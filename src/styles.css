@@ -1,0 +1,78 @@
+/* Basic CSS reset / layout */
+html, body, #root, .app-shell {
+  margin: 0;
+  padding: 0;
+  height: 100vh; /* Ensure full viewport */
+  width: 100%;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
+  background: #0f1115;
+  color: #f5f7fa;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  flex: 0 0 10vh; /* 10% of viewport height */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 1.25rem;
+  background: linear-gradient(135deg, #1e2633, #19202a);
+  border-bottom: 1px solid #222b36;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+  z-index: 500;
+}
+
+.app-title {
+  margin: 0;
+  font-size: clamp(1.1rem, 2vw, 1.6rem);
+  letter-spacing: 0.5px;
+}
+
+.app-subtitle {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0; /* Allows map to size correctly */
+  position: relative;
+}
+
+.map-wrapper, .map-container {
+  height: 100%;
+  width: 100%;
+}
+
+.map-container {
+  /* Leaflet will inject tiles */
+  outline: none;
+}
+
+.map-error {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #b00020;
+  color: #fff;
+  padding: 0.6rem 1rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  z-index: 800;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+
+/* Improve Leaflet default control look for dark background */
+.leaflet-control-attribution, .leaflet-control-scale, .leaflet-bar a {
+  background: rgba(30,36,51,0.85);
+  color: #d0d6dd;
+  border: 1px solid #2a3442;
+}
+.leaflet-bar a:hover {
+  background: rgba(45,54,70,0.85);
+}
