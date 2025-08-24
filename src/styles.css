@@ -67,6 +67,20 @@ html, body, #root, .app-shell {
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
 
+.map-info {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: rgba(30,36,51,0.95);
+  color: #d0d6dd;
+  padding: 0.6rem 1rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  z-index: 800;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  border: 1px solid #2a3442;
+}
+
 /* Improve Leaflet default control look for dark background */
 .leaflet-control-attribution, .leaflet-control-scale, .leaflet-bar a {
   background: rgba(30,36,51,0.85);
@@ -75,4 +89,193 @@ html, body, #root, .app-shell {
 }
 .leaflet-bar a:hover {
   background: rgba(45,54,70,0.85);
+}
+
+/* Style the drawing controls to match theme */
+.leaflet-draw-toolbar a {
+  background: rgba(30,36,51,0.85) !important;
+  color: #d0d6dd !important;
+  border: 1px solid #2a3442 !important;
+}
+.leaflet-draw-toolbar a:hover {
+  background: rgba(45,54,70,0.85) !important;
+}
+
+/* Style the drawing tooltips */
+.leaflet-draw-tooltip {
+  background: rgba(30,36,51,0.95) !important;
+  color: #d0d6dd !important;
+  border: 1px solid #2a3442 !important;
+}
+
+/* Analysis Panel Styles */
+.analysis-panel {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  width: 350px;
+  max-height: 70vh;
+  background: rgba(15,17,21,0.95);
+  border: 1px solid #2a3442;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.analysis-panel:not(.expanded) {
+  max-height: 80px;
+}
+
+.analysis-header {
+  padding: 1rem;
+  border-bottom: 1px solid #2a3442;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(30,36,51,0.8);
+}
+
+.analysis-header h3 {
+  margin: 0;
+  color: #f5f7fa;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.distance-display {
+  color: #ff6b35;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.expand-button {
+  background: none;
+  border: none;
+  color: #d0d6dd;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 3px;
+  transition: background-color 0.2s;
+}
+
+.expand-button:hover {
+  background: rgba(45,54,70,0.6);
+}
+
+.analysis-content {
+  padding: 1rem;
+  max-height: calc(70vh - 80px);
+  overflow-y: auto;
+}
+
+.factors-section, .resource-section {
+  margin-bottom: 1.5rem;
+}
+
+.factors-section h4, .resource-section h4 {
+  margin: 0 0 0.75rem 0;
+  color: #f5f7fa;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.factor-controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.factor-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #d0d6dd;
+  flex: 1;
+  min-width: 120px;
+}
+
+.factor-controls select {
+  padding: 0.5rem;
+  border: 1px solid #2a3442;
+  border-radius: 4px;
+  background: rgba(30,36,51,0.8);
+  color: #d0d6dd;
+  font-size: 0.8rem;
+}
+
+.resource-item {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.resource-item:hover {
+  border-color: #2a3442;
+  background: rgba(30,36,51,0.3);
+}
+
+.resource-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #d0d6dd;
+}
+
+.resource-item input[type="checkbox"] {
+  accent-color: #ff6b35;
+}
+
+.resource-name {
+  font-weight: 500;
+}
+
+.calculation-result {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(30,36,51,0.6);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #f5f7fa;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.calculation-result .time {
+  color: #4fc3f7;
+}
+
+.calculation-result .cost {
+  color: #81c784;
+}
+
+/* Custom scrollbar for analysis panel */
+.analysis-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.analysis-content::-webkit-scrollbar-track {
+  background: rgba(30,36,51,0.3);
+  border-radius: 3px;
+}
+
+.analysis-content::-webkit-scrollbar-thumb {
+  background: rgba(160,174,192,0.4);
+  border-radius: 3px;
+}
+
+.analysis-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(160,174,192,0.6);
 }
