@@ -34,6 +34,7 @@ const App: React.FC = () => {
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
+            fuelModels={defaultConfig.fuelModels}
           />
         </div>
         <EquipmentConfigPanel

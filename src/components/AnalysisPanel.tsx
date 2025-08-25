@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { MachinerySpec, AircraftSpec, HandCrewSpec } from '../types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, FuelModelSpec, CrewType, AttackMethod } from '../types/config';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -16,6 +16,8 @@ interface AnalysisPanelProps {
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Available fuel models for hand crew calculations */
+  fuelModels: FuelModelSpec[];
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
@@ -62,9 +64,21 @@ const calculateHandCrewTime = (
   distance: number,
   handCrew: HandCrewSpec,
   terrainFactor: number,
-  vegetationFactor: number
+  vegetationFactor: number,
+  fuelModel?: FuelModelSpec,
+  crewType?: CrewType,
+  attackMethod?: AttackMethod,
+  customCrewSize?: number
 ): number => {
-  const totalRate = handCrew.crewSize * handCrew.clearingRatePerPerson;
+  let ratePerPerson = handCrew.clearingRatePerPerson;
+  const crewSize = customCrewSize || handCrew.crewSize;
+  
+  // Use fuel model rate if available and crew supports it
+  if (fuelModel && crewType && attackMethod && handCrew.supportsFuelModels) {
+    ratePerPerson = fuelModel.rates[crewType][attackMethod];
+  }
+  
+  const totalRate = crewSize * ratePerPerson;
   const adjustedRate = totalRate / (terrainFactor * vegetationFactor);
   return distance / adjustedRate; // hours
 };
@@ -85,11 +99,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   machinery,
   aircraft,
-  handCrews
+  handCrews,
+  fuelModels
 }) => {
   const [terrain, setTerrain] = useState<TerrainType>('easy');
   const [vegetation, setVegetation] = useState<VegetationType>('light');
   const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Hand crew fuel model settings
+  const [useFuelModels, setUseFuelModels] = useState(false);
+  const [selectedFuelModel, setSelectedFuelModel] = useState<string>('');
+  const [crewType, setCrewType] = useState<CrewType>('typeI');
+  const [attackMethod, setAttackMethod] = useState<AttackMethod>('direct');
+  const [customCrewSize, setCustomCrewSize] = useState<number>(20);
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -153,7 +175,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // Calculate hand crew results
     handCrews.forEach(crew => {
       const compatible = isCompatible(crew, terrain, vegetation);
-      const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
+      
+      // Get fuel model data if enabled and crew supports it
+      const selectedFuelModelData = useFuelModels && selectedFuelModel && crew.supportsFuelModels 
+        ? fuelModels.find(fm => fm.id === selectedFuelModel)
+        : undefined;
+        
+      const time = compatible ? calculateHandCrewTime(
+        distance, 
+        crew, 
+        terrainFactor, 
+        vegetationFactor,
+        selectedFuelModelData,
+        crewType,
+        attackMethod,
+        crew.supportsFuelModels ? customCrewSize : undefined
+      ) : 0;
+      
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
       results.push({
@@ -183,7 +221,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return aTime - bTime;
     });
-  }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
+  }, [distance, terrain, vegetation, machinery, aircraft, handCrews, fuelModels, useFuelModels, selectedFuelModel, crewType, attackMethod, customCrewSize]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -237,6 +275,81 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <option value="extreme">Extreme (Very Dense)</option>
               </select>
             </label>
+          </div>
+        </div>
+
+        {/* Hand Crew Configuration */}
+        <div className="hand-crew-section">
+          <h4>Hand Crew Configuration</h4>
+          <div className="hand-crew-controls">
+            <label className="checkbox-label">
+              <input 
+                type="checkbox"
+                checked={useFuelModels}
+                onChange={(e) => setUseFuelModels(e.target.checked)}
+              />
+              Use fuel model-based rates
+            </label>
+            
+            {useFuelModels && (
+              <div className="fuel-model-controls">
+                <label>
+                  Fuel Model:
+                  <select 
+                    value={selectedFuelModel} 
+                    onChange={(e) => setSelectedFuelModel(e.target.value)}
+                  >
+                    <option value="">Select fuel model...</option>
+                    {fuelModels.map(model => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                
+                <label>
+                  Crew Type:
+                  <select 
+                    value={crewType} 
+                    onChange={(e) => setCrewType(e.target.value as CrewType)}
+                  >
+                    <option value="typeI">Type I (IHC)</option>
+                    <option value="typeII">Type II (Initial Attack)</option>
+                  </select>
+                </label>
+                
+                <label>
+                  Attack Method:
+                  <select 
+                    value={attackMethod} 
+                    onChange={(e) => setAttackMethod(e.target.value as AttackMethod)}
+                  >
+                    <option value="direct">Direct Attack</option>
+                    <option value="indirect">Indirect Attack</option>
+                  </select>
+                </label>
+                
+                <label>
+                  Crew Size:
+                  <input 
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={customCrewSize}
+                    onChange={(e) => setCustomCrewSize(parseInt(e.target.value) || 20)}
+                  />
+                </label>
+                
+                {selectedFuelModel && (
+                  <div className="fuel-model-info">
+                    <small>
+                      Rate: {fuelModels.find(fm => fm.id === selectedFuelModel)?.rates[crewType][attackMethod].toFixed(1)} m/hr per person
+                    </small>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

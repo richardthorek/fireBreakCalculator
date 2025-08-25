@@ -6,6 +6,7 @@
 
 import { FireBreakConfig } from '../types/config';
 import csvMachinery from '../utils/parseClearingRates';
+import { fuelModels } from './fuelModels';
 
 // Use CSV-derived machinery if available; otherwise fall back to the internal list.
 // `csvMachinery` is an array exported from the parser module.
@@ -128,8 +129,34 @@ export const defaultConfig: FireBreakConfig = {
       description: 'Large crew with power tools for heavy vegetation clearing',
       allowedTerrain: ['easy', 'moderate', 'difficult'],
       allowedVegetation: ['moderate', 'heavy', 'extreme']
+    },
+    {
+      id: 'fuel-model-crew-typeI',
+      name: 'Type I Crew (IHC)',
+      crewSize: 20,
+      clearingRatePerPerson: 10, // Base rate - will be overridden by fuel model
+      tools: ['Chainsaws', 'Pulaskis', 'Shovels', 'Hand tools'],
+      costPerHour: 1600, // for entire crew
+      description: 'Interagency Hotshots Crew - highly skilled with advanced training',
+      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme'],
+      supportsFuelModels: true
+    },
+    {
+      id: 'fuel-model-crew-typeII',
+      name: 'Type II Crew (Initial Attack)',
+      crewSize: 20,
+      clearingRatePerPerson: 8, // Base rate - will be overridden by fuel model
+      tools: ['Chainsaws', 'Pulaskis', 'Shovels', 'Hand tools'],
+      costPerHour: 1200, // for entire crew
+      description: 'Standard Type II crew for initial attack operations',
+      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme'],
+      supportsFuelModels: true
     }
   ],
+
+  fuelModels,
 
   calculationRules: {
     terrainFactors: {

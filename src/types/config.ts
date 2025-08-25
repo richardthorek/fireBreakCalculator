@@ -58,6 +58,8 @@ export interface HandCrewSpec {
   allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
   /** Vegetation types this crew can handle */
   allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
+  /** Whether this crew supports fuel model-based calculations */
+  supportsFuelModels?: boolean;
 }
 
 export interface CalculationRules {
@@ -83,6 +85,7 @@ export interface FireBreakConfig {
   machinery: MachinerySpec[];
   aircraft: AircraftSpec[];
   handCrews: HandCrewSpec[];
+  fuelModels: FuelModelSpec[];
   calculationRules: CalculationRules;
 }
 
@@ -96,3 +99,23 @@ export interface MachineryPerformance {
   /** Cost per hour under these conditions (optional) */
   costPerHour?: number;
 }
+
+export interface FuelModelSpec {
+  id: string;
+  name: string;
+  description: string;
+  /** Productivity rates in meters per hour per person for 20-person baseline */
+  rates: {
+    typeI: {
+      direct: number;
+      indirect: number;
+    };
+    typeII: {
+      direct: number;
+      indirect: number;
+    };
+  };
+}
+
+export type CrewType = 'typeI' | 'typeII';
+export type AttackMethod = 'direct' | 'indirect';
