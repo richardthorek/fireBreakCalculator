@@ -23,9 +23,12 @@ interface AnalysisPanelProps {
   handCrews: HandCrewSpec[];
   /** Callback for when drop preview selection changes */
   onDropPreviewChange?: (aircraftIds: string[]) => void;
+  /** Callback for when drop preview selection changes */
+  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
+type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
 type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
 
 interface CalculationResult {
@@ -33,14 +36,43 @@ interface CalculationResult {
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
   time: number; // hours for all types now
+  time: number; // hours for all types now
   cost: number;
   compatible: boolean;
+  slopeCompatible?: boolean; // Whether equipment can handle the slope
+  maxSlopeExceeded?: number; // Max slope encountered if exceeded
+  drops?: number;
   slopeCompatible?: boolean; // Whether equipment can handle the slope
   maxSlopeExceeded?: number; // Max slope encountered if exceeded
   drops?: number;
   unit: string;
   description?: string;
 }
+
+/**
+ * Get appropriate icon for equipment type
+ */
+const getEquipmentIcon = (result: CalculationResult): string => {
+  if (result.type === 'machinery') {
+    // Check if it's a dozer or grader from the name
+    if (result.name.toLowerCase().includes('dozer')) {
+      return '🚜';
+    } else if (result.name.toLowerCase().includes('grader')) {
+      return '🛠️';
+    }
+    return '🚜'; // Default to bulldozer for machinery
+  } else if (result.type === 'aircraft') {
+    // Check if it's a helicopter or fixed wing
+    if (result.name.toLowerCase().includes('helicopter')) {
+      return '🚁';
+    } else {
+      return '✈️';
+    }
+  } else if (result.type === 'handCrew') {
+    return '👨‍🚒';
+  }
+  return '';
+};
 
 /**
  * Get appropriate icon for equipment type
@@ -112,7 +144,32 @@ const isCompatible = (
   requiredTerrain: TerrainType,
   vegetation: VegetationType,
   expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
+  requiredTerrain: TerrainType,
+  vegetation: VegetationType,
+  expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
 ): boolean => {
+  // Basic compatibility checks: terrain and vegetation membership
+  return equipment.allowedTerrain.includes(requiredTerrain) &&
+         equipment.allowedVegetation.includes(vegetation as any);
+};
+
+/**
+ * Check if machinery is compatible with the slope requirements
+ */
+const isSlopeCompatible = (
+  machinery: MachinerySpec,
+  maxSlope: number
+): { compatible: boolean; maxSlopeExceeded?: number } => {
+  if (machinery.maxSlope === undefined) {
+    // If no slope limit is defined, assume it can handle any slope
+    return { compatible: true };
+  }
+  
+  const compatible = maxSlope <= machinery.maxSlope;
+  return {
+    compatible,
+    maxSlopeExceeded: compatible ? undefined : maxSlope
+  };
   // Basic compatibility checks: terrain and vegetation membership
   return equipment.allowedTerrain.includes(requiredTerrain) &&
          equipment.allowedVegetation.includes(vegetation as any);
@@ -143,6 +200,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   vegetationAnalysis,
   machinery,
   aircraft,
+  handCrews,
+  onDropPreviewChange
   handCrews,
   onDropPreviewChange
 }) => {
@@ -178,7 +237,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     extreme: 2.2
   };
   // Map new vegetation taxonomy to numeric factors (lower is easier)
+  // Map new vegetation taxonomy to numeric factors (lower is easier)
   const vegetationFactors = {
+    grassland: 1.0,
+    lightshrub: 1.1,
+    mediumscrub: 1.5,
+    heavyforest: 2.0
+  } as Record<VegetationType, number>;
+
+  // Map max slope to a minimum terrain class requirement
+  const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
+    if (!trackAnalysis) return null;
+    return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
+  }, [trackAnalysis]);
     grassland: 1.0,
     lightshrub: 1.1,
     mediumscrub: 1.5,
@@ -201,6 +272,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate machinery results
   const requiredTerrain = effectiveTerrain;
+  const requiredTerrain = effectiveTerrain;
     machinery.forEach(machine => {
   const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
@@ -215,6 +287,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         type: 'machinery',
         time,
         cost,
+        compatible: fullCompatibility,
+        slopeCompatible: slopeCheck.compatible,
+        maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         compatible: fullCompatibility,
         slopeCompatible: slopeCheck.compatible,
         maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
@@ -235,8 +310,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         name: plane.name,
         type: 'aircraft',
         time: totalTime,
+        time: totalTime,
         cost,
         compatible,
+        unit: 'hours',
+        description: plane.description,
+        // Store additional aircraft-specific info for display
+        drops: drops
         unit: 'hours',
         description: plane.description,
         // Store additional aircraft-specific info for display
@@ -270,8 +350,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       
       // All types now use time in hours, so direct comparison
       if (Math.abs(a.time - b.time) < 0.1) {
+      // All types now use time in hours, so direct comparison
+      if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost; // If time is similar, sort by cost
       }
+      return a.time - b.time;
       return a.time - b.time;
     });
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
@@ -287,10 +370,42 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
   }, [calculations]);
 
+  // Initialize / reconcile selected quick options when calculations change
+  useMemo(() => {
+    if (calculations.length === 0) return null;
+    const machList = calculations.filter(c => c.type === 'machinery' && c.compatible);
+    const airList = calculations.filter(c => c.type === 'aircraft' && c.compatible);
+    const handList = calculations.filter(c => c.type === 'handCrew' && c.compatible);
+    if ((!selectedQuickMachinery || !machList.some(m => m.id === selectedQuickMachinery)) && machList.length) {
+      setSelectedQuickMachinery(machList[0].id);
+    }
+    if ((!selectedQuickAircraft || !airList.some(a => a.id === selectedQuickAircraft)) && airList.length) {
+      setSelectedQuickAircraft(airList[0].id);
+    }
+    if ((!selectedQuickHandCrew || !handList.some(h => h.id === selectedQuickHandCrew)) && handList.length) {
+      setSelectedQuickHandCrew(handList[0].id);
+    }
+    return null;
+  }, [calculations, selectedQuickMachinery, selectedQuickAircraft, selectedQuickHandCrew]);
+
+  const quickMachinery = selectedQuickMachinery ? calculations.find(c => c.id === selectedQuickMachinery) : undefined;
+  const quickAircraft = selectedQuickAircraft ? calculations.find(c => c.id === selectedQuickAircraft) : undefined;
+  const quickHandCrew = selectedQuickHandCrew ? calculations.find(c => c.id === selectedQuickHandCrew) : undefined;
+
   return (
     <div className="analysis-panel-permanent">
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
+        <div className="header-info">
+          {distance && (
+            <span className="distance-display">{distance.toLocaleString()}m</span>
+          )}
+          {trackAnalysis && (
+            <span className="slope-display">
+              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
+            </span>
+          )}
+        </div>
         <div className="header-info">
           {distance && (
             <span className="distance-display">{distance.toLocaleString()}m</span>
@@ -400,6 +515,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             {/* Best Options Summary - Always visible when line exists */}
             <div className="best-options-summary">
               <h4>Quick Options</h4>
+              <h4>Quick Options</h4>
               <div className="best-options-grid">
                 <div className="option-category">
                   <div className="category-header">
@@ -410,12 +526,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <div className="option-details">
                       <span className="option-name">{bestOptions.machinery.name}</span>
                       <span className="option-time">
-                        {bestOptions.machinery.time.toFixed(1)} {bestOptions.machinery.unit}
+                        {quickMachinery.time.toFixed(1)} {quickMachinery.unit}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
                 
                 <div className="option-category">
@@ -448,9 +562,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                         )}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
                 
                 <div className="option-category">
@@ -462,15 +574,15 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <div className="option-details">
                       <span className="option-name">{bestOptions.handCrew.name}</span>
                       <span className="option-time">
-                        {bestOptions.handCrew.time.toFixed(1)} {bestOptions.handCrew.unit}
+                        {quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
               </div>
             </div>
+
+            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
 
             {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
 
@@ -478,6 +590,63 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             {isExpanded && (
               <div className="equipment-summary">
                 <h4>All Equipment Options</h4>
+                <div className="equipment-categories">
+                  {/* Machinery Section */}
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header">
+                      <span className="category-section-icon">🛠️</span>
+                      Machinery
+                    </h5>
+                    <div className="equipment-table">
+                      <div className="table-header">
+                        <span>Equipment</span>
+                        <span>Time</span>
+                        <span>Cost</span>
+                        <span>Status</span>
+                      </div>
+                      {calculations
+                        .filter(result => result.type === 'machinery')
+                        .map((result) => (
+                        <div 
+                          key={result.id} 
+                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                        >
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">
+                            {result.compatible ? (
+                              <>
+                                <span className="time-value">
+                                  {result.time.toFixed(1)}
+                                </span>
+                                <span className="time-unit">{result.unit}</span>
+                              </>
+                            ) : (
+                              <span className="incompatible-text">N/A</span>
+                            )}
+                          </div>
+                          <div className="cost-info">
+                            {result.compatible && result.cost > 0 ? (
+                              <span className="cost-value">${result.cost.toFixed(0)}</span>
+                            ) : (
+                              <span className="no-cost">-</span>
+                            )}
+                          </div>
+                          <div className="status-info">
+                            {result.compatible ? (
+                              <span className="compatible">✓ Compatible</span>
+                            ) : (
+                              <span className="incompatible-status">✗ Incompatible</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                 <div className="equipment-categories">
                   {/* Machinery Section */}
                   <div className="equipment-category-section">
@@ -568,6 +737,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                         {result.compatible ? (
                           <span className="compatible">✓ Compatible</span>
                         ) : (
+                          <div className="incompatible-details">
+                            <span className="incompatible-status">✗ Incompatible</span>
+                            {result.slopeCompatible === false && result.maxSlopeExceeded && (
+                              <span className="slope-warning">
+                                Max slope {result.maxSlopeExceeded.toFixed(1)}° exceeds limit
+                              </span>
+                            )}
+                          </div>
                           <div className="incompatible-details">
                             <span className="incompatible-status">✗ Incompatible</span>
                             {result.slopeCompatible === false && result.maxSlopeExceeded && (

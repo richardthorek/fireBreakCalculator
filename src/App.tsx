@@ -3,7 +3,7 @@ import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
-import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from './types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis, TrackAnalysis } from './types/config';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -15,6 +15,10 @@ const App: React.FC = () => {
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+  const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [breaks, setBreaks] = useState<{ id: number; distance: number; analysis: TrackAnalysis | null }[]>([]);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   
   // State for configurable equipment
   const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
@@ -26,6 +30,13 @@ const App: React.FC = () => {
       <header className="app-header">
         <h1 className="app-title">RFS Fire Break Calculator</h1>
         <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
+        <button
+          className="config-panel-toggle"
+          onClick={() => setIsConfigOpen(v => !v)}
+          title="Configure Equipment"
+        >
+          ⚙️ Config
+        </button>
       </header>
       <main className="app-main">
         <div className="map-section">
@@ -47,6 +58,7 @@ const App: React.FC = () => {
             aircraft={aircraft}
             handCrews={handCrews}
             onDropPreviewChange={setSelectedAircraftForPreview}
+            onDropPreviewChange={setSelectedAircraftForPreview}
           />
         </div>
         <EquipmentConfigPanel
@@ -56,6 +68,8 @@ const App: React.FC = () => {
           onUpdateMachinery={setMachinery}
           onUpdateAircraft={setAircraft}
           onUpdateHandCrews={setHandCrews}
+          isOpen={isConfigOpen}
+          onToggle={() => setIsConfigOpen(v => !v)}
         />
       </main>
     </div>

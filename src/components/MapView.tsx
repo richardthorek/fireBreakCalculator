@@ -116,10 +116,24 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
 
     // Try Mapbox first, fallback to OpenStreetMap
   const token = MAPBOX_TOKEN;
+  const token = MAPBOX_TOKEN;
     
     if (token && token !== 'YOUR_MAPBOX_TOKEN_HERE') {
       // Use Mapbox tiles if token is available. Define two Mapbox base layers
+      // Use Mapbox tiles if token is available. Define two Mapbox base layers
       const tileUrl = `https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token=${token}`;
+
+      // Satellite (default) and Streets layers
+      const satellite = L.tileLayer(tileUrl, {
+        id: 'mapbox/satellite-streets-v12',
+        tileSize: 512,
+        zoomOffset: -1,
+        maxZoom: 20,
+        attribution:
+          '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
+      });
+
+      const streets = L.tileLayer(tileUrl, {
 
       // Satellite (default) and Streets layers
       const satellite = L.tileLayer(tileUrl, {
@@ -152,11 +166,30 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         undefined,
         { position: 'topleft' }
       ).addTo(map);
+          '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
+      });
+
+      // Add satellite as the default base layer
+      satellite.addTo(map);
+
+      // Add a layer control so users can switch to Streets if desired
+      L.control.layers(
+        {
+          'Satellite': satellite,
+          'Streets': streets
+        },
+        undefined,
+        { position: 'topleft' }
+      ).addTo(map);
     } else {
+      // Fallback to OpenStreetMap when token is missing
+      const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       // Fallback to OpenStreetMap when token is missing
       const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '© <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors'
+      });
+      osm.addTo(map);
       });
       osm.addTo(map);
     }
@@ -270,8 +303,13 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
 
     // Handle drawing events for fire break calculation
     map.on(L.Draw.Event.CREATED, async (event: any) => {
+    map.on(L.Draw.Event.CREATED, async (event: any) => {
       const layer = event.layer;
       drawnItems.addLayer(layer);
+      // Attach interactive behavior for this polyline
+      if (layer instanceof L.Polyline) {
+        attachPolylineInteractions(layer);
+      }
       // Attach interactive behavior for this polyline
       if (layer instanceof L.Polyline) {
         attachPolylineInteractions(layer);
@@ -286,8 +324,8 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           totalDistance += latlngs[i].distanceTo(latlngs[i + 1]);
         }
         
-        setFireBreakDistance(Math.round(totalDistance));
-        onDistanceChange(Math.round(totalDistance));
+  setFireBreakDistance(Math.round(totalDistance));
+  onDistanceChange(Math.round(totalDistance));
         
         // Analyze slopes and add visualization
         const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
@@ -305,7 +343,9 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
 
     // Handle editing events
     map.on(L.Draw.Event.EDITED, async (event: any) => {
+    map.on(L.Draw.Event.EDITED, async (event: any) => {
       const layers = event.layers;
+      layers.eachLayer(async (layer: any) => {
       layers.eachLayer(async (layer: any) => {
         if (layer instanceof L.Polyline) {
           const latlngs = layer.getLatLngs() as LatLng[];
@@ -485,6 +525,74 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
       map.remove();
     };
   }, []);
+
+  // Re-render drop previews when selected aircraft change or when map/drawn items update.
+  // We use dropsVersion to also trigger on topology changes.
+  useEffect(() => {
+    if (!mapRef.current || !drawnItemsRef.current || !dropMarkersRef.current) return;
+
+    try {
+      // Clear previous per-aircraft groups
+      dropMarkerGroupsRef.current.forEach((group) => {
+        group.clearLayers();
+        if (dropMarkersRef.current!.hasLayer(group)) dropMarkersRef.current!.removeLayer(group);
+      });
+      dropMarkerGroupsRef.current.clear();
+
+      if (!selectedAircraftForPreview || selectedAircraftForPreview.length === 0) return;
+
+      // For each selected aircraft, create a layer group and populate across all polylines
+      selectedAircraftForPreview.forEach(id => {
+        const spec = aircraft.find(a => a.id === id);
+        if (!spec) return;
+        const dropLen = spec.dropLength || 1000;
+        const group = new L.LayerGroup();
+
+        // For each polyline, compute cumulative distances and add markers
+        drawnItemsRef.current!.eachLayer((layer: any) => {
+          if (!(layer instanceof L.Polyline)) return;
+          const latlngs = layer.getLatLngs() as LatLng[];
+          if (!latlngs || latlngs.length < 2) return;
+          const cumulative: { pt: LatLng; distFromStart: number }[] = [];
+          let acc = 0;
+          cumulative.push({ pt: latlngs[0], distFromStart: 0 });
+          for (let i = 1; i < latlngs.length; i++) {
+            const prev = latlngs[i - 1];
+            const curr = latlngs[i];
+            const seg = prev.distanceTo(curr);
+            acc += seg;
+            cumulative.push({ pt: curr, distFromStart: acc });
+          }
+
+          for (let d = dropLen; d <= cumulative[cumulative.length - 1].distFromStart; d += dropLen) {
+            let idx = cumulative.findIndex(c => c.distFromStart >= d);
+            if (idx === -1) idx = cumulative.length - 1;
+            const after = cumulative[idx];
+            const before = cumulative[Math.max(0, idx - 1)];
+            const segLen = after.distFromStart - before.distFromStart || 1;
+            const t = (d - before.distFromStart) / segLen;
+            const lat = before.pt.lat + (after.pt.lat - before.pt.lat) * t;
+            const lng = before.pt.lng + (after.pt.lng - before.pt.lng) * t;
+            const marker = L.circleMarker([lat, lng], {
+              radius: 6,
+              color: '#4fc3f7',
+              fillColor: '#4fc3f7',
+              fillOpacity: 0.9,
+              weight: 1
+            });
+            marker.bindTooltip(`${spec.name} drop`, { permanent: false, direction: 'top' });
+            group.addLayer(marker);
+          }
+        });
+
+        // Add group to top-level dropMarkers layer for collective visibility control
+        dropMarkersRef.current!.addLayer(group);
+        dropMarkerGroupsRef.current.set(id, group);
+      });
+    } catch (err) {
+      console.warn('Error rendering grouped drop previews', err);
+    }
+  }, [selectedAircraftForPreview, aircraft, dropsVersion]);
 
   return (
     <div className="map-wrapper">
