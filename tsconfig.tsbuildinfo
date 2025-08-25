@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/AnalysisPanel.tsx","./src/components/EquipmentConfigPanel.tsx","./src/components/MapView.tsx","./src/config/defaultConfig.ts","./src/types/config.ts","./src/utils/parseClearingRates.ts"],"version":"5.9.2"}
