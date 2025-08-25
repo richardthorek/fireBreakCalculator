@@ -23,56 +23,25 @@ interface AnalysisPanelProps {
   handCrews: HandCrewSpec[];
   /** Callback for when drop preview selection changes */
   onDropPreviewChange?: (aircraftIds: string[]) => void;
-  /** Callback for when drop preview selection changes */
-  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
 type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
-type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+
 
 interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for all types now
-  time: number; // hours for all types now
+  time: number; // hours for all types
   cost: number;
   compatible: boolean;
-  slopeCompatible?: boolean; // Whether equipment can handle the slope
-  maxSlopeExceeded?: number; // Max slope encountered if exceeded
-  drops?: number;
-  slopeCompatible?: boolean; // Whether equipment can handle the slope
-  maxSlopeExceeded?: number; // Max slope encountered if exceeded
-  drops?: number;
-  unit: string;
+  slopeCompatible?: boolean;
+  maxSlopeExceeded?: number;
+  drops?: number; // aircraft specific
+  unit: string; // always 'hours'
   description?: string;
 }
-
-/**
- * Get appropriate icon for equipment type
- */
-const getEquipmentIcon = (result: CalculationResult): string => {
-  if (result.type === 'machinery') {
-    // Check if it's a dozer or grader from the name
-    if (result.name.toLowerCase().includes('dozer')) {
-      return '🚜';
-    } else if (result.name.toLowerCase().includes('grader')) {
-      return '🛠️';
-    }
-    return '🚜'; // Default to bulldozer for machinery
-  } else if (result.type === 'aircraft') {
-    // Check if it's a helicopter or fixed wing
-    if (result.name.toLowerCase().includes('helicopter')) {
-      return '🚁';
-    } else {
-      return '✈️';
-    }
-  } else if (result.type === 'handCrew') {
-    return '👨‍🚒';
-  }
-  return '';
-};
 
 /**
  * Get appropriate icon for equipment type
@@ -144,9 +113,6 @@ const isCompatible = (
   requiredTerrain: TerrainType,
   vegetation: VegetationType,
   expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
-  requiredTerrain: TerrainType,
-  vegetation: VegetationType,
-  expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
 ): boolean => {
   // Basic compatibility checks: terrain and vegetation membership
   return equipment.allowedTerrain.includes(requiredTerrain) &&
@@ -160,56 +126,30 @@ const isSlopeCompatible = (
   machinery: MachinerySpec,
   maxSlope: number
 ): { compatible: boolean; maxSlopeExceeded?: number } => {
-  if (machinery.maxSlope === undefined) {
-    // If no slope limit is defined, assume it can handle any slope
-    return { compatible: true };
-  }
-  
+  if (machinery.maxSlope == null) return { compatible: true };
   const compatible = maxSlope <= machinery.maxSlope;
-  return {
-    compatible,
-    maxSlopeExceeded: compatible ? undefined : maxSlope
-  };
-  // Basic compatibility checks: terrain and vegetation membership
-  return equipment.allowedTerrain.includes(requiredTerrain) &&
-         equipment.allowedVegetation.includes(vegetation as any);
+  return { compatible, maxSlopeExceeded: compatible ? undefined : maxSlope };
 };
 
-/**
- * Check if machinery is compatible with the slope requirements
- */
-const isSlopeCompatible = (
-  machinery: MachinerySpec,
-  maxSlope: number
-): { compatible: boolean; maxSlopeExceeded?: number } => {
-  if (machinery.maxSlope === undefined) {
-    // If no slope limit is defined, assume it can handle any slope
-    return { compatible: true };
-  }
-  
-  const compatible = maxSlope <= machinery.maxSlope;
-  return {
-    compatible,
-    maxSlopeExceeded: compatible ? undefined : maxSlope
-  };
-};
-
-export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
+export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForPreview?: string[] }> = ({
   distance,
   trackAnalysis,
   vegetationAnalysis,
   machinery,
   aircraft,
   handCrews,
-  onDropPreviewChange
-  handCrews,
-  onDropPreviewChange
+  onDropPreviewChange,
+  selectedAircraftForPreview: externalSelected = []
 }) => {
   // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [useAutoDetected, setUseAutoDetected] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
+  // Quick option selections
+  const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
+  const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
+  const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
 
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
@@ -236,28 +176,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     difficult: 1.7,
     extreme: 2.2
   };
-  // Map new vegetation taxonomy to numeric factors (lower is easier)
-  // Map new vegetation taxonomy to numeric factors (lower is easier)
-  const vegetationFactors = {
+  // Vegetation taxonomy factors (lower easier)
+  const vegetationFactors: Record<VegetationType, number> = {
     grassland: 1.0,
     lightshrub: 1.1,
     mediumscrub: 1.5,
     heavyforest: 2.0
-  } as Record<VegetationType, number>;
+  };
 
-  // Map max slope to a minimum terrain class requirement
-  const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
-    if (!trackAnalysis) return null;
-    return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
-  }, [trackAnalysis]);
-    grassland: 1.0,
-    lightshrub: 1.1,
-    mediumscrub: 1.5,
-    heavyforest: 2.0
-  } as Record<VegetationType, number>;
-
-  // Map max slope to a minimum terrain class requirement
-  const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
+  // Derive effective terrain requirement from max slope
+  const derivedTerrainRequirement = useMemo<TerrainType | null>(() => {
     if (!trackAnalysis) return null;
     return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
   }, [trackAnalysis]);
@@ -266,15 +194,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (!distance) return [];
 
     const results: CalculationResult[] = [];
-  const effectiveTerrain = derivedTerrainRequirement || 'easy';
-  const terrainFactor = terrainFactors[effectiveTerrain];
-  const vegetationFactor = vegetationFactors[effectiveVegetation];
+    const effectiveTerrain = derivedTerrainRequirement || 'easy';
+    const terrainFactor = terrainFactors[effectiveTerrain];
+    const vegetationFactor = vegetationFactors[effectiveVegetation];
+    const requiredTerrain = effectiveTerrain;
 
-    // Calculate machinery results
-  const requiredTerrain = effectiveTerrain;
-  const requiredTerrain = effectiveTerrain;
+    // Machinery
     machinery.forEach(machine => {
-  const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
+      const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
       
@@ -290,17 +217,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         compatible: fullCompatibility,
         slopeCompatible: slopeCheck.compatible,
         maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
-        compatible: fullCompatibility,
-        slopeCompatible: slopeCheck.compatible,
-        maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         unit: 'hours',
         description: machine.description
       });
     });
 
-    // Calculate aircraft results
+    // Aircraft
     aircraft.forEach(plane => {
-  const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
+      const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -310,23 +234,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         name: plane.name,
         type: 'aircraft',
         time: totalTime,
-        time: totalTime,
         cost,
         compatible,
         unit: 'hours',
         description: plane.description,
-        // Store additional aircraft-specific info for display
-        drops: drops
-        unit: 'hours',
-        description: plane.description,
-        // Store additional aircraft-specific info for display
-        drops: drops
+        drops
       });
     });
 
-    // Calculate hand crew results
+    // Hand Crews
     handCrews.forEach(crew => {
-  const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
+      const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
@@ -350,11 +268,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       
       // All types now use time in hours, so direct comparison
       if (Math.abs(a.time - b.time) < 0.1) {
-      // All types now use time in hours, so direct comparison
-      if (Math.abs(a.time - b.time) < 0.1) {
-        return a.cost - b.cost; // If time is similar, sort by cost
+        return a.cost - b.cost;
       }
-      return a.time - b.time;
       return a.time - b.time;
     });
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
@@ -397,82 +312,45 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
         <div className="header-info">
-          {distance && (
-            <span className="distance-display">{distance.toLocaleString()}m</span>
-          )}
-          {trackAnalysis && (
-            <span className="slope-display">
-              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
-            </span>
-          )}
-        </div>
-        <div className="header-info">
-          {distance && (
-            <span className="distance-display">{distance.toLocaleString()}m</span>
-          )}
-          {trackAnalysis && (
-            <span className="slope-display">
-              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
-            </span>
-          )}
+          {distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
+          {trackAnalysis && <span className="slope-display">Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°</span>}
         </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
-
       <div className="analysis-content">
-        {/* Vegetation Analysis and Selector */}
         <div className="conditions-section">
           <div className="conditions-group">
             <label htmlFor="vegetation-toggle">Vegetation Type</label>
-            
-            {/* Show auto-detected vegetation info when available */}
             {vegetationAnalysis && (
               <div className="auto-detected-vegetation">
                 <div className="auto-detected-header">
-                  <span className="auto-detected-label">
-                    Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong>
-                  </span>
-                  <span className="confidence-badge">
-                    {Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence
-                  </span>
+                  <span className="auto-detected-label">Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong></span>
+                  <span className="confidence-badge">{Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence</span>
                 </div>
                 <div className="vegetation-toggle">
                   <label>
-                    <input
-                      type="checkbox"
-                      checked={useAutoDetected}
-                      onChange={(e) => setUseAutoDetected(e.target.checked)}
-                    />
+                    <input type="checkbox" checked={useAutoDetected} onChange={e => setUseAutoDetected(e.target.checked)} />
                     Use auto-detected vegetation
                   </label>
                 </div>
               </div>
             )}
-            
-            {/* Manual vegetation selector */}
             {(!vegetationAnalysis || !useAutoDetected) && (
               <select
+                aria-label="Select vegetation type"
                 id="vegetation-select"
                 value={selectedVegetation}
-                onChange={(e) => setSelectedVegetation(e.target.value as VegetationType)}
+                onChange={e => setSelectedVegetation(e.target.value as VegetationType)}
                 disabled={useAutoDetected && !!vegetationAnalysis}
               >
-                {VEGETATION_TYPES.map(v => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
+                {VEGETATION_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
               </select>
             )}
-            
-            {/* Show effective vegetation being used */}
-            <div className="effective-vegetation">
-              Using: <strong>{effectiveVegetation}</strong>
-            </div>
+            <div className="effective-vegetation">Using: <strong>{effectiveVegetation}</strong></div>
           </div>
         </div>
-
-        {/* Slope Analysis Information - When track analysis is available */}
         {trackAnalysis && (
           <div className="slope-analysis-section">
             <h4>Slope Analysis</h4>
@@ -484,133 +362,72 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </div>
               {isExpanded && (
                 <div className="slope-distribution">
-                  <div className="slope-category flat">
-                    <span>Flat (0-10°):</span>
-                    <span>{trackAnalysis.slopeDistribution.flat}</span>
-                  </div>
-                  <div className="slope-category medium">
-                    <span>Medium (10-20°):</span>
-                    <span>{trackAnalysis.slopeDistribution.medium}</span>
-                  </div>
-                  <div className="slope-category steep">
-                    <span>Steep (20-30°):</span>
-                    <span>{trackAnalysis.slopeDistribution.steep}</span>
-                  </div>
-                  <div className="slope-category very-steep">
-                    <span>Very Steep (30°+):</span>
-                    <span>{trackAnalysis.slopeDistribution.very_steep}</span>
-                  </div>
+                  <div className="slope-category flat"><span>Flat (0-10°):</span><span>{trackAnalysis.slopeDistribution.flat}</span></div>
+                  <div className="slope-category medium"><span>Medium (10-20°):</span><span>{trackAnalysis.slopeDistribution.medium}</span></div>
+                  <div className="slope-category steep"><span>Steep (20-30°):</span><span>{trackAnalysis.slopeDistribution.steep}</span></div>
+                  <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{trackAnalysis.slopeDistribution.very_steep}</span></div>
                 </div>
               )}
             </div>
           </div>
         )}
-
         {!distance ? (
-          <div className="no-line-message">
-            <p>Draw a line on the map to see equipment analysis</p>
-          </div>
+          <div className="no-line-message"><p>Draw a line on the map to see equipment analysis</p></div>
         ) : (
           <>
-            {/* Best Options Summary - Always visible when line exists */}
             <div className="best-options-summary">
-              <h4>Quick Options</h4>
               <h4>Quick Options</h4>
               <div className="best-options-grid">
                 <div className="option-category">
-                  <div className="category-header">
-                    <span className="category-icon">🛠️</span>
-                    <span className="category-label">Machinery</span>
-                  </div>
+                  <div className="category-header"><span className="category-icon">🛠️</span><span className="category-label">Machinery</span></div>
                   {bestOptions.machinery ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.machinery.name}</span>
-                      <span className="option-time">
-                        {quickMachinery.time.toFixed(1)} {quickMachinery.unit}
-                      </span>
+                      {quickMachinery && <span className="option-time">{quickMachinery.time.toFixed(1)} {quickMachinery.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
-                
                 <div className="option-category">
-                  <div className="category-header">
-                    <span className="category-icon">✈️</span>
-                    <span className="category-label">Aircraft</span>
-                  </div>
+                  <div className="category-header"><span className="category-icon">✈️</span><span className="category-label">Aircraft</span></div>
                   {bestOptions.aircraft ? (
                     <div className="option-details">
                       <div className="drop-preview-toggle">
                         <span className="option-name">{bestOptions.aircraft.name}</span>
-                        {/* Toggle button placed top-right via CSS */}
                         <button
                           type="button"
-                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'active' : ''}`}
-                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'Drop preview on' : 'Drop preview off'}
+                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft.id) ? 'active' : ''}`}
+                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft.id) ? 'Drop preview on' : 'Drop preview off'}
                           title="Toggle drop preview"
-                          onClick={() => bestOptions.aircraft && handleDropPreviewChange(bestOptions.aircraft.id, !selectedAircraftForPreview.includes(bestOptions.aircraft.id))}
+                          onClick={() => handleDropPreviewChange(bestOptions.aircraft!.id, !selectedAircraftForPreview.includes(bestOptions.aircraft!.id))}
                         >
-                          {/* Simple plane SVG icon */}
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
-                          </svg>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" /></svg>
                         </button>
                       </div>
-                      <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
-                        {bestOptions.aircraft.drops && (
-                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
-                        )}
-                      </span>
+                      <span className="option-time">{bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}{bestOptions.aircraft.drops && <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>}</span>
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
-                
                 <div className="option-category">
-                  <div className="category-header">
-                    <span className="category-icon">👨‍🚒</span>
-                    <span className="category-label">Hand Crew</span>
-                  </div>
+                  <div className="category-header"><span className="category-icon">👨‍🚒</span><span className="category-label">Hand Crew</span></div>
                   {bestOptions.handCrew ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.handCrew.name}</span>
-                      <span className="option-time">
-                        {quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}
-                      </span>
+                      {quickHandCrew && <span className="option-time">{quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
               </div>
             </div>
-
-            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
-
-            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
-
-            {/* Full Equipment Table - Only when expanded */}
             {isExpanded && (
               <div className="equipment-summary">
                 <h4>All Equipment Options</h4>
                 <div className="equipment-categories">
-                  {/* Machinery Section */}
                   <div className="equipment-category-section">
-                    <h5 className="category-section-header">
-                      <span className="category-section-icon">🛠️</span>
-                      Machinery
-                    </h5>
+                    <h5 className="category-section-header"><span className="category-section-icon">🛠️</span>Machinery</h5>
                     <div className="equipment-table">
-                      <div className="table-header">
-                        <span>Equipment</span>
-                        <span>Time</span>
-                        <span>Cost</span>
-                        <span>Status</span>
-                      </div>
-                      {calculations
-                        .filter(result => result.type === 'machinery')
-                        .map((result) => (
-                        <div 
-                          key={result.id} 
-                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                        >
+                      <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
+                      {calculations.filter(r => r.type === 'machinery').map(result => (
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''}`}>
                           <div className="equipment-info">
                             <span className="equipment-icon">{getEquipmentIcon(result)}</span>
                             <div className="equipment-details">
@@ -618,145 +435,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                               <span className="equipment-type">{result.type}</span>
                             </div>
                           </div>
-                          <div className="time-info">
-                            {result.compatible ? (
-                              <>
-                                <span className="time-value">
-                                  {result.time.toFixed(1)}
-                                </span>
-                                <span className="time-unit">{result.unit}</span>
-                              </>
-                            ) : (
-                              <span className="incompatible-text">N/A</span>
-                            )}
-                          </div>
-                          <div className="cost-info">
-                            {result.compatible && result.cost > 0 ? (
-                              <span className="cost-value">${result.cost.toFixed(0)}</span>
-                            ) : (
-                              <span className="no-cost">-</span>
-                            )}
-                          </div>
-                          <div className="status-info">
-                            {result.compatible ? (
-                              <span className="compatible">✓ Compatible</span>
-                            ) : (
-                              <span className="incompatible-status">✗ Incompatible</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                <div className="equipment-categories">
-                  {/* Machinery Section */}
-                  <div className="equipment-category-section">
-                    <h5 className="category-section-header">
-                      <span className="category-section-icon">🛠️</span>
-                      Machinery
-                    </h5>
-                    <div className="equipment-table">
-                      <div className="table-header">
-                        <span>Equipment</span>
-                        <span>Time</span>
-                        <span>Cost</span>
-                        <span>Status</span>
-                      </div>
-                      {calculations
-                        .filter(result => result.type === 'machinery')
-                        .map((result) => (
-                        <div 
-                          key={result.id} 
-                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                        >
-                          <div className="equipment-info">
-                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
-                            <div className="equipment-details">
-                              <span className="equipment-name">{result.name}</span>
-                              <span className="equipment-type">{result.type}</span>
-                            </div>
-                          </div>
-                          <div className="time-info">
-                            {result.compatible ? (
-                              <>
-                                <span className="time-value">
-                                  {result.time.toFixed(1)}
-                                </span>
-                                <span className="time-unit">{result.unit}</span>
-                              </>
-                            ) : (
-                              <span className="incompatible-text">N/A</span>
-                            )}
-                          </div>
-                          <div className="cost-info">
-                            {result.compatible && result.cost > 0 ? (
-                              <span className="cost-value">${result.cost.toFixed(0)}</span>
-                            ) : (
-                              <span className="no-cost">-</span>
-                            )}
-                          </div>
-                          <div className="status-info">
-                            {result.compatible ? (
-                              <span className="compatible">✓ Compatible</span>
-                            ) : (
-                              <span className="incompatible-status">✗ Incompatible</span>
-                            )}
-                          </div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(1)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
+                          <div className="status-info">{result.compatible ? <span className="compatible">✓ Compatible</span> : <span className="incompatible-status">✗ Incompatible</span>}</div>
                         </div>
                       ))}
                     </div>
                   </div>
-                  {calculations.map((result) => (
-                    <div 
-                      key={result.id} 
-                      className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                    >
-                      <div className="equipment-info">
-                        <span className="equipment-name">{result.name}</span>
-                        <span className="equipment-type">{result.type}</span>
-                      </div>
-                      <div className="time-info">
-                        {result.compatible ? (
-                          <>
-                            <span className="time-value">
-                              {result.time.toFixed(1)}
-                            </span>
-                            <span className="time-unit">{result.unit}</span>
-                          </>
-                        ) : (
-                          <span className="incompatible-text">N/A</span>
-                        )}
-                      </div>
-                      <div className="cost-info">
-                        {result.compatible && result.cost > 0 ? (
-                          <span className="cost-value">${result.cost.toFixed(0)}</span>
-                        ) : (
-                          <span className="no-cost">-</span>
-                        )}
-                      </div>
-                      <div className="status-info">
-                        {result.compatible ? (
-                          <span className="compatible">✓ Compatible</span>
-                        ) : (
-                          <div className="incompatible-details">
-                            <span className="incompatible-status">✗ Incompatible</span>
-                            {result.slopeCompatible === false && result.maxSlopeExceeded && (
-                              <span className="slope-warning">
-                                Max slope {result.maxSlopeExceeded.toFixed(1)}° exceeds limit
-                              </span>
-                            )}
-                          </div>
-                          <div className="incompatible-details">
-                            <span className="incompatible-status">✗ Incompatible</span>
-                            {result.slopeCompatible === false && result.maxSlopeExceeded && (
-                              <span className="slope-warning">
-                                Max slope {result.maxSlopeExceeded.toFixed(1)}° exceeds limit
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             )}

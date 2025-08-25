@@ -3,7 +3,7 @@ import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
-import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis, TrackAnalysis } from './types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAnalysis } from './types/config';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -12,12 +12,9 @@ import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAna
  */
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
-  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
-  const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
-  const [breaks, setBreaks] = useState<{ id: number; distance: number; analysis: TrackAnalysis | null }[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   
   // State for configurable equipment
@@ -41,8 +38,7 @@ const App: React.FC = () => {
       <main className="app-main">
         <div className="map-section">
           <MapView 
-            
-            onDistanceChange={setFireBreakDistance} 
+            onDistanceChange={setFireBreakDistance}
             onTrackAnalysisChange={setTrackAnalysis}
             onVegetationAnalysisChange={setVegetationAnalysis}
             selectedAircraftForPreview={selectedAircraftForPreview}
@@ -57,7 +53,7 @@ const App: React.FC = () => {
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
-            onDropPreviewChange={setSelectedAircraftForPreview}
+            selectedAircraftForPreview={selectedAircraftForPreview}
             onDropPreviewChange={setSelectedAircraftForPreview}
           />
         </div>
