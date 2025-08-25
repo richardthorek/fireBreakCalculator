@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   
@@ -41,6 +42,7 @@ const App: React.FC = () => {
             onDistanceChange={setFireBreakDistance}
             onTrackAnalysisChange={setTrackAnalysis}
             onVegetationAnalysisChange={setVegetationAnalysis}
+            onAnalyzingChange={setIsAnalyzing}
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
           />
@@ -50,6 +52,7 @@ const App: React.FC = () => {
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
             vegetationAnalysis={vegetationAnalysis}
+            isAnalyzing={isAnalyzing}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
