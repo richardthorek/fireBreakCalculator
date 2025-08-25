@@ -23,5 +23,5 @@ D4	machinery	30	heavyforest	200	500
 D6	machinery	30	heavyforest	250	1000
 D7	machinery	30	heavyforest	400	1500
 D8	machinery	30	heavyforest	650	2000
-grader	machinery	10	grassland	2000	500
-grader	machinery	15	lightshrub	1800	500
+grader	machinery	15	grassland	2000	500
+heavy grader	machinery	20	lightshrub	1800	500

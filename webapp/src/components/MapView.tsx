@@ -437,8 +437,15 @@ export const MapView: React.FC<MapViewProps> = ({
     });
 
     // Cleanup on unmount
-    return () => { map.remove(); };
-  }, [aircraft, onDistanceChange, onTrackAnalysisChange, onVegetationAnalysisChange]);
+    return () => { 
+      try { map.remove(); } catch {};
+      mapRef.current = null;
+      drawnItemsRef.current = null;
+      slopeLayersRef.current = null;
+      dropMarkersRef.current = null;
+      vertexMarkersRef.current.clear();
+    };
+  }, []);
 
   // Re-render drop previews when selected aircraft change or when map/drawn items update.
   // We use dropsVersion to also trigger on topology changes.
@@ -482,6 +489,12 @@ export const MapView: React.FC<MapViewProps> = ({
   return (
     <div className="map-wrapper">
       {error && <div className="map-error">{error}</div>}
+      {isAnalyzing && (
+        <div className="map-analyzing-badge" role="status" aria-live="polite">
+          <div className="spinner" aria-hidden="true"></div>
+          <span className="map-analyzing-text">Analyzing…</span>
+        </div>
+      )}
       {/* {fireBreakDistance && (
         <div className="map-info">
           <strong>Fire Break Distance:</strong> {fireBreakDistance.toLocaleString()} meters

@@ -1,0 +1,27 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+  "prestart": "npm run clean && npm run build",
+  "start": "func start",
+  "test": "npm run test:e2e",
+  "test:e2e": "node ./dist/test/e2e.test.js"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "@azure/data-tables": "^13.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+  "typescript": "^4.9.5",
+  "rimraf": "^5.0.0"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "main": "dist/src/{index.js,functions/*.js}"
+}
