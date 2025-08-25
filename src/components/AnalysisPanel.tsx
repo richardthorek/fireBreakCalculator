@@ -16,6 +16,8 @@ interface AnalysisPanelProps {
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Callback for when drop preview selection changes */
+  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
@@ -25,11 +27,12 @@ interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for machinery/handCrew, total drops for aircraft
+  time: number; // hours for all types now
   cost: number;
   compatible: boolean;
   unit: string;
   description?: string;
+  drops?: number; // number of drops for aircraft
 }
 
 /**
@@ -99,13 +102,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   machinery,
   aircraft,
-  handCrews
+  handCrews,
+  onDropPreviewChange
 }) => {
   const [terrain, setTerrain] = useState<TerrainType>('easy');
   const [vegetation, setVegetation] = useState<VegetationType>('grassland');
   const [slopeDeg, setSlopeDeg] = useState<number>(5); // degrees
   const [expectedObjectDiameter, setExpectedObjectDiameter] = useState<number>(0.2); // meters
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+
+  // Handle drop preview selection changes
+  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
+    const updatedSelection = isSelected 
+      ? [...selectedAircraftForPreview, aircraftId]
+      : selectedAircraftForPreview.filter(id => id !== aircraftId);
+    
+    setSelectedAircraftForPreview(updatedSelection);
+    onDropPreviewChange?.(updatedSelection);
+  };
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -188,11 +203,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         id: plane.id,
         name: plane.name,
         type: 'aircraft',
-        time: drops,
+        time: totalTime,
         cost,
         compatible,
-        unit: 'drops',
-        description: plane.description
+        unit: 'hours',
+        description: plane.description,
+        // Store additional aircraft-specific info for display
+        drops: drops
       });
     });
 
@@ -220,14 +237,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (a.compatible && !b.compatible) return -1;
       if (!a.compatible && !b.compatible) return 0;
       
-      // For aircraft, convert drops to estimated time for sorting
-      const aTime = a.type === 'aircraft' ? a.time * 0.5 : a.time; // rough estimate
-      const bTime = b.type === 'aircraft' ? b.time * 0.5 : b.time;
-      
-      if (Math.abs(aTime - bTime) < 0.1) {
+      // All types now use time in hours, so direct comparison
+      if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost; // If time is similar, sort by cost
       }
-      return aTime - bTime;
+      return a.time - b.time;
     });
   }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
 
@@ -322,9 +336,27 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   <span className="category-label">Aircraft</span>
                   {bestOptions.aircraft ? (
                     <div className="option-details">
-                      <span className="option-name">{bestOptions.aircraft.name}</span>
+                      <div className="drop-preview-toggle">
+                        <span className="option-name">{bestOptions.aircraft.name}</span>
+                        {/* Toggle button placed top-right via CSS */}
+                        <button
+                          type="button"
+                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'active' : ''}`}
+                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'Drop preview on' : 'Drop preview off'}
+                          title="Toggle drop preview"
+                          onClick={() => bestOptions.aircraft && handleDropPreviewChange(bestOptions.aircraft.id, !selectedAircraftForPreview.includes(bestOptions.aircraft.id))}
+                        >
+                          {/* Simple plane SVG icon */}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      </div>
                       <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(0)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.drops && (
+                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
+                        )}
                       </span>
                     </div>
                   ) : (
@@ -348,6 +380,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </div>
             </div>
 
+            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
+
             {/* Full Equipment Table - Only when expanded */}
             {isExpanded && (
               <div className="equipment-summary">
@@ -355,7 +389,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <div className="equipment-table">
                   <div className="table-header">
                     <span>Equipment</span>
-                    <span>Time/Drops</span>
+                    <span>Time</span>
                     <span>Cost</span>
                     <span>Status</span>
                   </div>
@@ -367,6 +401,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                       <div className="equipment-info">
                         <span className="equipment-name">{result.name}</span>
                         <span className="equipment-type">{result.type}</span>
+                        {result.type === 'aircraft' && (
+                          <button
+                            type="button"
+                            className={`row-drop-toggle-button ${selectedAircraftForPreview.includes(result.id) ? 'active' : ''}`}
+                            aria-label={selectedAircraftForPreview.includes(result.id) ? 'Preview drops on' : 'Preview drops off'}
+                            title="Preview drops"
+                            onClick={() => handleDropPreviewChange(result.id, !selectedAircraftForPreview.includes(result.id))}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                              <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                       <div className="time-info">
                         {result.compatible ? (
@@ -375,6 +422,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                               {result.time.toFixed(1)}
                             </span>
                             <span className="time-unit">{result.unit}</span>
+                            {result.drops && (
+                              <span className="drops-detail">({result.drops} drops)</span>
+                            )}
                           </>
                         ) : (
                           <span className="incompatible-text">N/A</span>

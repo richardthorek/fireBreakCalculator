@@ -254,6 +254,8 @@ html, body, #root, .app-shell {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  position: relative; /* allow absolute-positioned controls inside */
+  padding-right: 56px; /* room for top-right toggle */
 }
 
 .category-label {
@@ -282,6 +284,64 @@ html, body, #root, .app-shell {
   font-size: 0.85rem;
 }
 
+/* Drop preview toggle button in Best Options card */
+.drop-preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.drop-toggle-button {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(79,195,247,0.12);
+  background: rgba(30,36,51,0.6);
+  color: #d0eefe;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 20;
+}
+
+.drop-toggle-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(79,195,247,0.06);
+}
+
+.drop-toggle-button.active {
+  background: linear-gradient(135deg, rgba(79,195,247,0.12), rgba(79,195,247,0.18));
+  border-color: #4fc3f7;
+  color: #4fc3f7;
+}
+
+/* Small icon in row */
+.table-row { position: relative; }
+
+.row-drop-toggle-button {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  position: absolute;
+  right: 8px;
+  top: 10px;
+  z-index: 10;
+}
+
+.row-drop-toggle-button.active {
+  color: #4fc3f7;
+}
+
+.drop-preview-text, .drop-preview-text-small { font-size: 0.85rem; color: #94a3b8; }
+
 .no-option {
   font-size: 0.8rem;
   color: #6b7280;
@@ -298,8 +358,6 @@ html, body, #root, .app-shell {
 /* Legacy Analysis Panel Styles (for old overlay) - Remove these */
 .analysis-panel {
   display: none; /* Hide the old overlay style */
-}
-  overflow-y: auto;
 }
 
 .conditions-section, .equipment-summary {
