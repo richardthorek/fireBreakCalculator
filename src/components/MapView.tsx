@@ -84,6 +84,7 @@ interface MapViewProps {
   onDistanceChange: (distance: number | null) => void;
   onTrackAnalysisChange?: (analysis: TrackAnalysis | null) => void;
   onVegetationAnalysisChange?: (analysis: VegetationAnalysis | null) => void;
+  onAnalyzingChange?: (isAnalyzing: boolean) => void;
   selectedAircraftForPreview?: string[];
   aircraft?: AircraftSpec[];
 }
@@ -92,6 +93,7 @@ export const MapView: React.FC<MapViewProps> = ({
   onDistanceChange,
   onTrackAnalysisChange,
   onVegetationAnalysisChange,
+  onAnalyzingChange,
   selectedAircraftForPreview = [],
   aircraft = []
 }) => {
@@ -196,6 +198,31 @@ export const MapView: React.FC<MapViewProps> = ({
     });
     map.addControl(drawControl);
 
+    // Improve accessibility of drawing controls
+    setTimeout(() => {
+      const drawPolylineBtn = document.querySelector('.leaflet-draw-draw-polyline');
+      const editBtn = document.querySelector('.leaflet-draw-edit-edit');
+      const removeBtn = document.querySelector('.leaflet-draw-edit-remove');
+      
+      if (drawPolylineBtn) {
+        drawPolylineBtn.setAttribute('aria-label', 'Draw fire break line');
+        drawPolylineBtn.setAttribute('role', 'button');
+        drawPolylineBtn.setAttribute('tabindex', '0');
+      }
+      
+      if (editBtn) {
+        editBtn.setAttribute('aria-label', 'Edit fire break lines');
+        editBtn.setAttribute('role', 'button');
+        editBtn.setAttribute('tabindex', '0');
+      }
+      
+      if (removeBtn) {
+        removeBtn.setAttribute('aria-label', 'Delete fire break lines');
+        removeBtn.setAttribute('role', 'button');
+        removeBtn.setAttribute('tabindex', '0');
+      }
+    }, 100);
+
   // Create a top-level group for drop markers
   const dropLayer = new L.LayerGroup();
   map.addLayer(dropLayer);
@@ -204,6 +231,7 @@ export const MapView: React.FC<MapViewProps> = ({
   // Helper: analyze track for slopes and vegetation
     const analyzeAndVisualizeBranchSlopes = async (latlngs: LatLng[]): Promise<TrackAnalysis | null> => {
       setIsAnalyzing(true);
+      onAnalyzingChange?.(true);
       
       try {
         // Clear existing slope visualization
@@ -262,6 +290,7 @@ export const MapView: React.FC<MapViewProps> = ({
         return null;
       } finally {
         setIsAnalyzing(false);
+        onAnalyzingChange?.(false);
       }
     };
 

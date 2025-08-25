@@ -18,12 +18,16 @@ interface AnalysisPanelProps {
   trackAnalysis: TrackAnalysis | null;
   /** Vegetation analysis data from Mapbox Terrain v2 */
   vegetationAnalysis: VegetationAnalysis | null;
+  /** Whether analysis is currently running */
+  isAnalyzing?: boolean;
   /** Available machinery options */
   machinery: MachinerySpec[];
   /** Available aircraft options */
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Currently selected aircraft for preview */
+  selectedAircraftForPreview?: string[];
   /** Callback for when drop preview selection changes */
   onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
@@ -134,10 +138,11 @@ const isSlopeCompatible = (
   return { compatible, maxSlopeExceeded: compatible ? undefined : maxSlope };
 };
 
-export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForPreview?: string[] }> = ({
+export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   trackAnalysis,
   vegetationAnalysis,
+  isAnalyzing = false,
   machinery,
   aircraft,
   handCrews,
@@ -308,17 +313,37 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
 
   return (
     <div className="analysis-panel-permanent">
-      <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
+      <div 
+        className="analysis-header" 
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-controls="analysis-content"
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} fire break analysis panel`}
+      >
         <h3>Fire Break Analysis</h3>
         <div className="header-info">
-          {distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
-          {trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
+          {isAnalyzing && (
+            <div className="analysis-spinner">
+              <div className="spinner"></div>
+              <span>Analyzing terrain...</span>
+            </div>
+          )}
+          {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
+          {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
         </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
-      <div className="analysis-content">
+      <div className="analysis-content" id="analysis-content">
         <div className="conditions-section">
           <div className="conditions-group">
             <label htmlFor="vegetation-toggle">Vegetation Type</label>

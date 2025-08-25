@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   
@@ -24,6 +25,7 @@ const App: React.FC = () => {
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <header className="app-header">
         <h1 className="app-title">RFS Fire Break Calculator</h1>
         <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
@@ -31,16 +33,18 @@ const App: React.FC = () => {
           className="config-panel-toggle"
           onClick={() => setIsConfigOpen(v => !v)}
           title="Configure Equipment"
+          aria-label="Open equipment configuration panel"
         >
           ⚙️ Config
         </button>
       </header>
-      <main className="app-main">
+      <main className="app-main" id="main-content">
         <div className="map-section">
           <MapView 
             onDistanceChange={setFireBreakDistance}
             onTrackAnalysisChange={setTrackAnalysis}
             onVegetationAnalysisChange={setVegetationAnalysis}
+            onAnalyzingChange={setIsAnalyzing}
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
           />
@@ -50,6 +54,7 @@ const App: React.FC = () => {
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
             vegetationAnalysis={vegetationAnalysis}
+            isAnalyzing={isAnalyzing}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
