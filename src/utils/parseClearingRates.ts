@@ -97,11 +97,23 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
 
   const densities = new Set(performances.map(p => p.density));
   const allowedVegetation: MachinerySpec['allowedVegetation'] = [];
-  // Map new vegetation keys back to the allowedVegetation enumeration used elsewhere
-  if (densities.has('grassland')) allowedVegetation.push('grassland');
-  if (densities.has('lightshrub')) allowedVegetation.push('lightshrub');
-  if (densities.has('mediumscrub')) allowedVegetation.push('mediumscrub');
-  if (densities.has('heavyforest')) allowedVegetation.push('heavyforest');
+  
+  // Use hierarchical vegetation compatibility: if a machine can handle heavier vegetation,
+  // it can also handle lighter vegetation. Order: grassland < lightshrub < mediumscrub < heavyforest
+  const allVegetationTypes: Array<'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest'> = 
+    ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'];
+  
+  // Find the heaviest vegetation type this machine can handle
+  let maxVegetationIndex = -1;
+  if (densities.has('heavyforest')) maxVegetationIndex = 3;
+  else if (densities.has('mediumscrub')) maxVegetationIndex = 2;
+  else if (densities.has('lightshrub')) maxVegetationIndex = 1;
+  else if (densities.has('grassland')) maxVegetationIndex = 0;
+  
+  // Include all vegetation types up to and including the maximum
+  for (let i = 0; i <= maxVegetationIndex; i++) {
+    allowedVegetation.push(allVegetationTypes[i]);
+  }
 
   // Determine a minimum clear diameter heuristic (meters)
   // grassland -> 0.05m, light shrub -> 0.1m, medium scrub -> 0.3m, heavy forest -> 0.5m
