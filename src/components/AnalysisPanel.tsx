@@ -5,11 +5,13 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { MachinerySpec, AircraftSpec, HandCrewSpec } from '../types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from '../types/config';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
   distance: number | null;
+  /** Track analysis data including slope information */
+  trackAnalysis: TrackAnalysis | null;
   /** Available machinery options */
   machinery: MachinerySpec[];
   /** Available aircraft options */
@@ -30,6 +32,8 @@ interface CalculationResult {
   time: number; // hours for all types now
   cost: number;
   compatible: boolean;
+  slopeCompatible?: boolean; // Whether equipment can handle the slope
+  maxSlopeExceeded?: number; // Max slope encountered if exceeded
   unit: string;
   description?: string;
 }
@@ -104,26 +108,35 @@ const isCompatible = (
   terrain: TerrainType,
   vegetation: VegetationType,
   expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
+  requiredTerrain: TerrainType,
+  vegetation: VegetationType
 ): boolean => {
-  // Basic allowed terrain / vegetation check
-  const basic = equipment.allowedTerrain.includes(terrain) && 
-                equipment.allowedVegetation.includes(vegetation);
+  return equipment.allowedTerrain.includes(requiredTerrain) &&
+         equipment.allowedVegetation.includes(vegetation);
+};
 
-  if (!basic) return false;
-
-  // If equipment declares a minClearDiameter, ensure it can handle expected objects
-  // Use a type-guard to safely access machinery-specific field
-  if ((equipment as MachinerySpec).minClearDiameter !== undefined) {
-    const m = equipment as MachinerySpec;
-    return m.minClearDiameter! <= expectedObjectDiameter;
+/**
+ * Check if machinery is compatible with the slope requirements
+ */
+const isSlopeCompatible = (
+  machinery: MachinerySpec,
+  maxSlope: number
+): { compatible: boolean; maxSlopeExceeded?: number } => {
+  if (machinery.maxSlope === undefined) {
+    // If no slope limit is defined, assume it can handle any slope
+    return { compatible: true };
   }
-
-  // For aircraft and hand crews, assume they can handle small items; keep basic result
-  return true;
+  
+  const compatible = maxSlope <= machinery.maxSlope;
+  return {
+    compatible,
+    maxSlopeExceeded: compatible ? undefined : maxSlope
+  };
 };
 
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
+  trackAnalysis,
   machinery,
   aircraft,
   handCrews,
@@ -155,40 +168,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   };
   // Map new vegetation taxonomy to numeric factors (lower is easier)
   const vegetationFactors = {
-    grassland: 1.0,     // very light
-    lightshrub: 1.1,    // <10cm diameter
-    mediumscrub: 1.5,   // 10-50cm
-    heavyforest: 2.0    // 50cm+
-  } as const;
-
-  // Additional slope time factor: additional percent time per degree (2% = 0.02)
-  const slopeTimeFactor = 0.02;
-
-  // Helper: pick a per-condition rate for machinery if available
-  const selectMachineRate = (
-    machine: MachinerySpec,
-    slope: number,
-    veg: VegetationType,
-    terrainFactor: number,
-    vegetationFactor: number
-  ): number => {
-    // Try to find a performance row matching vegetation
-    const perfs = machine.performances?.filter(p => p.density === veg) ?? [];
-    if (perfs.length > 0) {
-      // Find first perf with slopeMax >= requested slope (smallest such slopeMax)
-      const higher = perfs.filter(p => p.slopeMax >= slope).sort((a,b) => a.slopeMax - b.slopeMax);
-      if (higher.length > 0) return higher[0].metersPerHour;
-      // else use the highest available slope performance (worst-case)
-      const fallback = perfs.sort((a,b) => b.slopeMax - a.slopeMax)[0];
-      if (fallback) return fallback.metersPerHour;
-    }
-
-    // No explicit performance row: fall back to penalty-adjusted base rate
-    // penalize rate by terrain and vegetation and slope
-    const base = machine.clearingRate || 1;
-    const slopePenalty = 1 + slope * slopeTimeFactor; // e.g., 5deg -> 1.1
-    return base / (terrainFactor * vegetationFactor * slopePenalty);
+    light: 1.0,
+    moderate: 1.4,
+    heavy: 1.8,
+    extreme: 2.5
   };
+
+  // Map max slope to a minimum terrain class requirement
+  const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
+    if (!trackAnalysis) return null;
+    const maxSlope = trackAnalysis.maxSlope;
+    if (maxSlope <= 10) return 'easy';
+    if (maxSlope <= 20) return 'moderate';
+    if (maxSlope <= 30) return 'difficult';
+    return 'extreme';
+  }, [trackAnalysis]);
 
   const calculations = useMemo(() => {
     if (!distance) return [];
@@ -197,12 +191,15 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const terrainFactor = terrainFactors[terrain];
     const vegetationFactor = vegetationFactors[vegetation];
 
-    // Calculate machinery results using per-condition rates when available
+    // Calculate machinery results
+    const requiredTerrain = derivedTerrainRequirement || terrain; // fallback to user selection if no analysis
     machinery.forEach(machine => {
-      const compatible = isCompatible(machine, terrain, vegetation, expectedObjectDiameter);
-      const rate = compatible ? selectMachineRate(machine, slopeDeg, vegetation, terrainFactor, vegetationFactor) : 0;
-      const time = compatible ? distance / Math.max(rate, 0.0001) : 0;
-      const cost = compatible && machine.costPerHour ? time * (machine.costPerHour ?? 0) : 0;
+      const compatible = isCompatible(machine, requiredTerrain, vegetation);
+      const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
+      const fullCompatibility = compatible && slopeCheck.compatible;
+      
+      const time = fullCompatibility ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
+      const cost = fullCompatibility && machine.costPerHour ? time * machine.costPerHour : 0;
 
       results.push({
         id: machine.id,
@@ -210,7 +207,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         type: 'machinery',
         time,
         cost,
-        compatible,
+        compatible: fullCompatibility,
+        slopeCompatible: slopeCheck.compatible,
+        maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         unit: 'hours',
         description: machine.description
       });
@@ -218,7 +217,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate aircraft results
     aircraft.forEach(plane => {
-      const compatible = isCompatible(plane, terrain, vegetation, expectedObjectDiameter);
+      const compatible = isCompatible(plane, requiredTerrain, vegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -239,7 +238,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate hand crew results
     handCrews.forEach(crew => {
-      const compatible = isCompatible(crew, terrain, vegetation, expectedObjectDiameter);
+      const compatible = isCompatible(crew, requiredTerrain, vegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
@@ -267,7 +266,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return a.time - b.time;
     });
-  }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
+  }, [distance, trackAnalysis, terrain, vegetation, machinery, aircraft, handCrews]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -284,9 +283,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     <div className="analysis-panel-permanent">
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
-        {distance && (
-          <span className="distance-display">{distance.toLocaleString()}m</span>
-        )}
+        <div className="header-info">
+          {distance && (
+            <span className="distance-display">{distance.toLocaleString()}m</span>
+          )}
+          {trackAnalysis && (
+            <span className="slope-display">
+              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
+            </span>
+          )}
+        </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
         </button>
@@ -331,6 +337,40 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </label>
           </div>
         </div>
+
+        {/* Slope Analysis Information - When track analysis is available */}
+        {trackAnalysis && (
+          <div className="slope-analysis-section">
+            <h4>Slope Analysis</h4>
+            <div className="slope-summary">
+              <div className="slope-stats">
+                <span>Max: {trackAnalysis.maxSlope.toFixed(1)}°</span>
+                <span>Avg: {trackAnalysis.averageSlope.toFixed(1)}°</span>
+                <span>Segments: {trackAnalysis.segments.length}</span>
+              </div>
+              {isExpanded && (
+                <div className="slope-distribution">
+                  <div className="slope-category flat">
+                    <span>Flat (0-10°):</span>
+                    <span>{trackAnalysis.slopeDistribution.flat}</span>
+                  </div>
+                  <div className="slope-category medium">
+                    <span>Medium (10-20°):</span>
+                    <span>{trackAnalysis.slopeDistribution.medium}</span>
+                  </div>
+                  <div className="slope-category steep">
+                    <span>Steep (20-30°):</span>
+                    <span>{trackAnalysis.slopeDistribution.steep}</span>
+                  </div>
+                  <div className="slope-category very-steep">
+                    <span>Very Steep (30°+):</span>
+                    <span>{trackAnalysis.slopeDistribution.very_steep}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {!distance ? (
           <div className="no-line-message">
@@ -477,122 +517,50 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                       ))}
                     </div>
                   </div>
-
-                  {/* Aircraft Section */}
-                  <div className="equipment-category-section">
-                    <h5 className="category-section-header">
-                      <span className="category-section-icon">✈️</span>
-                      Aircraft
-                    </h5>
-                    <div className="equipment-table">
-                      <div className="table-header">
-                        <span>Equipment</span>
-                        <span>Drops</span>
-                        <span>Cost</span>
-                        <span>Status</span>
+                  {calculations.map((result) => (
+                    <div 
+                      key={result.id} 
+                      className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                    >
+                      <div className="equipment-info">
+                        <span className="equipment-name">{result.name}</span>
+                        <span className="equipment-type">{result.type}</span>
                       </div>
-                      {calculations
-                        .filter(result => result.type === 'aircraft')
-                        .map((result) => (
-                        <div 
-                          key={result.id} 
-                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                        >
-                          <div className="equipment-info">
-                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
-                            <div className="equipment-details">
-                              <span className="equipment-name">{result.name}</span>
-                              <span className="equipment-type">{result.type}</span>
-                            </div>
-                          </div>
-                          <div className="time-info">
-                            {result.compatible ? (
-                              <>
-                                <span className="time-value">
-                                  {result.time.toFixed(0)}
-                                </span>
-                                <span className="time-unit">{result.unit}</span>
-                              </>
-                            ) : (
-                              <span className="incompatible-text">N/A</span>
-                            )}
-                          </div>
-                          <div className="cost-info">
-                            {result.compatible && result.cost > 0 ? (
-                              <span className="cost-value">${result.cost.toFixed(0)}</span>
-                            ) : (
-                              <span className="no-cost">-</span>
-                            )}
-                          </div>
-                          <div className="status-info">
-                            {result.compatible ? (
-                              <span className="compatible">✓ Compatible</span>
-                            ) : (
-                              <span className="incompatible-status">✗ Incompatible</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Hand Crew Section */}
-                  <div className="equipment-category-section">
-                    <h5 className="category-section-header">
-                      <span className="category-section-icon">👨‍🚒</span>
-                      Hand Crews
-                    </h5>
-                    <div className="equipment-table">
-                      <div className="table-header">
-                        <span>Equipment</span>
-                        <span>Time</span>
-                        <span>Cost</span>
-                        <span>Status</span>
+                      <div className="time-info">
+                        {result.compatible ? (
+                          <>
+                            <span className="time-value">
+                              {result.time.toFixed(1)}
+                            </span>
+                            <span className="time-unit">{result.unit}</span>
+                          </>
+                        ) : (
+                          <span className="incompatible-text">N/A</span>
+                        )}
                       </div>
-                      {calculations
-                        .filter(result => result.type === 'handCrew')
-                        .map((result) => (
-                        <div 
-                          key={result.id} 
-                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                        >
-                          <div className="equipment-info">
-                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
-                            <div className="equipment-details">
-                              <span className="equipment-name">{result.name}</span>
-                              <span className="equipment-type">{result.type}</span>
-                            </div>
-                          </div>
-                          <div className="time-info">
-                            {result.compatible ? (
-                              <>
-                                <span className="time-value">
-                                  {result.time.toFixed(1)}
-                                </span>
-                                <span className="time-unit">{result.unit}</span>
-                              </>
-                            ) : (
-                              <span className="incompatible-text">N/A</span>
+                      <div className="cost-info">
+                        {result.compatible && result.cost > 0 ? (
+                          <span className="cost-value">${result.cost.toFixed(0)}</span>
+                        ) : (
+                          <span className="no-cost">-</span>
+                        )}
+                      </div>
+                      <div className="status-info">
+                        {result.compatible ? (
+                          <span className="compatible">✓ Compatible</span>
+                        ) : (
+                          <div className="incompatible-details">
+                            <span className="incompatible-status">✗ Incompatible</span>
+                            {result.slopeCompatible === false && result.maxSlopeExceeded && (
+                              <span className="slope-warning">
+                                Max slope {result.maxSlopeExceeded.toFixed(1)}° exceeds limit
+                              </span>
                             )}
                           </div>
-                          <div className="cost-info">
-                            {result.compatible && result.cost > 0 ? (
-                              <span className="cost-value">${result.cost.toFixed(0)}</span>
-                            ) : (
-                              <span className="no-cost">-</span>
-                            )}
-                          </div>
-                          <div className="status-info">
-                            {result.compatible ? (
-                              <span className="compatible">✓ Compatible</span>
-                            ) : (
-                              <span className="incompatible-status">✗ Incompatible</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             )}

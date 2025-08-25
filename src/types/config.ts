@@ -24,8 +24,10 @@ export interface MachinerySpec {
   description?: string;
   /** Terrain types this machinery can operate in */
   allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
-  /** Vegetation types this machinery can handle (new taxonomy) */
-  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
+  /** Vegetation types this machinery can handle */
+  allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
+  /** Maximum slope this machinery can handle (in degrees) */
+  maxSlope?: number;
 }
 
 export interface AircraftSpec {
@@ -102,4 +104,46 @@ export interface MachineryPerformance {
   metersPerHour: number;
   /** Cost per hour under these conditions (optional) */
   costPerHour?: number;
+}
+
+/** Slope categories for visualization and analysis */
+export type SlopeCategory = 'flat' | 'medium' | 'steep' | 'very_steep';
+
+/** Slope segment data for visualization */
+export interface SlopeSegment {
+  /** Start point coordinates [lat, lng] */
+  start: [number, number];
+  /** End point coordinates [lat, lng] */
+  end: [number, number];
+  /** Full ordered coordinate path for this segment (includes all intermediate interpolated/user points) */
+  coords?: [number, number][];
+  /** Slope angle in degrees */
+  slope: number;
+  /** Slope category */
+  category: SlopeCategory;
+  /** Elevation at start point (meters) */
+  startElevation: number;
+  /** Elevation at end point (meters) */
+  endElevation: number;
+  /** Distance of this segment (meters) */
+  distance: number;
+}
+
+/** Track analysis data including slope information */
+export interface TrackAnalysis {
+  /** Total distance of the track */
+  totalDistance: number;
+  /** Array of slope segments */
+  segments: SlopeSegment[];
+  /** Maximum slope encountered */
+  maxSlope: number;
+  /** Average slope across the track */
+  averageSlope: number;
+  /** Distribution of slope categories */
+  slopeDistribution: {
+    flat: number;
+    medium: number;
+    steep: number;
+    very_steep: number;
+  };
 }

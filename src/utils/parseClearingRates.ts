@@ -71,25 +71,17 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
 
     const performances: MachineryPerformance[] = group.map(row => {
       const slopeMax = Number(row.slopeMax || row['slopemax'] || row['slope max'] || 0);
-      const rawDensity = ((row.density || 'moderate') as string).toLowerCase();
-      // Map incoming density values to new categories
-      // CSV may contain: grassland, light, medium, heavy
-  let density: MachineryPerformance['density'] = 'mediumscrub';
-      if (rawDensity === 'grassland' || rawDensity === 'verylight') density = 'grassland';
-      else if (rawDensity === 'light') density = 'lightshrub';
-      else if (rawDensity === 'medium' || rawDensity === 'moderate') density = 'mediumscrub';
-      else if (rawDensity === 'heavy') density = 'heavyforest';
-      else density = 'mediumscrub';
-
+      const rawDensity = ((row.density || 'moderate') as string).toLowerCase().trim();
+      let density: MachineryPerformance['density'];
+      if (rawDensity.startsWith('lig')) density = 'light';
+      else if (rawDensity.startsWith('mod') || rawDensity.startsWith('med')) density = 'moderate';
+      else if (rawDensity.startsWith('hea')) density = 'heavy';
+      else if (rawDensity.startsWith('ext') || rawDensity.startsWith('very')) density = 'extreme';
+      else density = 'moderate';
       const metersPerHour = Number(row.metersPerHour || row['mperhour'] || row['m per hour'] || 0);
       const costPerHour = Number(row.costPerHour || row['$perhour'] || row['$ per hour'] || 0) || undefined;
 
-      return {
-        slopeMax,
-        density,
-        metersPerHour,
-        costPerHour
-      };
+      return { slopeMax, density, metersPerHour, costPerHour };
     }).sort((a,b) => a.slopeMax - b.slopeMax);
 
     // default clearingRate is best-case (max metersPerHour)
@@ -128,7 +120,8 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
       costPerHour: performances.find(p => p.costPerHour !== undefined)?.costPerHour,
       description: `${name} derived from clearingrates.csv`,
       allowedTerrain,
-      allowedVegetation
+      allowedVegetation,
+      maxSlope // Add the maximum slope capability
     });
   }
 

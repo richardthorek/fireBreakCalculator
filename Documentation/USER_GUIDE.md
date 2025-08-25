@@ -58,11 +58,29 @@ Select the types of equipment and crews you want to include in your analysis:
 - **Rapid Response Crew**: 4-person crew for quick initial attack
 - **Heavy Clearing Crew**: 10-person crew with power tools for heavy vegetation
 
-### Step 4: Review Results
+### Step 4: Review Results and Slope Analysis
 For each selected resource, the system displays:
 - **Estimated completion time** (in hours for all resource types)
 - **Number of aircraft drops** (shown alongside completion time for aircraft)  
 - **Estimated operational cost** (when cost data is available)
+- **Slope compatibility** (for machinery resources)
+
+#### Understanding Slope Analysis
+When you draw a fire break line, the system automatically:
+- Calculates slope every 100m along the route
+- Color-codes segments based on steepness:
+  - **Green**: Flat terrain (0-10°) - suitable for all equipment
+  - **Yellow**: Medium slope (10-20°) - challenging for some equipment
+  - **Orange**: Steep terrain (20-30°) - only heavy machinery
+  - **Red**: Very steep (30°+) - specialized equipment only
+
+#### Equipment Slope Limits
+- **Motor Grader**: Maximum 10° slope
+- **D4 Dozer**: Maximum 20° slope  
+- **D6 Dozer**: Maximum 25° slope
+- **D8 Dozer**: Maximum 35° slope
+
+**Important**: If ANY segment of your fire break exceeds an equipment's slope limit, that equipment will be marked as incompatible for the entire job.
 
 ### Step 5: Drop Preview for Aircraft (New Feature)
 When you have drawn a fire break line, you can visualize aircraft drop patterns:
@@ -138,6 +156,8 @@ Operating costs include:
 - **Drawing tools not working**: Ensure the drawing tool is selected and try clicking directly on the map
 - **No distance showing**: Complete the line by double-clicking or connecting back to start
 - **Analysis panel empty**: Draw a fire break line first
+- **Slope analysis not appearing**: Wait for "Analyzing slopes..." message to complete
+- **Equipment marked incompatible**: Check if any slope segment exceeds equipment limits
 
 ### Performance Tips
 - Clear old fire break lines before drawing new ones

@@ -72,19 +72,21 @@ Never commit real tokens. The `.gitignore` excludes `.env` files.
 
 **Map Features:**
 - Line drawing with real-time distance measurement
+- **Slope analysis and visualization** with color-coded terrain difficulty
 - Terrain-appropriate styling for fire break visualization
 - Edit and delete capabilities for drawn lines
-- Popup displays showing calculated distances
+- Popup displays showing calculated distances and slope information
 
 **Calculation Engine:**
 - Machinery time estimates based on clearing rates and conditions
+- **Slope compatibility checks** with equipment capability limits
 - Aircraft drop calculations considering coverage and turnaround times
 - Hand crew estimates factoring crew size and efficiency
 - Terrain and vegetation difficulty multipliers
 - Optional cost estimation for operational planning
 
 **Resource Types:**
-- **Machinery**: Dozers (D4, D6, D8), Motor Graders with varying capabilities
+- **Machinery**: Dozers (D4, D6, D7, D8), Motor Graders with **slope capability limits**
 - **Aircraft**: Light/Medium Helicopters, Fixed-wing aircraft with different drop patterns
 - **Hand Crews**: Standard, Rapid Response, and Heavy Clearing crews
 
@@ -105,12 +107,13 @@ npm run preview
 
 ## Future Enhancements
 
-- **Elevation Profile**: Add terrain elevation analysis for more accurate calculations
+- **Enhanced Elevation Integration**: Replace mock elevation data with real topographic services
 - **Weather Integration**: Factor weather conditions into resource planning
 - **GPS Integration**: Import/export GPX routes for field use
 - **Multi-language Support**: Localization for international use
 - **Offline Mode**: Cache maps and operate without internet connectivity
 - **Report Generation**: Export detailed analysis reports in PDF format
+- **Route Optimization**: Suggest alternative routes based on slope and terrain analysis
 
 ## License
 
