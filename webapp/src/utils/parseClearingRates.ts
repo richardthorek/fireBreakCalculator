@@ -1,4 +1,5 @@
 import { MachinerySpec, MachineryPerformance } from '../types/config';
+import { logger } from './logger';
 
 // Import the CSV as raw text using Vite's raw import handling
 // Note: Vite supports `?raw` to import file contents as string.
@@ -155,8 +156,7 @@ export function loadMachineryFromCSV(): MachinerySpec[] {
     return mapRowsToMachinery(rows);
   } catch (err) {
     // On error return empty array so defaultConfig can fallback
-    // eslint-disable-next-line no-console
-    console.error('Failed to parse clearingrates.csv', err);
+    logger.error('Failed to parse clearingrates.csv', err);
     return [];
   }
 }

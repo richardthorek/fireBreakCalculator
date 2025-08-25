@@ -8,6 +8,7 @@ import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { isTouchDevice } from '../utils/deviceDetection';
+import { logger } from '../utils/logger';
 
 // Helper to build richer popup HTML with slope and vegetation data
 const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: VegetationAnalysis | null, totalDistance: number) => {
@@ -281,7 +282,7 @@ export const MapView: React.FC<MapViewProps> = ({
           setVegetationAnalysis(vegAnalysis);
           onVegetationAnalysisChange?.(vegAnalysis);
         } catch (vegError) {
-          console.warn('Vegetation analysis failed, continuing with slope analysis only:', vegError);
+          logger.warn('Vegetation analysis failed, continuing with slope analysis only:', vegError);
         }
         
         // Visualize slope segments (use full coordinate chain if provided)
@@ -315,7 +316,7 @@ export const MapView: React.FC<MapViewProps> = ({
         return analysis;
         
       } catch (error) {
-        console.error('Error analyzing track slopes:', error);
+        logger.error('Error analyzing track slopes:', error);
         setError('Failed to analyze track slopes');
         return null;
       } finally {
