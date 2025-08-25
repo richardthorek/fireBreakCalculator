@@ -33,6 +33,31 @@ interface CalculationResult {
 }
 
 /**
+ * Get appropriate icon for equipment type
+ */
+const getEquipmentIcon = (result: CalculationResult): string => {
+  if (result.type === 'machinery') {
+    // Check if it's a dozer or grader from the name
+    if (result.name.toLowerCase().includes('dozer')) {
+      return '🚜';
+    } else if (result.name.toLowerCase().includes('grader')) {
+      return '🛠️';
+    }
+    return '🚜'; // Default to bulldozer for machinery
+  } else if (result.type === 'aircraft') {
+    // Check if it's a helicopter or fixed wing
+    if (result.name.toLowerCase().includes('helicopter')) {
+      return '🚁';
+    } else {
+      return '✈️';
+    }
+  } else if (result.type === 'handCrew') {
+    return '👨‍🚒';
+  }
+  return '';
+};
+
+/**
  * Calculate time required for machinery to clear the fire break
  * TODO: Future enhancement - integrate elevation profile analysis
  * similar to https://docs.mapbox.com/mapbox-gl-js/example/elevation-along-line/
@@ -248,10 +273,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <>
             {/* Best Options Summary - Always visible when line exists */}
             <div className="best-options-summary">
-              <h4>Best Options</h4>
+              <h4>Quick Options</h4>
               <div className="best-options-grid">
                 <div className="option-category">
-                  <span className="category-label">Machinery</span>
+                  <div className="category-header">
+                    <span className="category-icon">🛠️</span>
+                    <span className="category-label">Machinery</span>
+                  </div>
                   {bestOptions.machinery ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.machinery.name}</span>
@@ -265,7 +293,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 
                 <div className="option-category">
-                  <span className="category-label">Aircraft</span>
+                  <div className="category-header">
+                    <span className="category-icon">✈️</span>
+                    <span className="category-label">Aircraft</span>
+                  </div>
                   {bestOptions.aircraft ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.aircraft.name}</span>
@@ -279,7 +310,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 
                 <div className="option-category">
-                  <span className="category-label">Hand Crew</span>
+                  <div className="category-header">
+                    <span className="category-icon">👨‍🚒</span>
+                    <span className="category-label">Hand Crew</span>
+                  </div>
                   {bestOptions.handCrew ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.handCrew.name}</span>
@@ -298,50 +332,180 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             {isExpanded && (
               <div className="equipment-summary">
                 <h4>All Equipment Options</h4>
-                <div className="equipment-table">
-                  <div className="table-header">
-                    <span>Equipment</span>
-                    <span>Time/Drops</span>
-                    <span>Cost</span>
-                    <span>Status</span>
-                  </div>
-                  {calculations.map((result) => (
-                    <div 
-                      key={result.id} 
-                      className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                    >
-                      <div className="equipment-info">
-                        <span className="equipment-name">{result.name}</span>
-                        <span className="equipment-type">{result.type}</span>
+                <div className="equipment-categories">
+                  {/* Machinery Section */}
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header">
+                      <span className="category-section-icon">🛠️</span>
+                      Machinery
+                    </h5>
+                    <div className="equipment-table">
+                      <div className="table-header">
+                        <span>Equipment</span>
+                        <span>Time</span>
+                        <span>Cost</span>
+                        <span>Status</span>
                       </div>
-                      <div className="time-info">
-                        {result.compatible ? (
-                          <>
-                            <span className="time-value">
-                              {result.time.toFixed(1)}
-                            </span>
-                            <span className="time-unit">{result.unit}</span>
-                          </>
-                        ) : (
-                          <span className="incompatible-text">N/A</span>
-                        )}
-                      </div>
-                      <div className="cost-info">
-                        {result.compatible && result.cost > 0 ? (
-                          <span className="cost-value">${result.cost.toFixed(0)}</span>
-                        ) : (
-                          <span className="no-cost">-</span>
-                        )}
-                      </div>
-                      <div className="status-info">
-                        {result.compatible ? (
-                          <span className="compatible">✓ Compatible</span>
-                        ) : (
-                          <span className="incompatible-status">✗ Incompatible</span>
-                        )}
-                      </div>
+                      {calculations
+                        .filter(result => result.type === 'machinery')
+                        .map((result) => (
+                        <div 
+                          key={result.id} 
+                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                        >
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">
+                            {result.compatible ? (
+                              <>
+                                <span className="time-value">
+                                  {result.time.toFixed(1)}
+                                </span>
+                                <span className="time-unit">{result.unit}</span>
+                              </>
+                            ) : (
+                              <span className="incompatible-text">N/A</span>
+                            )}
+                          </div>
+                          <div className="cost-info">
+                            {result.compatible && result.cost > 0 ? (
+                              <span className="cost-value">${result.cost.toFixed(0)}</span>
+                            ) : (
+                              <span className="no-cost">-</span>
+                            )}
+                          </div>
+                          <div className="status-info">
+                            {result.compatible ? (
+                              <span className="compatible">✓ Compatible</span>
+                            ) : (
+                              <span className="incompatible-status">✗ Incompatible</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+
+                  {/* Aircraft Section */}
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header">
+                      <span className="category-section-icon">✈️</span>
+                      Aircraft
+                    </h5>
+                    <div className="equipment-table">
+                      <div className="table-header">
+                        <span>Equipment</span>
+                        <span>Drops</span>
+                        <span>Cost</span>
+                        <span>Status</span>
+                      </div>
+                      {calculations
+                        .filter(result => result.type === 'aircraft')
+                        .map((result) => (
+                        <div 
+                          key={result.id} 
+                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                        >
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">
+                            {result.compatible ? (
+                              <>
+                                <span className="time-value">
+                                  {result.time.toFixed(0)}
+                                </span>
+                                <span className="time-unit">{result.unit}</span>
+                              </>
+                            ) : (
+                              <span className="incompatible-text">N/A</span>
+                            )}
+                          </div>
+                          <div className="cost-info">
+                            {result.compatible && result.cost > 0 ? (
+                              <span className="cost-value">${result.cost.toFixed(0)}</span>
+                            ) : (
+                              <span className="no-cost">-</span>
+                            )}
+                          </div>
+                          <div className="status-info">
+                            {result.compatible ? (
+                              <span className="compatible">✓ Compatible</span>
+                            ) : (
+                              <span className="incompatible-status">✗ Incompatible</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Hand Crew Section */}
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header">
+                      <span className="category-section-icon">👨‍🚒</span>
+                      Hand Crews
+                    </h5>
+                    <div className="equipment-table">
+                      <div className="table-header">
+                        <span>Equipment</span>
+                        <span>Time</span>
+                        <span>Cost</span>
+                        <span>Status</span>
+                      </div>
+                      {calculations
+                        .filter(result => result.type === 'handCrew')
+                        .map((result) => (
+                        <div 
+                          key={result.id} 
+                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                        >
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">
+                            {result.compatible ? (
+                              <>
+                                <span className="time-value">
+                                  {result.time.toFixed(1)}
+                                </span>
+                                <span className="time-unit">{result.unit}</span>
+                              </>
+                            ) : (
+                              <span className="incompatible-text">N/A</span>
+                            )}
+                          </div>
+                          <div className="cost-info">
+                            {result.compatible && result.cost > 0 ? (
+                              <span className="cost-value">${result.cost.toFixed(0)}</span>
+                            ) : (
+                              <span className="no-cost">-</span>
+                            )}
+                          </div>
+                          <div className="status-info">
+                            {result.compatible ? (
+                              <span className="compatible">✓ Compatible</span>
+                            ) : (
+                              <span className="incompatible-status">✗ Incompatible</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
