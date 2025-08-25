@@ -1,5 +1,22 @@
 # UI Design Documentation
 
+## Drawing Tools Enhancement (v2.0)
+
+### Visual Improvements
+- **Professional Icons**: Replaced text-based controls with clean SVG icons
+- **Consistent Styling**: Icons follow the application's design language
+- **Visual Hierarchy**: Clear distinction between active and disabled states
+
+### Icon Set
+- **Draw Tool**: Multi-point line icon with fire break orange color (#ff6b35)
+- **Edit Tool**: Pencil and document icon for editing existing lines
+- **Delete Tool**: Trash can icon in warning red for removal actions
+
+### Touch and Mobile Optimization
+- **Large Touch Targets**: 44px minimum size on mobile devices
+- **Responsive Scaling**: Icons scale appropriately across screen sizes
+- **Touch-Friendly Spacing**: Adequate spacing between interactive elements
+
 ## Preview Pane Redesign (v2.0)
 
 ### Overview
@@ -116,14 +133,36 @@ The expanded view organizes equipment into three distinct categories:
 
 ### WCAG 2.1 AA Compliance
 - **Color Contrast**: All text maintains minimum 4.5:1 contrast ratio
-- **Keyboard Navigation**: Full keyboard support for expand/collapse
-- **Screen Reader Support**: Proper ARIA labels and semantic markup
-- **Focus Management**: Clear focus indicators for all interactive elements
+- **Keyboard Navigation**: Full keyboard support for all interactive elements including drawing tools
+- **Screen Reader Support**: Proper ARIA labels and semantic markup throughout
+- **Focus Management**: Clear focus indicators with 2px outline and proper focus order
+- **Skip Navigation**: Skip link for quick access to main content
+- **Form Labels**: All form controls have associated labels or aria-label attributes
+
+### Drawing Tools Accessibility
+- **Keyboard Navigation**: All drawing tools are keyboard accessible with Tab navigation
+- **ARIA Labels**: Descriptive labels for screen readers ("Draw fire break line", "Edit fire break lines", etc.)
+- **Focus Indicators**: Clear visual focus states with proper contrast
+- **Touch Targets**: Minimum 44px touch targets on mobile devices (WCAG AAA compliance)
+- **Role Attributes**: Proper button roles and states for interactive elements
 
 ### Icon Accessibility
-- Icons are supplemented with text labels
-- Color is not the only means of conveying information
-- Proper alt text and ARIA descriptions where needed
+- **Visual Icons**: SVG icons replace text labels for professional appearance
+- **Screen Reader Text**: Icons include proper alt text and ARIA descriptions
+- **Color Independence**: Icons don't rely solely on color to convey meaning
+- **Progressive Enhancement**: Text fallbacks available for accessibility tools
+
+### Loading States and Progress Indicators
+- **Analysis Spinner**: Animated spinner with descriptive text during terrain analysis
+- **Visual Feedback**: Clear indication when long-running operations are in progress
+- **Non-blocking UI**: Loading states don't prevent other interactions
+- **Accessible Loading**: Screen reader announcements for loading state changes
+
+### Interactive Elements Accessibility
+- **Analysis Panel**: Collapsible header with proper aria-expanded and aria-controls
+- **Loading States**: Visual and textual indicators for long-running operations
+- **Form Controls**: Proper labeling and keyboard navigation for all inputs
+- **Button States**: Clear disabled/enabled states with appropriate ARIA attributes
 
 ## Technical Implementation
 

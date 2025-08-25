@@ -587,6 +587,37 @@ html, body, #root, .app-shell {
   border-radius: 6px !important;
 }
 
+/* Improve focus indicators for better accessibility */
+*:focus {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 2px;
+}
+
+/* Skip to main content link for screen readers */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 6px;
+  background: #4fc3f7;
+  color: #1e2633;
+  padding: 8px;
+  text-decoration: none;
+  border-radius: 4px;
+  z-index: 1000;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  top: 6px;
+}
+
+/* Improve button focus states */
+button:focus,
+.leaflet-draw-toolbar a:focus {
+  outline: 2px solid #4fc3f7 !important;
+  outline-offset: 2px !important;
+}
+
 /* Analysis Panel Loading Spinner */
 .analysis-spinner {
   display: inline-flex;

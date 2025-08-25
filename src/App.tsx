@@ -25,6 +25,7 @@ const App: React.FC = () => {
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <header className="app-header">
         <h1 className="app-title">RFS Fire Break Calculator</h1>
         <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
@@ -32,11 +33,12 @@ const App: React.FC = () => {
           className="config-panel-toggle"
           onClick={() => setIsConfigOpen(v => !v)}
           title="Configure Equipment"
+          aria-label="Open equipment configuration panel"
         >
           ⚙️ Config
         </button>
       </header>
-      <main className="app-main">
+      <main className="app-main" id="main-content">
         <div className="map-section">
           <MapView 
             onDistanceChange={setFireBreakDistance}

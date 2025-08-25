@@ -313,7 +313,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   return (
     <div className="analysis-panel-permanent">
-      <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
+      <div 
+        className="analysis-header" 
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-controls="analysis-content"
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} fire break analysis panel`}
+      >
         <h3>Fire Break Analysis</h3>
         <div className="header-info">
           {isAnalyzing && (
@@ -329,7 +343,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
-      <div className="analysis-content">
+      <div className="analysis-content" id="analysis-content">
         <div className="conditions-section">
           <div className="conditions-group">
             <label htmlFor="vegetation-toggle">Vegetation Type</label>
