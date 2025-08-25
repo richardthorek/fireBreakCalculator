@@ -250,10 +250,27 @@ html, body, #root, .app-shell {
   background: rgba(30,36,51,0.6);
   border: 1px solid #2a3442;
   border-radius: 6px;
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.option-category:hover {
+  background: rgba(30,36,51,0.8);
+  border-color: #3a4452;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.category-icon {
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .category-label {
@@ -282,6 +299,64 @@ html, body, #root, .app-shell {
   font-size: 0.85rem;
 }
 
+/* Drop preview toggle button in Best Options card */
+.drop-preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.drop-toggle-button {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(79,195,247,0.12);
+  background: rgba(30,36,51,0.6);
+  color: #d0eefe;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 20;
+}
+
+.drop-toggle-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(79,195,247,0.06);
+}
+
+.drop-toggle-button.active {
+  background: linear-gradient(135deg, rgba(79,195,247,0.12), rgba(79,195,247,0.18));
+  border-color: #4fc3f7;
+  color: #4fc3f7;
+}
+
+/* Small icon in row */
+.table-row { position: relative; }
+
+.row-drop-toggle-button {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  position: absolute;
+  right: 8px;
+  top: 10px;
+  z-index: 10;
+}
+
+.row-drop-toggle-button.active {
+  color: #4fc3f7;
+}
+
+.drop-preview-text, .drop-preview-text-small { font-size: 0.85rem; color: #94a3b8; }
+
 .no-option {
   font-size: 0.8rem;
   color: #6b7280;
@@ -298,8 +373,6 @@ html, body, #root, .app-shell {
 /* Legacy Analysis Panel Styles (for old overlay) - Remove these */
 .analysis-panel {
   display: none; /* Hide the old overlay style */
-}
-  overflow-y: auto;
 }
 
 .conditions-section, .equipment-summary {
@@ -341,9 +414,40 @@ html, body, #root, .app-shell {
 }
 
 /* Equipment Table Styles */
-.equipment-table {
+.equipment-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.equipment-category-section {
   border: 1px solid #2a3442;
-  border-radius: 6px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(30,36,51,0.4);
+}
+
+.category-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: rgba(30,36,51,0.8);
+  border-bottom: 1px solid #2a3442;
+  color: #f5f7fa;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.category-section-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.equipment-table {
+  border: none;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -352,7 +456,7 @@ html, body, #root, .app-shell {
   grid-template-columns: 2fr 1fr 1fr 1.2fr;
   gap: 1rem;
   padding: 0.75rem;
-  background: rgba(30,36,51,0.9);
+  background: rgba(30,36,51,0.6);
   border-bottom: 1px solid #2a3442;
   font-size: 0.8rem;
   font-weight: 600;
@@ -366,7 +470,7 @@ html, body, #root, .app-shell {
   grid-template-columns: 2fr 1fr 1fr 1.2fr;
   gap: 1rem;
   padding: 0.75rem;
-  border-bottom: 1px solid rgba(42,52,66,0.5);
+  border-bottom: 1px solid rgba(42,52,66,0.3);
   transition: background-color 0.2s;
 }
 
@@ -385,8 +489,22 @@ html, body, #root, .app-shell {
 
 .equipment-info {
   display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.equipment-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.equipment-details {
+  display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  min-width: 0;
 }
 
 .equipment-name {
@@ -459,14 +577,67 @@ html, body, #root, .app-shell {
 
 /* Responsive table for smaller screens */
 @media (max-width: 768px) {
+  .best-options-grid {
+    gap: 0.5rem;
+  }
+  
+  .option-category {
+    padding: 0.5rem;
+  }
+  
+  .category-header {
+    gap: 0.4rem;
+  }
+  
+  .category-icon {
+    font-size: 0.9rem;
+  }
+  
+  .category-label {
+    font-size: 0.75rem;
+  }
+  
+  .option-name, .option-time {
+    font-size: 0.8rem;
+  }
+  
+  .equipment-categories {
+    gap: 1rem;
+  }
+  
+  .category-section-header {
+    padding: 0.6rem 0.8rem;
+    font-size: 0.85rem;
+  }
+  
+  .category-section-icon {
+    font-size: 1rem;
+  }
+  
   .table-header {
     grid-template-columns: 1.5fr 1fr 1fr;
     gap: 0.5rem;
+    padding: 0.6rem;
+    font-size: 0.75rem;
   }
   
   .table-row {
     grid-template-columns: 1.5fr 1fr 1fr;
     gap: 0.5rem;
+    padding: 0.6rem;
+  }
+  
+  .equipment-icon {
+    font-size: 1rem;
+    min-width: 1.2rem;
+  }
+  
+  .equipment-name {
+    font-size: 0.8rem;
+  }
+  
+  .equipment-type {
+    font-size: 0.65rem;
   }
   
   .status-info {

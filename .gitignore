@@ -13,6 +13,8 @@ yarn-error.log*
 
 # Build output
 dist/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
 
 # Env files
 .env

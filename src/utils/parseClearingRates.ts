@@ -94,12 +94,20 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
     else if (maxSlope <= 20) allowedTerrain.push('easy','moderate','difficult');
     else allowedTerrain.push('easy','moderate','difficult','extreme');
 
-    const densities = new Set(performances.map(p => p.density));
-    const allowedVegetation: MachinerySpec['allowedVegetation'] = [];
-    if (densities.has('light')) allowedVegetation.push('light');
-    if (densities.has('moderate')) allowedVegetation.push('moderate');
-    if (densities.has('heavy')) allowedVegetation.push('heavy');
-    if (densities.has('extreme')) allowedVegetation.push('extreme');
+  const densities = new Set(performances.map(p => p.density));
+  const allowedVegetation: MachinerySpec['allowedVegetation'] = [];
+  // Map new vegetation keys back to the allowedVegetation enumeration used elsewhere
+  if (densities.has('grassland')) allowedVegetation.push('grassland');
+  if (densities.has('lightshrub')) allowedVegetation.push('lightshrub');
+  if (densities.has('mediumscrub')) allowedVegetation.push('mediumscrub');
+  if (densities.has('heavyforest')) allowedVegetation.push('heavyforest');
+
+  // Determine a minimum clear diameter heuristic (meters)
+  // grassland -> 0.05m, light shrub -> 0.1m, medium scrub -> 0.3m, heavy forest -> 0.5m
+  let minClearDiameter = 0.05;
+  if (densities.has('lightshrub')) minClearDiameter = Math.max(minClearDiameter, 0.1);
+  if (densities.has('mediumscrub')) minClearDiameter = Math.max(minClearDiameter, 0.3);
+  if (densities.has('heavyforest')) minClearDiameter = Math.max(minClearDiameter, 0.5);
 
     const name = id.includes('grader') ? 'Motor Grader' : id.toUpperCase();
 

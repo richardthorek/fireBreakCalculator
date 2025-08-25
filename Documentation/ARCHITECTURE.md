@@ -56,6 +56,11 @@ This Fire Break Calculator application is built on a foundation of modern web te
 - Resource selection interface with checkboxes for each category
 - Terrain and vegetation condition selectors
 - Calculation engine for time and cost estimates
+- **NEW: Enhanced preview pane design with:**
+  - Compact collapsed state featuring icons/emojis for visual clarity
+  - Improved space utilization with streamlined layout
+  - Categorized expanded view with equipment type icons
+  - Better visual hierarchy and equipment type distinction
 - Expandable/collapsible UI for space efficiency
 - Real-time updates based on distance changes and selections
 
@@ -74,6 +79,8 @@ This Fire Break Calculator application is built on a foundation of modern web te
 3. **Resource selection** → AnalysisPanel applies calculation formulas
 4. **Condition changes** → Recalculates with terrain/vegetation factors
 5. **Results display** → Shows time estimates and optional costs
+6. **Drop preview selection** → AnalysisPanel notifies App → MapView updates drop markers
+7. **Map visualization** → Drop markers positioned at calculated intervals along polyline
 
 ## Calculation Algorithms
 
@@ -86,7 +93,8 @@ Time (hours) = Distance (meters) / Adjusted Rate
 ### Aircraft Drop Calculation
 ```
 Number of Drops = Ceiling(Distance / Drop Length)
-Total Time = (Number of Drops × Turnaround Time) / 60 minutes
+Total Time (hours) = (Number of Drops × Turnaround Time) / 60 minutes
+Drop Marker Positions = Calculated at each Drop Length interval along polyline
 ```
 
 ### Hand Crew Time Calculation  

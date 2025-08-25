@@ -18,16 +18,18 @@ interface AnalysisPanelProps {
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Callback for when drop preview selection changes */
+  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
-type VegetationType = 'light' | 'moderate' | 'heavy' | 'extreme';
+type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
 
 interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for machinery/handCrew, total drops for aircraft
+  time: number; // hours for all types now
   cost: number;
   compatible: boolean;
   slopeCompatible?: boolean; // Whether equipment can handle the slope
@@ -35,6 +37,31 @@ interface CalculationResult {
   unit: string;
   description?: string;
 }
+
+/**
+ * Get appropriate icon for equipment type
+ */
+const getEquipmentIcon = (result: CalculationResult): string => {
+  if (result.type === 'machinery') {
+    // Check if it's a dozer or grader from the name
+    if (result.name.toLowerCase().includes('dozer')) {
+      return '🚜';
+    } else if (result.name.toLowerCase().includes('grader')) {
+      return '🛠️';
+    }
+    return '🚜'; // Default to bulldozer for machinery
+  } else if (result.type === 'aircraft') {
+    // Check if it's a helicopter or fixed wing
+    if (result.name.toLowerCase().includes('helicopter')) {
+      return '🚁';
+    } else {
+      return '✈️';
+    }
+  } else if (result.type === 'handCrew') {
+    return '👨‍🚒';
+  }
+  return '';
+};
 
 /**
  * Calculate time required for machinery to clear the fire break
@@ -78,6 +105,9 @@ const calculateHandCrewTime = (
  */
 const isCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
+  terrain: TerrainType,
+  vegetation: VegetationType,
+  expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
   requiredTerrain: TerrainType,
   vegetation: VegetationType
 ): boolean => {
@@ -109,11 +139,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   trackAnalysis,
   machinery,
   aircraft,
-  handCrews
+  handCrews,
+  onDropPreviewChange
 }) => {
   const [terrain, setTerrain] = useState<TerrainType>('easy');
-  const [vegetation, setVegetation] = useState<VegetationType>('light');
+  const [vegetation, setVegetation] = useState<VegetationType>('grassland');
+  const [slopeDeg, setSlopeDeg] = useState<number>(5); // degrees
+  const [expectedObjectDiameter, setExpectedObjectDiameter] = useState<number>(0.2); // meters
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+
+  // Handle drop preview selection changes
+  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
+    const updatedSelection = isSelected 
+      ? [...selectedAircraftForPreview, aircraftId]
+      : selectedAircraftForPreview.filter(id => id !== aircraftId);
+    
+    setSelectedAircraftForPreview(updatedSelection);
+    onDropPreviewChange?.(updatedSelection);
+  };
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -122,7 +166,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     difficult: 1.7,
     extreme: 2.2
   };
-
+  // Map new vegetation taxonomy to numeric factors (lower is easier)
   const vegetationFactors = {
     light: 1.0,
     moderate: 1.4,
@@ -182,11 +226,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         id: plane.id,
         name: plane.name,
         type: 'aircraft',
-        time: drops,
+        time: totalTime,
         cost,
         compatible,
-        unit: 'drops',
-        description: plane.description
+        unit: 'hours',
+        description: plane.description,
+        // Store additional aircraft-specific info for display
+        drops: drops
       });
     });
 
@@ -214,14 +260,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (a.compatible && !b.compatible) return -1;
       if (!a.compatible && !b.compatible) return 0;
       
-      // For aircraft, convert drops to estimated time for sorting
-      const aTime = a.type === 'aircraft' ? a.time * 0.5 : a.time; // rough estimate
-      const bTime = b.type === 'aircraft' ? b.time * 0.5 : b.time;
-      
-      if (Math.abs(aTime - bTime) < 0.1) {
+      // All types now use time in hours, so direct comparison
+      if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost; // If time is similar, sort by cost
       }
-      return aTime - bTime;
+      return a.time - b.time;
     });
   }, [distance, trackAnalysis, terrain, vegetation, machinery, aircraft, handCrews]);
 
@@ -273,15 +316,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </select>
             </label>
             <label>
+              Slope (degrees):
+              <input type="number" value={slopeDeg} min={0} max={60} step={1} onChange={(e) => setSlopeDeg(Number(e.target.value))} />
+            </label>
+            <label>
+              Expected object diameter (m):
+              <input type="number" value={expectedObjectDiameter} min={0} max={5} step={0.05} onChange={(e) => setExpectedObjectDiameter(Number(e.target.value))} />
+            </label>
+            <label>
               Vegetation:
               <select 
                 value={vegetation} 
                 onChange={(e) => setVegetation(e.target.value as VegetationType)}
               >
-                <option value="light">Light (Grass)</option>
-                <option value="moderate">Moderate (Mixed)</option>
-                <option value="heavy">Heavy (Dense Forest)</option>
-                <option value="extreme">Extreme (Very Dense)</option>
+                <option value="grassland">Grassland (very light)</option>
+                <option value="lightshrub">Light shrub/scrub (&lt;10cm diameter)</option>
+                <option value="mediumscrub">Medium scrub/forest (10-50cm)</option>
+                <option value="heavyforest">Heavy forest (50cm+)</option>
               </select>
             </label>
           </div>
@@ -329,10 +380,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <>
             {/* Best Options Summary - Always visible when line exists */}
             <div className="best-options-summary">
-              <h4>Best Options</h4>
+              <h4>Quick Options</h4>
               <div className="best-options-grid">
                 <div className="option-category">
-                  <span className="category-label">Machinery</span>
+                  <div className="category-header">
+                    <span className="category-icon">🛠️</span>
+                    <span className="category-label">Machinery</span>
+                  </div>
                   {bestOptions.machinery ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.machinery.name}</span>
@@ -346,12 +400,33 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 
                 <div className="option-category">
-                  <span className="category-label">Aircraft</span>
+                  <div className="category-header">
+                    <span className="category-icon">✈️</span>
+                    <span className="category-label">Aircraft</span>
+                  </div>
                   {bestOptions.aircraft ? (
                     <div className="option-details">
-                      <span className="option-name">{bestOptions.aircraft.name}</span>
+                      <div className="drop-preview-toggle">
+                        <span className="option-name">{bestOptions.aircraft.name}</span>
+                        {/* Toggle button placed top-right via CSS */}
+                        <button
+                          type="button"
+                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'active' : ''}`}
+                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'Drop preview on' : 'Drop preview off'}
+                          title="Toggle drop preview"
+                          onClick={() => bestOptions.aircraft && handleDropPreviewChange(bestOptions.aircraft.id, !selectedAircraftForPreview.includes(bestOptions.aircraft.id))}
+                        >
+                          {/* Simple plane SVG icon */}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      </div>
                       <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(0)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.drops && (
+                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
+                        )}
                       </span>
                     </div>
                   ) : (
@@ -360,7 +435,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 
                 <div className="option-category">
-                  <span className="category-label">Hand Crew</span>
+                  <div className="category-header">
+                    <span className="category-icon">👨‍🚒</span>
+                    <span className="category-label">Hand Crew</span>
+                  </div>
                   {bestOptions.handCrew ? (
                     <div className="option-details">
                       <span className="option-name">{bestOptions.handCrew.name}</span>
@@ -375,16 +453,69 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </div>
             </div>
 
+            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
+
             {/* Full Equipment Table - Only when expanded */}
             {isExpanded && (
               <div className="equipment-summary">
                 <h4>All Equipment Options</h4>
-                <div className="equipment-table">
-                  <div className="table-header">
-                    <span>Equipment</span>
-                    <span>Time/Drops</span>
-                    <span>Cost</span>
-                    <span>Status</span>
+                <div className="equipment-categories">
+                  {/* Machinery Section */}
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header">
+                      <span className="category-section-icon">🛠️</span>
+                      Machinery
+                    </h5>
+                    <div className="equipment-table">
+                      <div className="table-header">
+                        <span>Equipment</span>
+                        <span>Time</span>
+                        <span>Cost</span>
+                        <span>Status</span>
+                      </div>
+                      {calculations
+                        .filter(result => result.type === 'machinery')
+                        .map((result) => (
+                        <div 
+                          key={result.id} 
+                          className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                        >
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">
+                            {result.compatible ? (
+                              <>
+                                <span className="time-value">
+                                  {result.time.toFixed(1)}
+                                </span>
+                                <span className="time-unit">{result.unit}</span>
+                              </>
+                            ) : (
+                              <span className="incompatible-text">N/A</span>
+                            )}
+                          </div>
+                          <div className="cost-info">
+                            {result.compatible && result.cost > 0 ? (
+                              <span className="cost-value">${result.cost.toFixed(0)}</span>
+                            ) : (
+                              <span className="no-cost">-</span>
+                            )}
+                          </div>
+                          <div className="status-info">
+                            {result.compatible ? (
+                              <span className="compatible">✓ Compatible</span>
+                            ) : (
+                              <span className="incompatible-status">✗ Incompatible</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   {calculations.map((result) => (
                     <div 
