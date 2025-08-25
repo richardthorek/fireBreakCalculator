@@ -5,15 +5,15 @@
  */
 
 import React, { useState } from 'react';
-import { EquipmentApi, EquipmentCoreType, CreateEquipmentInput } from '../types/equipmentApi';
+import { EquipmentApi, EquipmentCoreType, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from '../types/equipmentApi';
 
 interface EquipmentConfigPanelProps {
   equipment: EquipmentApi[];
   loading: boolean;
   error: string | null;
-  onCreate: any;
-  onUpdate: any;
-  onDelete: any;
+  onCreate: (partial: Partial<EquipmentApi> & { type: EquipmentApi['type']; name: string; }) => Promise<void>;
+  onUpdate: (item: EquipmentApi) => Promise<void>;
+  onDelete: (item: EquipmentApi) => Promise<void>;
   isOpen?: boolean;
   onToggle?: () => void;
 }
@@ -33,26 +33,69 @@ const InlineEditComponent: React.FC<{
   terrainExample: (t: string) => string;
   vegExample: (v: string) => string;
 }> = ({ item, onSave, onCancel, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample }) => {
-  const [form, setForm] = useState<any>(item);
+  const [form, setForm] = useState<EquipmentApi>(item);
+
+  // Type-safe form update helpers
+  const updateMachinery = (updates: Partial<MachineryApi>) => {
+    if (form.type === 'Machinery') {
+      setForm({ ...form, ...updates } as MachineryApi);
+    }
+  };
+
+  const updateAircraft = (updates: Partial<AircraftApi>) => {
+    if (form.type === 'Aircraft') {
+      setForm({ ...form, ...updates } as AircraftApi);
+    }
+  };
+
+  const updateHandCrew = (updates: Partial<HandCrewApi>) => {
+    if (form.type === 'HandCrew') {
+      setForm({ ...form, ...updates } as HandCrewApi);
+    }
+  };
   return (
     <div className="equip-row editing">
       <label className="visually-hidden" htmlFor={`name-${item.id}`}>Name</label>
-      <input id={`name-${item.id}`} aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value } as EquipmentApi)} />
+      <input id={`name-${item.id}`} aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
       {item.type === 'Machinery' && (
         <>
           <label className="visually-hidden" htmlFor={`rate-${item.id}`}>Clearing rate</label>
-          <input id={`rate-${item.id}`} aria-label="Clearing rate" type="number" className="eq-small" placeholder="Rate" value={(form as any).clearingRate ?? ''} onChange={e => setForm({ ...(form as any), clearingRate: Number(e.target.value) } as EquipmentApi)} />
+          <input 
+            id={`rate-${item.id}`} 
+            aria-label="Clearing rate" 
+            type="number" 
+            className="eq-small" 
+            placeholder="Rate" 
+            value={(form as MachineryApi).clearingRate ?? ''} 
+            onChange={e => updateMachinery({ clearingRate: Number(e.target.value) })} 
+          />
         </>
       )}
       {item.type === 'Aircraft' && (
         <>
           <label className="visually-hidden" htmlFor={`drop-${item.id}`}>Drop length</label>
-          <input id={`drop-${item.id}`} aria-label="Drop length" type="number" className="eq-small" placeholder="Drop m" value={(form as any).dropLength ?? ''} onChange={e => setForm({ ...(form as any), dropLength: Number(e.target.value) } as EquipmentApi)} />
+          <input 
+            id={`drop-${item.id}`} 
+            aria-label="Drop length" 
+            type="number" 
+            className="eq-small" 
+            placeholder="Drop m" 
+            value={(form as AircraftApi).dropLength ?? ''} 
+            onChange={e => updateAircraft({ dropLength: Number(e.target.value) })} 
+          />
           <label className="visually-hidden" htmlFor={`turn-${item.id}`}>Turnaround (minutes)</label>
-          <input id={`turn-${item.id}`} aria-label="Turnaround minutes" type="number" className="eq-small" placeholder="Turn (m)" value={(form as any).turnaroundMinutes ?? ''} onChange={e => setForm({ ...(form as any), turnaroundMinutes: Number(e.target.value) } as EquipmentApi)} />
-          {(form as any).turnaroundMinutes && (form as any).dropLength ? (
+          <input 
+            id={`turn-${item.id}`} 
+            aria-label="Turnaround minutes" 
+            type="number" 
+            className="eq-small" 
+            placeholder="Turn (m)" 
+            value={(form as AircraftApi).turnaroundMinutes ?? ''} 
+            onChange={e => updateAircraft({ turnaroundMinutes: Number(e.target.value) })} 
+          />
+          {(form as AircraftApi).turnaroundMinutes && (form as AircraftApi).dropLength ? (
             <div className="cycle-hint" aria-hidden>
-              <small>Est cycle: {(form as any).turnaroundMinutes} min turnaround between drops.</small>
+              <small>Est cycle: {(form as AircraftApi).turnaroundMinutes} min turnaround between drops.</small>
             </div>
           ) : null}
         </>
@@ -60,22 +103,40 @@ const InlineEditComponent: React.FC<{
       {item.type === 'HandCrew' && (
         <>
           <label className="visually-hidden" htmlFor={`crew-${item.id}`}>Crew size</label>
-          <input id={`crew-${item.id}`} aria-label="Crew size" type="number" className="eq-xsmall" title="Crew Size" placeholder="Crew" value={(form as any).crewSize ?? ''} onChange={e => setForm({ ...(form as any), crewSize: Number(e.target.value) } as EquipmentApi)} />
+          <input 
+            id={`crew-${item.id}`} 
+            aria-label="Crew size" 
+            type="number" 
+            className="eq-xsmall" 
+            title="Crew Size" 
+            placeholder="Crew" 
+            value={(form as HandCrewApi).crewSize ?? ''} 
+            onChange={e => updateHandCrew({ crewSize: Number(e.target.value) })} 
+          />
           <label className="visually-hidden" htmlFor={`rateperson-${item.id}`}>Clearing rate per person</label>
-          <input id={`rateperson-${item.id}`} aria-label="Clearing rate per person" type="number" className="eq-xsmall" title="Rate / person" placeholder="/person" value={(form as any).clearingRatePerPerson ?? ''} onChange={e => setForm({ ...(form as any), clearingRatePerPerson: Number(e.target.value) } as EquipmentApi)} />
+          <input 
+            id={`rateperson-${item.id}`} 
+            aria-label="Clearing rate per person" 
+            type="number" 
+            className="eq-xsmall" 
+            title="Rate / person" 
+            placeholder="/person" 
+            value={(form as HandCrewApi).clearingRatePerPerson ?? ''} 
+            onChange={e => updateHandCrew({ clearingRatePerPerson: Number(e.target.value) })} 
+          />
         </>
       )}
       <label className="visually-hidden" htmlFor={`cost-${item.id}`}>Cost per hour</label>
-      <input id={`cost-${item.id}`} aria-label="Cost per hour" type="number" className="eq-small" placeholder="$/h" value={form.costPerHour ?? ''} onChange={e => setForm({ ...form, costPerHour: Number(e.target.value) } as EquipmentApi)} />
+      <input id={`cost-${item.id}`} aria-label="Cost per hour" type="number" className="eq-small" placeholder="$/h" value={form.costPerHour ?? ''} onChange={e => setForm({ ...form, costPerHour: Number(e.target.value) })} />
       <div className="eq-tags">
         {terrainOptions.map((t: string) => (
           <button
             aria-label={`Terrain ${t}`}
             key={t}
             type="button"
-            className={(form.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'}
+            className={(form.allowedTerrain ?? []).includes(t as any) ? 'tag on' : 'tag'}
             title={terrainExample(t)}
-            onClick={() => setForm({ ...form, allowedTerrain: (form.allowedTerrain ?? []).includes(t) ? (form.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(form.allowedTerrain ?? []), t] } as EquipmentApi)}
+            onClick={() => setForm({ ...form, allowedTerrain: (form.allowedTerrain ?? []).includes(t as any) ? (form.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(form.allowedTerrain ?? []), t] } as EquipmentApi)}
           >{terrainLabel(t)}</button>
         ))}
       </div>
@@ -85,9 +146,9 @@ const InlineEditComponent: React.FC<{
             aria-label={`Vegetation ${v}`}
             key={v}
             type="button"
-            className={(form.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'}
+            className={(form.allowedVegetation ?? []).includes(v as any) ? 'tag on' : 'tag'}
             title={vegExample(v)}
-            onClick={() => setForm({ ...form, allowedVegetation: (form.allowedVegetation ?? []).includes(v) ? (form.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(form.allowedVegetation ?? []), v] } as EquipmentApi)}
+            onClick={() => setForm({ ...form, allowedVegetation: (form.allowedVegetation ?? []).includes(v as any) ? (form.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(form.allowedVegetation ?? []), v] } as EquipmentApi)}
           >{vegLabel(v)}</button>
         ))}
       </div>
@@ -105,8 +166,8 @@ const EquipmentListComponent: React.FC<{
   equipment: EquipmentApi[];
   activeTab: EquipmentTab;
   adding: boolean;
-  draft: any;
-  setDraft: (d: any) => void;
+  draft: Record<string, any>;
+  setDraft: (d: Record<string, any>) => void;
   saveNew: () => Promise<void>;
   setAdding: (b: boolean) => void;
   resetDraft: (t?: EquipmentCoreType) => void;
@@ -177,14 +238,14 @@ const EquipmentListComponent: React.FC<{
         ) : (
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
             <div className="eq-name text" title={item.name}>{item.name}</div>
-            {item.type === 'Machinery' && <div className="eq-small text">{(item as any).clearingRate || '-'} m/h</div>}
+            {item.type === 'Machinery' && <div className="eq-small text">{(item as MachineryApi).clearingRate || '-'} m/h</div>}
             {item.type === 'Aircraft' && (
-              <div className="eq-small text" title={`Turnaround ${(item as any).turnaroundMinutes ?? '-'} min`}>
-                {(item as any).dropLength || '-'} m
-                {(item as any).turnaroundMinutes ? <span className="inline-sub"> / {(item as any).turnaroundMinutes}m</span> : null}
+              <div className="eq-small text" title={`Turnaround ${(item as AircraftApi).turnaroundMinutes ?? '-'} min`}>
+                {(item as AircraftApi).dropLength || '-'} m
+                {(item as AircraftApi).turnaroundMinutes ? <span className="inline-sub"> / {(item as AircraftApi).turnaroundMinutes}m</span> : null}
               </div>
             )}
-            {item.type === 'HandCrew' && <div className="eq-small text">{(item as any).crewSize || '-'} / {(item as any).clearingRatePerPerson || '-'} </div>}
+            {item.type === 'HandCrew' && <div className="eq-small text">{(item as HandCrewApi).crewSize || '-'} / {(item as HandCrewApi).clearingRatePerPerson || '-'} </div>}
             <div className="eq-small text">{item.costPerHour ? `$${item.costPerHour}` : '-'}</div>
             <div className="eq-tags readonly">
               {item.allowedTerrain.map(t => <span key={t} className="tag on mini" title={terrainExample(t)}>{terrainLabel(t)}</span>)}
@@ -212,7 +273,13 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const [activeTab, setActiveTab] = useState<EquipmentTab>('Machinery');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState<any>({ type: 'Machinery', name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true });
+  const [draft, setDraft] = useState<Record<string, any>>({ 
+    type: 'Machinery', 
+    name: '', 
+    allowedTerrain: ['easy'], 
+    allowedVegetation: ['grassland'], 
+    active: true 
+  });
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -261,28 +328,53 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
 
   const filtered = equipment.filter(e => e.type === activeTab);
 
-  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ type, name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true } as CreateEquipmentInput);
+  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ 
+    type, 
+    name: '', 
+    allowedTerrain: ['easy'], 
+    allowedVegetation: ['grassland'], 
+    active: true 
+  });
 
   const startAdd = () => { resetDraft(activeTab); setAdding(true); setEditingId(null); };
 
   const saveNew = async () => {
     if (!draft.name?.trim()) { setLocalError('Name required'); return; }
     setSaving(true); setLocalError(null);
-    try { await onCreate(draft); setAdding(false); resetDraft(activeTab); }
-    catch (e: any) { setLocalError(e.message); }
-    finally { setSaving(false); }
+    try { 
+      await onCreate(draft as any); 
+      setAdding(false); 
+      resetDraft(activeTab); 
+    } catch (error: unknown) { 
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create equipment';
+      setLocalError(errorMessage); 
+    } finally { 
+      setSaving(false); 
+    }
   };
 
   const saveEdit = async (item: EquipmentApi) => {
     setSaving(true); setLocalError(null);
-    try { await onUpdate(item); setEditingId(null); }
-    catch (e: any) { setLocalError(e.message); }
-    finally { setSaving(false); }
+    try { 
+      await onUpdate(item); 
+      setEditingId(null); 
+    } catch (error: unknown) { 
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update equipment';
+      setLocalError(errorMessage); 
+    } finally { 
+      setSaving(false); 
+    }
   };
 
   const remove = async (item: EquipmentApi) => {
-    if (!confirm(`Delete ${item.name}?`)) return;
-    try { await onDelete(item); } catch (e: any) { setLocalError(e.message); }
+    // TODO: Replace with a proper modal dialog for better UX
+    if (!confirm(`Delete ${item.name}? This action cannot be undone.`)) return;
+    try { 
+      await onDelete(item); 
+    } catch (error: unknown) { 
+      const errorMessage = error instanceof Error ? error.message : 'Failed to delete equipment';
+      setLocalError(errorMessage); 
+    }
   };
 
   // InlineEdit moved to top-level InlineEditComponent

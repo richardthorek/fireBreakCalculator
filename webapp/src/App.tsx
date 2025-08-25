@@ -4,7 +4,7 @@ import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAnalysis } from './types/config';
-import { EquipmentApi } from './types/equipmentApi';
+import { EquipmentApi, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from './types/equipmentApi';
 import { listEquipment, createEquipment, updateEquipmentItem, deleteEquipment } from './utils/equipmentApi';
 
 /**
@@ -27,84 +27,93 @@ const App: React.FC = () => {
 
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
-    const items = equipment.filter(e => e.type === 'Machinery');
+    const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
     if (!items.length) return defaultConfig.machinery;
     return items.map(m => ({
       id: m.id,
       name: m.name,
       type: 'other',
-      clearingRate: (m as any).clearingRate || 0,
-      costPerHour: m.costPerHour,
-      description: m.description,
-      allowedTerrain: m.allowedTerrain as any,
-      allowedVegetation: m.allowedVegetation as any,
-      maxSlope: (m as any).maxSlope
+      clearingRate: m.clearingRate || 0,
+      costPerHour: m.costPerHour || 0,
+      description: m.description || '',
+      allowedTerrain: m.allowedTerrain as MachinerySpec['allowedTerrain'],
+      allowedVegetation: m.allowedVegetation as MachinerySpec['allowedVegetation'],
+      maxSlope: m.maxSlope
     }));
   }, [equipment]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
-    const items = equipment.filter(e => e.type === 'Aircraft');
+    const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
     if (!items.length) return defaultConfig.aircraft;
     return items.map(a => ({
       id: a.id,
       name: a.name,
       type: 'other',
-      dropLength: (a as any).dropLength || 0,
+      dropLength: a.dropLength || 0,
       speed: 0,
-      turnaroundTime: (a as any).turnaroundMinutes || 0,
-      costPerHour: a.costPerHour,
-      description: a.description,
-      allowedTerrain: a.allowedTerrain as any,
-      allowedVegetation: a.allowedVegetation as any
+      turnaroundTime: a.turnaroundMinutes || 0,
+      costPerHour: a.costPerHour || 0,
+      description: a.description || '',
+      allowedTerrain: a.allowedTerrain as AircraftSpec['allowedTerrain'],
+      allowedVegetation: a.allowedVegetation as AircraftSpec['allowedVegetation']
     }));
   }, [equipment]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
-    const items = equipment.filter(e => e.type === 'HandCrew');
+    const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
     if (!items.length) return defaultConfig.handCrews;
     return items.map(c => ({
       id: c.id,
       name: c.name,
-      crewSize: (c as any).crewSize || 0,
-      clearingRatePerPerson: (c as any).clearingRatePerPerson || 0,
-      tools: (c as any).equipmentList || [],
-      costPerHour: c.costPerHour,
-      description: c.description,
-      allowedTerrain: c.allowedTerrain as any,
-      allowedVegetation: c.allowedVegetation as any
+      crewSize: c.crewSize || 0,
+      clearingRatePerPerson: c.clearingRatePerPerson || 0,
+      tools: c.equipmentList || [],
+      costPerHour: c.costPerHour || 0,
+      description: c.description || '',
+      allowedTerrain: c.allowedTerrain as HandCrewSpec['allowedTerrain'],
+      allowedVegetation: c.allowedVegetation as HandCrewSpec['allowedVegetation']
     }));
   }, [equipment]);
 
   // Initial load
   useEffect(() => {
-    (async () => {
-      setLoadingEquip(true); setEquipError(null);
-      try { setEquipment(await listEquipment()); } catch (e: any) { setEquipError(e.message); }
-      finally { setLoadingEquip(false); }
-    })();
+    const loadEquipment = async () => {
+      setLoadingEquip(true); 
+      setEquipError(null);
+      try { 
+        setEquipment(await listEquipment()); 
+      } catch (error: unknown) { 
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load equipment';
+        setEquipError(errorMessage); 
+      } finally { 
+        setLoadingEquip(false); 
+      }
+    };
+    loadEquipment();
   }, []);
 
   // CRUD helpers passed to config panel
   const handleCreate = async (partial: Partial<EquipmentApi> & { type: EquipmentApi['type']; name: string; }) => {
-    const payload: any = {
+    const payload = {
       type: partial.type,
       name: partial.name,
       description: partial.description || '',
       allowedTerrain: partial.allowedTerrain || ['easy'],
       allowedVegetation: partial.allowedVegetation || ['grassland'],
       active: true,
-      // type-specific minimal defaults
-      ...(partial.type === 'Machinery' ? { clearingRate: (partial as any).clearingRate || 0 } : {}),
-      ...(partial.type === 'Aircraft' ? { dropLength: (partial as any).dropLength || 0, turnaroundMinutes: (partial as any).turnaroundMinutes || 0 } : {}),
-      ...(partial.type === 'HandCrew' ? { crewSize: (partial as any).crewSize || 0, clearingRatePerPerson: (partial as any).clearingRatePerPerson || 0, equipmentList: (partial as any).equipmentList || [] } : {})
-    };
-  const created = await createEquipment(payload as unknown as import('./types/equipmentApi').CreateEquipmentInput);
+      costPerHour: partial.costPerHour,
+      // Add type-specific properties
+      ...(partial.type === 'Machinery' && 'clearingRate' in partial ? { clearingRate: partial.clearingRate, maxSlope: partial.maxSlope } : {}),
+      ...(partial.type === 'Aircraft' && 'dropLength' in partial ? { dropLength: partial.dropLength, turnaroundMinutes: partial.turnaroundMinutes } : {}),
+      ...(partial.type === 'HandCrew' && 'crewSize' in partial ? { crewSize: partial.crewSize, clearingRatePerPerson: partial.clearingRatePerPerson, equipmentList: partial.equipmentList } : {})
+    } as CreateEquipmentInput;
+
+    const created = await createEquipment(payload);
     setEquipment(prev => [...prev, created]);
   };
 
   const handleUpdate = async (item: EquipmentApi) => {
-    // updateEquipment expects (id, type, payload)
-  const updated = await updateEquipmentItem(item);
+    const updated = await updateEquipmentItem(item);
     setEquipment(prev => prev.map(e => e.id === updated.id ? updated : e));
   };
 

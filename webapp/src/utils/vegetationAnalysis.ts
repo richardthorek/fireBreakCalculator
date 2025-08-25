@@ -8,6 +8,7 @@ import { VegetationType } from '../config/classification';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchNSWVegetation } from './nswVegetationService';
+import { logger } from './logger';
 
 /**
  * Map Mapbox Terrain v2 landcover class to application vegetation type
@@ -94,7 +95,7 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
     
     default:
       // Log unknown landcover classes for debugging
-      console.warn(`Unknown landcover class: "${landcoverClass}" - defaulting to mediumscrub`);
+      logger.warn(`Unknown landcover class: "${landcoverClass}" - defaulting to mediumscrub`);
       return { vegetation: 'mediumscrub', confidence: 0.4 };
   }
 };
@@ -127,7 +128,7 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
 
     const resp = await fetch(url);
     if (!resp.ok) {
-      console.warn(`Mapbox tilequery HTTP ${resp.status}: ${resp.statusText} - falling back to mock data`);
+      logger.warn(`Mapbox tilequery HTTP ${resp.status}: ${resp.statusText} - falling back to mock data`);
       return getMockLandcoverClass(lat, lng);
     }
 
@@ -137,17 +138,17 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
       const props = feature.properties || {};
       const candidate = props.class || props.Class || props.landcover || props.type || props.label || props.cover || null;
       if (candidate) {
-        console.log(`Mapbox returned landcover class: "${candidate}" for lat=${lat.toFixed(4)}, lng=${lng.toFixed(4)}`);
+        logger.debug(`Mapbox returned landcover class: "${candidate}" for lat=${lat.toFixed(4)}, lng=${lng.toFixed(4)}`);
         return String(candidate);
       }
     }
 
     // If we get here, Mapbox returned no usable landcover class - use mock data
-    console.warn('Mapbox tilequery returned no landcover class for point - using mock data');
+    logger.warn('Mapbox tilequery returned no landcover class for point - using mock data');
     return getMockLandcoverClass(lat, lng);
   } catch (err) {
     // Fall back to mock data instead of propagating errors
-    console.warn('Mapbox tilequery failed, using mock data:', err);
+    logger.warn('Mapbox tilequery failed, using mock data:', err);
     return getMockLandcoverClass(lat, lng);
   }
 };
@@ -333,7 +334,7 @@ export const analyzeTrackVegetation = async (points: LatLng[]): Promise<Vegetati
       totalConfidence += confidence;
   } catch (segmentError) {
       // If individual segment fails, use fallback vegetation based on position
-      console.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
+      logger.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
       const fallbackClass = getMockLandcoverClass(midLat, midLng);
       const { vegetation, confidence } = mapLandcoverToVegetation(fallbackClass);
       
