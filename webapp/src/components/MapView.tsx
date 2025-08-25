@@ -521,15 +521,33 @@ export const MapView: React.FC<MapViewProps> = ({
   const finishCurrentDrawing = () => {
     if (drawControlRef.current && mapRef.current) {
       const drawControl = drawControlRef.current;
-      const polylineTool = (drawControl as any)._toolbars?.draw?._modes?.polyline;
       
-      if (polylineTool && polylineTool.handler && polylineTool.handler._enabled) {
-        // Complete the current shape if we're in drawing mode
-        if (polylineTool.handler.completeShape) {
-          polylineTool.handler.completeShape();
-        } else if (polylineTool.handler._finishShape) {
-          polylineTool.handler._finishShape();
+      // Try multiple approaches to complete the drawing
+      try {
+        // Approach 1: Access the active mode directly
+        const drawToolbar = (drawControl as any)._toolbars?.draw;
+        if (drawToolbar && drawToolbar._activeMode) {
+          const activeMode = drawToolbar._activeMode;
+          if (activeMode.completeShape) {
+            activeMode.completeShape();
+            return;
+          }
+          if (activeMode._finishShape) {
+            activeMode._finishShape();
+            return;
+          }
         }
+        
+        // Approach 2: Simulate double-click to finish
+        const map = mapRef.current;
+        map.fire('dblclick', { 
+          latlng: map.getCenter(),
+          layerPoint: map.latLngToLayerPoint(map.getCenter()),
+          containerPoint: map.latLngToContainerPoint(map.getCenter())
+        });
+        
+      } catch (error) {
+        console.warn('Could not finish drawing programmatically:', error);
       }
     }
   };

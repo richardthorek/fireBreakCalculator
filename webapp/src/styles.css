@@ -1820,8 +1820,7 @@ button:focus,
 .drawing-controls {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 10px;
   z-index: 1001;
   background: rgba(245, 247, 250, 0.95);
   border: 1px solid #d0d6dd;
@@ -1870,13 +1869,14 @@ button:focus,
   .drawing-controls {
     top: 8px;
     left: 8px;
-    right: 8px;
+    right: auto;
     transform: none;
-    text-align: center;
+    text-align: left;
   }
   
   .finish-line-button {
-    width: 100%;
+    width: auto;
+    min-width: 120px;
     min-height: 48px; /* Larger touch target on mobile */
   }
 }
