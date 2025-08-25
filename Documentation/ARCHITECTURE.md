@@ -56,6 +56,11 @@ This Fire Break Calculator application is built on a foundation of modern web te
 - Resource selection interface with checkboxes for each category
 - Terrain and vegetation condition selectors
 - Calculation engine for time and cost estimates
+- **NEW: Enhanced preview pane design with:**
+  - Compact collapsed state featuring icons/emojis for visual clarity
+  - Improved space utilization with streamlined layout
+  - Categorized expanded view with equipment type icons
+  - Better visual hierarchy and equipment type distinction
 - Expandable/collapsible UI for space efficiency
 - Real-time updates based on distance changes and selections
 
