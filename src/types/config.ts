@@ -13,6 +13,10 @@ export interface MachinerySpec {
   costPerHour?: number;
   /** Description of the machinery */
   description?: string;
+  /** Terrain types this machinery can operate in */
+  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  /** Vegetation types this machinery can handle */
+  allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
 }
 
 export interface AircraftSpec {
@@ -29,6 +33,10 @@ export interface AircraftSpec {
   costPerHour?: number;
   /** Description of the aircraft */
   description?: string;
+  /** Terrain types this aircraft can operate over */
+  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  /** Vegetation types this aircraft can effectively treat */
+  allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
 }
 
 export interface HandCrewSpec {
@@ -44,6 +52,10 @@ export interface HandCrewSpec {
   costPerHour?: number;
   /** Description of the crew type */
   description?: string;
+  /** Terrain types this crew can work in */
+  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  /** Vegetation types this crew can handle */
+  allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
 }
 
 export interface CalculationRules {

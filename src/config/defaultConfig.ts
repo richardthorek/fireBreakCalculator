@@ -14,7 +14,9 @@ export const defaultConfig: FireBreakConfig = {
       type: 'dozer',
       clearingRate: 1200, // meters per hour
       costPerHour: 180,
-      description: 'Medium dozer suitable for most terrain types'
+      description: 'Medium dozer suitable for most terrain types',
+      allowedTerrain: ['easy', 'moderate', 'difficult'],
+      allowedVegetation: ['light', 'moderate', 'heavy']
     },
     {
       id: 'dozer-d8',
@@ -22,7 +24,9 @@ export const defaultConfig: FireBreakConfig = {
       type: 'dozer',
       clearingRate: 1800, // meters per hour
       costPerHour: 250,
-      description: 'Heavy dozer for difficult terrain and heavy vegetation'
+      description: 'Heavy dozer for difficult terrain and heavy vegetation',
+      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
     },
     {
       id: 'grader-140m',
@@ -30,7 +34,9 @@ export const defaultConfig: FireBreakConfig = {
       type: 'grader',
       clearingRate: 2500, // meters per hour
       costPerHour: 120,
-      description: 'Motor grader for maintaining existing trails and light clearing'
+      description: 'Motor grader for maintaining existing trails and light clearing',
+      allowedTerrain: ['easy', 'moderate'],
+      allowedVegetation: ['light']
     },
     {
       id: 'dozer-d4',
@@ -38,7 +44,9 @@ export const defaultConfig: FireBreakConfig = {
       type: 'dozer',
       clearingRate: 800, // meters per hour
       costPerHour: 140,
-      description: 'Light dozer for sensitive areas and narrow fire breaks'
+      description: 'Light dozer for sensitive areas and narrow fire breaks',
+      allowedTerrain: ['easy', 'moderate', 'difficult'],
+      allowedVegetation: ['light', 'moderate']
     }
   ],
 
@@ -51,7 +59,9 @@ export const defaultConfig: FireBreakConfig = {
       speed: 180, // km/h
       turnaroundTime: 15, // minutes
       costPerHour: 3500,
-      description: 'Light helicopter for water/retardant drops on smaller fire breaks'
+      description: 'Light helicopter for water/retardant drops on smaller fire breaks',
+      allowedTerrain: ['easy', 'moderate', 'difficult'],
+      allowedVegetation: ['light', 'moderate', 'heavy']
     },
     {
       id: 'helicopter-medium',
@@ -61,7 +71,9 @@ export const defaultConfig: FireBreakConfig = {
       speed: 200, // km/h
       turnaroundTime: 20, // minutes
       costPerHour: 5000,
-      description: 'Medium helicopter with larger capacity for longer fire breaks'
+      description: 'Medium helicopter with larger capacity for longer fire breaks',
+      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
     },
     {
       id: 'fixed-wing-light',
@@ -71,7 +83,9 @@ export const defaultConfig: FireBreakConfig = {
       speed: 300, // km/h
       turnaroundTime: 25, // minutes
       costPerHour: 4200,
-      description: 'Fixed-wing aircraft for large area coverage'
+      description: 'Fixed-wing aircraft for large area coverage',
+      allowedTerrain: ['easy', 'moderate'],
+      allowedVegetation: ['light', 'moderate', 'heavy']
     }
   ],
 
@@ -83,7 +97,9 @@ export const defaultConfig: FireBreakConfig = {
       clearingRatePerPerson: 50, // meters per hour per person
       tools: ['Hand tools', 'Chainsaws', 'Rakes'],
       costPerHour: 420, // for entire crew
-      description: 'Standard 6-person crew with mixed hand tools and chainsaws'
+      description: 'Standard 6-person crew with mixed hand tools and chainsaws',
+      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
     },
     {
       id: 'rapid-response',
@@ -92,7 +108,9 @@ export const defaultConfig: FireBreakConfig = {
       clearingRatePerPerson: 60, // meters per hour per person
       tools: ['Specialized hand tools', 'Portable equipment'],
       costPerHour: 320, // for entire crew
-      description: 'Smaller, faster crew for quick initial attack'
+      description: 'Smaller, faster crew for quick initial attack',
+      allowedTerrain: ['easy', 'moderate', 'difficult'],
+      allowedVegetation: ['light', 'moderate']
     },
     {
       id: 'heavy-crew',
@@ -101,7 +119,9 @@ export const defaultConfig: FireBreakConfig = {
       clearingRatePerPerson: 45, // meters per hour per person
       tools: ['Chainsaws', 'Brush cutters', 'Hand tools'],
       costPerHour: 650, // for entire crew
-      description: 'Large crew with power tools for heavy vegetation clearing'
+      description: 'Large crew with power tools for heavy vegetation clearing',
+      allowedTerrain: ['easy', 'moderate', 'difficult'],
+      allowedVegetation: ['moderate', 'heavy', 'extreme']
     }
   ],
 

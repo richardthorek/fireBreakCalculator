@@ -30,12 +30,6 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
     if (!mapContainerRef.current) return;
     if (mapRef.current) return; // prevent re-init
 
-    const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined;
-    if (!token || token === 'YOUR_MAPBOX_TOKEN_HERE') {
-      setError('Mapbox access token not configured. Set VITE_MAPBOX_ACCESS_TOKEN in .env');
-      return;
-    }
-
     // Initialize the map
     const map = L.map(mapContainerRef.current, {
       center: DEFAULT_CENTER,
@@ -45,18 +39,28 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
     });
     mapRef.current = map;
 
-    // Mapbox raster tiles URL template
-    const tileUrl = `https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token=${token}`;
-
-    L.tileLayer(tileUrl, {
-      id: 'mapbox/streets-v12',
-      tileSize: 512,
-      zoomOffset: -1,
-      maxZoom: 20,
-      attribution:
-        '© <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors | ' +
-        '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>',
-    }).addTo(map);
+    // Try Mapbox first, fallback to OpenStreetMap
+    const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined;
+    
+    if (token && token !== 'YOUR_MAPBOX_TOKEN_HERE') {
+      // Use Mapbox tiles if token is available
+      const tileUrl = `https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token=${token}`;
+      L.tileLayer(tileUrl, {
+        id: 'mapbox/streets-v12',
+        tileSize: 512,
+        zoomOffset: -1,
+        maxZoom: 20,
+        attribution:
+          '© <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors | ' +
+          '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>',
+      }).addTo(map);
+    } else {
+      // Fallback to OpenStreetMap
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors'
+      }).addTo(map);
+    }
 
     // Optional: Add a marker to show the center
     L.marker(DEFAULT_CENTER).addTo(map).bindPopup('Default Center - NSW, Australia').openPopup();

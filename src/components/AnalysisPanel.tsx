@@ -4,7 +4,7 @@
  * based on the drawn fire break line and selected parameters.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec } from '../types/config';
 
 interface AnalysisPanelProps {
@@ -18,12 +18,18 @@ interface AnalysisPanelProps {
   handCrews: HandCrewSpec[];
 }
 
-interface CalculationInputs {
-  terrainFactor: number;
-  vegetationFactor: number;
-  selectedMachinery: string[];
-  selectedAircraft: string[];
-  selectedHandCrews: string[];
+type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
+type VegetationType = 'light' | 'moderate' | 'heavy' | 'extreme';
+
+interface CalculationResult {
+  id: string;
+  name: string;
+  type: 'machinery' | 'aircraft' | 'handCrew';
+  time: number; // hours for machinery/handCrew, total drops for aircraft
+  cost: number;
+  compatible: boolean;
+  unit: string;
+  description?: string;
 }
 
 /**
@@ -60,21 +66,121 @@ const calculateHandCrewTime = (
   return distance / adjustedRate; // hours
 };
 
+/**
+ * Check if equipment is compatible with terrain and vegetation
+ */
+const isCompatible = (
+  equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
+  terrain: TerrainType,
+  vegetation: VegetationType
+): boolean => {
+  return equipment.allowedTerrain.includes(terrain) && 
+         equipment.allowedVegetation.includes(vegetation);
+};
+
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   machinery,
   aircraft,
   handCrews
 }) => {
-  const [inputs, setInputs] = useState<CalculationInputs>({
-    terrainFactor: 1.0,
-    vegetationFactor: 1.0,
-    selectedMachinery: [],
-    selectedAircraft: [],
-    selectedHandCrews: []
-  });
-
+  const [terrain, setTerrain] = useState<TerrainType>('easy');
+  const [vegetation, setVegetation] = useState<VegetationType>('light');
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Terrain and vegetation factors
+  const terrainFactors = {
+    easy: 1.0,
+    moderate: 1.3,
+    difficult: 1.7,
+    extreme: 2.2
+  };
+
+  const vegetationFactors = {
+    light: 1.0,
+    moderate: 1.4,
+    heavy: 1.8,
+    extreme: 2.5
+  };
+
+  const calculations = useMemo(() => {
+    if (!distance) return [];
+
+    const results: CalculationResult[] = [];
+    const terrainFactor = terrainFactors[terrain];
+    const vegetationFactor = vegetationFactors[vegetation];
+
+    // Calculate machinery results
+    machinery.forEach(machine => {
+      const compatible = isCompatible(machine, terrain, vegetation);
+      const time = compatible ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
+      const cost = compatible && machine.costPerHour ? time * machine.costPerHour : 0;
+
+      results.push({
+        id: machine.id,
+        name: machine.name,
+        type: 'machinery',
+        time,
+        cost,
+        compatible,
+        unit: 'hours',
+        description: machine.description
+      });
+    });
+
+    // Calculate aircraft results
+    aircraft.forEach(plane => {
+      const compatible = isCompatible(plane, terrain, vegetation);
+      const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
+      const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
+      const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
+
+      results.push({
+        id: plane.id,
+        name: plane.name,
+        type: 'aircraft',
+        time: drops,
+        cost,
+        compatible,
+        unit: 'drops',
+        description: plane.description
+      });
+    });
+
+    // Calculate hand crew results
+    handCrews.forEach(crew => {
+      const compatible = isCompatible(crew, terrain, vegetation);
+      const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
+      const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
+
+      results.push({
+        id: crew.id,
+        name: crew.name,
+        type: 'handCrew',
+        time,
+        cost,
+        compatible,
+        unit: 'hours',
+        description: crew.description
+      });
+    });
+
+    // Sort by time (ascending) - quickest first, then by cost
+    return results.sort((a, b) => {
+      if (!a.compatible && b.compatible) return 1;
+      if (a.compatible && !b.compatible) return -1;
+      if (!a.compatible && !b.compatible) return 0;
+      
+      // For aircraft, convert drops to estimated time for sorting
+      const aTime = a.type === 'aircraft' ? a.time * 0.5 : a.time; // rough estimate
+      const bTime = b.type === 'aircraft' ? b.time * 0.5 : b.time;
+      
+      if (Math.abs(aTime - bTime) < 0.1) {
+        return a.cost - b.cost; // If time is similar, sort by cost
+      }
+      return aTime - bTime;
+    });
+  }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
 
   if (!distance) {
     return (
@@ -86,22 +192,6 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       </div>
     );
   }
-
-  const toggleResourceSelection = (type: 'machinery' | 'aircraft' | 'handCrews', id: string) => {
-    setInputs(prev => {
-      const key = `selected${type.charAt(0).toUpperCase() + type.slice(1)}` as 
-        'selectedMachinery' | 'selectedAircraft' | 'selectedHandCrews';
-      const currentSelection = prev[key];
-      const newSelection = currentSelection.includes(id)
-        ? currentSelection.filter(item => item !== id)
-        : [...currentSelection, id];
-      
-      return {
-        ...prev,
-        [key]: newSelection
-      };
-    });
-  };
 
   return (
     <div className={`analysis-panel ${isExpanded ? 'expanded' : ''}`}>
@@ -115,119 +205,85 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
       {isExpanded && (
         <div className="analysis-content">
-          {/* Terrain and Vegetation Factors */}
-          <div className="factors-section">
-            <h4>Conditions</h4>
-            <div className="factor-controls">
+          {/* Terrain and Vegetation Controls */}
+          <div className="conditions-section">
+            <h4>Site Conditions</h4>
+            <div className="condition-controls">
               <label>
                 Terrain:
                 <select 
-                  value={inputs.terrainFactor} 
-                  onChange={(e) => setInputs(prev => ({ ...prev, terrainFactor: parseFloat(e.target.value) }))}
+                  value={terrain} 
+                  onChange={(e) => setTerrain(e.target.value as TerrainType)}
                 >
-                  <option value={1.0}>Easy (Flat)</option>
-                  <option value={1.3}>Moderate (Rolling)</option>
-                  <option value={1.7}>Difficult (Steep)</option>
-                  <option value={2.2}>Extreme (Very Steep)</option>
+                  <option value="easy">Easy (Flat)</option>
+                  <option value="moderate">Moderate (Rolling)</option>
+                  <option value="difficult">Difficult (Steep)</option>
+                  <option value="extreme">Extreme (Very Steep)</option>
                 </select>
               </label>
               <label>
                 Vegetation:
                 <select 
-                  value={inputs.vegetationFactor} 
-                  onChange={(e) => setInputs(prev => ({ ...prev, vegetationFactor: parseFloat(e.target.value) }))}
+                  value={vegetation} 
+                  onChange={(e) => setVegetation(e.target.value as VegetationType)}
                 >
-                  <option value={1.0}>Light (Grass)</option>
-                  <option value={1.4}>Moderate (Mixed)</option>
-                  <option value={1.8}>Heavy (Dense Forest)</option>
-                  <option value={2.5}>Extreme (Very Dense)</option>
+                  <option value="light">Light (Grass)</option>
+                  <option value="moderate">Moderate (Mixed)</option>
+                  <option value="heavy">Heavy (Dense Forest)</option>
+                  <option value="extreme">Extreme (Very Dense)</option>
                 </select>
               </label>
             </div>
           </div>
 
-          {/* Machinery Section */}
-          <div className="resource-section">
-            <h4>Machinery</h4>
-            {machinery.map(machine => (
-              <div key={machine.id} className="resource-item">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={inputs.selectedMachinery.includes(machine.id)}
-                    onChange={() => toggleResourceSelection('machinery', machine.id)}
-                  />
-                  <span className="resource-name">{machine.name}</span>
-                </label>
-                {inputs.selectedMachinery.includes(machine.id) && (
-                  <div className="calculation-result">
-                    Time: {calculateMachineryTime(distance, machine, inputs.terrainFactor, inputs.vegetationFactor).toFixed(1)} hours
-                    {machine.costPerHour && (
-                      <span className="cost">
-                        Cost: ${(calculateMachineryTime(distance, machine, inputs.terrainFactor, inputs.vegetationFactor) * machine.costPerHour).toFixed(0)}
-                      </span>
+          {/* Equipment Summary Table */}
+          <div className="equipment-summary">
+            <h4>Equipment Analysis</h4>
+            <div className="equipment-table">
+              <div className="table-header">
+                <span>Equipment</span>
+                <span>Time/Drops</span>
+                <span>Cost</span>
+                <span>Status</span>
+              </div>
+              {calculations.map((result) => (
+                <div 
+                  key={result.id} 
+                  className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                >
+                  <div className="equipment-info">
+                    <span className="equipment-name">{result.name}</span>
+                    <span className="equipment-type">{result.type}</span>
+                  </div>
+                  <div className="time-info">
+                    {result.compatible ? (
+                      <>
+                        <span className="time-value">
+                          {result.time.toFixed(1)}
+                        </span>
+                        <span className="time-unit">{result.unit}</span>
+                      </>
+                    ) : (
+                      <span className="incompatible-text">N/A</span>
                     )}
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Aircraft Section */}
-          <div className="resource-section">
-            <h4>Aircraft</h4>
-            {aircraft.map(craft => (
-              <div key={craft.id} className="resource-item">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={inputs.selectedAircraft.includes(craft.id)}
-                    onChange={() => toggleResourceSelection('aircraft', craft.id)}
-                  />
-                  <span className="resource-name">{craft.name}</span>
-                </label>
-                {inputs.selectedAircraft.includes(craft.id) && (
-                  <div className="calculation-result">
-                    Drops: {calculateAircraftDrops(distance, craft)}
-                    <span className="time">
-                      Time: {((calculateAircraftDrops(distance, craft) * craft.turnaroundTime) / 60).toFixed(1)} hours
-                    </span>
-                    {craft.costPerHour && (
-                      <span className="cost">
-                        Cost: ${(((calculateAircraftDrops(distance, craft) * craft.turnaroundTime) / 60) * craft.costPerHour).toFixed(0)}
-                      </span>
+                  <div className="cost-info">
+                    {result.compatible && result.cost > 0 ? (
+                      <span className="cost-value">${result.cost.toFixed(0)}</span>
+                    ) : (
+                      <span className="no-cost">-</span>
                     )}
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Hand Crews Section */}
-          <div className="resource-section">
-            <h4>Hand Crews</h4>
-            {handCrews.map(crew => (
-              <div key={crew.id} className="resource-item">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={inputs.selectedHandCrews.includes(crew.id)}
-                    onChange={() => toggleResourceSelection('handCrews', crew.id)}
-                  />
-                  <span className="resource-name">{crew.name}</span>
-                </label>
-                {inputs.selectedHandCrews.includes(crew.id) && (
-                  <div className="calculation-result">
-                    Time: {calculateHandCrewTime(distance, crew, inputs.terrainFactor, inputs.vegetationFactor).toFixed(1)} hours
-                    {crew.costPerHour && (
-                      <span className="cost">
-                        Cost: ${(calculateHandCrewTime(distance, crew, inputs.terrainFactor, inputs.vegetationFactor) * crew.costPerHour).toFixed(0)}
-                      </span>
+                  <div className="status-info">
+                    {result.compatible ? (
+                      <span className="compatible">✓ Compatible</span>
+                    ) : (
+                      <span className="incompatible-status">✗ Incompatible</span>
                     )}
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
