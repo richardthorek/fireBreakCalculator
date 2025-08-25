@@ -71,16 +71,17 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
 
     const performances: MachineryPerformance[] = group.map(row => {
       const slopeMax = Number(row.slopeMax || row['slopemax'] || row['slope max'] || 0);
-      const density = ((row.density || 'moderate') as string).toLowerCase() as MachineryPerformance['density'];
+      const rawDensity = ((row.density || 'moderate') as string).toLowerCase().trim();
+      let density: MachineryPerformance['density'];
+      if (rawDensity.startsWith('lig')) density = 'light';
+      else if (rawDensity.startsWith('mod') || rawDensity.startsWith('med')) density = 'moderate';
+      else if (rawDensity.startsWith('hea')) density = 'heavy';
+      else if (rawDensity.startsWith('ext') || rawDensity.startsWith('very')) density = 'extreme';
+      else density = 'moderate';
       const metersPerHour = Number(row.metersPerHour || row['mperhour'] || row['m per hour'] || 0);
       const costPerHour = Number(row.costPerHour || row['$perhour'] || row['$ per hour'] || 0) || undefined;
 
-      return {
-        slopeMax,
-        density: (density as any) || 'moderate',
-        metersPerHour,
-        costPerHour
-      };
+      return { slopeMax, density, metersPerHour, costPerHour };
     }).sort((a,b) => a.slopeMax - b.slopeMax);
 
     // default clearingRate is best-case (max metersPerHour)

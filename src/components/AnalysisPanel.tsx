@@ -78,10 +78,10 @@ const calculateHandCrewTime = (
  */
 const isCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
-  terrain: TerrainType,
+  requiredTerrain: TerrainType,
   vegetation: VegetationType
 ): boolean => {
-  return equipment.allowedTerrain.includes(terrain) && 
+  return equipment.allowedTerrain.includes(requiredTerrain) &&
          equipment.allowedVegetation.includes(vegetation);
 };
 
@@ -130,6 +130,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     extreme: 2.5
   };
 
+  // Map max slope to a minimum terrain class requirement
+  const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
+    if (!trackAnalysis) return null;
+    const maxSlope = trackAnalysis.maxSlope;
+    if (maxSlope <= 10) return 'easy';
+    if (maxSlope <= 20) return 'moderate';
+    if (maxSlope <= 30) return 'difficult';
+    return 'extreme';
+  }, [trackAnalysis]);
+
   const calculations = useMemo(() => {
     if (!distance) return [];
 
@@ -138,8 +148,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const vegetationFactor = vegetationFactors[vegetation];
 
     // Calculate machinery results
+    const requiredTerrain = derivedTerrainRequirement || terrain; // fallback to user selection if no analysis
     machinery.forEach(machine => {
-      const compatible = isCompatible(machine, terrain, vegetation);
+      const compatible = isCompatible(machine, requiredTerrain, vegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
       
@@ -162,7 +173,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate aircraft results
     aircraft.forEach(plane => {
-      const compatible = isCompatible(plane, terrain, vegetation);
+      const compatible = isCompatible(plane, requiredTerrain, vegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -181,7 +192,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate hand crew results
     handCrews.forEach(crew => {
-      const compatible = isCompatible(crew, terrain, vegetation);
+      const compatible = isCompatible(crew, requiredTerrain, vegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 

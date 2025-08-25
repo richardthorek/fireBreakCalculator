@@ -108,6 +108,8 @@ export interface SlopeSegment {
   start: [number, number];
   /** End point coordinates [lat, lng] */
   end: [number, number];
+  /** Full ordered coordinate path for this segment (includes all intermediate interpolated/user points) */
+  coords?: [number, number][];
   /** Slope angle in degrees */
   slope: number;
   /** Slope category */
