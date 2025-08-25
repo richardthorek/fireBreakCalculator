@@ -48,6 +48,13 @@ const InlineEditComponent: React.FC<{
         <>
           <label className="visually-hidden" htmlFor={`drop-${item.id}`}>Drop length</label>
           <input id={`drop-${item.id}`} aria-label="Drop length" type="number" className="eq-small" placeholder="Drop m" value={(form as any).dropLength ?? ''} onChange={e => setForm({ ...(form as any), dropLength: Number(e.target.value) } as EquipmentApi)} />
+          <label className="visually-hidden" htmlFor={`turn-${item.id}`}>Turnaround (minutes)</label>
+          <input id={`turn-${item.id}`} aria-label="Turnaround minutes" type="number" className="eq-small" placeholder="Turn (m)" value={(form as any).turnaroundMinutes ?? ''} onChange={e => setForm({ ...(form as any), turnaroundMinutes: Number(e.target.value) } as EquipmentApi)} />
+          {(form as any).turnaroundMinutes && (form as any).dropLength ? (
+            <div className="cycle-hint" aria-hidden>
+              <small>Est cycle: {(form as any).turnaroundMinutes} min turnaround between drops.</small>
+            </div>
+          ) : null}
         </>
       )}
       {item.type === 'HandCrew' && (
@@ -132,6 +139,8 @@ const EquipmentListComponent: React.FC<{
             <>
               <label className="visually-hidden" htmlFor="draft-drop">Drop m</label>
               <input id="draft-drop" type="number" className="eq-small" placeholder="Drop m" value={draft.dropLength ?? ''} onChange={e => setDraft({ ...draft, dropLength: Number(e.target.value) })} />
+                  <label className="visually-hidden" htmlFor="draft-turn">Turnaround minutes</label>
+                  <input id="draft-turn" type="number" className="eq-small" placeholder="Turn (m)" value={draft.turnaroundMinutes ?? ''} onChange={e => setDraft({ ...draft, turnaroundMinutes: Number(e.target.value) })} />
             </>
           )}
           {activeTab === 'HandCrew' && (
@@ -169,7 +178,12 @@ const EquipmentListComponent: React.FC<{
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
             <div className="eq-name text" title={item.name}>{item.name}</div>
             {item.type === 'Machinery' && <div className="eq-small text">{(item as any).clearingRate || '-'} m/h</div>}
-            {item.type === 'Aircraft' && <div className="eq-small text">{(item as any).dropLength || '-'} m</div>}
+            {item.type === 'Aircraft' && (
+              <div className="eq-small text" title={`Turnaround ${(item as any).turnaroundMinutes ?? '-'} min`}>
+                {(item as any).dropLength || '-'} m
+                {(item as any).turnaroundMinutes ? <span className="inline-sub"> / {(item as any).turnaroundMinutes}m</span> : null}
+              </div>
+            )}
             {item.type === 'HandCrew' && <div className="eq-small text">{(item as any).crewSize || '-'} / {(item as any).clearingRatePerPerson || '-'} </div>}
             <div className="eq-small text">{item.costPerHour ? `$${item.costPerHour}` : '-'}</div>
             <div className="eq-tags readonly">
@@ -216,11 +230,12 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
     }
   };
   const terrainExample = (t: string) => {
+    // Updated to reflect standardized slope bands: 0–10, 10–20, 20–30, 30°+
     switch (t) {
-      case 'easy': return '0–5° — flat or gentle slopes (e.g. paddock, grass)';
-      case 'moderate': return '5–15° — rolling hills, light obstacles';
-      case 'difficult': return '15–30° — steep slopes, rocky or dense scrub';
-      case 'extreme': return '>30° — very steep / technical / impassable terrain';
+      case 'easy': return '0–10° — flat or gentle slopes (paddock, grass)';
+      case 'moderate': return '10–20° — rolling hills, light obstacles';
+      case 'difficult': return '20–30° — steep slopes, rocky or dense scrub';
+      case 'extreme': return '30°+ — very steep / technical terrain';
       default: return '';
     }
   };
@@ -300,7 +315,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
 
       {/* Single top-level guide for the visible tab to avoid repeating helpers in every row */}
       <div className="tab-guide" aria-hidden>
-        <div className="guide-line"><strong>Slope guide:</strong> 0–5° (Easy), 5–15° (Moderate), 15–30° (Difficult), &gt;30° (Extreme)</div>
+  <div className="guide-line"><strong>Slope guide:</strong> 0–10° (Easy), 10–20° (Moderate), 20–30° (Difficult), &gt;=30° (Extreme)</div>
         <div className="guide-line"><strong>Vegetation examples:</strong> Grassland · Light shrub · Medium scrub · Heavy timber</div>
         <div className="guide-line"><small className="muted">Tip: click tags to toggle terrain/vegetation inclusion for each equipment item.</small></div>
       </div>

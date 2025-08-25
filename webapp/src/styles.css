@@ -302,8 +302,8 @@ html, body, #root, .app-shell {
 .equip-list { display:flex; flex-direction:column; gap:4px; }
 .equip-row {
   display: grid;
-  /* flexible first column for name, then compact cols for numeric/type fields, and actions at end */
-  grid-template-columns: 1fr repeat(5, minmax(80px, 140px)) 120px;
+  /* Name | dynamic numeric fields (up to 6) | terrain tags | vegetation tags | actions */
+  grid-template-columns: minmax(140px, 1.2fr) repeat(4, minmax(70px, 110px)) minmax(70px,110px) minmax(120px, 1fr) minmax(120px, 1fr) 90px;
   gap: 6px;
   padding: 6px 8px;
   background: #1d2732;
@@ -323,6 +323,8 @@ html, body, #root, .app-shell {
 .tag { background:#2b3b4a; border:none; color:#bcd0e0; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:11px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tag.on { background:#0d6efd; color:#fff; }
 .tag.mini { cursor:default; }
+.inline-sub { font-size:10px; opacity:0.75; margin-left:4px; }
+.cycle-hint { grid-column: 1 / -1; font-size:11px; color:#8aa9bf; margin-top:2px; }
 .eq-actions { display:flex; gap:4px; justify-content:flex-end; }
 .btn { background:#2e3c4b; border:1px solid #3c4c5d; color:#d0d8e0; padding:4px 8px; font-size:12px; border-radius:4px; cursor:pointer; }
 .btn:hover:not(:disabled) { background:#375168; }
@@ -571,7 +573,7 @@ html, body, #root, .app-shell {
 /* Ensure proper touch targets for mobile */
 @media (max-width: 768px) {
   .leaflet-draw-toolbar a {
-    width: 44px !important;
+  .equip-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
     height: 44px !important;
     line-height: 44px !important;
   }

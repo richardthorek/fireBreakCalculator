@@ -91,9 +91,17 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
     // derive allowedTerrain and allowedVegetation from performance rows
     const maxSlope = Math.max(...performances.map(p => p.slopeMax));
     const allowedTerrain: MachinerySpec['allowedTerrain'] = [];
-    if (maxSlope <= 10) allowedTerrain.push('easy','moderate');
-    else if (maxSlope <= 20) allowedTerrain.push('easy','moderate','difficult');
-    else allowedTerrain.push('easy','moderate','difficult','extreme');
+    // Use < thresholds to mirror deriveTerrainFromSlope & category boundaries:
+    // <10 easy, <20 moderate, <30 difficult, >=30 extreme (add cumulative list)
+    if (maxSlope < 10) {
+      allowedTerrain.push('easy');
+    } else if (maxSlope < 20) {
+      allowedTerrain.push('easy','moderate');
+    } else if (maxSlope < 30) {
+      allowedTerrain.push('easy','moderate','difficult');
+    } else {
+      allowedTerrain.push('easy','moderate','difficult','extreme');
+    }
 
   const densities = new Set(performances.map(p => p.density));
   const allowedVegetation: MachinerySpec['allowedVegetation'] = [];

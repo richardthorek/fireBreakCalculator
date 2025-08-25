@@ -38,9 +38,13 @@ export function classifySlope(angleDeg: number, defs: SlopeCategoryDefinition[] 
 
 /** Derive minimum terrain requirement from maximum slope */
 export function deriveTerrainFromSlope(maxSlope: number): TerrainLevel {
-  if (maxSlope <= 10) return 'easy';
-  if (maxSlope <= 20) return 'moderate';
-  if (maxSlope <= 30) return 'difficult';
+  // Align boundaries with displayed slope bands:
+  // Flat: 0–10°, Medium: 10–20°, Steep: 20–30°, Very Steep: 30°+
+  // classifySlope treats max exclusive; a value exactly 10 becomes medium.
+  // For overall maxSlope we treat <10 as easy, <20 as moderate, <30 as difficult, else extreme.
+  if (maxSlope < 10) return 'easy';
+  if (maxSlope < 20) return 'moderate';
+  if (maxSlope < 30) return 'difficult';
   return 'extreme';
 }
 
