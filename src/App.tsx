@@ -3,7 +3,7 @@ import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
-import { MachinerySpec, AircraftSpec, HandCrewSpec } from './types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from './types/config';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -12,6 +12,7 @@ import { MachinerySpec, AircraftSpec, HandCrewSpec } from './types/config';
  */
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   
   // State for configurable equipment
   const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
@@ -26,11 +27,15 @@ const App: React.FC = () => {
       </header>
       <main className="app-main">
         <div className="map-section">
-          <MapView onDistanceChange={setFireBreakDistance} />
+          <MapView 
+            onDistanceChange={setFireBreakDistance} 
+            onTrackAnalysisChange={setTrackAnalysis}
+          />
         </div>
         <div className="analysis-section">
           <AnalysisPanel 
             distance={fireBreakDistance}
+            trackAnalysis={trackAnalysis}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}

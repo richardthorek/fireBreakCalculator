@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
+import { TrackAnalysis } from '../types/config';
+import { analyzeTrackSlopes, getSlopeColor } from '../utils/slopeCalculation';
 
 // Default map center (latitude, longitude) & zoom. Centered on New South Wales, Australia.
 // This center (~ -32, 147) and zoom ~6 gives a state-level view of NSW.
@@ -17,14 +19,18 @@ const DEFAULT_ZOOM = 6;
 
 interface MapViewProps {
   onDistanceChange: (distance: number | null) => void;
+  onTrackAnalysisChange?: (analysis: TrackAnalysis | null) => void;
 }
 
-export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
+export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+  const slopeLayersRef = useRef<L.LayerGroup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -70,6 +76,11 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
     map.addLayer(drawnItems);
     drawnItemsRef.current = drawnItems;
 
+    // Initialize slope visualization layer
+    const slopeLayer = new L.LayerGroup();
+    map.addLayer(slopeLayer);
+    slopeLayersRef.current = slopeLayer;
+
     // Configure drawing controls - only allow polylines for fire breaks
     const drawControl = new L.Control.Draw({
       position: 'topright',
@@ -103,8 +114,58 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
     });
     map.addControl(drawControl);
 
+    // Function to analyze track and visualize slopes
+    const analyzeAndVisualizeBranchSlopes = async (latlngs: LatLng[]) => {
+      setIsAnalyzing(true);
+      
+      try {
+        // Clear existing slope visualization
+        if (slopeLayersRef.current) {
+          slopeLayersRef.current.clearLayers();
+        }
+        
+        // Perform slope analysis
+        const analysis = await analyzeTrackSlopes(latlngs);
+        setTrackAnalysis(analysis);
+        onTrackAnalysisChange?.(analysis);
+        
+        // Visualize slope segments
+        analysis.segments.forEach((segment) => {
+          const color = getSlopeColor(segment.category);
+          const line = L.polyline(
+            [segment.start, segment.end],
+            {
+              color,
+              weight: 6,
+              opacity: 0.8
+            }
+          );
+          
+          // Add popup with slope information
+          line.bindPopup(`
+            <div>
+              <strong>Slope Segment</strong><br/>
+              Slope: ${segment.slope.toFixed(1)}° (${segment.category.replace('_', ' ')})<br/>
+              Distance: ${segment.distance.toFixed(0)}m<br/>
+              Elevation change: ${Math.abs(segment.endElevation - segment.startElevation).toFixed(1)}m
+            </div>
+          `);
+          
+          if (slopeLayersRef.current) {
+            slopeLayersRef.current.addLayer(line);
+          }
+        });
+        
+      } catch (error) {
+        console.error('Error analyzing track slopes:', error);
+        setError('Failed to analyze track slopes');
+      } finally {
+        setIsAnalyzing(false);
+      }
+    };
+
     // Handle drawing events for fire break calculation
-    map.on(L.Draw.Event.CREATED, (event: any) => {
+    map.on(L.Draw.Event.CREATED, async (event: any) => {
       const layer = event.layer;
       drawnItems.addLayer(layer);
       
@@ -120,15 +181,34 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
         setFireBreakDistance(Math.round(totalDistance));
         onDistanceChange(Math.round(totalDistance));
         
-        // Add popup with distance info
-        layer.bindPopup(`Fire Break Distance: ${Math.round(totalDistance)} meters`).openPopup();
+        // Analyze slopes and add visualization
+        await analyzeAndVisualizeBranchSlopes(latlngs);
+        
+        // Add popup with comprehensive info
+        const analysis = trackAnalysis;
+        const popupContent = analysis ? `
+          <div>
+            <strong>Fire Break Analysis</strong><br/>
+            Distance: ${Math.round(totalDistance)}m<br/>
+            Max Slope: ${analysis.maxSlope.toFixed(1)}°<br/>
+            Avg Slope: ${analysis.averageSlope.toFixed(1)}°<br/>
+            <br/>
+            <strong>Slope Distribution:</strong><br/>
+            Flat (0-10°): ${analysis.slopeDistribution.flat} segments<br/>
+            Medium (10-20°): ${analysis.slopeDistribution.medium} segments<br/>
+            Steep (20-30°): ${analysis.slopeDistribution.steep} segments<br/>
+            Very Steep (30°+): ${analysis.slopeDistribution.very_steep} segments
+          </div>
+        ` : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
+        
+        layer.bindPopup(popupContent).openPopup();
       }
     });
 
     // Handle editing events
-    map.on(L.Draw.Event.EDITED, (event: any) => {
+    map.on(L.Draw.Event.EDITED, async (event: any) => {
       const layers = event.layers;
-      layers.eachLayer((layer: any) => {
+      layers.eachLayer(async (layer: any) => {
         if (layer instanceof L.Polyline) {
           const latlngs = layer.getLatLngs() as LatLng[];
           let totalDistance = 0;
@@ -139,7 +219,28 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
           
           setFireBreakDistance(Math.round(totalDistance));
           onDistanceChange(Math.round(totalDistance));
-          layer.setPopupContent(`Fire Break Distance: ${Math.round(totalDistance)} meters`);
+          
+          // Re-analyze slopes after editing
+          await analyzeAndVisualizeBranchSlopes(latlngs);
+          
+          // Update popup with new analysis
+          const analysis = trackAnalysis;
+          const popupContent = analysis ? `
+            <div>
+              <strong>Fire Break Analysis</strong><br/>
+              Distance: ${Math.round(totalDistance)}m<br/>
+              Max Slope: ${analysis.maxSlope.toFixed(1)}°<br/>
+              Avg Slope: ${analysis.averageSlope.toFixed(1)}°<br/>
+              <br/>
+              <strong>Slope Distribution:</strong><br/>
+              Flat (0-10°): ${analysis.slopeDistribution.flat} segments<br/>
+              Medium (10-20°): ${analysis.slopeDistribution.medium} segments<br/>
+              Steep (20-30°): ${analysis.slopeDistribution.steep} segments<br/>
+              Very Steep (30°+): ${analysis.slopeDistribution.very_steep} segments
+            </div>
+          ` : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
+          
+          layer.setPopupContent(popupContent);
         }
       });
     });
@@ -149,6 +250,13 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
       if (drawnItems.getLayers().length === 0) {
         setFireBreakDistance(null);
         onDistanceChange(null);
+        setTrackAnalysis(null);
+        onTrackAnalysisChange?.(null);
+        
+        // Clear slope visualization
+        if (slopeLayersRef.current) {
+          slopeLayersRef.current.clearLayers();
+        }
       }
     });
 
@@ -164,6 +272,13 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
       {fireBreakDistance && (
         <div className="map-info">
           <strong>Fire Break Distance:</strong> {fireBreakDistance.toLocaleString()} meters
+          {isAnalyzing && <div className="analysis-loading">Analyzing slopes...</div>}
+          {trackAnalysis && (
+            <div className="slope-summary">
+              <strong>Slope Analysis:</strong> Max {trackAnalysis.maxSlope.toFixed(1)}°, 
+              Avg {trackAnalysis.averageSlope.toFixed(1)}°
+            </div>
+          )}
         </div>
       )}
       <div ref={mapContainerRef} className="map-container" aria-label="Fire break planning map" />

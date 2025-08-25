@@ -5,11 +5,13 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { MachinerySpec, AircraftSpec, HandCrewSpec } from '../types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from '../types/config';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
   distance: number | null;
+  /** Track analysis data including slope information */
+  trackAnalysis: TrackAnalysis | null;
   /** Available machinery options */
   machinery: MachinerySpec[];
   /** Available aircraft options */
@@ -28,6 +30,8 @@ interface CalculationResult {
   time: number; // hours for machinery/handCrew, total drops for aircraft
   cost: number;
   compatible: boolean;
+  slopeCompatible?: boolean; // Whether equipment can handle the slope
+  maxSlopeExceeded?: number; // Max slope encountered if exceeded
   unit: string;
   description?: string;
 }
@@ -81,8 +85,28 @@ const isCompatible = (
          equipment.allowedVegetation.includes(vegetation);
 };
 
+/**
+ * Check if machinery is compatible with the slope requirements
+ */
+const isSlopeCompatible = (
+  machinery: MachinerySpec,
+  maxSlope: number
+): { compatible: boolean; maxSlopeExceeded?: number } => {
+  if (machinery.maxSlope === undefined) {
+    // If no slope limit is defined, assume it can handle any slope
+    return { compatible: true };
+  }
+  
+  const compatible = maxSlope <= machinery.maxSlope;
+  return {
+    compatible,
+    maxSlopeExceeded: compatible ? undefined : maxSlope
+  };
+};
+
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
+  trackAnalysis,
   machinery,
   aircraft,
   handCrews
@@ -116,8 +140,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // Calculate machinery results
     machinery.forEach(machine => {
       const compatible = isCompatible(machine, terrain, vegetation);
-      const time = compatible ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
-      const cost = compatible && machine.costPerHour ? time * machine.costPerHour : 0;
+      const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
+      const fullCompatibility = compatible && slopeCheck.compatible;
+      
+      const time = fullCompatibility ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
+      const cost = fullCompatibility && machine.costPerHour ? time * machine.costPerHour : 0;
 
       results.push({
         id: machine.id,
@@ -125,7 +152,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         type: 'machinery',
         time,
         cost,
-        compatible,
+        compatible: fullCompatibility,
+        slopeCompatible: slopeCheck.compatible,
+        maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         unit: 'hours',
         description: machine.description
       });
@@ -183,7 +212,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return aTime - bTime;
     });
-  }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
+  }, [distance, trackAnalysis, terrain, vegetation, machinery, aircraft, handCrews]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -200,9 +229,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     <div className="analysis-panel-permanent">
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
-        {distance && (
-          <span className="distance-display">{distance.toLocaleString()}m</span>
-        )}
+        <div className="header-info">
+          {distance && (
+            <span className="distance-display">{distance.toLocaleString()}m</span>
+          )}
+          {trackAnalysis && (
+            <span className="slope-display">
+              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
+            </span>
+          )}
+        </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
         </button>
@@ -239,6 +275,40 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </label>
           </div>
         </div>
+
+        {/* Slope Analysis Information - When track analysis is available */}
+        {trackAnalysis && (
+          <div className="slope-analysis-section">
+            <h4>Slope Analysis</h4>
+            <div className="slope-summary">
+              <div className="slope-stats">
+                <span>Max: {trackAnalysis.maxSlope.toFixed(1)}°</span>
+                <span>Avg: {trackAnalysis.averageSlope.toFixed(1)}°</span>
+                <span>Segments: {trackAnalysis.segments.length}</span>
+              </div>
+              {isExpanded && (
+                <div className="slope-distribution">
+                  <div className="slope-category flat">
+                    <span>Flat (0-10°):</span>
+                    <span>{trackAnalysis.slopeDistribution.flat}</span>
+                  </div>
+                  <div className="slope-category medium">
+                    <span>Medium (10-20°):</span>
+                    <span>{trackAnalysis.slopeDistribution.medium}</span>
+                  </div>
+                  <div className="slope-category steep">
+                    <span>Steep (20-30°):</span>
+                    <span>{trackAnalysis.slopeDistribution.steep}</span>
+                  </div>
+                  <div className="slope-category very-steep">
+                    <span>Very Steep (30°+):</span>
+                    <span>{trackAnalysis.slopeDistribution.very_steep}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {!distance ? (
           <div className="no-line-message">
@@ -337,7 +407,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                         {result.compatible ? (
                           <span className="compatible">✓ Compatible</span>
                         ) : (
-                          <span className="incompatible-status">✗ Incompatible</span>
+                          <div className="incompatible-details">
+                            <span className="incompatible-status">✗ Incompatible</span>
+                            {result.slopeCompatible === false && result.maxSlopeExceeded && (
+                              <span className="slope-warning">
+                                Max slope {result.maxSlopeExceeded.toFixed(1)}° exceeds limit
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

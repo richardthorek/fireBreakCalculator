@@ -22,7 +22,8 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 180,
           description: 'Medium dozer suitable for most terrain types',
           allowedTerrain: ['easy', 'moderate', 'difficult'],
-          allowedVegetation: ['light', 'moderate', 'heavy']
+          allowedVegetation: ['light', 'moderate', 'heavy'],
+          maxSlope: 25 // Maximum slope capability in degrees
         },
         {
           id: 'dozer-d8',
@@ -32,7 +33,8 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 250,
           description: 'Heavy dozer for difficult terrain and heavy vegetation',
           allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
-          allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
+          allowedVegetation: ['light', 'moderate', 'heavy', 'extreme'],
+          maxSlope: 35 // Maximum slope capability in degrees
         },
         {
           id: 'grader-140m',
@@ -42,7 +44,8 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 120,
           description: 'Motor grader for maintaining existing trails and light clearing',
           allowedTerrain: ['easy', 'moderate'],
-          allowedVegetation: ['light']
+          allowedVegetation: ['light'],
+          maxSlope: 15 // Maximum slope capability in degrees
         },
         {
           id: 'dozer-d4',
@@ -52,7 +55,8 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 140,
           description: 'Light dozer for sensitive areas and narrow fire breaks',
           allowedTerrain: ['easy', 'moderate', 'difficult'],
-          allowedVegetation: ['light', 'moderate']
+          allowedVegetation: ['light', 'moderate'],
+          maxSlope: 20 // Maximum slope capability in degrees
         }
       ],
 

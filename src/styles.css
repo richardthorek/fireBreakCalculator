@@ -788,3 +788,97 @@ html, body, #root, .app-shell {
 .cancel-button:hover {
   background: rgba(107,114,128,0.3);
 }
+
+/* Slope Analysis Styles */
+.header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.slope-display {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.analysis-loading {
+  color: #ff6b35;
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.slope-summary {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.slope-analysis-section {
+  background: rgba(30,36,51,0.4);
+  padding: 1rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.slope-analysis-section h4 {
+  color: #e1e7ef;
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+}
+
+.slope-stats {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.slope-stats span {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.slope-distribution {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.slope-category {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.slope-category.flat {
+  background: rgba(0,255,0,0.1);
+  color: #4ade80;
+}
+
+.slope-category.medium {
+  background: rgba(255,255,0,0.1);
+  color: #fbbf24;
+}
+
+.slope-category.steep {
+  background: rgba(255,136,0,0.1);
+  color: #f97316;
+}
+
+.slope-category.very-steep {
+  background: rgba(255,0,0,0.1);
+  color: #ef4444;
+}
+
+.incompatible-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.slope-warning {
+  color: #f97316;
+  font-size: 0.75rem;
+  font-style: italic;
+}
