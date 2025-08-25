@@ -9,6 +9,8 @@
  * We query attributes: vegForm, vegClass, PCTName
  */
 
+import { logger } from './logger';
+
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
 const FEATURE_LAYER_ID = 3;
 
@@ -102,7 +104,7 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
-      console.warn('NSW vegetation query HTTP', resp.status, resp.statusText);
+      logger.warn('NSW vegetation query HTTP', resp.status, resp.statusText);
       cache[key] = null; return null;
     }
     const json = await resp.json();
@@ -113,7 +115,7 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
     cache[key] = mapped;
     return mapped;
   } catch (e) {
-    console.warn('NSW vegetation query failed', e);
+    logger.warn('NSW vegetation query failed', e);
     cache[key] = null; return null;
   }
 }
