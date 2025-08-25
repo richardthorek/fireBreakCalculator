@@ -183,5 +183,61 @@ For technical support, training, or feature requests, contact your local Rural F
 
 ---
 
-*Last updated: December 2024*
-*Version: 1.0*
+*Last updated: August 2025*
+*Version: 1.1*
+
+## Equipment Management (API)
+
+Administrators (or authorized users) can manage the equipment catalogue via the backing Azure Functions API.
+
+### Endpoints
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/equipment` | List all equipment |
+| GET | `/api/equipment?type=Machinery` | Filter list by type (`Machinery|Aircraft|HandCrew`) |
+| POST | `/api/equipment` | Create a new item |
+| PUT/PATCH | `/api/equipment/{type}/{id}` | Update existing item (optimistic version check) |
+| DELETE | `/api/equipment/{type}/{id}` | Remove an item |
+
+### Create Payload Examples
+Machinery:
+```json
+{
+   "type": "Machinery",
+   "name": "Caterpillar D6",
+   "allowedTerrain": ["easy","moderate","difficult"],
+   "allowedVegetation": ["grassland","lightshrub","mediumscrub"],
+   "clearingRate": 180,
+   "costPerHour": 450,
+   "maxSlope": 25,
+   "cutWidthMeters": 4
+}
+```
+Aircraft:
+```json
+{
+   "type": "Aircraft",
+   "name": "Air Tractor AT-802F",
+   "dropLength": 300,
+   "turnaroundMinutes": 12,
+   "capacityLitres": 3000,
+   "costPerDrop": 950
+}
+```
+Hand Crew:
+```json
+{
+   "type": "HandCrew",
+   "name": "Heavy Clearing Crew",
+   "crewSize": 10,
+   "clearingRatePerPerson": 18,
+   "equipmentList": ["chainsaws","brushcutters"],
+   "costPerHour": 1200
+}
+```
+
+### Versioning / Concurrency
+Every update increments an integer `version`. Supply the current `version` in your update payload; if it has changed on the server a `409` is returned so clients can re-fetch and reconcile.
+
+### Permissions
+Current implementation exposes anonymous endpoints for prototyping. Production deployments SHOULD enforce authentication & authorization (e.g. Azure Entra ID + APIM / Function auth).
