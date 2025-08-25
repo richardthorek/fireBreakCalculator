@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import * as React from 'react';
+import { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
@@ -118,6 +119,10 @@ export const MapView: React.FC<MapViewProps> = ({
   const dropMarkersRef = useRef<L.LayerGroup | null>(null);
   const dropMarkerGroupsRef = useRef<Map<string, L.LayerGroup>>(new Map());
   const [dropsVersion, setDropsVersion] = useState(0); // bump when geometry changes
+  // Mobile / touch guidance hint state
+  const [showTouchHint, setShowTouchHint] = useState(() => {
+    try { return isTouchDevice(); } catch { return false; }
+  });
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -235,16 +240,16 @@ export const MapView: React.FC<MapViewProps> = ({
     }, 100);
 
     // Add drawing event handlers for improved touch device support
-    map.on(L.Draw.Event.DRAWSTART, (event: any) => {
+    map.on(L.Draw.Event.DRAWSTART, (event: L.LeafletEvent) => {
       setIsDrawing(true);
     });
 
-    map.on(L.Draw.Event.DRAWSTOP, (event: any) => {
+    map.on(L.Draw.Event.DRAWSTOP, (event: L.LeafletEvent) => {
       setIsDrawing(false);
       setCurrentDrawingLayer(null);
     });
 
-    map.on(L.Draw.Event.DRAWVERTEX, (event: any) => {
+  map.on(L.Draw.Event.DRAWVERTEX, (event: any) => {
       // Update the current drawing layer when vertices are added
       if (event.layers) {
         const layer = event.layers.getLayers()[0];
@@ -348,10 +353,10 @@ export const MapView: React.FC<MapViewProps> = ({
         addVertexMarkers(poly);
         (async () => {
           const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
-          if (analysis) {
+            if (analysis) {
             setFireBreakDistance(Math.round(analysis.totalDistance));
             onDistanceChange(Math.round(analysis.totalDistance));
-            setDropsVersion(v => v + 1);
+            setDropsVersion((v: number) => v + 1);
           }
         })();
       });
@@ -377,10 +382,10 @@ export const MapView: React.FC<MapViewProps> = ({
             let total = 0; for (let i = 0; i < pts.length - 1; i++) total += calculateDistance(pts[i].lat, pts[i].lng, pts[i + 1].lat, pts[i + 1].lng);
             setFireBreakDistance(Math.round(total)); onDistanceChange(Math.round(total));
             const analysis = await analyzeAndVisualizeBranchSlopes(pts);
-            if (analysis) { poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup(); setDropsVersion(v => v + 1); }
+            if (analysis) { poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup(); setDropsVersion((v: number) => v + 1); }
             removeVertexMarkers(poly); addVertexMarkers(poly);
         });
-        markers.push(vertexMarker);
+  markers.push(vertexMarker);
         if (idx < latlngs.length - 1) {
           const a = latlngs[idx]; const b = latlngs[idx + 1];
           const mid = new LatLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
@@ -398,7 +403,7 @@ export const MapView: React.FC<MapViewProps> = ({
               let total = 0; for (let i = 0; i < pts.length - 1; i++) total += calculateDistance(pts[i].lat, pts[i].lng, pts[i + 1].lat, pts[i + 1].lng);
               setFireBreakDistance(Math.round(total)); onDistanceChange(Math.round(total));
               const analysis = await analyzeAndVisualizeBranchSlopes(pts);
-              if (analysis) { poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup(); setDropsVersion(v => v + 1); }
+              if (analysis) { poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup(); setDropsVersion((v: number) => v + 1); }
             });
           })(idx);
           markers.push(midMarker);
@@ -410,7 +415,7 @@ export const MapView: React.FC<MapViewProps> = ({
     const removeVertexMarkers = (poly: L.Polyline) => {
       const id = (poly as any)._leaflet_id as number;
       const existing = vertexMarkersRef.current.get(id);
-      if (existing) { existing.forEach(m => m.remove()); vertexMarkersRef.current.delete(id); }
+  if (existing) { existing.forEach((m: L.Marker) => m.remove()); vertexMarkersRef.current.delete(id); }
     };
 
     // Drawing created
@@ -425,7 +430,7 @@ export const MapView: React.FC<MapViewProps> = ({
         const popupContent = analysis ? buildAnalysisPopupHTML(analysis, vegetationAnalysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
         layer.bindPopup(popupContent).openPopup();
         addVertexMarkers(layer);
-        setDropsVersion(v => v + 1);
+  setDropsVersion((v: number) => v + 1);
       }
     });
 
@@ -441,7 +446,7 @@ export const MapView: React.FC<MapViewProps> = ({
           const popupContent = analysis ? buildAnalysisPopupHTML(analysis, vegetationAnalysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
           layer.setPopupContent(popupContent);
           removeVertexMarkers(layer); addVertexMarkers(layer);
-          setDropsVersion(v => v + 1);
+          setDropsVersion((v: number) => v + 1);
         }
       });
     });
@@ -461,10 +466,10 @@ export const MapView: React.FC<MapViewProps> = ({
           slopeLayersRef.current.clearLayers();
         }
         // Clear vertex markers map
-        vertexMarkersRef.current.forEach((markers) => markers.forEach(m => m.remove()));
+  vertexMarkersRef.current.forEach((markers: L.Marker[]) => markers.forEach((m: L.Marker) => m.remove()));
         vertexMarkersRef.current.clear();
       }
-      setDropsVersion(v => v + 1);
+  setDropsVersion((v: number) => v + 1);
     });
 
     // Cleanup on unmount
@@ -571,6 +576,19 @@ export const MapView: React.FC<MapViewProps> = ({
           >
             ✓ Finish Line
           </button>
+          {showTouchHint && isTouchDevice() && (
+            <div className="touch-drawing-hint" role="note" aria-live="assertive">
+              <div className="touch-drawing-hint-text">
+                <strong>Touch drawing:</strong> Long press (≈1s) to add a point. A single quick tap will finish the line.
+              </div>
+              <button
+                type="button"
+                className="touch-drawing-hint-dismiss"
+                aria-label="Dismiss touch drawing hint"
+                onClick={() => setShowTouchHint(false)}
+              >×</button>
+            </div>
+          )}
         </div>
       )}
       {/* {fireBreakDistance && (

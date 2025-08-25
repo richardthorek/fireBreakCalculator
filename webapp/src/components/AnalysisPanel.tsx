@@ -148,7 +148,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   handCrews,
   onDropPreviewChange,
   selectedAircraftForPreview: externalSelected = []
-}) => {
+}: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [useAutoDetected, setUseAutoDetected] = useState(true);
@@ -168,7 +168,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
     const updatedSelection = enabled
       ? Array.from(new Set([...selectedAircraftForPreview, aircraftId]))
-      : selectedAircraftForPreview.filter(id => id !== aircraftId);
+      : selectedAircraftForPreview.filter((id: string) => id !== aircraftId);
     setSelectedAircraftForPreview(updatedSelection);
     onDropPreviewChange?.(updatedSelection);
   };
@@ -194,8 +194,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
   }, [trackAnalysis]);
 
-  const calculations = useMemo(() => {
-    if (!distance) return [];
+  const calculations = useMemo<CalculationResult[]>(() => {
+    if (!distance) return [] as CalculationResult[];
 
     const results: CalculationResult[] = [];
     const effectiveTerrain = derivedTerrainRequirement || 'easy';
@@ -204,7 +204,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const requiredTerrain = effectiveTerrain;
 
     // Machinery
-    machinery.forEach(machine => {
+  machinery.forEach((machine: MachinerySpec) => {
       const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
@@ -227,7 +227,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     // Aircraft
-    aircraft.forEach(plane => {
+  aircraft.forEach((plane: AircraftSpec) => {
       const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
@@ -247,7 +247,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     // Hand Crews
-    handCrews.forEach(crew => {
+  handCrews.forEach((crew: HandCrewSpec) => {
       const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const costVal = compatible && (crew as any).costPerHour ? time * (crew as any).costPerHour : 0;
@@ -280,7 +280,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
-    const compatibleResults = calculations.filter(result => result.compatible);
+    const compatibleResults = calculations.filter((result: CalculationResult) => result.compatible);
     
     return {
       machinery: compatibleResults.find(result => result.type === 'machinery'),
@@ -292,9 +292,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   // Initialize / reconcile selected quick options when calculations change
   useMemo(() => {
     if (calculations.length === 0) return null;
-    const machList = calculations.filter(c => c.type === 'machinery' && c.compatible);
-    const airList = calculations.filter(c => c.type === 'aircraft' && c.compatible);
-    const handList = calculations.filter(c => c.type === 'handCrew' && c.compatible);
+  const machList = calculations.filter((c: CalculationResult) => c.type === 'machinery' && c.compatible);
+  const airList = calculations.filter((c: CalculationResult) => c.type === 'aircraft' && c.compatible);
+  const handList = calculations.filter((c: CalculationResult) => c.type === 'handCrew' && c.compatible);
     if ((!selectedQuickMachinery || !machList.some(m => m.id === selectedQuickMachinery)) && machList.length) {
       setSelectedQuickMachinery(machList[0].id);
     }
@@ -335,50 +335,55 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </button>
       </div>
       <div className="analysis-content" id="analysis-content">
-        <div className="conditions-section">
-          <div className="conditions-group">
-            <label htmlFor="vegetation-toggle">Vegetation Type</label>
-            {vegetationAnalysis && (
-              <div className="auto-detected-vegetation">
-                <div className="auto-detected-header">
-                  <span className="auto-detected-label">Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong></span>
-                  <span className="confidence-badge">{Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence</span>
+        {distance && (
+          <div className="conditions-section">
+            {vegetationAnalysis ? (
+              <div className="conditions-group">
+                <label htmlFor="vegetation-toggle">Vegetation Type</label>
+                <div className="auto-detected-vegetation">
+                  <div className="auto-detected-header">
+                    <span className="auto-detected-label">Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong></span>
+                    <span className="confidence-badge">{Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence</span>
+                  </div>
+                  <div className="vegetation-toggle">
+                    <label>
+                      <input type="checkbox" checked={useAutoDetected} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUseAutoDetected(e.target.checked)} />
+                      Use auto-detected vegetation
+                    </label>
+                  </div>
+                  <div className="vegetation-breakdown">
+                    <div className="vegetation-breakdown-title">Distribution</div>
+                    <DistributionBar
+                      categories={VEGETATION_CATEGORIES}
+                      data={vegetationAnalysis.vegetationDistribution as any}
+                      total={vegetationAnalysis.totalDistance}
+                      ariaLabel="Vegetation distribution"
+                      compact={true}
+                      showLabels={false}
+                    />
+                    <FormationSummary vegetationAnalysis={vegetationAnalysis} />
+                  </div>
                 </div>
-                <div className="vegetation-toggle">
-                  <label>
-                    <input type="checkbox" checked={useAutoDetected} onChange={e => setUseAutoDetected(e.target.checked)} />
-                    Use auto-detected vegetation
-                  </label>
-                </div>
-                <div className="vegetation-breakdown">
-                  <div className="vegetation-breakdown-title">Distribution</div>
-                  <DistributionBar
-                    categories={VEGETATION_CATEGORIES}
-                    data={vegetationAnalysis.vegetationDistribution as any}
-                    total={vegetationAnalysis.totalDistance}
-                    ariaLabel="Vegetation distribution"
-                    compact={true}
-                    showLabels={false}
-                  />
-                  {/* Subtle formation details under main categories (largest → smallest) */}
-                  <FormationSummary vegetationAnalysis={vegetationAnalysis} />
-                </div>
+                {!useAutoDetected && (
+                  <select
+                    aria-label="Select vegetation type"
+                    id="vegetation-select"
+                    value={selectedVegetation}
+                    onChange={e => setSelectedVegetation(e.target.value as VegetationType)}
+                    disabled={useAutoDetected}
+                  >
+                    {VEGETATION_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                )}
+                <div className="effective-vegetation">Using: <strong>{effectiveVegetation}</strong></div>
+              </div>
+            ) : (
+              <div className="conditions-group">
+                <div className="vegetation-loading">{isAnalyzing ? 'Analyzing vegetation…' : 'Vegetation analysis pending…'}</div>
               </div>
             )}
-            {(!vegetationAnalysis || !useAutoDetected) && (
-              <select
-                aria-label="Select vegetation type"
-                id="vegetation-select"
-                value={selectedVegetation}
-                onChange={e => setSelectedVegetation(e.target.value as VegetationType)}
-                disabled={useAutoDetected && !!vegetationAnalysis}
-              >
-                {VEGETATION_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            )}
-            <div className="effective-vegetation">Using: <strong>{effectiveVegetation}</strong></div>
           </div>
-        </div>
+        )}
         {trackAnalysis && (
           <div className="slope-analysis-section">
             <h4>Slope Analysis</h4>

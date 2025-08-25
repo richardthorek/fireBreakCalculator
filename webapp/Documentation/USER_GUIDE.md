@@ -25,6 +25,14 @@ The RFS Fire Break Calculator is a web-based tool designed to help rural firefig
 4. Double-click or click the first point again to finish the line
 5. The system automatically calculates and displays the total distance
 
+#### Mobile / Touch Devices
+On phones and tablets a single quick tap after the first point may immediately finish the line due to touch event handling in the drawing library. To add additional intermediate points:
+
+* **Press and hold (~1 second) at the location** where you want to insert the next point – this adds a vertex without finishing the line.
+* **Single quick tap** ends (finishes) the current line.
+* A dismissible on‑screen hint appears the first time you start drawing on a touch device to remind you of this behavior.
+* You can still edit the line afterwards using the edit (✎) control to adjust or add points.
+
 ### Step 2: Set Environmental Conditions
 1. **Expand the analysis panel** by clicking the header or arrow button
 2. **Select terrain difficulty:**
