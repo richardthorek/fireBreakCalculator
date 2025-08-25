@@ -5,50 +5,56 @@
  */
 
 import { FireBreakConfig } from '../types/config';
+import csvMachinery from '../utils/parseClearingRates';
+
+// Use CSV-derived machinery if available; otherwise fall back to the internal list.
+// `csvMachinery` is an array exported from the parser module.
 
 export const defaultConfig: FireBreakConfig = {
-  machinery: [
-    {
-      id: 'dozer-d6',
-      name: 'Caterpillar D6 Dozer',
-      type: 'dozer',
-      clearingRate: 1200, // meters per hour
-      costPerHour: 180,
-      description: 'Medium dozer suitable for most terrain types',
-      allowedTerrain: ['easy', 'moderate', 'difficult'],
-      allowedVegetation: ['light', 'moderate', 'heavy']
-    },
-    {
-      id: 'dozer-d8',
-      name: 'Caterpillar D8 Dozer',
-      type: 'dozer',
-      clearingRate: 1800, // meters per hour
-      costPerHour: 250,
-      description: 'Heavy dozer for difficult terrain and heavy vegetation',
-      allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
-      allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
-    },
-    {
-      id: 'grader-140m',
-      name: 'Motor Grader 140M',
-      type: 'grader',
-      clearingRate: 2500, // meters per hour
-      costPerHour: 120,
-      description: 'Motor grader for maintaining existing trails and light clearing',
-      allowedTerrain: ['easy', 'moderate'],
-      allowedVegetation: ['light']
-    },
-    {
-      id: 'dozer-d4',
-      name: 'Caterpillar D4 Dozer',
-      type: 'dozer',
-      clearingRate: 800, // meters per hour
-      costPerHour: 140,
-      description: 'Light dozer for sensitive areas and narrow fire breaks',
-      allowedTerrain: ['easy', 'moderate', 'difficult'],
-      allowedVegetation: ['light', 'moderate']
-    }
-  ],
+  machinery: csvMachinery.length
+    ? csvMachinery
+    : [
+        {
+          id: 'dozer-d6',
+          name: 'Caterpillar D6 Dozer',
+          type: 'dozer',
+          clearingRate: 1200, // meters per hour
+          costPerHour: 180,
+          description: 'Medium dozer suitable for most terrain types',
+          allowedTerrain: ['easy', 'moderate', 'difficult'],
+          allowedVegetation: ['light', 'moderate', 'heavy']
+        },
+        {
+          id: 'dozer-d8',
+          name: 'Caterpillar D8 Dozer',
+          type: 'dozer',
+          clearingRate: 1800, // meters per hour
+          costPerHour: 250,
+          description: 'Heavy dozer for difficult terrain and heavy vegetation',
+          allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+          allowedVegetation: ['light', 'moderate', 'heavy', 'extreme']
+        },
+        {
+          id: 'grader-140m',
+          name: 'Motor Grader 140M',
+          type: 'grader',
+          clearingRate: 2500, // meters per hour
+          costPerHour: 120,
+          description: 'Motor grader for maintaining existing trails and light clearing',
+          allowedTerrain: ['easy', 'moderate'],
+          allowedVegetation: ['light']
+        },
+        {
+          id: 'dozer-d4',
+          name: 'Caterpillar D4 Dozer',
+          type: 'dozer',
+          clearingRate: 800, // meters per hour
+          costPerHour: 140,
+          description: 'Light dozer for sensitive areas and narrow fire breaks',
+          allowedTerrain: ['easy', 'moderate', 'difficult'],
+          allowedVegetation: ['light', 'moderate']
+        }
+      ],
 
   aircraft: [
     {

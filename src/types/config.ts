@@ -9,6 +9,8 @@ export interface MachinerySpec {
   type: 'dozer' | 'grader' | 'other';
   /** Meters per hour clearing rate */
   clearingRate: number;
+  /** Breakdown of performance by slope/density conditions */
+  performances?: MachineryPerformance[];
   /** Operating cost per hour (optional) */
   costPerHour?: number;
   /** Description of the machinery */
@@ -82,4 +84,15 @@ export interface FireBreakConfig {
   aircraft: AircraftSpec[];
   handCrews: HandCrewSpec[];
   calculationRules: CalculationRules;
+}
+
+export interface MachineryPerformance {
+  /** Maximum slope (degrees) that this performance row applies to */
+  slopeMax: number;
+  /** Vegetation density key */
+  density: 'light' | 'moderate' | 'heavy' | 'extreme';
+  /** Meters per hour achieved under these conditions */
+  metersPerHour: number;
+  /** Cost per hour under these conditions (optional) */
+  costPerHour?: number;
 }
