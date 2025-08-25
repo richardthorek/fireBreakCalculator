@@ -141,42 +141,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
   onDropPreviewChange,
   selectedAircraftForPreview: externalSelected = []
 }) => {
-<<<<<<< HEAD
-  // UI state
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
-=======
   // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [useAutoDetected, setUseAutoDetected] = useState(true);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
->>>>>>> 55e9295fcd80d5768c75ca523af998f5f16bb652
   // Quick option selections
   const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
   const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
-  // Aircraft drop preview selection
-  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
-
-<<<<<<< HEAD
-  const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
-    const updatedSelection = enabled
-      ? Array.from(new Set([...selectedAircraftForPreview, aircraftId]))
-=======
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
-    if (useAutoDetected && vegetationAnalysis) {
-      return vegetationAnalysis.predominantVegetation;
-    }
+    if (useAutoDetected && vegetationAnalysis) return vegetationAnalysis.predominantVegetation;
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
   // Handle drop preview selection changes
-  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
-    const updatedSelection = isSelected 
-      ? [...selectedAircraftForPreview, aircraftId]
->>>>>>> 55e9295fcd80d5768c75ca523af998f5f16bb652
+  const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
+    const updatedSelection = enabled
+      ? Array.from(new Set([...selectedAircraftForPreview, aircraftId]))
       : selectedAircraftForPreview.filter(id => id !== aircraftId);
     setSelectedAircraftForPreview(updatedSelection);
     onDropPreviewChange?.(updatedSelection);
@@ -325,17 +308,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
         <div className="header-info">
-<<<<<<< HEAD
-          {distance && (
-            <span className="distance-display">{distance.toLocaleString()}m</span>
-          )}
-          {trackAnalysis && (
-            <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>
-          )}
-=======
           {distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
-          {trackAnalysis && <span className="slope-display">Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°</span>}
->>>>>>> 55e9295fcd80d5768c75ca523af998f5f16bb652
+          {trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
         </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
@@ -384,17 +358,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
               </div>
               {isExpanded && (
                 <div className="slope-distribution">
-<<<<<<< HEAD
                   <div className="slope-category flat"><span>Flat (0-10°):</span><span>{Math.round(trackAnalysis.slopeDistribution.flat / 1000)} km</span></div>
                   <div className="slope-category medium"><span>Medium (10-20°):</span><span>{Math.round(trackAnalysis.slopeDistribution.medium / 1000)} km</span></div>
                   <div className="slope-category steep"><span>Steep (20-30°):</span><span>{Math.round(trackAnalysis.slopeDistribution.steep / 1000)} km</span></div>
                   <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{Math.round(trackAnalysis.slopeDistribution.very_steep / 1000)} km</span></div>
-=======
-                  <div className="slope-category flat"><span>Flat (0-10°):</span><span>{trackAnalysis.slopeDistribution.flat}</span></div>
-                  <div className="slope-category medium"><span>Medium (10-20°):</span><span>{trackAnalysis.slopeDistribution.medium}</span></div>
-                  <div className="slope-category steep"><span>Steep (20-30°):</span><span>{trackAnalysis.slopeDistribution.steep}</span></div>
-                  <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{trackAnalysis.slopeDistribution.very_steep}</span></div>
->>>>>>> 55e9295fcd80d5768c75ca523af998f5f16bb652
                 </div>
               )}
             </div>
