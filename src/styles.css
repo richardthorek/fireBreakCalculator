@@ -149,23 +149,86 @@ html, body, #root, .app-shell {
 /* Overlap matrix */
 .overlap-section { margin-top:1rem; }
 .overlap-title { margin:0 0 0.5rem 0; font-size:0.8rem; letter-spacing:0.5px; text-transform:uppercase; color:#f5f7fa; }
-.overlap-matrix { display:flex; flex-direction:column; gap:2px; font-size:0.65rem; background:rgba(30,36,51,0.35); border:1px solid #2a3442; border-radius:6px; padding:6px; }
-.overlap-header-row, .overlap-row { display:grid; grid-template-columns: 92px repeat(4, 1fr) 44px; align-items:stretch; gap:2px; }
-.overlap-corner, .overlap-col-header, .overlap-row-header, .overlap-row-total { padding:4px 6px; font-weight:600; text-align:center; }
-.overlap-col-header { background:rgba(45,54,70,0.55); border-radius:4px; }
-.overlap-row-header { background:rgba(45,54,70,0.45); text-align:left; border-radius:4px; }
-.overlap-row { min-height:28px; }
-.overlap-cell { position:relative; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-.overlap-cell.max-in-row { outline:1px solid rgba(255,255,255,0.35); }
-.overlap-row.dominant-row .overlap-row-header { border-left:3px solid #10b981; padding-left:4px; }
-.overlap-cell .cell-label { position:absolute; z-index:2; font-weight:600; color:#f1f5f9; text-shadow:0 1px 2px rgba(0,0,0,0.6); }
-.overlap-row-total { background:rgba(45,54,70,0.55); border-radius:4px; font-size:0.65rem; display:flex; align-items:center; justify-content:center; }
-.cell-bar { position:absolute; left:0; top:0; bottom:0; background:rgba(255,255,255,0.1); }
+/* Stronger, more specific selectors to avoid being overridden by other layout rules */
+.analysis-panel-permanent .overlap-matrix,
+.overlap-matrix {
+  display:flex !important;
+  flex-direction:column !important;
+  gap:2px;
+  font-size:0.65rem;
+  background:rgba(30,36,51,0.35);
+  border:1px solid #2a3442;
+  border-radius:6px;
+  padding:6px;
+}
+.analysis-panel-permanent .overlap-header-row,
+.analysis-panel-permanent .overlap-row,
+.overlap-header-row, .overlap-row {
+  display:grid !important;
+  grid-template-columns: 92px repeat(4, 1fr) 44px !important;
+  align-items:stretch !important;
+  gap:2px;
+}
+.analysis-panel-permanent .overlap-corner,
+.analysis-panel-permanent .overlap-col-header,
+.analysis-panel-permanent .overlap-row-header,
+.analysis-panel-permanent .overlap-row-total,
+.overlap-corner, .overlap-col-header, .overlap-row-header, .overlap-row-total {
+  padding:4px 6px;
+  font-weight:600;
+  text-align:center;
+}
+.analysis-panel-permanent .overlap-col-header, .overlap-col-header { background:rgba(45,54,70,0.55); border-radius:4px; }
+.analysis-panel-permanent .overlap-row-header, .overlap-row-header { background:rgba(45,54,70,0.45); text-align:left; border-radius:4px; }
+.analysis-panel-permanent .overlap-row, .overlap-row { min-height:28px; }
+.analysis-panel-permanent .overlap-cell, .overlap-cell {
+  position:relative;
+  background:rgba(255,255,255,0.03);
+  border-radius:3px;
+  overflow:hidden;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+}
+.analysis-panel-permanent .overlap-cell.max-in-row, .overlap-cell.max-in-row { outline:1px solid rgba(255,255,255,0.35); }
+.analysis-panel-permanent .overlap-row.dominant-row .overlap-row-header, .overlap-row.dominant-row .overlap-row-header { border-left:3px solid #10b981; padding-left:4px; }
+.analysis-panel-permanent .overlap-cell .cell-label, .overlap-cell .cell-label { position:absolute; z-index:2; font-weight:600; color:#f1f5f9; text-shadow:0 1px 2px rgba(0,0,0,0.6); }
+.analysis-panel-permanent .overlap-row-total, .overlap-row-total { background:rgba(45,54,70,0.55); border-radius:4px; font-size:0.65rem; display:flex; align-items:center; justify-content:center; }
+.analysis-panel-permanent .cell-bar, .cell-bar { position:absolute; left:0; top:0; bottom:0; background:rgba(255,255,255,0.1); }
 .cell-bar[data-color="#00aa00"] { background: linear-gradient(90deg,#00aa00,#028a02); }
 .cell-bar[data-color="#c8c800"] { background: linear-gradient(90deg,#c8c800,#a8a800); }
 .cell-bar[data-color="#ff8800"] { background: linear-gradient(90deg,#ff8800,#e06c00); }
 .cell-bar[data-color="#006400"] { background: linear-gradient(90deg,#006400,#004d00); }
 .cell-bar[data-color="#ff0000"] { background: linear-gradient(90deg,#ff0000,#cc0000); }
+
+/* Emergency high-specificity fallback to ensure overlap matrix layout is applied
+   Targets the exact DOM path the app renders into so it wins over other rules. */
+#root > div > main .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-matrix,
+#root .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-matrix {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+#root > div > main .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-header-row,
+#root .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-row {
+  display: grid !important;
+  grid-template-columns: 92px repeat(4, 1fr) 44px !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+#root > div > main .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-cell {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: relative !important;
+  min-height: 28px !important;
+}
+#root > div > main .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-cell .cell-bar {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+}
   display:flex;
   width:100%;
   background:#f1f5f9;
