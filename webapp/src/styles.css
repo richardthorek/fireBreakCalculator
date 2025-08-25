@@ -1815,3 +1815,68 @@ button:focus,
 .effective-vegetation strong {
   color: #e1e7ef;
 }
+
+/* Drawing controls for touch device support */
+.drawing-controls {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1001;
+  background: rgba(245, 247, 250, 0.95);
+  border: 1px solid #d0d6dd;
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.finish-line-button {
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px; /* Touch-friendly target size */
+  min-width: 120px;
+  justify-content: center;
+}
+
+.finish-line-button:hover {
+  background: #218838;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.finish-line-button:active {
+  background: #1e7e34;
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.finish-line-button:focus {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 2px;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 768px) {
+  .drawing-controls {
+    top: 8px;
+    left: 8px;
+    right: auto;
+    transform: none;
+    text-align: left;
+  }
+  
+  .finish-line-button {
+    width: auto;
+    min-width: 120px;
+    min-height: 48px; /* Larger touch target on mobile */
+  }
+}
