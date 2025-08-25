@@ -7,6 +7,7 @@ import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/s
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
+import { isTouchDevice } from '../utils/deviceDetection';
 
 // Helper to build richer popup HTML with slope and vegetation data
 const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: VegetationAnalysis | null, totalDistance: number) => {
@@ -103,11 +104,15 @@ export const MapView: React.FC<MapViewProps> = ({
   // Map from polyline leaflet internal id to vertex markers
   const vertexMarkersRef = useRef<Map<number, L.Marker[]>>(new Map());
   const slopeLayersRef = useRef<L.LayerGroup | null>(null);
+  const drawControlRef = useRef<L.Control.Draw | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // Drawing state for touch device support
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentDrawingLayer, setCurrentDrawingLayer] = useState<L.Polyline | null>(null);
   // Drop preview layers
   const dropMarkersRef = useRef<L.LayerGroup | null>(null);
   const dropMarkerGroupsRef = useRef<Map<string, L.LayerGroup>>(new Map());
@@ -166,6 +171,8 @@ export const MapView: React.FC<MapViewProps> = ({
     slopeLayersRef.current = slopeLayer;
 
   // Configure drawing controls - only allow polylines for fire breaks
+    // On touch devices, we'll use repeatMode to prevent premature line completion
+    const isTouch = isTouchDevice();
     const drawControl = new L.Control.Draw({
       position: 'topright',
       draw: {
@@ -183,7 +190,9 @@ export const MapView: React.FC<MapViewProps> = ({
           guidelineDistance: 20,
           maxGuideLineLength: 4000,
           showLength: true,
-          metric: true
+          metric: true,
+          // On touch devices, use repeatMode to allow multi-point lines
+          repeatMode: isTouch
         },
         polygon: false,
         rectangle: false,
@@ -197,6 +206,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
     map.addControl(drawControl);
+    drawControlRef.current = drawControl;
 
     // Improve accessibility of drawing controls
     setTimeout(() => {
@@ -222,6 +232,26 @@ export const MapView: React.FC<MapViewProps> = ({
         removeBtn.setAttribute('tabindex', '0');
       }
     }, 100);
+
+    // Add drawing event handlers for improved touch device support
+    map.on(L.Draw.Event.DRAWSTART, (event: any) => {
+      setIsDrawing(true);
+    });
+
+    map.on(L.Draw.Event.DRAWSTOP, (event: any) => {
+      setIsDrawing(false);
+      setCurrentDrawingLayer(null);
+    });
+
+    map.on(L.Draw.Event.DRAWVERTEX, (event: any) => {
+      // Update the current drawing layer when vertices are added
+      if (event.layers) {
+        const layer = event.layers.getLayers()[0];
+        if (layer instanceof L.Polyline) {
+          setCurrentDrawingLayer(layer);
+        }
+      }
+    });
 
   // Create a top-level group for drop markers
   const dropLayer = new L.LayerGroup();
@@ -443,6 +473,7 @@ export const MapView: React.FC<MapViewProps> = ({
       drawnItemsRef.current = null;
       slopeLayersRef.current = null;
       dropMarkersRef.current = null;
+      drawControlRef.current = null;
       vertexMarkersRef.current.clear();
     };
   }, []);
@@ -486,6 +517,23 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   }, [selectedAircraftForPreview, aircraft, dropsVersion]);
 
+  // Function to finish the current drawing
+  const finishCurrentDrawing = () => {
+    if (drawControlRef.current && mapRef.current) {
+      const drawControl = drawControlRef.current;
+      const polylineTool = (drawControl as any)._toolbars?.draw?._modes?.polyline;
+      
+      if (polylineTool && polylineTool.handler && polylineTool.handler._enabled) {
+        // Complete the current shape if we're in drawing mode
+        if (polylineTool.handler.completeShape) {
+          polylineTool.handler.completeShape();
+        } else if (polylineTool.handler._finishShape) {
+          polylineTool.handler._finishShape();
+        }
+      }
+    }
+  };
+
   return (
     <div className="map-wrapper">
       {error && <div className="map-error">{error}</div>}
@@ -493,6 +541,17 @@ export const MapView: React.FC<MapViewProps> = ({
         <div className="map-analyzing-badge" role="status" aria-live="polite">
           <div className="spinner" aria-hidden="true"></div>
           <span className="map-analyzing-text">Analyzing…</span>
+        </div>
+      )}
+      {isDrawing && (
+        <div className="drawing-controls">
+          <button 
+            className="finish-line-button"
+            onClick={finishCurrentDrawing}
+            aria-label="Finish drawing the fire break line"
+          >
+            ✓ Finish Line
+          </button>
         </div>
       )}
       {/* {fireBreakDistance && (
