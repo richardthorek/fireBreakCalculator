@@ -24,8 +24,10 @@ export interface MachinerySpec {
   description?: string;
   /** Terrain types this machinery can operate in */
   allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
-  /** Vegetation types this machinery can handle */
-  allowedVegetation: ('light' | 'moderate' | 'heavy' | 'extreme')[];
+  /** Vegetation types this machinery can handle (new taxonomy)
+   *  Use 'grassland', 'lightshrub', 'mediumscrub', 'heavyforest'
+   */
+  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
   /** Maximum slope this machinery can handle (in degrees) */
   maxSlope?: number;
 }

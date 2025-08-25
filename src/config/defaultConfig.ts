@@ -22,8 +22,7 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 180,
           description: 'Medium dozer suitable for most terrain types',
           allowedTerrain: ['easy', 'moderate', 'difficult'],
-          allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub']
-          allowedVegetation: ['light', 'moderate', 'heavy'],
+          allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
           maxSlope: 25 // Maximum slope capability in degrees
         },
         {
@@ -34,7 +33,7 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 250,
           description: 'Heavy dozer for difficult terrain and heavy vegetation',
           allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
-          allowedVegetation: ['light', 'moderate', 'heavy', 'extreme'],
+          allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
           maxSlope: 35 // Maximum slope capability in degrees
         },
         {
@@ -45,7 +44,7 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 120,
           description: 'Motor grader for maintaining existing trails and light clearing',
           allowedTerrain: ['easy', 'moderate'],
-          allowedVegetation: ['light'],
+          allowedVegetation: ['grassland'],
           maxSlope: 15 // Maximum slope capability in degrees
         },
         {
@@ -56,7 +55,7 @@ export const defaultConfig: FireBreakConfig = {
           costPerHour: 140,
           description: 'Light dozer for sensitive areas and narrow fire breaks',
           allowedTerrain: ['easy', 'moderate', 'difficult'],
-          allowedVegetation: ['light', 'moderate'],
+          allowedVegetation: ['grassland', 'lightshrub'],
           maxSlope: 20 // Maximum slope capability in degrees
         }
       ],

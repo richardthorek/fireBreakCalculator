@@ -34,6 +34,7 @@ interface CalculationResult {
   compatible: boolean;
   slopeCompatible?: boolean; // Whether equipment can handle the slope
   maxSlopeExceeded?: number; // Max slope encountered if exceeded
+  drops?: number;
   unit: string;
   description?: string;
 }
@@ -105,14 +106,13 @@ const calculateHandCrewTime = (
  */
 const isCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
-  terrain: TerrainType,
+  requiredTerrain: TerrainType,
   vegetation: VegetationType,
   expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
-  requiredTerrain: TerrainType,
-  vegetation: VegetationType
 ): boolean => {
+  // Basic compatibility checks: terrain and vegetation membership
   return equipment.allowedTerrain.includes(requiredTerrain) &&
-         equipment.allowedVegetation.includes(vegetation);
+         equipment.allowedVegetation.includes(vegetation as any);
 };
 
 /**
@@ -168,11 +168,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   };
   // Map new vegetation taxonomy to numeric factors (lower is easier)
   const vegetationFactors = {
-    light: 1.0,
-    moderate: 1.4,
-    heavy: 1.8,
-    extreme: 2.5
-  };
+    grassland: 1.0,
+    lightshrub: 1.1,
+    mediumscrub: 1.5,
+    heavyforest: 2.0
+  } as Record<VegetationType, number>;
 
   // Map max slope to a minimum terrain class requirement
   const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
