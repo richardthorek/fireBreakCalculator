@@ -5,7 +5,7 @@ import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAnalysis } from './types/config';
 import { EquipmentApi } from './types/equipmentApi';
-import { listEquipment, createEquipment, updateEquipment, deleteEquipment } from './utils/equipmentApi';
+import { listEquipment, createEquipment, updateEquipmentItem, deleteEquipment } from './utils/equipmentApi';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -104,8 +104,7 @@ const App: React.FC = () => {
 
   const handleUpdate = async (item: EquipmentApi) => {
     // updateEquipment expects (id, type, payload)
-    const payload = { ...item, version: item.version } as any;
-    const updated = await updateEquipment(item.id, item.type, payload);
+  const updated = await updateEquipmentItem(item);
     setEquipment(prev => prev.map(e => e.id === updated.id ? updated : e));
   };
 

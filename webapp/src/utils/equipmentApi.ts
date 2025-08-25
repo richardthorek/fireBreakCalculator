@@ -18,7 +18,7 @@ export async function listEquipment(): Promise<EquipmentApi[]> {
   return handle<EquipmentApi[]>(res);
 }
 
-export async function createEquipment(input: CreateEquipmentInput): Promise<EquipmentApi> {
+export async function createEquipment(input: any /* CreateEquipmentInput */): Promise<EquipmentApi> {
   const res = await fetch(`${baseUrl}/equipment`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -34,6 +34,13 @@ export async function updateEquipment(id: string, type: EquipmentCoreType, paylo
     body: JSON.stringify(payload)
   });
   return handle<EquipmentApi>(res);
+}
+
+// Convenience wrapper: accept an EquipmentApi item and forward to updateEquipment
+export async function updateEquipmentItem(item: EquipmentApi): Promise<EquipmentApi> {
+  const { id, type, version, ...rest } = item as any;
+  const payload = { ...rest, version } as any;
+  return updateEquipment(id, type, payload);
 }
 
 export async function deleteEquipment(type: EquipmentCoreType, id: string): Promise<void> {
