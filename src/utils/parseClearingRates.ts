@@ -111,7 +111,8 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
       costPerHour: performances.find(p => p.costPerHour !== undefined)?.costPerHour,
       description: `${name} derived from clearingrates.csv`,
       allowedTerrain,
-      allowedVegetation
+      allowedVegetation,
+      maxSlope // Add the maximum slope capability
     });
   }
 

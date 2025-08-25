@@ -115,7 +115,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
     map.addControl(drawControl);
 
     // Function to analyze track and visualize slopes
-    const analyzeAndVisualizeBranchSlopes = async (latlngs: LatLng[]) => {
+    const analyzeAndVisualizeBranchSlopes = async (latlngs: LatLng[]): Promise<TrackAnalysis | null> => {
       setIsAnalyzing(true);
       
       try {
@@ -156,9 +156,12 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           }
         });
         
+        return analysis;
+        
       } catch (error) {
         console.error('Error analyzing track slopes:', error);
         setError('Failed to analyze track slopes');
+        return null;
       } finally {
         setIsAnalyzing(false);
       }
@@ -182,10 +185,9 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         onDistanceChange(Math.round(totalDistance));
         
         // Analyze slopes and add visualization
-        await analyzeAndVisualizeBranchSlopes(latlngs);
+        const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
         
         // Add popup with comprehensive info
-        const analysis = trackAnalysis;
         const popupContent = analysis ? `
           <div>
             <strong>Fire Break Analysis</strong><br/>
@@ -221,10 +223,9 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           onDistanceChange(Math.round(totalDistance));
           
           // Re-analyze slopes after editing
-          await analyzeAndVisualizeBranchSlopes(latlngs);
+          const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
           
           // Update popup with new analysis
-          const analysis = trackAnalysis;
           const popupContent = analysis ? `
             <div>
               <strong>Fire Break Analysis</strong><br/>
