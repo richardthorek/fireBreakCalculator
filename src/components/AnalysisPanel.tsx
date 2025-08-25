@@ -146,21 +146,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   handCrews,
   onDropPreviewChange
 }) => {
-  // User-selected vegetation context (was previously removed)
+  // UI state
+  const [isExpanded, setIsExpanded] = useState(true);
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
-  // User-selected quick option IDs
+  // Quick option selections
   const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
   const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
+  // Aircraft drop preview selection
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
 
-  // Handle drop preview selection changes
-  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
-    const updatedSelection = isSelected 
-      ? [...selectedAircraftForPreview, aircraftId]
+  const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
+    const updatedSelection = enabled
+      ? Array.from(new Set([...selectedAircraftForPreview, aircraftId]))
       : selectedAircraftForPreview.filter(id => id !== aircraftId);
-    
     setSelectedAircraftForPreview(updatedSelection);
     onDropPreviewChange?.(updatedSelection);
   };
@@ -368,9 +367,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             <span className="distance-display">{distance.toLocaleString()}m</span>
           )}
           {trackAnalysis && (
-            <span className="slope-display">
-              Max Slope: {trackAnalysis.maxSlope.toFixed(1)}°
-            </span>
+            <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>
           )}
         </div>
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
@@ -429,28 +426,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             <h4>Slope Analysis</h4>
             <div className="slope-summary">
               <div className="slope-stats">
-                <span>Max: {trackAnalysis.maxSlope.toFixed(1)}°</span>
-                <span>Avg: {trackAnalysis.averageSlope.toFixed(1)}°</span>
+                <span>Max: {Math.round(trackAnalysis.maxSlope)}°</span>
+                <span>Avg: {Math.round(trackAnalysis.averageSlope)}°</span>
                 <span>Segments: {trackAnalysis.segments.length}</span>
               </div>
               {isExpanded && (
                 <div className="slope-distribution">
-                  <div className="slope-category flat">
-                    <span>Flat (0-10°):</span>
-                    <span>{trackAnalysis.slopeDistribution.flat}</span>
-                  </div>
-                  <div className="slope-category medium">
-                    <span>Medium (10-20°):</span>
-                    <span>{trackAnalysis.slopeDistribution.medium}</span>
-                  </div>
-                  <div className="slope-category steep">
-                    <span>Steep (20-30°):</span>
-                    <span>{trackAnalysis.slopeDistribution.steep}</span>
-                  </div>
-                  <div className="slope-category very-steep">
-                    <span>Very Steep (30°+):</span>
-                    <span>{trackAnalysis.slopeDistribution.very_steep}</span>
-                  </div>
+                  <div className="slope-category flat"><span>Flat (0-10°):</span><span>{Math.round(trackAnalysis.slopeDistribution.flat / 1000)} km</span></div>
+                  <div className="slope-category medium"><span>Medium (10-20°):</span><span>{Math.round(trackAnalysis.slopeDistribution.medium / 1000)} km</span></div>
+                  <div className="slope-category steep"><span>Steep (20-30°):</span><span>{Math.round(trackAnalysis.slopeDistribution.steep / 1000)} km</span></div>
+                  <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{Math.round(trackAnalysis.slopeDistribution.very_steep / 1000)} km</span></div>
                 </div>
               )}
             </div>
