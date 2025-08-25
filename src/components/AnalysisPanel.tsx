@@ -68,13 +68,19 @@ const calculateHandCrewTime = (
   fuelModel?: FuelModelSpec,
   crewType?: CrewType,
   attackMethod?: AttackMethod,
-  customCrewSize?: number
+  customCrewSize?: number,
+  useManualRate?: boolean,
+  manualRate?: number
 ): number => {
   let ratePerPerson = handCrew.clearingRatePerPerson;
   const crewSize = customCrewSize || handCrew.crewSize;
   
+  // Use manual rate if specified
+  if (useManualRate && manualRate && handCrew.supportsFuelModels) {
+    ratePerPerson = manualRate;
+  }
   // Use fuel model rate if available and crew supports it
-  if (fuelModel && crewType && attackMethod && handCrew.supportsFuelModels) {
+  else if (fuelModel && crewType && attackMethod && handCrew.supportsFuelModels && !useManualRate) {
     ratePerPerson = fuelModel.rates[crewType][attackMethod];
   }
   
@@ -112,6 +118,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [crewType, setCrewType] = useState<CrewType>('typeI');
   const [attackMethod, setAttackMethod] = useState<AttackMethod>('direct');
   const [customCrewSize, setCustomCrewSize] = useState<number>(20);
+  const [manualRate, setManualRate] = useState<number>(10);
+  const [useManualRate, setUseManualRate] = useState(false);
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -189,7 +197,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         selectedFuelModelData,
         crewType,
         attackMethod,
-        crew.supportsFuelModels ? customCrewSize : undefined
+        crew.supportsFuelModels ? customCrewSize : undefined,
+        crew.supportsFuelModels ? useManualRate : false,
+        crew.supportsFuelModels ? manualRate : undefined
       ) : 0;
       
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
@@ -221,7 +231,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return aTime - bTime;
     });
-  }, [distance, terrain, vegetation, machinery, aircraft, handCrews, fuelModels, useFuelModels, selectedFuelModel, crewType, attackMethod, customCrewSize]);
+  }, [distance, terrain, vegetation, machinery, aircraft, handCrews, fuelModels, useFuelModels, selectedFuelModel, crewType, attackMethod, customCrewSize, useManualRate, manualRate]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -308,27 +318,52 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   </select>
                 </label>
                 
-                <label>
-                  Crew Type:
-                  <select 
-                    value={crewType} 
-                    onChange={(e) => setCrewType(e.target.value as CrewType)}
-                  >
-                    <option value="typeI">Type I (IHC)</option>
-                    <option value="typeII">Type II (Initial Attack)</option>
-                  </select>
+                <label className="checkbox-label">
+                  <input 
+                    type="checkbox"
+                    checked={useManualRate}
+                    onChange={(e) => setUseManualRate(e.target.checked)}
+                  />
+                  Use manual rate
                 </label>
                 
-                <label>
-                  Attack Method:
-                  <select 
-                    value={attackMethod} 
-                    onChange={(e) => setAttackMethod(e.target.value as AttackMethod)}
-                  >
-                    <option value="direct">Direct Attack</option>
-                    <option value="indirect">Indirect Attack</option>
-                  </select>
-                </label>
+                {useManualRate ? (
+                  <label>
+                    Manual Rate (m/hr per person):
+                    <input 
+                      type="number"
+                      min="0.1"
+                      max="100"
+                      step="0.1"
+                      value={manualRate}
+                      onChange={(e) => setManualRate(parseFloat(e.target.value) || 10)}
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label>
+                      Crew Type:
+                      <select 
+                        value={crewType} 
+                        onChange={(e) => setCrewType(e.target.value as CrewType)}
+                      >
+                        <option value="typeI">Type I (IHC)</option>
+                        <option value="typeII">Type II (Initial Attack)</option>
+                      </select>
+                    </label>
+                    
+                    <label>
+                      Attack Method:
+                      <select 
+                        value={attackMethod} 
+                        onChange={(e) => setAttackMethod(e.target.value as AttackMethod)}
+                      >
+                        <option value="direct">Direct Attack</option>
+                        <option value="indirect">Indirect Attack</option>
+                      </select>
+                    </label>
+                  </>
+                )}
                 
                 <label>
                   Crew Size:
@@ -341,10 +376,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   />
                 </label>
                 
-                {selectedFuelModel && (
+                {!useManualRate && selectedFuelModel && (
                   <div className="fuel-model-info">
                     <small>
                       Rate: {fuelModels.find(fm => fm.id === selectedFuelModel)?.rates[crewType][attackMethod].toFixed(1)} m/hr per person
+                    </small>
+                  </div>
+                )}
+                
+                {useManualRate && (
+                  <div className="fuel-model-info">
+                    <small>
+                      Using manual rate: {manualRate.toFixed(1)} m/hr per person
                     </small>
                   </div>
                 )}

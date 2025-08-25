@@ -57,6 +57,17 @@ Select the types of equipment and crews you want to include in your analysis:
 - **Standard Hand Crew**: 6-person crew with mixed hand tools and chainsaws
 - **Rapid Response Crew**: 4-person crew for quick initial attack
 - **Heavy Clearing Crew**: 10-person crew with power tools for heavy vegetation
+- **Type I Crew (IHC)**: 20-person Interagency Hotshots Crew with advanced training
+- **Type II Crew (Initial Attack)**: 20-person standard crew for initial attack operations
+
+#### Hand Crew Configuration
+For fuel model-based crews, you can configure:
+- **Fuel Model**: Select from 7 standard fuel types (Short Grass, Chaparral, Brush, etc.)
+- **Crew Type**: Type I (IHC) for higher productivity, Type II for standard rates
+- **Attack Method**: Direct attack (higher rates) or indirect attack (lower rates)
+- **Crew Size**: Adjustable from 1-50 people with linear scaling
+
+*See [Fuel Model Reference](FUEL_MODELS.md) for detailed productivity rates and usage guidelines.*
 
 ### Step 4: Review Results
 For each selected resource, the system displays:
