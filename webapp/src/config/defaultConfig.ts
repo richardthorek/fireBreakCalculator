@@ -5,15 +5,10 @@
  */
 
 import { FireBreakConfig } from '../types/config';
-import csvMachinery from '../utils/parseClearingRates';
-
-// Use CSV-derived machinery if available; otherwise fall back to the internal list.
-// `csvMachinery` is an array exported from the parser module.
+// Legacy CSV-derived machinery loading removed. Equipment is now sourced dynamically via API & Table Storage.
 
 export const defaultConfig: FireBreakConfig = {
-  machinery: csvMachinery.length
-    ? csvMachinery
-    : [
+  machinery: [
         {
           id: 'dozer-d6',
           name: 'Caterpillar D6 Dozer',
