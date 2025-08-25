@@ -34,6 +34,9 @@ interface CalculationResult {
 
 /**
  * Calculate time required for machinery to clear the fire break
+ * TODO: Future enhancement - integrate elevation profile analysis
+ * similar to https://docs.mapbox.com/mapbox-gl-js/example/elevation-along-line/
+ * to factor in slope steepness for more accurate time calculations
  */
 const calculateMachineryTime = (
   distance: number,

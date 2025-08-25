@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
+import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
+import { MachinerySpec, AircraftSpec, HandCrewSpec } from './types/config';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -10,6 +12,11 @@ import { defaultConfig } from './config/defaultConfig';
  */
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  
+  // State for configurable equipment
+  const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
+  const [aircraft, setAircraft] = useState<AircraftSpec[]>(defaultConfig.aircraft);
+  const [handCrews, setHandCrews] = useState<HandCrewSpec[]>(defaultConfig.handCrews);
 
   return (
     <div className="app-shell">
@@ -21,9 +28,17 @@ const App: React.FC = () => {
         <MapView onDistanceChange={setFireBreakDistance} />
         <AnalysisPanel 
           distance={fireBreakDistance}
-          machinery={defaultConfig.machinery}
-          aircraft={defaultConfig.aircraft}
-          handCrews={defaultConfig.handCrews}
+          machinery={machinery}
+          aircraft={aircraft}
+          handCrews={handCrews}
+        />
+        <EquipmentConfigPanel
+          machinery={machinery}
+          aircraft={aircraft}
+          handCrews={handCrews}
+          onUpdateMachinery={setMachinery}
+          onUpdateAircraft={setAircraft}
+          onUpdateHandCrews={setHandCrews}
         />
       </main>
     </div>
