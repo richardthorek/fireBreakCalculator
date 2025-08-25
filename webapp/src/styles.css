@@ -283,16 +283,44 @@ html, body, #root, .app-shell {
 .equip-tabs { display:flex; align-items:center; gap:8px; padding:8px 12px; background:#16202b; border-bottom:1px solid #233040; flex-wrap:wrap; }
 .equip-tab-spacer { flex:1; }
 .equip-content { flex:1; overflow:auto; padding:12px 14px 40px; display:flex; flex-direction:column; gap:10px; }
+.equipment-config-panel.sidebar .tab-guide {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:10px 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: #cfe8ff;
+  font-size: 13px;
+  max-height: 72px;
+  overflow: auto;
+}
+.equipment-config-panel.sidebar .tab-guide .guide-line { display:flex; gap:8px; align-items:center; }
+.equipment-config-panel.sidebar .tab-guide .guide-line strong { color:#e6f7ff; font-weight:600; }
+.equipment-config-panel.sidebar .tab-guide .muted { color:#94a3b8; font-size:12px; }
+
 .equip-list { display:flex; flex-direction:column; gap:4px; }
-.equip-row { display:grid; grid-template-columns: 200px 90px 120px 80px 120px 120px 140px; gap:6px; padding:6px 8px; background:#1d2732; border:1px solid #233040; border-radius:6px; align-items:center; font-size:13px; }
-.equip-row.editing { background:#223547; }
-.equip-row.adding { background:#1f3444; border-style:dashed; }
-.eq-name { width:100%; font-size:13px; }
-.eq-small { width:100%; }
-.eq-xsmall { width:100%; }
-.eq-tags { display:flex; gap:4px; flex-wrap:wrap; }
+.equip-row {
+  display: grid;
+  /* flexible first column for name, then compact cols for numeric/type fields, and actions at end */
+  grid-template-columns: 1fr repeat(5, minmax(80px, 140px)) 120px;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #1d2732;
+  border: 1px solid #233040;
+  border-radius: 6px;
+  align-items: center;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.equip-row.editing { background: #223547; }
+.equip-row.adding { background: #1f3444; border-style: dashed; }
+.eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; }
+.eq-small { width:100%; min-width:0; box-sizing:border-box; }
+.eq-xsmall { width:100%; min-width:0; box-sizing:border-box; }
+.eq-tags { display:flex; gap:4px; flex-wrap:wrap; max-width:100%; }
 .eq-tags.readonly { opacity:0.8; }
-.tag { background:#2b3b4a; border:none; color:#bcd0e0; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:11px; line-height:1.2; }
+.tag { background:#2b3b4a; border:none; color:#bcd0e0; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:11px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tag.on { background:#0d6efd; color:#fff; }
 .tag.mini { cursor:default; }
 .eq-actions { display:flex; gap:4px; justify-content:flex-end; }
@@ -315,6 +343,15 @@ html, body, #root, .app-shell {
 .tab-button { background:#243240; border:1px solid #2f4152; padding:6px 12px; border-radius:4px; color:#c1ced8; cursor:pointer; font-size:12px; }
 .tab-button:hover { background:#2e4153; }
 .empty { font-size:12px; opacity:0.7; padding:8px; }
+
+/* Responsive adjustments: stack fields on narrow screens to avoid horizontal overflow */
+@media (max-width: 760px) {
+  .equipment-config-panel.sidebar { width: 100%; right: 0; left: 0; top: 8vh; height: 92vh; }
+  .equip-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; grid-template-columns: none; }
+  .eq-actions { justify-content: flex-start; }
+  .eq-tags { justify-content: flex-start; }
+  .tab-guide { max-height: none; }
+}
 
 
 /* Proper app-header block (repaired) */
@@ -629,6 +666,7 @@ button:focus,
   right: 0;
   bottom: 0;
   background: rgba(15, 17, 21, 0.7);
+  -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
   border-radius: 4px;
   z-index: 1;

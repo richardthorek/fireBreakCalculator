@@ -20,6 +20,178 @@ interface EquipmentConfigPanelProps {
 
 type EquipmentTab = EquipmentCoreType;
 
+// Top-level Inline editor component (hoisted to avoid remount on parent render)
+const InlineEditComponent: React.FC<{
+  item: EquipmentApi;
+  onSave: (item: EquipmentApi) => Promise<void>;
+  onCancel: () => void;
+  saving: boolean;
+  terrainOptions: EquipmentApi['allowedTerrain'];
+  vegetationOptions: EquipmentApi['allowedVegetation'];
+  terrainLabel: (t: string) => string;
+  vegLabel: (v: string) => string;
+  terrainExample: (t: string) => string;
+  vegExample: (v: string) => string;
+}> = ({ item, onSave, onCancel, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample }) => {
+  const [form, setForm] = useState<any>(item);
+  return (
+    <div className="equip-row editing">
+      <label className="visually-hidden" htmlFor={`name-${item.id}`}>Name</label>
+      <input id={`name-${item.id}`} aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value } as EquipmentApi)} />
+      {item.type === 'Machinery' && (
+        <>
+          <label className="visually-hidden" htmlFor={`rate-${item.id}`}>Clearing rate</label>
+          <input id={`rate-${item.id}`} aria-label="Clearing rate" type="number" className="eq-small" placeholder="Rate" value={(form as any).clearingRate ?? ''} onChange={e => setForm({ ...(form as any), clearingRate: Number(e.target.value) } as EquipmentApi)} />
+        </>
+      )}
+      {item.type === 'Aircraft' && (
+        <>
+          <label className="visually-hidden" htmlFor={`drop-${item.id}`}>Drop length</label>
+          <input id={`drop-${item.id}`} aria-label="Drop length" type="number" className="eq-small" placeholder="Drop m" value={(form as any).dropLength ?? ''} onChange={e => setForm({ ...(form as any), dropLength: Number(e.target.value) } as EquipmentApi)} />
+        </>
+      )}
+      {item.type === 'HandCrew' && (
+        <>
+          <label className="visually-hidden" htmlFor={`crew-${item.id}`}>Crew size</label>
+          <input id={`crew-${item.id}`} aria-label="Crew size" type="number" className="eq-xsmall" title="Crew Size" placeholder="Crew" value={(form as any).crewSize ?? ''} onChange={e => setForm({ ...(form as any), crewSize: Number(e.target.value) } as EquipmentApi)} />
+          <label className="visually-hidden" htmlFor={`rateperson-${item.id}`}>Clearing rate per person</label>
+          <input id={`rateperson-${item.id}`} aria-label="Clearing rate per person" type="number" className="eq-xsmall" title="Rate / person" placeholder="/person" value={(form as any).clearingRatePerPerson ?? ''} onChange={e => setForm({ ...(form as any), clearingRatePerPerson: Number(e.target.value) } as EquipmentApi)} />
+        </>
+      )}
+      <label className="visually-hidden" htmlFor={`cost-${item.id}`}>Cost per hour</label>
+      <input id={`cost-${item.id}`} aria-label="Cost per hour" type="number" className="eq-small" placeholder="$/h" value={form.costPerHour ?? ''} onChange={e => setForm({ ...form, costPerHour: Number(e.target.value) } as EquipmentApi)} />
+      <div className="eq-tags">
+        {terrainOptions.map((t: string) => (
+          <button
+            aria-label={`Terrain ${t}`}
+            key={t}
+            type="button"
+            className={(form.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'}
+            title={terrainExample(t)}
+            onClick={() => setForm({ ...form, allowedTerrain: (form.allowedTerrain ?? []).includes(t) ? (form.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(form.allowedTerrain ?? []), t] } as EquipmentApi)}
+          >{terrainLabel(t)}</button>
+        ))}
+      </div>
+      <div className="eq-tags">
+        {vegetationOptions.map((v: string) => (
+          <button
+            aria-label={`Vegetation ${v}`}
+            key={v}
+            type="button"
+            className={(form.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'}
+            title={vegExample(v)}
+            onClick={() => setForm({ ...form, allowedVegetation: (form.allowedVegetation ?? []).includes(v) ? (form.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(form.allowedVegetation ?? []), v] } as EquipmentApi)}
+          >{vegLabel(v)}</button>
+        ))}
+      </div>
+  {/* per-row helpers removed; guidance now shown once in the tab guide above */}
+      <div className="eq-actions">
+        <button className="btn save" disabled={saving} onClick={() => onSave(form)}>{saving ? '...' : 'Save'}</button>
+        <button className="btn cancel" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+};
+
+// Top-level Equipment list component (hoisted)
+const EquipmentListComponent: React.FC<{
+  equipment: EquipmentApi[];
+  activeTab: EquipmentTab;
+  adding: boolean;
+  draft: any;
+  setDraft: (d: any) => void;
+  saveNew: () => Promise<void>;
+  setAdding: (b: boolean) => void;
+  resetDraft: (t?: EquipmentCoreType) => void;
+  editingId: string | null;
+  setEditingId: (id: string | null) => void;
+  saveEdit: (item: EquipmentApi) => Promise<void>;
+  remove: (item: EquipmentApi) => Promise<void>;
+  saving: boolean;
+  terrainOptions: EquipmentApi['allowedTerrain'];
+  vegetationOptions: EquipmentApi['allowedVegetation'];
+  terrainLabel: (t: string) => string;
+  vegLabel: (v: string) => string;
+  terrainExample: (t: string) => string;
+  vegExample: (v: string) => string;
+}> = ({ equipment, activeTab, adding, draft, setDraft, saveNew, setAdding, resetDraft, editingId, setEditingId, saveEdit, remove, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample }) => {
+  const filtered = equipment.filter(e => e.type === activeTab);
+  return (
+    <div className="equip-list">
+      {adding && (
+        <div className="equip-row adding">
+          <label className="visually-hidden" htmlFor="draft-name">Name</label>
+          <input id="draft-name" className="eq-name" placeholder={`${activeTab} name`} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+          {activeTab === 'Machinery' && (
+            <>
+              <label className="visually-hidden" htmlFor="draft-rate">Rate</label>
+              <input id="draft-rate" type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
+            </>
+          )}
+          {activeTab === 'Aircraft' && (
+            <>
+              <label className="visually-hidden" htmlFor="draft-drop">Drop m</label>
+              <input id="draft-drop" type="number" className="eq-small" placeholder="Drop m" value={draft.dropLength ?? ''} onChange={e => setDraft({ ...draft, dropLength: Number(e.target.value) })} />
+            </>
+          )}
+          {activeTab === 'HandCrew' && (
+            <>
+              <label className="visually-hidden" htmlFor="draft-crew">Crew</label>
+              <input id="draft-crew" type="number" className="eq-xsmall" placeholder="Crew" value={draft.crewSize ?? ''} onChange={e => setDraft({ ...draft, crewSize: Number(e.target.value) })} />
+              <label className="visually-hidden" htmlFor="draft-rateperson">Rate/person</label>
+              <input id="draft-rateperson" type="number" className="eq-xsmall" placeholder="/person" value={draft.clearingRatePerPerson ?? ''} onChange={e => setDraft({ ...draft, clearingRatePerPerson: Number(e.target.value) })} />
+            </>
+          )}
+          <label className="visually-hidden" htmlFor="draft-cost">$/h</label>
+          <input id="draft-cost" type="number" className="eq-small" placeholder="$/h" value={draft.costPerHour ?? ''} onChange={e => setDraft({ ...draft, costPerHour: Number(e.target.value) })} />
+          <div className="eq-tags">
+            {terrainOptions.map(t => (
+              <button key={t} type="button" className={(draft.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'} title={terrainExample(t)} onClick={() => setDraft({ ...draft, allowedTerrain: (draft.allowedTerrain ?? []).includes(t) ? (draft.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(draft.allowedTerrain ?? []), t] })}>{terrainLabel(t)}</button>
+            ))}
+          </div>
+          {/* per-row helpers removed; guidance shown in top-level tab guide */}
+          <div className="eq-tags">
+            {vegetationOptions.map(v => (
+              <button key={v} type="button" className={(draft.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'} title={vegExample(v)} onClick={() => setDraft({ ...draft, allowedVegetation: (draft.allowedVegetation ?? []).includes(v) ? (draft.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(draft.allowedVegetation ?? []), v] })}>{vegLabel(v)}</button>
+            ))}
+          </div>
+          {/* per-row helpers removed; guidance shown in top-level tab guide */}
+          <div className="eq-actions">
+            <button className="btn save" disabled={saving} onClick={saveNew}>{saving ? '...' : 'Add'}</button>
+            <button className="btn cancel" onClick={() => { setAdding(false); resetDraft(activeTab); }}>X</button>
+          </div>
+        </div>
+      )}
+      {filtered.map(item => (
+        editingId === item.id ? (
+          <InlineEditComponent key={item.id} item={item} onSave={saveEdit} onCancel={() => setEditingId(null)} saving={saving} terrainOptions={terrainOptions} vegetationOptions={vegetationOptions} terrainLabel={terrainLabel} vegLabel={vegLabel} terrainExample={terrainExample} vegExample={vegExample} />
+        ) : (
+          <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
+            <div className="eq-name text" title={item.name}>{item.name}</div>
+            {item.type === 'Machinery' && <div className="eq-small text">{(item as any).clearingRate || '-'} m/h</div>}
+            {item.type === 'Aircraft' && <div className="eq-small text">{(item as any).dropLength || '-'} m</div>}
+            {item.type === 'HandCrew' && <div className="eq-small text">{(item as any).crewSize || '-'} / {(item as any).clearingRatePerPerson || '-'} </div>}
+            <div className="eq-small text">{item.costPerHour ? `$${item.costPerHour}` : '-'}</div>
+            <div className="eq-tags readonly">
+              {item.allowedTerrain.map(t => <span key={t} className="tag on mini" title={terrainExample(t)}>{terrainLabel(t)}</span>)}
+            </div>
+            <div className="eq-tags readonly">
+              {item.allowedVegetation.map(v => <span key={v} className="tag on mini" title={vegExample(v)}>{vegLabel(v)}</span>)}
+            </div>
+            <div className="eq-actions">
+              <button className="btn edit" onClick={() => setEditingId(item.id)}>Edit</button>
+              <button className="btn del" onClick={() => remove(item)}>✕</button>
+            </div>
+          </div>
+        )
+      ))}
+      {!filtered.length && !adding && (
+        <div className="empty">No {activeTab} yet.</div>
+      )}
+    </div>
+  );
+};
+
 export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle
 }) => {
@@ -32,6 +204,45 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
 
   const terrainOptions: EquipmentApi['allowedTerrain'] = ['easy','moderate','difficult','extreme'];
   const vegetationOptions: EquipmentApi['allowedVegetation'] = ['grassland','lightshrub','mediumscrub','heavyforest'];
+
+  // Short, compact labels for the tag buttons and helpful examples shown as tooltips.
+  const terrainLabel = (t: string) => {
+    switch (t) {
+      case 'easy': return 'Easy';
+      case 'moderate': return 'Moderate';
+      case 'difficult': return 'Difficult';
+      case 'extreme': return 'Extreme';
+      default: return t;
+    }
+  };
+  const terrainExample = (t: string) => {
+    switch (t) {
+      case 'easy': return '0–5° — flat or gentle slopes (e.g. paddock, grass)';
+      case 'moderate': return '5–15° — rolling hills, light obstacles';
+      case 'difficult': return '15–30° — steep slopes, rocky or dense scrub';
+      case 'extreme': return '>30° — very steep / technical / impassable terrain';
+      default: return '';
+    }
+  };
+
+  const vegLabel = (v: string) => {
+    switch (v) {
+      case 'grassland': return 'Grass';
+      case 'lightshrub': return 'Light shrub';
+      case 'mediumscrub': return 'Medium scrub';
+      case 'heavyforest': return 'Heavy forest';
+      default: return v;
+    }
+  };
+  const vegExample = (v: string) => {
+    switch (v) {
+      case 'grassland': return 'Grassland — open grass, low fuel loads';
+      case 'lightshrub': return 'Light shrub / scrub — low bushes, scattered shrubs';
+      case 'mediumscrub': return 'Medium scrub — dense shrub, mixed groundcover';
+      case 'heavyforest': return 'Heavy timber / forest — tall trees, closed canopy';
+      default: return '';
+    }
+  };
 
   const filtered = equipment.filter(e => e.type === activeTab);
 
@@ -59,105 +270,9 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
     try { await onDelete(item); } catch (e: any) { setLocalError(e.message); }
   };
 
-  const InlineEdit: React.FC<{ item: EquipmentApi }> = ({ item }) => {
-    const [form, setForm] = useState<any>(item);
-    return (
-      <div className="equip-row editing">
-  <input aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value } as EquipmentApi)} />
-        {item.type === 'Machinery' && (
-          <input aria-label="Clearing rate" type="number" className="eq-small" placeholder="Rate" value={(form as any).clearingRate ?? ''} onChange={e => setForm({ ...(form as any), clearingRate: Number(e.target.value) } as EquipmentApi)} />
-        )}
-        {item.type === 'Aircraft' && (
-          <input aria-label="Drop length" type="number" className="eq-small" placeholder="Drop m" value={(form as any).dropLength ?? ''} onChange={e => setForm({ ...(form as any), dropLength: Number(e.target.value) } as EquipmentApi)} />
-        )}
-        {item.type === 'HandCrew' && (
-          <>
-            <input aria-label="Crew size" type="number" className="eq-xsmall" title="Crew Size" placeholder="Crew" value={(form as any).crewSize ?? ''} onChange={e => setForm({ ...(form as any), crewSize: Number(e.target.value) } as EquipmentApi)} />
-            <input aria-label="Clearing rate per person" type="number" className="eq-xsmall" title="Rate / person" placeholder="/person" value={(form as any).clearingRatePerPerson ?? ''} onChange={e => setForm({ ...(form as any), clearingRatePerPerson: Number(e.target.value) } as EquipmentApi)} />
-          </>
-        )}
-  <input aria-label="Cost per hour" type="number" className="eq-small" placeholder="$/h" value={form.costPerHour ?? ''} onChange={e => setForm({ ...form, costPerHour: Number(e.target.value) } as EquipmentApi)} />
-        <div className="eq-tags">
-          {terrainOptions.map((t: string) => (
-            <button aria-label={`Terrain ${t}`} key={t} type="button" className={(form.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedTerrain: (form.allowedTerrain ?? []).includes(t) ? (form.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(form.allowedTerrain ?? []), t] } as EquipmentApi)}>{t[0].toUpperCase()}</button>
-          ))}
-        </div>
-        <div className="eq-tags">
-          {vegetationOptions.map((v: string) => (
-            <button aria-label={`Vegetation ${v}`} key={v} type="button" className={(form.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedVegetation: (form.allowedVegetation ?? []).includes(v) ? (form.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(form.allowedVegetation ?? []), v] } as EquipmentApi)}>{v[0].toUpperCase()}</button>
-          ))}
-        </div>
-        <div className="eq-actions">
-          <button className="btn save" disabled={saving} onClick={() => saveEdit(form)}>{saving ? '...' : 'Save'}</button>
-          <button className="btn cancel" onClick={() => setEditingId(null)}>Cancel</button>
-        </div>
-      </div>
-    );
-  };
+  // InlineEdit moved to top-level InlineEditComponent
 
-  const EquipmentList: React.FC = () => (
-    <div className="equip-list">
-  {adding && (
-        <div className="equip-row adding">
-          <input className="eq-name" placeholder={`${activeTab} name`} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
-          {activeTab === 'Machinery' && (
-            <input type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
-          )}
-          {activeTab === 'Aircraft' && (
-            <input type="number" className="eq-small" placeholder="Drop m" value={draft.dropLength ?? ''} onChange={e => setDraft({ ...draft, dropLength: Number(e.target.value) })} />
-          )}
-          {activeTab === 'HandCrew' && (
-            <>
-              <input type="number" className="eq-xsmall" placeholder="Crew" value={draft.crewSize ?? ''} onChange={e => setDraft({ ...draft, crewSize: Number(e.target.value) })} />
-              <input type="number" className="eq-xsmall" placeholder="/person" value={draft.clearingRatePerPerson ?? ''} onChange={e => setDraft({ ...draft, clearingRatePerPerson: Number(e.target.value) })} />
-            </>
-          )}
-            <input type="number" className="eq-small" placeholder="$/h" value={draft.costPerHour ?? ''} onChange={e => setDraft({ ...draft, costPerHour: Number(e.target.value) })} />
-          <div className="eq-tags">
-            {terrainOptions.map(t => (
-            <button key={t} type="button" className={(draft.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'} onClick={() => setDraft({ ...draft, allowedTerrain: (draft.allowedTerrain ?? []).includes(t) ? (draft.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(draft.allowedTerrain ?? []), t] })}>{t[0].toUpperCase()}</button>
-            ))}
-          </div>
-            <div className="eq-tags">
-            {vegetationOptions.map(v => (
-              <button key={v} type="button" className={(draft.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'} onClick={() => setDraft({ ...draft, allowedVegetation: (draft.allowedVegetation ?? []).includes(v) ? (draft.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(draft.allowedVegetation ?? []), v] })}>{v[0].toUpperCase()}</button>
-            ))}
-          </div>
-          <div className="eq-actions">
-            <button className="btn save" disabled={saving} onClick={saveNew}>{saving ? '...' : 'Add'}</button>
-            <button className="btn cancel" onClick={() => { setAdding(false); resetDraft(activeTab); }}>X</button>
-          </div>
-        </div>
-      )}
-      {filtered.map(item => (
-        editingId === item.id ? (
-          <InlineEdit key={item.id} item={item} />
-        ) : (
-          <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
-            <div className="eq-name text" title={item.name}>{item.name}</div>
-            {item.type === 'Machinery' && <div className="eq-small text">{(item as any).clearingRate || '-'} m/h</div>}
-            {item.type === 'Aircraft' && <div className="eq-small text">{(item as any).dropLength || '-'} m</div>}
-            {item.type === 'HandCrew' && <div className="eq-small text">{(item as any).crewSize || '-'} / {(item as any).clearingRatePerPerson || '-'} </div>}
-            <div className="eq-small text">{item.costPerHour ? `$${item.costPerHour}` : '-'}</div>
-            <div className="eq-tags readonly">
-              {item.allowedTerrain.map(t => <span key={t} className="tag on mini" title={t}>{t[0].toUpperCase()}</span>)}
-            </div>
-            <div className="eq-tags readonly">
-              {item.allowedVegetation.map(v => <span key={v} className="tag on mini" title={v}>{v[0].toUpperCase()}</span>)}
-            </div>
-            <div className="eq-actions">
-              <button className="btn edit" onClick={() => setEditingId(item.id)}>Edit</button>
-              <button className="btn del" onClick={() => remove(item)}>✕</button>
-            </div>
-          </div>
-        )
-      ))}
-      {!filtered.length && !adding && (
-        <div className="empty">No {activeTab} yet.</div>
-      )}
-    </div>
-  );
-  
+  // EquipmentList moved to top-level EquipmentListComponent
 
   if (!isOpen) return null;
 
@@ -183,11 +298,38 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         <button className="quick-add" onClick={startAdd} disabled={adding}>＋ Add {activeTab}</button>
       </div>
 
+      {/* Single top-level guide for the visible tab to avoid repeating helpers in every row */}
+      <div className="tab-guide" aria-hidden>
+        <div className="guide-line"><strong>Slope guide:</strong> 0–5° (Easy), 5–15° (Moderate), 15–30° (Difficult), &gt;30° (Extreme)</div>
+        <div className="guide-line"><strong>Vegetation examples:</strong> Grassland · Light shrub · Medium scrub · Heavy timber</div>
+        <div className="guide-line"><small className="muted">Tip: click tags to toggle terrain/vegetation inclusion for each equipment item.</small></div>
+      </div>
+
       <div className="config-content equip-content">
         {error && <div className="equip-error">{error}</div>}
         {localError && <div className="equip-error">{localError}</div>}
         {loading && <div className="equip-loading">Loading...</div>}
-        <EquipmentList />
+        <EquipmentListComponent
+          equipment={equipment}
+          activeTab={activeTab}
+          adding={adding}
+          draft={draft}
+          setDraft={setDraft}
+          saveNew={saveNew}
+          setAdding={setAdding}
+          resetDraft={resetDraft}
+          editingId={editingId}
+          setEditingId={setEditingId}
+          saveEdit={saveEdit}
+          remove={remove}
+          saving={saving}
+          terrainOptions={terrainOptions}
+          vegetationOptions={vegetationOptions}
+          terrainLabel={terrainLabel}
+          vegLabel={vegLabel}
+          terrainExample={terrainExample}
+          vegExample={vegExample}
+        />
         <p className="equip-hint">Double-click a row to edit. Tags toggle inclusion. Changes save instantly.</p>
       </div>
     </div>

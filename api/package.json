@@ -21,7 +21,7 @@
   "rimraf": "^5.0.0"
   },
   "engines": {
-    "node": "20.x"
+  "node": ">=18.x"
   },
   "main": "dist/src/{index.js,functions/*.js}"
 }
