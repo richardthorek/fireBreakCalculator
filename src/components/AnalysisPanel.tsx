@@ -13,6 +13,8 @@ interface AnalysisPanelProps {
   distance: number | null;
   /** Track analysis data including slope information */
   trackAnalysis: TrackAnalysis | null;
+  /** All drawn breaks with their distances and analyses */
+  breaks?: { id: number; distance: number; analysis: TrackAnalysis | null }[];
   /** Available machinery options */
   machinery: MachinerySpec[];
   /** Available aircraft options */
@@ -138,6 +140,7 @@ const isSlopeCompatible = (
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   trackAnalysis,
+  breaks = [],
   machinery,
   aircraft,
   handCrews,
@@ -147,6 +150,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+  // User-selected quick option IDs
+  const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
+  const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
+  const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
@@ -264,6 +271,61 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
   }, [distance, trackAnalysis, selectedVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
+  // Helper to compute calculations for an arbitrary break (re-use same logic)
+  const computeForBreak = (dist: number, analysis: TrackAnalysis | null) => {
+    // reuse the same logic as above but with provided inputs
+    const effectiveTerrain = (analysis ? deriveTerrainFromSlope(analysis.maxSlope) : 'easy') as TerrainType;
+    const terrainFactor = {
+      easy: 1.0,
+      moderate: 1.3,
+      difficult: 1.7,
+      extreme: 2.2
+    }[effectiveTerrain];
+    const vegetationFactor = {
+      grassland: 1.0,
+      lightshrub: 1.1,
+      mediumscrub: 1.5,
+      heavyforest: 2.0
+    }[selectedVegetation];
+
+    const results: CalculationResult[] = [];
+    const requiredTerrain = effectiveTerrain;
+
+    machinery.forEach(machine => {
+      const compatible = isCompatible(machine, requiredTerrain, selectedVegetation);
+      const slopeCheck = analysis ? isSlopeCompatible(machine, analysis.maxSlope) : { compatible: true };
+      const fullCompatibility = compatible && slopeCheck.compatible;
+      const time = fullCompatibility ? calculateMachineryTime(dist, machine, terrainFactor, vegetationFactor) : 0;
+      const cost = fullCompatibility && machine.costPerHour ? time * machine.costPerHour : 0;
+      results.push({ id: machine.id, name: machine.name, type: 'machinery', time, cost, compatible: fullCompatibility, slopeCompatible: slopeCheck.compatible, maxSlopeExceeded: slopeCheck.maxSlopeExceeded, unit: 'hours', description: machine.description });
+    });
+
+    aircraft.forEach(plane => {
+      const compatible = isCompatible(plane, requiredTerrain, selectedVegetation);
+      const drops = compatible ? calculateAircraftDrops(dist, plane) : 0;
+      const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0;
+      const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
+      results.push({ id: plane.id, name: plane.name, type: 'aircraft', time: totalTime, cost, compatible, unit: 'hours', description: plane.description, drops });
+    });
+
+    handCrews.forEach(crew => {
+      const compatible = isCompatible(crew, requiredTerrain, selectedVegetation);
+      const time = compatible ? calculateHandCrewTime(dist, crew, terrainFactor, vegetationFactor) : 0;
+      const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
+      results.push({ id: crew.id, name: crew.name, type: 'handCrew', time, cost, compatible, unit: 'hours', description: crew.description });
+    });
+
+    results.sort((a, b) => {
+      if (!a.compatible && b.compatible) return 1;
+      if (a.compatible && !b.compatible) return -1;
+      if (!a.compatible && !b.compatible) return 0;
+      if (Math.abs(a.time - b.time) < 0.1) return a.cost - b.cost;
+      return a.time - b.time;
+    });
+
+    return results;
+  };
+
   // Get best option for each category
   const bestOptions = useMemo(() => {
     const compatibleResults = calculations.filter(result => result.compatible);
@@ -274,6 +336,28 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       handCrew: compatibleResults.find(result => result.type === 'handCrew')
     };
   }, [calculations]);
+
+  // Initialize / reconcile selected quick options when calculations change
+  useMemo(() => {
+    if (calculations.length === 0) return null;
+    const machList = calculations.filter(c => c.type === 'machinery' && c.compatible);
+    const airList = calculations.filter(c => c.type === 'aircraft' && c.compatible);
+    const handList = calculations.filter(c => c.type === 'handCrew' && c.compatible);
+    if ((!selectedQuickMachinery || !machList.some(m => m.id === selectedQuickMachinery)) && machList.length) {
+      setSelectedQuickMachinery(machList[0].id);
+    }
+    if ((!selectedQuickAircraft || !airList.some(a => a.id === selectedQuickAircraft)) && airList.length) {
+      setSelectedQuickAircraft(airList[0].id);
+    }
+    if ((!selectedQuickHandCrew || !handList.some(h => h.id === selectedQuickHandCrew)) && handList.length) {
+      setSelectedQuickHandCrew(handList[0].id);
+    }
+    return null;
+  }, [calculations, selectedQuickMachinery, selectedQuickAircraft, selectedQuickHandCrew]);
+
+  const quickMachinery = selectedQuickMachinery ? calculations.find(c => c.id === selectedQuickMachinery) : undefined;
+  const quickAircraft = selectedQuickAircraft ? calculations.find(c => c.id === selectedQuickAircraft) : undefined;
+  const quickHandCrew = selectedQuickHandCrew ? calculations.find(c => c.id === selectedQuickHandCrew) : undefined;
 
   return (
     <div className="analysis-panel-permanent">
@@ -310,6 +394,34 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </select>
           </div>
         </div>
+
+        {/* List of drawn breaks and per-break recommendations */}
+        {breaks && breaks.length > 0 && (
+          <div className="breaks-list">
+            <h4>Drawn Fire Breaks</h4>
+            <div className="break-items">
+              {breaks.map(b => {
+                const recs = computeForBreak(b.distance, b.analysis);
+                const bestMachinery = recs.find(r => r.type === 'machinery' && r.compatible);
+                const bestAircraft = recs.find(r => r.type === 'aircraft' && r.compatible);
+                const bestHand = recs.find(r => r.type === 'handCrew' && r.compatible);
+                return (
+                  <div key={b.id} className="break-item">
+                    <div className="break-header">
+                      <strong>Break {b.id}</strong>
+                      <span className="break-distance">{b.distance} m</span>
+                    </div>
+                    <div className="break-recommendations">
+                      <div className="rec-machinery">Machinery: {bestMachinery ? `${bestMachinery.name} (${bestMachinery.time.toFixed(1)}h)` : 'None'}</div>
+                      <div className="rec-aircraft">Aircraft: {bestAircraft ? `${bestAircraft.name} (${bestAircraft.time.toFixed(1)}h)` : 'None'}</div>
+                      <div className="rec-hand">Hand Crew: {bestHand ? `${bestHand.name} (${bestHand.time.toFixed(1)}h)` : 'None'}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Slope Analysis Information - When track analysis is available */}
         {trackAnalysis && (
@@ -360,16 +472,29 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <span className="category-icon">🛠️</span>
                     <span className="category-label">Machinery</span>
                   </div>
-                  {bestOptions.machinery ? (
-                    <div className="option-details">
-                      <span className="option-name">{bestOptions.machinery.name}</span>
+                  {quickMachinery ? (
+                    <div className="option-details option-with-select">
+                      <div className="option-main-line">
+                        <select
+                          className="quick-select"
+                          value={quickMachinery.id}
+                          onChange={(e) => setSelectedQuickMachinery(e.target.value)}
+                          aria-label="Select machinery option"
+                          title="Select machinery option"
+                        >
+                          {calculations.filter(c => c.type==='machinery').map(m => (
+                            // Allow the user to pick any option; mark incompatible ones visually instead of disabling them
+                            <option key={m.id} value={m.id} data-incompatible={m.compatible ? 'false' : 'true'}>
+                              {m.name}{!m.compatible ? ' (✗)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <span className="option-time">
-                        {bestOptions.machinery.time.toFixed(1)} {bestOptions.machinery.unit}
+                        {quickMachinery.time.toFixed(1)} {quickMachinery.unit}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
                 
                 <div className="option-category">
@@ -377,34 +502,53 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <span className="category-icon">✈️</span>
                     <span className="category-label">Aircraft</span>
                   </div>
-                  {bestOptions.aircraft ? (
-                    <div className="option-details">
-                      <div className="drop-preview-toggle">
-                        <span className="option-name">{bestOptions.aircraft.name}</span>
-                        {/* Toggle button placed top-right via CSS */}
+                  {quickAircraft ? (
+                    <div className="option-details option-with-select">
+                      <div className="drop-preview-toggle option-main-line">
+                        <select
+                          className="quick-select"
+                          value={quickAircraft.id}
+                          onChange={(e) => {
+                            const newId = e.target.value;
+                            const prevId = selectedQuickAircraft;
+                            setSelectedQuickAircraft(newId);
+                            // If drop preview was enabled for the previous quick aircraft,
+                            // replace it with the newly selected aircraft so the preview follows selection.
+                            if (prevId && selectedAircraftForPreview.includes(prevId)) {
+                              const updated = selectedAircraftForPreview.filter(id => id !== prevId).concat(newId);
+                              setSelectedAircraftForPreview(updated);
+                              onDropPreviewChange?.(updated);
+                            }
+                          }}
+                          aria-label="Select aircraft option"
+                          title="Select aircraft option"
+                        >
+                          {calculations.filter(c => c.type==='aircraft').map(a => (
+                            <option key={a.id} value={a.id} data-incompatible={a.compatible ? 'false' : 'true'}>
+                              {a.name}{!a.compatible ? ' (✗)' : ''}
+                            </option>
+                          ))}
+                        </select>
                         <button
                           type="button"
-                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'active' : ''}`}
-                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'Drop preview on' : 'Drop preview off'}
+                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(quickAircraft.id) ? 'active' : ''}`}
+                          aria-label={selectedAircraftForPreview.includes(quickAircraft.id) ? 'Drop preview on' : 'Drop preview off'}
                           title="Toggle drop preview"
-                          onClick={() => bestOptions.aircraft && handleDropPreviewChange(bestOptions.aircraft.id, !selectedAircraftForPreview.includes(bestOptions.aircraft.id))}
+                          onClick={() => handleDropPreviewChange(quickAircraft.id, !selectedAircraftForPreview.includes(quickAircraft.id))}
                         >
-                          {/* Simple plane SVG icon */}
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                             <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
                           </svg>
                         </button>
                       </div>
                       <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
-                        {bestOptions.aircraft.drops && (
-                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
+                        {quickAircraft.time.toFixed(1)} {quickAircraft.unit}
+                        {quickAircraft.drops && (
+                          <span className="drops-info"> ({quickAircraft.drops} drops)</span>
                         )}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
                 
                 <div className="option-category">
@@ -412,16 +556,28 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <span className="category-icon">👨‍🚒</span>
                     <span className="category-label">Hand Crew</span>
                   </div>
-                  {bestOptions.handCrew ? (
-                    <div className="option-details">
-                      <span className="option-name">{bestOptions.handCrew.name}</span>
+                  {quickHandCrew ? (
+                    <div className="option-details option-with-select">
+                      <div className="option-main-line">
+                        <select
+                          className="quick-select"
+                          value={quickHandCrew.id}
+                          onChange={(e) => setSelectedQuickHandCrew(e.target.value)}
+                          aria-label="Select hand crew option"
+                          title="Select hand crew option"
+                        >
+                          {calculations.filter(c => c.type==='handCrew').map(h => (
+                            <option key={h.id} value={h.id} data-incompatible={h.compatible ? 'false' : 'true'}>
+                              {h.name}{!h.compatible ? ' (✗)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <span className="option-time">
-                        {bestOptions.handCrew.time.toFixed(1)} {bestOptions.handCrew.unit}
+                        {quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}
                       </span>
                     </div>
-                  ) : (
-                    <span className="no-option">No compatible options</span>
-                  )}
+                  ) : <span className="no-option">No compatible options</span>}
                 </div>
               </div>
             </div>

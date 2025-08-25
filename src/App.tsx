@@ -14,6 +14,8 @@ const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [breaks, setBreaks] = useState<{ id: number; distance: number; analysis: TrackAnalysis | null }[]>([]);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   
   // State for configurable equipment
   const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
@@ -25,21 +27,29 @@ const App: React.FC = () => {
       <header className="app-header">
         <h1 className="app-title">RFS Fire Break Calculator</h1>
         <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
+        <button
+          className="config-panel-toggle"
+          onClick={() => setIsConfigOpen(v => !v)}
+          title="Configure Equipment"
+        >
+          ⚙️ Config
+        </button>
       </header>
       <main className="app-main">
         <div className="map-section">
           <MapView 
-            
             onDistanceChange={setFireBreakDistance} 
             onTrackAnalysisChange={setTrackAnalysis}
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
+            onBreaksChange={setBreaks}
           />
         </div>
         <div className="analysis-section">
           <AnalysisPanel 
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
+            breaks={breaks}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
@@ -53,6 +63,8 @@ const App: React.FC = () => {
           onUpdateMachinery={setMachinery}
           onUpdateAircraft={setAircraft}
           onUpdateHandCrews={setHandCrews}
+          isOpen={isConfigOpen}
+          onToggle={() => setIsConfigOpen(v => !v)}
         />
       </main>
     </div>

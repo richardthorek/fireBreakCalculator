@@ -57,15 +57,21 @@ interface MapViewProps {
   /** Aircraft list and selected aircraft for drop preview - provided by App */
   selectedAircraftForPreview?: string[];
   aircraft?: AircraftSpec[];
+  /** Callback to report all drawn breaks with their distances and analyses */
+  onBreaksChange?: (breaks: { id: number; distance: number; analysis: TrackAnalysis | null }[]) => void;
 }
 
-export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange }) => {
+export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange, selectedAircraftForPreview = [], aircraft = [], onBreaksChange }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   // Map from polyline leaflet internal id to vertex markers
   const vertexMarkersRef = useRef<Map<number, L.Marker[]>>(new Map());
   const slopeLayersRef = useRef<L.LayerGroup | null>(null);
+  const dropMarkersRef = useRef<L.LayerGroup | null>(null);
+  const dropMarkerGroupsRef = useRef<Map<string, L.LayerGroup>>(new Map());
+  const [dropsVersion, setDropsVersion] = useState(0);
+  const breakSummariesRef = useRef<Map<number, { id: number; distance: number; analysis: TrackAnalysis | null }>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
@@ -140,6 +146,11 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
     const slopeLayer = new L.LayerGroup();
     map.addLayer(slopeLayer);
     slopeLayersRef.current = slopeLayer;
+
+  // Layer for aircraft drop preview markers
+  const dropsLayer = new L.LayerGroup();
+  map.addLayer(dropsLayer);
+  dropMarkersRef.current = dropsLayer;
 
     // Configure drawing controls - only allow polylines for fire breaks
     const drawControl = new L.Control.Draw({
@@ -246,11 +257,11 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           totalDistance += latlngs[i].distanceTo(latlngs[i + 1]);
         }
         
-        setFireBreakDistance(Math.round(totalDistance));
-        onDistanceChange(Math.round(totalDistance));
+  setFireBreakDistance(Math.round(totalDistance));
+  onDistanceChange(Math.round(totalDistance));
         
         // Analyze slopes and add visualization
-        const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
+  const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
         
         // Add popup with comprehensive info
   const popupContent = analysis ? buildAnalysisPopupHTML(analysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
@@ -259,6 +270,13 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         // After creating and analyzing, add draggable vertex markers
         if (layer instanceof L.Polyline) {
           addVertexMarkers(layer);
+        }
+
+        // Register break summary for this polyline
+        if ((layer as any)._leaflet_id) {
+          const id = (layer as any)._leaflet_id as number;
+          breakSummariesRef.current.set(id, { id, distance: Math.round(totalDistance), analysis });
+          onBreaksChange?.(Array.from(breakSummariesRef.current.values()));
         }
       }
     });
@@ -287,6 +305,13 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           // Rebuild vertex markers to match new vertices
           removeVertexMarkers(layer);
           addVertexMarkers(layer);
+
+          // Update break summary for this polyline
+          if ((layer as any)._leaflet_id) {
+            const id = (layer as any)._leaflet_id as number;
+            breakSummariesRef.current.set(id, { id, distance: Math.round(totalDistance), analysis });
+            onBreaksChange?.(Array.from(breakSummariesRef.current.values()));
+          }
         }
       });
     });
@@ -303,9 +328,14 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         if (slopeLayersRef.current) {
           slopeLayersRef.current.clearLayers();
         }
+        if (dropMarkersRef.current) {
+          dropMarkersRef.current.clearLayers();
+        }
         // Clear vertex markers map
         vertexMarkersRef.current.forEach((markers) => markers.forEach(m => m.remove()));
         vertexMarkersRef.current.clear();
+  breakSummariesRef.current.clear();
+  onBreaksChange?.([]);
       }
     });
 
@@ -361,7 +391,9 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
       // Create vertex markers for each user vertex
       for (let idx = 0; idx < latlngs.length; idx++) {
         const pt = latlngs[idx];
-        const vertexMarker = L.marker(pt, { draggable: true });
+        // Use a DivIcon so we can style primary vertices as filled circles
+        const vertexIcon = L.divIcon({ className: 'vertex-marker-icon', iconSize: [14, 14] });
+        const vertexMarker = L.marker(pt, { draggable: true, icon: vertexIcon, riseOnHover: true, zIndexOffset: 1000 });
         vertexMarker.addTo(map);
 
         // While dragging, update the polyline vertex
@@ -394,7 +426,9 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           const a = latlngs[idx];
           const b = latlngs[idx + 1];
           const mid = new LatLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
-          const midMarker = L.marker(mid, { draggable: true, opacity: 0.8 });
+          // Midpoint markers are hollow circles (transparent middle) to indicate they are generated
+          const midIcon = L.divIcon({ className: 'midpoint-marker-icon', iconSize: [14, 14] });
+          const midMarker = L.marker(mid, { draggable: true, icon: midIcon, opacity: 0.95, zIndexOffset: 500 });
           midMarker.addTo(map);
 
           // When a midpoint is dragged and released, convert it to a real vertex
@@ -426,8 +460,12 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         }
       }
 
-      vertexMarkersRef.current.set(id, markers);
+  vertexMarkersRef.current.set(id, markers);
+  // Signal that topology changed so drop previews can be re-rendered by the main effect
+  setDropsVersion(v => v + 1);
     };
+
+  // (removed) per-polyline immediate renderer; main effect will handle grouped rendering
 
     const removeVertexMarkers = (poly: L.Polyline) => {
       const id = (poly as any)._leaflet_id as number;
@@ -436,6 +474,8 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         existing.forEach(m => m.remove());
         vertexMarkersRef.current.delete(id);
       }
+      // Signal topology change so drop previews re-render
+      setDropsVersion(v => v + 1);
     };
 
     // Cleanup on unmount
@@ -444,21 +484,77 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
     };
   }, []);
 
+  // Re-render drop previews when selected aircraft change or when map/drawn items update.
+  // We use dropsVersion to also trigger on topology changes.
+  useEffect(() => {
+    if (!mapRef.current || !drawnItemsRef.current || !dropMarkersRef.current) return;
+
+    try {
+      // Clear previous per-aircraft groups
+      dropMarkerGroupsRef.current.forEach((group) => {
+        group.clearLayers();
+        if (dropMarkersRef.current!.hasLayer(group)) dropMarkersRef.current!.removeLayer(group);
+      });
+      dropMarkerGroupsRef.current.clear();
+
+      if (!selectedAircraftForPreview || selectedAircraftForPreview.length === 0) return;
+
+      // For each selected aircraft, create a layer group and populate across all polylines
+      selectedAircraftForPreview.forEach(id => {
+        const spec = aircraft.find(a => a.id === id);
+        if (!spec) return;
+        const dropLen = spec.dropLength || 1000;
+        const group = new L.LayerGroup();
+
+        // For each polyline, compute cumulative distances and add markers
+        drawnItemsRef.current!.eachLayer((layer: any) => {
+          if (!(layer instanceof L.Polyline)) return;
+          const latlngs = layer.getLatLngs() as LatLng[];
+          if (!latlngs || latlngs.length < 2) return;
+          const cumulative: { pt: LatLng; distFromStart: number }[] = [];
+          let acc = 0;
+          cumulative.push({ pt: latlngs[0], distFromStart: 0 });
+          for (let i = 1; i < latlngs.length; i++) {
+            const prev = latlngs[i - 1];
+            const curr = latlngs[i];
+            const seg = prev.distanceTo(curr);
+            acc += seg;
+            cumulative.push({ pt: curr, distFromStart: acc });
+          }
+
+          for (let d = dropLen; d <= cumulative[cumulative.length - 1].distFromStart; d += dropLen) {
+            let idx = cumulative.findIndex(c => c.distFromStart >= d);
+            if (idx === -1) idx = cumulative.length - 1;
+            const after = cumulative[idx];
+            const before = cumulative[Math.max(0, idx - 1)];
+            const segLen = after.distFromStart - before.distFromStart || 1;
+            const t = (d - before.distFromStart) / segLen;
+            const lat = before.pt.lat + (after.pt.lat - before.pt.lat) * t;
+            const lng = before.pt.lng + (after.pt.lng - before.pt.lng) * t;
+            const marker = L.circleMarker([lat, lng], {
+              radius: 6,
+              color: '#4fc3f7',
+              fillColor: '#4fc3f7',
+              fillOpacity: 0.9,
+              weight: 1
+            });
+            marker.bindTooltip(`${spec.name} drop`, { permanent: false, direction: 'top' });
+            group.addLayer(marker);
+          }
+        });
+
+        // Add group to top-level dropMarkers layer for collective visibility control
+        dropMarkersRef.current!.addLayer(group);
+        dropMarkerGroupsRef.current.set(id, group);
+      });
+    } catch (err) {
+      console.warn('Error rendering grouped drop previews', err);
+    }
+  }, [selectedAircraftForPreview, aircraft, dropsVersion]);
+
   return (
     <div className="map-wrapper">
       {error && <div className="map-error">{error}</div>}
-      {fireBreakDistance && (
-        <div className="map-info">
-          <strong>Fire Break Distance:</strong> {fireBreakDistance.toLocaleString()} meters
-          {isAnalyzing && <div className="analysis-loading">Analyzing slopes...</div>}
-          {trackAnalysis && (
-            <div className="slope-summary">
-              <strong>Slope Analysis:</strong> Max {trackAnalysis.maxSlope.toFixed(1)}°, 
-              Avg {trackAnalysis.averageSlope.toFixed(1)}°
-            </div>
-          )}
-        </div>
-      )}
       <div ref={mapContainerRef} className="map-container" aria-label="Fire break planning map" />
     </div>
   );

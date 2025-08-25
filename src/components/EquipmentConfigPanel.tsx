@@ -14,6 +14,8 @@ interface EquipmentConfigPanelProps {
   onUpdateMachinery: (machinery: MachinerySpec[]) => void;
   onUpdateAircraft: (aircraft: AircraftSpec[]) => void;
   onUpdateHandCrews: (handCrews: HandCrewSpec[]) => void;
+  isOpen?: boolean;
+  onToggle?: () => void;
 }
 
 type EquipmentType = 'machinery' | 'aircraft' | 'handCrews';
@@ -25,8 +27,8 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   onUpdateMachinery,
   onUpdateAircraft,
   onUpdateHandCrews
+  , isOpen, onToggle
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<EquipmentType>('machinery');
   const [editingItem, setEditingItem] = useState<string | null>(null);
 
@@ -191,15 +193,8 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   };
 
   if (!isOpen) {
-    return (
-      <button 
-        className="config-panel-toggle"
-        onClick={() => setIsOpen(true)}
-        title="Configure Equipment"
-      >
-        ⚙️ Config
-      </button>
-    );
+    // When closed, render nothing: the toggle is now in the header
+    return null;
   }
 
   return (
@@ -208,7 +203,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         <h3>Equipment Configuration</h3>
         <button 
           className="close-button"
-          onClick={() => setIsOpen(false)}
+          onClick={() => onToggle?.()}
         >
           ✕
         </button>
