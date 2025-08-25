@@ -5,26 +5,21 @@ import 'leaflet-draw';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
-import { computeSlopeVegetationOverlap } from '../utils/analysisOverlap';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
+import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 
 // Helper to build richer popup HTML with slope and vegetation data
 const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: VegetationAnalysis | null, totalDistance: number) => {
   const dist = (n: number) => Math.round(n); // 0 decimals
   const total = analysis.totalDistance || 1;
-  const entries: { label: string; key: keyof typeof analysis.slopeDistribution; color: string; range: string }[] = [
-    { label: 'Flat', key: 'flat', color: '#00aa00', range: '0-10°' },
-    { label: 'Medium', key: 'medium', color: '#c8c800', range: '10-20°' },
-    { label: 'Steep', key: 'steep', color: '#ff8800', range: '20-30°' },
-    { label: 'Very Steep', key: 'very_steep', color: '#ff0000', range: '30°+' }
-  ];
-  const bars = entries.map(e => {
-    const meters = analysis.slopeDistribution[e.key];
-    const pct = Math.max(0.5, (meters / total) * 100); // ensure tiny visibility
-    const color = e.color;
+  const bars = SLOPE_CATEGORIES.map(e => {
+    const meters = (analysis.slopeDistribution as any)[e.key] || 0;
+    const pct = Math.max(0.5, Math.round((meters / total) * 100)); // percent as integer
     return `<div class="popup-bar-row">
       <div class="popup-bar-label">${e.label}</div>
-      <div class="popup-bar-track"><div class="popup-bar-fill" style="width:${pct}%;background:${color};"></div></div>
+      <div class="popup-bar-track">
+        <div class="popup-bar-fill pct-${pct}" data-color="${e.color}"></div>
+      </div>
       <div class="popup-bar-value">${dist(meters)} m</div>
     </div>`;
   }).join('');
@@ -38,46 +33,37 @@ const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: Veg
       mediumscrub: 'Medium Scrub',
       heavyforest: 'Heavy Forest'
     };
-    
     const predominantLabel = vegTypeLabels[vegetationAnalysis.predominantVegetation];
     const confidencePercent = Math.round(vegetationAnalysis.overallConfidence * 100);
-    
+    const total = Math.max(1, vegetationAnalysis.totalDistance);
+    const pct = (m: number) => Math.round((m / total) * 100);
+
+    const parts = VEGETATION_CATEGORIES.map(c => ({
+      label: c.label,
+      pct: pct(vegetationAnalysis.vegetationDistribution[c.key as keyof typeof vegetationAnalysis.vegetationDistribution] || 0),
+      color: c.color
+    }));
+
     vegetationSection = `
-      <div class="popup-veg-summary">
+      <div class="popup-veg-section">
         <div class="popup-veg-title">Vegetation Analysis</div>
-        <div class="popup-veg-pred">Predominant: <strong>${predominantLabel}</strong></div>
-        <div class="popup-veg-conf">Confidence: ${confidencePercent}%</div>
+        <div class="popup-veg-sub">Predominant: <strong>${predominantLabel}</strong> &nbsp; | &nbsp; Confidence: ${confidencePercent}%</div>
+        <div class="dist-bar" role="img" aria-label="Vegetation distribution">
+          ${parts.map(p => `<div class=\"dist-seg dist-pct-${p.pct}\" data-color=\"${p.color}\"></div>`).join('')}
+        </div>
+        <div class="dist-legend">
+          ${parts.map(p => `<div class=\"dist-legend-item\"><span class=\"dist-swatch\" data-color=\"${p.color}\"></span><span class=\"dist-legend-label\">${p.label}</span><span class=\"dist-legend-pct\">${p.pct}%</span></div>`).join('')}
+        </div>
       </div>`;
-  // Append disclaimer to be explicit in the popup
-  vegetationSection += `<div class="popup-veg-disclaimer">Vegetation sourced from a global landcover API; results may be imprecise. Verify and use the manual override in the side panel if needed.</div>`;
   }
 
-  // Build slope-by-vegetation breakdown HTML if both analyses available
-  let slopeVegSection = '';
-  if (vegetationAnalysis) {
-    try {
-      const overlap = computeSlopeVegetationOverlap(analysis.segments, vegetationAnalysis.segments);
-      const slopeLines = entries.map(e => {
-        const perVeg = overlap[e.key] || {};
-        const totalForCat = Object.values(perVeg).reduce((s, v) => s + v, 0) || 1;
-        const parts = Object.entries(perVeg).map(([veg, meters]) => `${veg}: ${Math.round((meters / totalForCat) * 100)}%`).join(', ');
-        return `<div style="font-size:11px;color:#444;margin-top:4px;"><strong>${e.label}:</strong> ${parts || '—'}</div>`;
-      }).join('');
-  slopeVegSection = `<div class="popup-veg-section">${slopeLines}</div>`;
-    } catch (err) {
-      // ignore overlap errors
-    }
-  }
-
-  return `
-    <div class="popup-container">
-      <div class="popup-header">Fire Break Analysis</div>
-      <div class="popup-distance">Distance: ${Math.round(totalDistance)} m</div>
-      <div class="popup-slope-summary">Max Slope: ${analysis.maxSlope.toFixed(1)}°, Avg: ${analysis.averageSlope.toFixed(1)}°</div>
+    return `
+    <div class="popup-analysis">
+      <div class="popup-title">Fire Break Analysis</div>
+      <div class="popup-summary">Distance: ${Math.round(totalDistance)} m &middot; Max: ${analysis.maxSlope.toFixed(1)}° &middot; Avg: ${analysis.averageSlope.toFixed(1)}°</div>
       <div class="popup-section-title">Slope Distribution</div>
-      <div class="popup-section-subtitle">Meters per category</div>
+      <div class="popup-section-sub">Meters per category</div>
       ${bars}
-      ${slopeVegSection}
       ${vegetationSection}
     </div>`;
 };
@@ -255,11 +241,11 @@ export const MapView: React.FC<MapViewProps> = ({
           
           // Add popup with slope information
           line.bindPopup(`
-            <div class="popup-segment">
-              <div class="popup-segment-title"><strong>Slope Segment</strong></div>
-              <div class="popup-segment-body">Slope: ${segment.slope.toFixed(1)}° (${segment.category.replace('_', ' ')})</div>
-              <div class="popup-segment-body">Distance: ${segment.distance.toFixed(0)} m</div>
-              <div class="popup-segment-body">Elevation change: ${Math.abs(segment.endElevation - segment.startElevation).toFixed(1)} m</div>
+            <div>
+              <strong>Slope Segment</strong><br/>
+              Slope: ${segment.slope.toFixed(1)}° (${segment.category.replace('_', ' ')})<br/>
+              Distance: ${segment.distance.toFixed(0)}m<br/>
+              Elevation change: ${Math.abs(segment.endElevation - segment.startElevation).toFixed(1)}m
             </div>
           `);
           
@@ -463,7 +449,7 @@ export const MapView: React.FC<MapViewProps> = ({
   return (
     <div className="map-wrapper">
       {error && <div className="map-error">{error}</div>}
-      {fireBreakDistance && (
+      {/* {fireBreakDistance && (
         <div className="map-info">
           <strong>Fire Break Distance:</strong> {fireBreakDistance.toLocaleString()} meters
           {isAnalyzing && <div className="analysis-loading">Analyzing slopes...</div>}
@@ -474,7 +460,7 @@ export const MapView: React.FC<MapViewProps> = ({
             </div>
           )}
         </div>
-      )}
+      )} */}
       <div ref={mapContainerRef} className="map-container" aria-label="Fire break planning map" />
     </div>
   );
