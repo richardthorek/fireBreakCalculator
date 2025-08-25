@@ -16,6 +16,8 @@ interface AnalysisPanelProps {
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Callback for when drop preview selection changes */
+  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
@@ -25,11 +27,12 @@ interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for machinery/handCrew, total drops for aircraft
+  time: number; // hours for all types now
   cost: number;
   compatible: boolean;
   unit: string;
   description?: string;
+  drops?: number; // number of drops for aircraft
 }
 
 /**
@@ -85,11 +88,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   machinery,
   aircraft,
-  handCrews
+  handCrews,
+  onDropPreviewChange
 }) => {
   const [terrain, setTerrain] = useState<TerrainType>('easy');
   const [vegetation, setVegetation] = useState<VegetationType>('light');
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+
+  // Handle drop preview selection changes
+  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
+    const updatedSelection = isSelected 
+      ? [...selectedAircraftForPreview, aircraftId]
+      : selectedAircraftForPreview.filter(id => id !== aircraftId);
+    
+    setSelectedAircraftForPreview(updatedSelection);
+    onDropPreviewChange?.(updatedSelection);
+  };
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -142,11 +157,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         id: plane.id,
         name: plane.name,
         type: 'aircraft',
-        time: drops,
+        time: totalTime,
         cost,
         compatible,
-        unit: 'drops',
-        description: plane.description
+        unit: 'hours',
+        description: plane.description,
+        // Store additional aircraft-specific info for display
+        drops: drops
       });
     });
 
@@ -174,14 +191,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (a.compatible && !b.compatible) return -1;
       if (!a.compatible && !b.compatible) return 0;
       
-      // For aircraft, convert drops to estimated time for sorting
-      const aTime = a.type === 'aircraft' ? a.time * 0.5 : a.time; // rough estimate
-      const bTime = b.type === 'aircraft' ? b.time * 0.5 : b.time;
-      
-      if (Math.abs(aTime - bTime) < 0.1) {
+      // All types now use time in hours, so direct comparison
+      if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost; // If time is similar, sort by cost
       }
-      return aTime - bTime;
+      return a.time - b.time;
     });
   }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
 
@@ -270,7 +284,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <div className="option-details">
                       <span className="option-name">{bestOptions.aircraft.name}</span>
                       <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(0)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.drops && (
+                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
+                        )}
                       </span>
                     </div>
                   ) : (
@@ -294,6 +311,38 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </div>
             </div>
 
+            {/* Drop Preview Section */}
+            <div className="drop-preview-section">
+              <h4>Drop Preview</h4>
+              <p>Select aircraft to show drop intervals on the map:</p>
+              <div className="aircraft-preview-controls">
+                {aircraft.filter(plane => isCompatible(plane, terrain, vegetation)).map(plane => {
+                  const drops = calculateAircraftDrops(distance, plane);
+                  const totalTime = drops * (plane.turnaroundTime / 60);
+                  
+                  return (
+                    <label key={plane.id} className="aircraft-preview-option">
+                      <input
+                        type="checkbox"
+                        checked={selectedAircraftForPreview.includes(plane.id)}
+                        onChange={(e) => handleDropPreviewChange(plane.id, e.target.checked)}
+                      />
+                      <div className="aircraft-preview-details">
+                        <span className="aircraft-name">{plane.name}</span>
+                        <span className="aircraft-stats">
+                          {drops} drops @ {plane.dropLength}m intervals 
+                          ({totalTime.toFixed(1)} hours total)
+                        </span>
+                      </div>
+                    </label>
+                  );
+                })}
+                {aircraft.filter(plane => isCompatible(plane, terrain, vegetation)).length === 0 && (
+                  <p className="no-compatible-aircraft">No compatible aircraft for current conditions</p>
+                )}
+              </div>
+            </div>
+
             {/* Full Equipment Table - Only when expanded */}
             {isExpanded && (
               <div className="equipment-summary">
@@ -301,7 +350,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <div className="equipment-table">
                   <div className="table-header">
                     <span>Equipment</span>
-                    <span>Time/Drops</span>
+                    <span>Time</span>
                     <span>Cost</span>
                     <span>Status</span>
                   </div>
@@ -321,6 +370,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                               {result.time.toFixed(1)}
                             </span>
                             <span className="time-unit">{result.unit}</span>
+                            {result.drops && (
+                              <span className="drops-detail">({result.drops} drops)</span>
+                            )}
                           </>
                         ) : (
                           <span className="incompatible-text">N/A</span>

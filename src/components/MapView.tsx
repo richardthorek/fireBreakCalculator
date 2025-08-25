@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
+import { AircraftSpec } from '../types/config';
 
 // Default map center (latitude, longitude) & zoom. Centered on New South Wales, Australia.
 // This center (~ -32, 147) and zoom ~6 gives a state-level view of NSW.
@@ -17,14 +18,98 @@ const DEFAULT_ZOOM = 6;
 
 interface MapViewProps {
   onDistanceChange: (distance: number | null) => void;
+  selectedAircraftForPreview: string[];
+  aircraft: AircraftSpec[];
 }
 
-export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
+export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, selectedAircraftForPreview, aircraft }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+  const dropMarkersRef = useRef<L.LayerGroup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  const [currentPolyline, setCurrentPolyline] = useState<L.Polyline | null>(null);
+
+  // Function to create drop markers along a polyline
+  const createDropMarkers = (polyline: L.Polyline, aircraftId: string, dropInterval: number) => {
+    if (!mapRef.current || !dropMarkersRef.current) return;
+
+    const latlngs = polyline.getLatLngs() as LatLng[];
+    
+    if (latlngs.length < 2) return;
+
+    const markerPositions: LatLng[] = [];
+    let totalDistanceTraversed = 0;
+    let nextDropDistance = dropInterval; // First drop at dropInterval meters
+
+    // Walk along the polyline
+    for (let i = 0; i < latlngs.length - 1; i++) {
+      const start = latlngs[i];
+      const end = latlngs[i + 1];
+      const segmentDistance = start.distanceTo(end);
+      const segmentStart = totalDistanceTraversed;
+      const segmentEnd = totalDistanceTraversed + segmentDistance;
+
+      // Check if any drop points fall within this segment
+      while (nextDropDistance <= segmentEnd) {
+        const distanceIntoSegment = nextDropDistance - segmentStart;
+        const ratio = distanceIntoSegment / segmentDistance;
+        
+        const lat = start.lat + (end.lat - start.lat) * ratio;
+        const lng = start.lng + (end.lng - start.lng) * ratio;
+        markerPositions.push(new L.LatLng(lat, lng));
+        
+        nextDropDistance += dropInterval;
+      }
+      
+      totalDistanceTraversed = segmentEnd;
+    }
+
+    // Create markers with different colors for different aircraft
+    const colors = ['red', 'blue', 'green', 'orange', 'purple'];
+    const aircraftIndex = selectedAircraftForPreview.indexOf(aircraftId);
+    const color = colors[aircraftIndex % colors.length];
+    
+    const aircraftSpec = aircraft.find(a => a.id === aircraftId);
+    const aircraftName = aircraftSpec?.name || aircraftId;
+
+    markerPositions.forEach((pos, index) => {
+      const marker = L.circleMarker(pos, {
+        color: color,
+        fillColor: color,
+        fillOpacity: 0.7,
+        radius: 6,
+        weight: 2
+      }).bindTooltip(`${aircraftName} - Drop ${index + 1}`, {
+        permanent: false,
+        direction: 'top'
+      });
+      
+      dropMarkersRef.current!.addLayer(marker);
+    });
+  };
+
+  // Function to update drop markers based on selected aircraft
+  const updateDropMarkers = () => {
+    if (!dropMarkersRef.current || !currentPolyline) return;
+
+    // Clear existing markers
+    dropMarkersRef.current.clearLayers();
+
+    // Add markers for each selected aircraft
+    selectedAircraftForPreview.forEach(aircraftId => {
+      const aircraftSpec = aircraft.find(a => a.id === aircraftId);
+      if (aircraftSpec) {
+        createDropMarkers(currentPolyline, aircraftId, aircraftSpec.dropLength);
+      }
+    });
+  };
+
+  // Effect to update drop markers when aircraft selection changes
+  useEffect(() => {
+    updateDropMarkers();
+  }, [selectedAircraftForPreview, aircraft, currentPolyline]);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -69,6 +154,11 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
     drawnItemsRef.current = drawnItems;
+
+    // Initialize drop markers layer
+    const dropMarkers = new L.LayerGroup();
+    map.addLayer(dropMarkers);
+    dropMarkersRef.current = dropMarkers;
 
     // Configure drawing controls - only allow polylines for fire breaks
     const drawControl = new L.Control.Draw({
@@ -119,6 +209,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
         
         setFireBreakDistance(Math.round(totalDistance));
         onDistanceChange(Math.round(totalDistance));
+        setCurrentPolyline(layer); // Store the polyline for drop markers
         
         // Add popup with distance info
         layer.bindPopup(`Fire Break Distance: ${Math.round(totalDistance)} meters`).openPopup();
@@ -139,6 +230,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
           
           setFireBreakDistance(Math.round(totalDistance));
           onDistanceChange(Math.round(totalDistance));
+          setCurrentPolyline(layer); // Update the polyline for drop markers
           layer.setPopupContent(`Fire Break Distance: ${Math.round(totalDistance)} meters`);
         }
       });
@@ -149,6 +241,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange }) => {
       if (drawnItems.getLayers().length === 0) {
         setFireBreakDistance(null);
         onDistanceChange(null);
+        setCurrentPolyline(null);
       }
     });
 
