@@ -55,19 +55,28 @@ This Fire Break Calculator application is built on a foundation of modern web te
 ### AnalysisPanel Component  
 - Resource selection interface with checkboxes for each category
 - Terrain and vegetation condition selectors
+- **Enhanced machinery compatibility system with:**
+  - Hierarchical vegetation compatibility (machines handling heavier vegetation can handle lighter types)
+  - Real-time slope compatibility checking against equipment limits
+  - Dynamic terrain and vegetation analysis integration
+  - Performance factor calculations with vegetation multipliers (1.0x grassland to 2.0x heavy forest)
+  - CSV-based equipment specification loading with automatic compatibility derivation
 - Calculation engine for time and cost estimates
 - **NEW: Enhanced preview pane design with:**
   - Compact collapsed state featuring icons/emojis for visual clarity
   - Improved space utilization with streamlined layout
   - Categorized expanded view with equipment type icons
   - Better visual hierarchy and equipment type distinction
+  - Compatibility status indicators (✓ Compatible / ✗ Incompatible)
 - Expandable/collapsible UI for space efficiency
 - Real-time updates based on distance changes and selections
 
 ### Configuration System
 - **config/defaultConfig.ts**: Resource specifications and calculation rules
 - **types/config.ts**: TypeScript interfaces ensuring type safety
-- Machinery specifications: clearing rates, costs, descriptions
+- **clearingrates.csv**: External machinery data with slope/vegetation performance matrices
+- **utils/parseClearingRates.ts**: CSV parsing with hierarchical vegetation compatibility logic
+- Machinery specifications: clearing rates, costs, descriptions, slope limits, vegetation capabilities
 - Aircraft capabilities: drop patterns, speeds, turnaround times
 - Hand crew profiles: sizes, efficiency rates, tool types
 - Calculation factors: terrain and vegetation difficulty multipliers
@@ -86,8 +95,10 @@ This Fire Break Calculator application is built on a foundation of modern web te
 
 ### Machinery Time Calculation
 ```
+Compatibility Check = Equipment supports terrain AND vegetation type AND max slope
 Adjusted Rate = Base Clearing Rate / (Terrain Factor × Vegetation Factor)  
-Time (hours) = Distance (meters) / Adjusted Rate
+Time (hours) = Distance (meters) / Adjusted Rate (if compatible, otherwise N/A)
+Hierarchical Vegetation Logic = If machine handles heavy vegetation, also compatible with lighter types
 ```
 
 ### Aircraft Drop Calculation

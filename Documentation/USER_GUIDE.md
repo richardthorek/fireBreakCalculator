@@ -33,11 +33,11 @@ The RFS Fire Break Calculator is a web-based tool designed to help rural firefig
    - **Difficult**: Steep slopes, rocky terrain, limited access
    - **Extreme**: Very steep, heavily obstructed, or inaccessible areas
 
-3. **Select vegetation density:**
-   - **Light**: Grass, light shrubs, minimal tree cover
-   - **Moderate**: Mixed vegetation, scattered small trees
-   - **Heavy**: Dense forest, thick undergrowth, numerous trees
-   - **Extreme**: Very dense vegetation, large trees, impenetrable areas
+3. **Select vegetation type:**
+   - **Grassland**: Open areas with grass and minimal woody vegetation
+   - **Light Shrub**: Scattered small shrubs and bushes under 10cm diameter  
+   - **Medium Scrub**: Dense shrubs and small trees 10-50cm diameter
+   - **Heavy Forest**: Large trees and dense undergrowth over 50cm diameter
 
 ### Step 3: Choose Resources
 Select the types of equipment and crews you want to include in your analysis:
@@ -106,9 +106,10 @@ When you have drawn a fire break line, you can visualize aircraft drop patterns:
 ### Time Estimates
 The system calculates time requirements based on:
 - **Base clearing rates** for each equipment type
-- **Terrain difficulty multipliers** (1.0× to 2.2×)
-- **Vegetation density multipliers** (1.0× to 2.5×)
+- **Terrain difficulty multipliers** (1.0× for easy to 2.2× for extreme)
+- **Vegetation type multipliers** (1.0× for grassland to 2.0× for heavy forest)
 - **Distance of the fire break** in meters
+- **Hierarchical compatibility**: Machinery capable of handling heavier vegetation can also handle lighter vegetation types
 
 ### Cost Estimates
 Operating costs include:
