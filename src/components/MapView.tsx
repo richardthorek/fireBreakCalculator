@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
-import { TrackAnalysis, AircraftSpec } from '../types/config';
+import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
+import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 
-// Helper to build richer popup HTML with 0-decimal slope distribution and mini bar chart
-const buildAnalysisPopupHTML = (analysis: TrackAnalysis, totalDistance: number) => {
+// Helper to build richer popup HTML with slope and vegetation data
+const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: VegetationAnalysis | null, totalDistance: number) => {
   const dist = (n: number) => Math.round(n); // 0 decimals
   const total = analysis.totalDistance || 1;
   const entries: { label: string; key: keyof typeof analysis.slopeDistribution; color: string; range: string }[] = [
@@ -27,6 +28,32 @@ const buildAnalysisPopupHTML = (analysis: TrackAnalysis, totalDistance: number) 
       <div style=\"width:55px;text-align:right;\">${dist(meters)} m</div>
     </div>`; 
   }).join('');
+
+  // Build vegetation analysis section
+  let vegetationSection = '';
+  if (vegetationAnalysis) {
+    const vegTypeLabels = {
+      grassland: 'Grassland',
+      lightshrub: 'Light Shrub',
+      mediumscrub: 'Medium Scrub',
+      heavyforest: 'Heavy Forest'
+    };
+    
+    const predominantLabel = vegTypeLabels[vegetationAnalysis.predominantVegetation];
+    const confidencePercent = Math.round(vegetationAnalysis.overallConfidence * 100);
+    
+    vegetationSection = `
+      <div style=\"margin-top:8px;border-top:1px solid #ddd;padding-top:6px;\">
+        <div style=\"font-weight:bold;\">Vegetation Analysis</div>
+        <div style=\"font-size:11px;margin:2px 0;\">
+          Predominant: <strong>${predominantLabel}</strong>
+        </div>
+        <div style=\"font-size:11px;color:#666;\">
+          Confidence: ${confidencePercent}%
+        </div>
+      </div>`;
+  }
+
   return `
     <div style=\"min-width:260px;\">
       <strong>Fire Break Analysis</strong><br/>
@@ -36,6 +63,7 @@ const buildAnalysisPopupHTML = (analysis: TrackAnalysis, totalDistance: number) 
       <div style=\"margin-top:6px;font-weight:bold;\">Slope Distribution</div>
       <div style=\"font-size:10px;color:#555;margin-bottom:4px;\">Meters per category</div>
       ${bars}
+      ${vegetationSection}
     </div>`;
 };
 
@@ -54,12 +82,13 @@ const DEFAULT_ZOOM = 6;
 interface MapViewProps {
   onDistanceChange: (distance: number | null) => void;
   onTrackAnalysisChange?: (analysis: TrackAnalysis | null) => void;
+  onVegetationAnalysisChange?: (analysis: VegetationAnalysis | null) => void;
   /** Aircraft list and selected aircraft for drop preview - provided by App */
   selectedAircraftForPreview?: string[];
   aircraft?: AircraftSpec[];
 }
 
-export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange }) => {
+export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange, onVegetationAnalysisChange }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
@@ -69,6 +98,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
@@ -174,7 +204,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
     });
     map.addControl(drawControl);
 
-    // Function to analyze track and visualize slopes
+    // Function to analyze track for slopes and vegetation
     const analyzeAndVisualizeBranchSlopes = async (latlngs: LatLng[]): Promise<TrackAnalysis | null> => {
       setIsAnalyzing(true);
       
@@ -184,10 +214,20 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           slopeLayersRef.current.clearLayers();
         }
         
-  // Perform slope analysis
-  const analysis = await analyzeTrackSlopes(latlngs);
+        // Perform slope analysis
+        const analysis = await analyzeTrackSlopes(latlngs);
         setTrackAnalysis(analysis);
         onTrackAnalysisChange?.(analysis);
+        
+        // Perform vegetation analysis in parallel
+        let vegAnalysis: VegetationAnalysis | null = null;
+        try {
+          vegAnalysis = await analyzeTrackVegetation(latlngs);
+          setVegetationAnalysis(vegAnalysis);
+          onVegetationAnalysisChange?.(vegAnalysis);
+        } catch (vegError) {
+          console.warn('Vegetation analysis failed, continuing with slope analysis only:', vegError);
+        }
         
         // Visualize slope segments (use full coordinate chain if provided)
         analysis.segments.forEach((segment) => {
@@ -217,7 +257,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           }
         });
         
-  return analysis;
+        return analysis;
         
       } catch (error) {
         console.error('Error analyzing track slopes:', error);
@@ -253,7 +293,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
         
         // Add popup with comprehensive info
-  const popupContent = analysis ? buildAnalysisPopupHTML(analysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
+        const popupContent = analysis ? buildAnalysisPopupHTML(analysis, vegetationAnalysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
         
         layer.bindPopup(popupContent).openPopup();
         // After creating and analyzing, add draggable vertex markers
@@ -281,7 +321,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           // Re-analyze slopes after editing
           const analysis = await analyzeAndVisualizeBranchSlopes(latlngs);
           // Update popup with new analysis
-          const popupContent = analysis ? buildAnalysisPopupHTML(analysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
+          const popupContent = analysis ? buildAnalysisPopupHTML(analysis, vegetationAnalysis, totalDistance) : `Fire Break Distance: ${Math.round(totalDistance)} meters`;
           
           layer.setPopupContent(popupContent);
           // Rebuild vertex markers to match new vertices
@@ -298,6 +338,8 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
         onDistanceChange(null);
         setTrackAnalysis(null);
         onTrackAnalysisChange?.(null);
+        setVegetationAnalysis(null);
+        onVegetationAnalysisChange?.(null);
         
         // Clear slope visualization
         if (slopeLayersRef.current) {
@@ -380,7 +422,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
           onDistanceChange(Math.round(total));
           const analysis = await analyzeAndVisualizeBranchSlopes(pts);
           if (analysis) {
-            poly.bindPopup(buildAnalysisPopupHTML(analysis, total)).openPopup();
+            poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup();
           }
           // rebuild markers to ensure indices match
           removeVertexMarkers(poly);
@@ -417,7 +459,7 @@ export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnaly
               onDistanceChange(Math.round(total));
               const analysis = await analyzeAndVisualizeBranchSlopes(pts);
               if (analysis) {
-                poly.bindPopup(buildAnalysisPopupHTML(analysis, total)).openPopup();
+                poly.bindPopup(buildAnalysisPopupHTML(analysis, vegetationAnalysis, total)).openPopup();
               }
             });
           })(idx);

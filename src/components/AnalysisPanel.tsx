@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from '../types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES } from '../config/classification';
 
 interface AnalysisPanelProps {
@@ -13,6 +13,8 @@ interface AnalysisPanelProps {
   distance: number | null;
   /** Track analysis data including slope information */
   trackAnalysis: TrackAnalysis | null;
+  /** Vegetation analysis data from Mapbox Terrain v2 */
+  vegetationAnalysis: VegetationAnalysis | null;
   /** Available machinery options */
   machinery: MachinerySpec[];
   /** Available aircraft options */
@@ -138,15 +140,25 @@ const isSlopeCompatible = (
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   trackAnalysis,
+  vegetationAnalysis,
   machinery,
   aircraft,
   handCrews,
   onDropPreviewChange
 }) => {
-  // User-selected vegetation context (was previously removed)
+  // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
+  const [useAutoDetected, setUseAutoDetected] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+
+  // Determine effective vegetation: auto-detected or manually selected
+  const effectiveVegetation = useMemo(() => {
+    if (useAutoDetected && vegetationAnalysis) {
+      return vegetationAnalysis.predominantVegetation;
+    }
+    return selectedVegetation;
+  }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
@@ -185,12 +197,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const results: CalculationResult[] = [];
   const effectiveTerrain = derivedTerrainRequirement || 'easy';
   const terrainFactor = terrainFactors[effectiveTerrain];
-  const vegetationFactor = vegetationFactors[selectedVegetation];
+  const vegetationFactor = vegetationFactors[effectiveVegetation];
 
     // Calculate machinery results
   const requiredTerrain = effectiveTerrain;
     machinery.forEach(machine => {
-  const compatible = isCompatible(machine, requiredTerrain, selectedVegetation);
+  const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
       
@@ -213,7 +225,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate aircraft results
     aircraft.forEach(plane => {
-  const compatible = isCompatible(plane, requiredTerrain, selectedVegetation);
+  const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -234,7 +246,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate hand crew results
     handCrews.forEach(crew => {
-  const compatible = isCompatible(crew, requiredTerrain, selectedVegetation);
+  const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
@@ -262,7 +274,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return a.time - b.time;
     });
-  }, [distance, trackAnalysis, selectedVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
+  }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -295,19 +307,53 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       </div>
 
       <div className="analysis-content">
-        {/* Vegetation selector */}
+        {/* Vegetation Analysis and Selector */}
         <div className="conditions-section">
           <div className="conditions-group">
-            <label htmlFor="vegetation-select">Vegetation</label>
-            <select
-              id="vegetation-select"
-              value={selectedVegetation}
-              onChange={(e) => setSelectedVegetation(e.target.value as VegetationType)}
-            >
-              {VEGETATION_TYPES.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
+            <label htmlFor="vegetation-toggle">Vegetation Type</label>
+            
+            {/* Show auto-detected vegetation info when available */}
+            {vegetationAnalysis && (
+              <div className="auto-detected-vegetation">
+                <div className="auto-detected-header">
+                  <span className="auto-detected-label">
+                    Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong>
+                  </span>
+                  <span className="confidence-badge">
+                    {Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence
+                  </span>
+                </div>
+                <div className="vegetation-toggle">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={useAutoDetected}
+                      onChange={(e) => setUseAutoDetected(e.target.checked)}
+                    />
+                    Use auto-detected vegetation
+                  </label>
+                </div>
+              </div>
+            )}
+            
+            {/* Manual vegetation selector */}
+            {(!vegetationAnalysis || !useAutoDetected) && (
+              <select
+                id="vegetation-select"
+                value={selectedVegetation}
+                onChange={(e) => setSelectedVegetation(e.target.value as VegetationType)}
+                disabled={useAutoDetected && !!vegetationAnalysis}
+              >
+                {VEGETATION_TYPES.map(v => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            )}
+            
+            {/* Show effective vegetation being used */}
+            <div className="effective-vegetation">
+              Using: <strong>{effectiveVegetation}</strong>
+            </div>
           </div>
         </div>
 

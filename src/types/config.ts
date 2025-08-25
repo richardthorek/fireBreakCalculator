@@ -149,3 +149,40 @@ export interface TrackAnalysis {
     very_steep: number;
   };
 }
+
+/** Vegetation segment data from Mapbox Terrain v2 analysis */
+export interface VegetationSegment {
+  /** Start point coordinates [lat, lng] */
+  start: [number, number];
+  /** End point coordinates [lat, lng] */
+  end: [number, number];
+  /** Full ordered coordinate path for this segment */
+  coords?: [number, number][];
+  /** Detected vegetation type */
+  vegetationType: 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+  /** Confidence level (0-1) of the detection */
+  confidence: number;
+  /** Original landcover class from Mapbox */
+  landcoverClass: string;
+  /** Distance of this segment (meters) */
+  distance: number;
+}
+
+/** Vegetation analysis data from Mapbox Terrain v2 */
+export interface VegetationAnalysis {
+  /** Total distance analyzed */
+  totalDistance: number;
+  /** Array of vegetation segments */
+  segments: VegetationSegment[];
+  /** Predominant vegetation type across the track */
+  predominantVegetation: 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+  /** Distribution of vegetation types (distance in meters) */
+  vegetationDistribution: {
+    grassland: number;
+    lightshrub: number;
+    mediumscrub: number;
+    heavyforest: number;
+  };
+  /** Overall confidence of the analysis */
+  overallConfidence: number;
+}

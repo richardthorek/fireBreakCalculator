@@ -3,7 +3,7 @@ import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
-import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from './types/config';
+import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from './types/config';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   
   // State for configurable equipment
   const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
@@ -32,6 +33,7 @@ const App: React.FC = () => {
             
             onDistanceChange={setFireBreakDistance} 
             onTrackAnalysisChange={setTrackAnalysis}
+            onVegetationAnalysisChange={setVegetationAnalysis}
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
           />
@@ -40,6 +42,7 @@ const App: React.FC = () => {
           <AnalysisPanel 
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
+            vegetationAnalysis={vegetationAnalysis}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}

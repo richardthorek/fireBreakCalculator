@@ -5,8 +5,10 @@ Modern React web application to assist rural firefighters in estimating the time
 ## Features
 
 - **Interactive Map-based Planning**: Draw fire break lines directly on the map with real-time distance calculation
+- **Automated Vegetation Analysis**: Mapbox Terrain v2 integration automatically detects vegetation type/density with manual override option
 - **Resource Library**: Choose from various machinery (dozers, graders), aircraft (helicopters, fixed-wing), and hand crews
-- **Intelligent Calculations**: Factor in terrain difficulty and vegetation density for accurate time estimates
+- **Intelligent Calculations**: Factor in terrain difficulty and auto-detected vegetation density for accurate time estimates
+- **Slope Analysis**: Real-time slope calculation and visualization with equipment compatibility checks
 - **Cost Analysis**: View estimated operational costs for different resource combinations
 - **Responsive Design**: Collapsible analysis panel with full mobile support
 - **Configurable Rules**: All equipment specifications and calculation rules defined in editable configuration files
@@ -36,9 +38,10 @@ Modern React web application to assist rural firefighters in estimating the time
 ## How to Use
 
 1. **Draw a Fire Break**: Use the drawing tool (pencil icon) in the top-right corner to draw a line on the map representing your proposed fire break route
-2. **Set Conditions**: Expand the analysis panel and select terrain difficulty (Easy/Moderate/Difficult/Extreme) and vegetation density (Light/Moderate/Heavy/Extreme)
-3. **Select Resources**: Choose from available machinery, aircraft, and hand crews to include in your analysis
-4. **View Results**: See estimated completion times and costs for each selected resource type
+2. **Automatic Analysis**: The system automatically analyzes slope and vegetation along your route using elevation data and Mapbox Terrain v2
+3. **Review Auto-Detection**: Check the auto-detected vegetation type and confidence level, or manually override if needed
+4. **Select Resources**: Choose from available machinery, aircraft, and hand crews to include in your analysis
+5. **View Results**: See estimated completion times and costs for each selected resource type
 
 ## Configuration
 
@@ -72,13 +75,15 @@ Never commit real tokens. The `.gitignore` excludes `.env` files.
 
 **Map Features:**
 - Line drawing with real-time distance measurement
+- **Automated vegetation analysis** using Mapbox Terrain v2 for intelligent landcover detection
 - **Slope analysis and visualization** with color-coded terrain difficulty
 - Terrain-appropriate styling for fire break visualization
 - Edit and delete capabilities for drawn lines
-- Popup displays showing calculated distances and slope information
+- Popup displays showing calculated distances, slope information, and vegetation analysis
 
 **Calculation Engine:**
 - Machinery time estimates based on clearing rates and conditions
+- **Automated vegetation detection** with confidence scoring and manual override
 - **Slope compatibility checks** with equipment capability limits
 - Aircraft drop calculations considering coverage and turnaround times
 - Hand crew estimates factoring crew size and efficiency
@@ -107,13 +112,14 @@ npm run preview
 
 ## Future Enhancements
 
+- **Enhanced Vector Tile Integration**: Full MVT parsing for more detailed Mapbox Terrain v2 analysis
 - **Enhanced Elevation Integration**: Replace mock elevation data with real topographic services
 - **Weather Integration**: Factor weather conditions into resource planning
 - **GPS Integration**: Import/export GPX routes for field use
 - **Multi-language Support**: Localization for international use
 - **Offline Mode**: Cache maps and operate without internet connectivity
 - **Report Generation**: Export detailed analysis reports in PDF format
-- **Route Optimization**: Suggest alternative routes based on slope and terrain analysis
+- **Route Optimization**: Suggest alternative routes based on slope, vegetation, and terrain analysis
 
 ## License
 
