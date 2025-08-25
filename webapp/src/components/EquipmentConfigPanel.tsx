@@ -11,9 +11,9 @@ interface EquipmentConfigPanelProps {
   equipment: EquipmentApi[];
   loading: boolean;
   error: string | null;
-  onCreate: (item: CreateEquipmentInput) => Promise<void> | void;
-  onUpdate: (item: EquipmentApi) => Promise<void> | void;
-  onDelete: (item: EquipmentApi) => Promise<void> | void;
+  onCreate: any;
+  onUpdate: any;
+  onDelete: any;
   isOpen?: boolean;
   onToggle?: () => void;
 }
@@ -26,7 +26,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const [activeTab, setActiveTab] = useState<EquipmentTab>('Machinery');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState<CreateEquipmentInput>({ type: 'Machinery', name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true } as CreateEquipmentInput);
+  const [draft, setDraft] = useState<any>({ type: 'Machinery', name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true });
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -60,7 +60,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   };
 
   const InlineEdit: React.FC<{ item: EquipmentApi }> = ({ item }) => {
-    const [form, setForm] = useState<EquipmentApi>(item);
+    const [form, setForm] = useState<any>(item);
     return (
       <div className="equip-row editing">
   <input aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value } as EquipmentApi)} />
@@ -78,13 +78,13 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         )}
   <input aria-label="Cost per hour" type="number" className="eq-small" placeholder="$/h" value={form.costPerHour ?? ''} onChange={e => setForm({ ...form, costPerHour: Number(e.target.value) } as EquipmentApi)} />
         <div className="eq-tags">
-          {terrainOptions.map(t => (
-            <button aria-label={`Terrain ${t}`} key={t} type="button" className={form.allowedTerrain.includes(t) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedTerrain: form.allowedTerrain.includes(t) ? form.allowedTerrain.filter(x => x !== t) : [...form.allowedTerrain, t] } as EquipmentApi)}>{t[0].toUpperCase()}</button>
+          {terrainOptions.map((t: string) => (
+            <button aria-label={`Terrain ${t}`} key={t} type="button" className={(form.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedTerrain: (form.allowedTerrain ?? []).includes(t) ? (form.allowedTerrain ?? []).filter((x: string) => x !== t) : [...(form.allowedTerrain ?? []), t] } as EquipmentApi)}>{t[0].toUpperCase()}</button>
           ))}
         </div>
         <div className="eq-tags">
-          {vegetationOptions.map(v => (
-            <button aria-label={`Vegetation ${v}`} key={v} type="button" className={form.allowedVegetation.includes(v) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedVegetation: form.allowedVegetation.includes(v) ? form.allowedVegetation.filter(x => x !== v) : [...form.allowedVegetation, v] } as EquipmentApi)}>{v[0].toUpperCase()}</button>
+          {vegetationOptions.map((v: string) => (
+            <button aria-label={`Vegetation ${v}`} key={v} type="button" className={(form.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'} onClick={() => setForm({ ...form, allowedVegetation: (form.allowedVegetation ?? []).includes(v) ? (form.allowedVegetation ?? []).filter((x: string) => x !== v) : [...(form.allowedVegetation ?? []), v] } as EquipmentApi)}>{v[0].toUpperCase()}</button>
           ))}
         </div>
         <div className="eq-actions">

@@ -98,12 +98,14 @@ const App: React.FC = () => {
       ...(partial.type === 'Aircraft' ? { dropLength: (partial as any).dropLength || 0, turnaroundMinutes: (partial as any).turnaroundMinutes || 0 } : {}),
       ...(partial.type === 'HandCrew' ? { crewSize: (partial as any).crewSize || 0, clearingRatePerPerson: (partial as any).clearingRatePerPerson || 0, equipmentList: (partial as any).equipmentList || [] } : {})
     };
-    const created = await createEquipment(payload);
+  const created = await createEquipment(payload as unknown as import('./types/equipmentApi').CreateEquipmentInput);
     setEquipment(prev => [...prev, created]);
   };
 
   const handleUpdate = async (item: EquipmentApi) => {
-    const updated = await updateEquipment({ ...item, id: item.id, type: item.type, version: item.version });
+    // updateEquipment expects (id, type, payload)
+    const payload = { ...item, version: item.version } as any;
+    const updated = await updateEquipment(item.id, item.type, payload);
     setEquipment(prev => prev.map(e => e.id === updated.id ? updated : e));
   };
 
