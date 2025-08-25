@@ -41,9 +41,47 @@ html, body, #root, .app-shell {
   flex: 1 1 auto;
   min-height: 0; /* Allows map to size correctly */
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mobile-first: analysis panel at bottom */
+.map-section {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.analysis-section {
+  flex: 0 0 auto;
+  height: 300px;
+  min-height: 200px;
+}
+
+/* Desktop: analysis panel on right side */
+@media (min-width: 1024px) {
+  .app-main {
+    flex-direction: row;
+  }
+  
+  .map-section {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  
+  .analysis-section {
+    flex: 0 0 400px;
+    height: auto;
+    min-height: auto;
+  }
 }
 
 .map-wrapper, .map-container {
+  height: 100%;
+  width: 100%;
+}
+
+.map-section .map-wrapper,
+.map-section .map-container {
   height: 100%;
   width: 100%;
 }
@@ -119,40 +157,17 @@ html, body, #root, .app-shell {
   border-radius: 6px !important;
 }
 
-/* Analysis Panel Styles */
-.analysis-panel {
-  position: absolute;
-  bottom: 1rem;
-  left: 1rem;
-  right: 1rem;
-  max-width: 90vw;
-  max-height: 80vh;
+/* Analysis Panel Styles - Permanent Panel */
+.analysis-panel-permanent {
+  height: 100%;
   background: rgba(15,17,21,0.95);
   border: 1px solid #2a3442;
   border-radius: 8px;
   backdrop-filter: blur(10px);
-  z-index: 900; /* Lower than leaflet controls */
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   overflow: hidden;
-  transition: max-height 0.3s ease;
-}
-
-/* For larger screens, use the side layout */
-@media (min-width: 1024px) {
-  .analysis-panel {
-    position: absolute;
-    top: 4rem; /* Leave space for drawing controls */
-    right: 1rem;
-    bottom: 1rem;
-    left: auto;
-    width: 400px;
-    max-width: 400px;
-    max-height: calc(100vh - 5rem);
-  }
-}
-
-.analysis-panel:not(.expanded) {
-  max-height: 80px;
+  display: flex;
+  flex-direction: column;
 }
 
 .analysis-header {
@@ -163,6 +178,7 @@ html, body, #root, .app-shell {
   align-items: center;
   justify-content: space-between;
   background: rgba(30,36,51,0.8);
+  flex: 0 0 auto;
 }
 
 .analysis-header h3 {
@@ -197,7 +213,92 @@ html, body, #root, .app-shell {
 
 .analysis-content {
   padding: 1rem;
-  max-height: calc(80vh - 80px);
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Best Options Summary */
+.best-options-summary {
+  margin-bottom: 1rem;
+}
+
+.best-options-summary h4 {
+  margin: 0 0 0.75rem 0;
+  color: #f5f7fa;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.best-options-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .best-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.option-category {
+  background: rgba(30,36,51,0.6);
+  border: 1px solid #2a3442;
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.category-label {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.option-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.option-name {
+  font-weight: 500;
+  color: #f5f7fa;
+  font-size: 0.85rem;
+}
+
+.option-time {
+  font-weight: 600;
+  color: #4fc3f7;
+  font-size: 0.85rem;
+}
+
+.no-option {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.no-line-message {
+  text-align: center;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 2rem 1rem;
+}
+
+/* Legacy Analysis Panel Styles (for old overlay) - Remove these */
+.analysis-panel {
+  display: none; /* Hide the old overlay style */
+}
   overflow-y: auto;
 }
 

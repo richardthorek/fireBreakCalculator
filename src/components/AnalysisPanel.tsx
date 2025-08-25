@@ -185,111 +185,169 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
   }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
 
-  if (!distance) {
-    return (
-      <div className="analysis-panel">
-        <div className="analysis-header">
-          <h3>Fire Break Analysis</h3>
-          <p>Draw a line on the map to start planning your fire break</p>
-        </div>
-      </div>
-    );
-  }
+  // Get best option for each category
+  const bestOptions = useMemo(() => {
+    const compatibleResults = calculations.filter(result => result.compatible);
+    
+    return {
+      machinery: compatibleResults.find(result => result.type === 'machinery'),
+      aircraft: compatibleResults.find(result => result.type === 'aircraft'),
+      handCrew: compatibleResults.find(result => result.type === 'handCrew')
+    };
+  }, [calculations]);
 
   return (
-    <div className={`analysis-panel ${isExpanded ? 'expanded' : ''}`}>
+    <div className="analysis-panel-permanent">
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
         <h3>Fire Break Analysis</h3>
-        <span className="distance-display">{distance.toLocaleString()}m</span>
+        {distance && (
+          <span className="distance-display">{distance.toLocaleString()}m</span>
+        )}
         <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
 
-      {isExpanded && (
-        <div className="analysis-content">
-          {/* Terrain and Vegetation Controls */}
-          <div className="conditions-section">
-            <h4>Site Conditions</h4>
-            <div className="condition-controls">
-              <label>
-                Terrain:
-                <select 
-                  value={terrain} 
-                  onChange={(e) => setTerrain(e.target.value as TerrainType)}
-                >
-                  <option value="easy">Easy (Flat)</option>
-                  <option value="moderate">Moderate (Rolling)</option>
-                  <option value="difficult">Difficult (Steep)</option>
-                  <option value="extreme">Extreme (Very Steep)</option>
-                </select>
-              </label>
-              <label>
-                Vegetation:
-                <select 
-                  value={vegetation} 
-                  onChange={(e) => setVegetation(e.target.value as VegetationType)}
-                >
-                  <option value="light">Light (Grass)</option>
-                  <option value="moderate">Moderate (Mixed)</option>
-                  <option value="heavy">Heavy (Dense Forest)</option>
-                  <option value="extreme">Extreme (Very Dense)</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
-          {/* Equipment Summary Table */}
-          <div className="equipment-summary">
-            <h4>Equipment Analysis</h4>
-            <div className="equipment-table">
-              <div className="table-header">
-                <span>Equipment</span>
-                <span>Time/Drops</span>
-                <span>Cost</span>
-                <span>Status</span>
-              </div>
-              {calculations.map((result) => (
-                <div 
-                  key={result.id} 
-                  className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
-                >
-                  <div className="equipment-info">
-                    <span className="equipment-name">{result.name}</span>
-                    <span className="equipment-type">{result.type}</span>
-                  </div>
-                  <div className="time-info">
-                    {result.compatible ? (
-                      <>
-                        <span className="time-value">
-                          {result.time.toFixed(1)}
-                        </span>
-                        <span className="time-unit">{result.unit}</span>
-                      </>
-                    ) : (
-                      <span className="incompatible-text">N/A</span>
-                    )}
-                  </div>
-                  <div className="cost-info">
-                    {result.compatible && result.cost > 0 ? (
-                      <span className="cost-value">${result.cost.toFixed(0)}</span>
-                    ) : (
-                      <span className="no-cost">-</span>
-                    )}
-                  </div>
-                  <div className="status-info">
-                    {result.compatible ? (
-                      <span className="compatible">✓ Compatible</span>
-                    ) : (
-                      <span className="incompatible-status">✗ Incompatible</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+      <div className="analysis-content">
+        {/* Terrain and Vegetation Controls - Always visible */}
+        <div className="conditions-section">
+          <h4>Site Conditions</h4>
+          <div className="condition-controls">
+            <label>
+              Terrain:
+              <select 
+                value={terrain} 
+                onChange={(e) => setTerrain(e.target.value as TerrainType)}
+              >
+                <option value="easy">Easy (Flat)</option>
+                <option value="moderate">Moderate (Rolling)</option>
+                <option value="difficult">Difficult (Steep)</option>
+                <option value="extreme">Extreme (Very Steep)</option>
+              </select>
+            </label>
+            <label>
+              Vegetation:
+              <select 
+                value={vegetation} 
+                onChange={(e) => setVegetation(e.target.value as VegetationType)}
+              >
+                <option value="light">Light (Grass)</option>
+                <option value="moderate">Moderate (Mixed)</option>
+                <option value="heavy">Heavy (Dense Forest)</option>
+                <option value="extreme">Extreme (Very Dense)</option>
+              </select>
+            </label>
           </div>
         </div>
-      )}
+
+        {!distance ? (
+          <div className="no-line-message">
+            <p>Draw a line on the map to see equipment analysis</p>
+          </div>
+        ) : (
+          <>
+            {/* Best Options Summary - Always visible when line exists */}
+            <div className="best-options-summary">
+              <h4>Best Options</h4>
+              <div className="best-options-grid">
+                <div className="option-category">
+                  <span className="category-label">Machinery</span>
+                  {bestOptions.machinery ? (
+                    <div className="option-details">
+                      <span className="option-name">{bestOptions.machinery.name}</span>
+                      <span className="option-time">
+                        {bestOptions.machinery.time.toFixed(1)} {bestOptions.machinery.unit}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="no-option">No compatible options</span>
+                  )}
+                </div>
+                
+                <div className="option-category">
+                  <span className="category-label">Aircraft</span>
+                  {bestOptions.aircraft ? (
+                    <div className="option-details">
+                      <span className="option-name">{bestOptions.aircraft.name}</span>
+                      <span className="option-time">
+                        {bestOptions.aircraft.time.toFixed(0)} {bestOptions.aircraft.unit}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="no-option">No compatible options</span>
+                  )}
+                </div>
+                
+                <div className="option-category">
+                  <span className="category-label">Hand Crew</span>
+                  {bestOptions.handCrew ? (
+                    <div className="option-details">
+                      <span className="option-name">{bestOptions.handCrew.name}</span>
+                      <span className="option-time">
+                        {bestOptions.handCrew.time.toFixed(1)} {bestOptions.handCrew.unit}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="no-option">No compatible options</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Full Equipment Table - Only when expanded */}
+            {isExpanded && (
+              <div className="equipment-summary">
+                <h4>All Equipment Options</h4>
+                <div className="equipment-table">
+                  <div className="table-header">
+                    <span>Equipment</span>
+                    <span>Time/Drops</span>
+                    <span>Cost</span>
+                    <span>Status</span>
+                  </div>
+                  {calculations.map((result) => (
+                    <div 
+                      key={result.id} 
+                      className={`table-row ${!result.compatible ? 'incompatible' : ''}`}
+                    >
+                      <div className="equipment-info">
+                        <span className="equipment-name">{result.name}</span>
+                        <span className="equipment-type">{result.type}</span>
+                      </div>
+                      <div className="time-info">
+                        {result.compatible ? (
+                          <>
+                            <span className="time-value">
+                              {result.time.toFixed(1)}
+                            </span>
+                            <span className="time-unit">{result.unit}</span>
+                          </>
+                        ) : (
+                          <span className="incompatible-text">N/A</span>
+                        )}
+                      </div>
+                      <div className="cost-info">
+                        {result.compatible && result.cost > 0 ? (
+                          <span className="cost-value">${result.cost.toFixed(0)}</span>
+                        ) : (
+                          <span className="no-cost">-</span>
+                        )}
+                      </div>
+                      <div className="status-info">
+                        {result.compatible ? (
+                          <span className="compatible">✓ Compatible</span>
+                        ) : (
+                          <span className="incompatible-status">✗ Incompatible</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

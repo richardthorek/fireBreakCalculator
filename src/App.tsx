@@ -25,13 +25,17 @@ const App: React.FC = () => {
         <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
       </header>
       <main className="app-main">
-        <MapView onDistanceChange={setFireBreakDistance} />
-        <AnalysisPanel 
-          distance={fireBreakDistance}
-          machinery={machinery}
-          aircraft={aircraft}
-          handCrews={handCrews}
-        />
+        <div className="map-section">
+          <MapView onDistanceChange={setFireBreakDistance} />
+        </div>
+        <div className="analysis-section">
+          <AnalysisPanel 
+            distance={fireBreakDistance}
+            machinery={machinery}
+            aircraft={aircraft}
+            handCrews={handCrews}
+          />
+        </div>
         <EquipmentConfigPanel
           machinery={machinery}
           aircraft={aircraft}
