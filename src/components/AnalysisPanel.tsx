@@ -208,16 +208,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
-      
+
       const time = fullCompatibility ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
-      const cost = fullCompatibility && machine.costPerHour ? time * machine.costPerHour : 0;
+      const costVal = fullCompatibility && (machine as any).costPerHour ? time * (machine as any).costPerHour : 0;
 
       results.push({
         id: machine.id,
         name: machine.name,
         type: 'machinery',
         time,
-        cost,
+        cost: costVal,
         compatible: fullCompatibility,
         slopeCompatible: slopeCheck.compatible,
         maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
@@ -231,14 +231,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
-      const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
+      const costVal = compatible && (plane as any).costPerHour ? totalTime * (plane as any).costPerHour : 0;
 
       results.push({
         id: plane.id,
         name: plane.name,
         type: 'aircraft',
         time: totalTime,
-        cost,
+        cost: costVal,
         compatible,
         unit: 'hours',
         description: plane.description,
@@ -250,14 +250,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     handCrews.forEach(crew => {
       const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
-      const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
+      const costVal = compatible && (crew as any).costPerHour ? time * (crew as any).costPerHour : 0;
 
       results.push({
         id: crew.id,
         name: crew.name,
         type: 'handCrew',
         time,
-        cost,
+        cost: costVal,
         compatible,
         unit: 'hours',
         description: crew.description
@@ -269,7 +269,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (!a.compatible && b.compatible) return 1;
       if (a.compatible && !b.compatible) return -1;
       if (!a.compatible && !b.compatible) return 0;
-      
+
       // All types now use time in hours, so direct comparison
       if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost;
@@ -313,21 +313,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   return (
     <div className="analysis-panel-permanent">
-      <div 
-        className="analysis-header" 
-        onClick={() => setIsExpanded(!isExpanded)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setIsExpanded(!isExpanded);
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        aria-expanded={isExpanded}
-        aria-controls="analysis-content"
-        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} fire break analysis panel`}
-      >
+  <div className="analysis-header">
         <h3>Fire Break Analysis</h3>
         <div className="header-info">
           {isAnalyzing && (
@@ -339,7 +325,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
           {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
         </div>
-        <button className="expand-button" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
+        <button
+          className="expand-button"
+          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+          aria-controls="analysis-content"
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
@@ -366,7 +357,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     data={vegetationAnalysis.vegetationDistribution as any}
                     total={vegetationAnalysis.totalDistance}
                     ariaLabel="Vegetation distribution"
+                    compact={true}
+                    showLabels={false}
                   />
+                  {/* Subtle formation details under main categories (largest → smallest) */}
+                  <FormationSummary vegetationAnalysis={vegetationAnalysis} />
                 </div>
               </div>
             )}
@@ -408,6 +403,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <div className="overlap-section">
                 <h5 className="overlap-title">Slope × Vegetation Overlap</h5>
                 <OverlapMatrix trackAnalysis={trackAnalysis} vegetationAnalysis={vegetationAnalysis} />
+                <div className="overlap-aux">
+                  <div className="overlap-legend">
+                    <div className="legend-title">Vegetation legend</div>
+                    <div className="legend-items">
+                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#00aa00"></span><span className="dist-legend-label">Grass</span></div>
+                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#c8c800"></span><span className="dist-legend-label">Light</span></div>
+                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#ff8800"></span><span className="dist-legend-label">Medium</span></div>
+                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#006400"></span><span className="dist-legend-label">Heavy</span></div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -489,6 +495,63 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           </>
         )}
       </div>
+    </div>
+  );
+};
+
+/** Formation summary: subtle sorted list with small bar graphic (largest → smallest) and supporting examples */
+const FormationSummary: React.FC<{ vegetationAnalysis: VegetationAnalysis }> = ({ vegetationAnalysis }) => {
+  // Aggregate distances by displayLabel (preferred formation)
+  const counts: Record<string, number> = {};
+  const supporting: Set<string> = new Set();
+  let total = 0;
+  for (const seg of vegetationAnalysis.segments) {
+    const label = (seg.displayLabel || seg.landcoverClass || 'Unknown').toString();
+    const dist = seg.distance || 0;
+    counts[label] = (counts[label] || 0) + dist;
+    total += dist;
+    if (seg.nswVegClass) supporting.add(seg.nswVegClass);
+    if (seg.nswPCTName) supporting.add(seg.nswPCTName);
+    if (seg.landcoverClass) supporting.add(seg.landcoverClass);
+  }
+
+  // Convert to sorted array largest → smallest
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+  // Subtle colors for bars
+  const barBg = '#e9eef0';
+  const barColor = '#6aa84f';
+
+  return (
+    <div className="formation-summary">
+      <div className="formation-title">Formation distribution</div>
+      <div role="list" aria-label="Formation distribution" className="formation-list">
+        {entries.length === 0 && <div className="formation-note">No formation data available</div>}
+        {entries.map(([label, dist], i) => {
+          const pct = total > 0 ? Math.round((dist / total) * 100) : 0;
+          return (
+            <div key={i} role="listitem" className="formation-row">
+              <div className="formation-swatch" aria-hidden />
+              <div className="formation-label">{label}</div>
+              <div className="formation-bar">
+                <div className={`formation-bar-fill pct-${Math.max(0, Math.min(100, Math.round(pct)))}`} aria-hidden />
+              </div>
+              <div className="formation-pct">{pct}%</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {supporting.size > 0 && (
+        <div className="formation-supporting">
+          <div className="formation-supporting-title">Supporting examples</div>
+          <div>
+            {Array.from(supporting).slice(0, 6).map((s, i) => (
+              <span key={i} className="example">{s}</span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

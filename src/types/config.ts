@@ -164,6 +164,12 @@ export interface VegetationSegment {
   confidence: number;
   /** Original landcover class from Mapbox */
   landcoverClass: string;
+  /** NSW attributes when authoritative dataset used */
+  nswVegClass?: string | null;
+  nswVegForm?: string | null;
+  nswPCTName?: string | null;
+  /** Preferred label for display (e.g., formation/PCTName) */
+  displayLabel?: string;
   /** Distance of this segment (meters) */
   distance: number;
 }

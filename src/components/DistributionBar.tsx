@@ -39,7 +39,7 @@ export const DistributionBar: React.FC<DistributionBarProps> = ({
           return (
             <div
               key={c.key}
-              className={`dist-seg dist-pct-${pct}`}
+              className={`dist-seg pct-${pct}`}
               data-color={c.color}
               title={`${c.label}: ${pct}% (${Math.round(raw)} ${valueUnit})`}
             >

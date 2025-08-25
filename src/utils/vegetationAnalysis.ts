@@ -7,6 +7,7 @@ import { LatLng } from 'leaflet';
 import { VegetationType } from '../config/classification';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
+import { fetchNSWVegetation } from './nswVegetationService';
 
 /**
  * Map Mapbox Terrain v2 landcover class to application vegetation type
@@ -295,8 +296,22 @@ export const analyzeTrackVegetation = async (points: LatLng[]): Promise<Vegetati
     const midLng = (start.lng + end.lng) / 2;
     
     try {
-      const landcoverClass = await fetchLandcoverData(midLat, midLng, token || '');
-      const { vegetation, confidence } = mapLandcoverToVegetation(landcoverClass);
+      // 1. Try high‑fidelity NSW government vegetation layer first (if in region)
+      const nswVeg = await fetchNSWVegetation(midLat, midLng);
+      let vegetation: VegetationType; let confidence: number; let landcoverClass: string;
+      if (nswVeg) {
+        vegetation = nswVeg.vegetationType as VegetationType;
+        // Blend original heuristic confidence with a base high trust for authoritative dataset
+        confidence = Math.min(1, nswVeg.confidence + 0.1);
+        landcoverClass = nswVeg.source || '(nsw)';
+      } else {
+        // 2. Fallback to Mapbox Landcover query (existing logic)
+        const mapboxClass = await fetchLandcoverData(midLat, midLng, token || '');
+        landcoverClass = mapboxClass;
+        const mapped = mapLandcoverToVegetation(mapboxClass);
+        vegetation = mapped.vegetation;
+        confidence = mapped.confidence;
+      }
       
       rawSegments.push({
         start: [start.lat, start.lng],
@@ -305,12 +320,18 @@ export const analyzeTrackVegetation = async (points: LatLng[]): Promise<Vegetati
         vegetationType: vegetation,
         confidence,
         landcoverClass,
+        // If NSW authoritative data was used, include its raw fields for display/rollup
+        nswVegClass: nswVeg?.vegClass ?? null,
+        nswVegForm: nswVeg?.vegForm ?? null,
+        nswPCTName: nswVeg?.pctName ?? null,
+        // Preferred display label: prefer formation (vegForm) -> PCTName -> vegClass -> mapbox class
+        displayLabel: (nswVeg?.vegForm || nswVeg?.pctName || nswVeg?.vegClass || landcoverClass || '').toString(),
         distance
       });
       
       totalDistance += distance;
       totalConfidence += confidence;
-    } catch (segmentError) {
+  } catch (segmentError) {
       // If individual segment fails, use fallback vegetation based on position
       console.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
       const fallbackClass = getMockLandcoverClass(midLat, midLng);

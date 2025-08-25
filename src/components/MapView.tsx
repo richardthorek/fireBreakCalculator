@@ -49,7 +49,7 @@ const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: Veg
         <div class="popup-veg-title">Vegetation Analysis</div>
         <div class="popup-veg-sub">Predominant: <strong>${predominantLabel}</strong> &nbsp; | &nbsp; Confidence: ${confidencePercent}%</div>
         <div class="dist-bar" role="img" aria-label="Vegetation distribution">
-          ${parts.map(p => `<div class=\"dist-seg dist-pct-${p.pct}\" data-color=\"${p.color}\"></div>`).join('')}
+          ${parts.map(p => `<div class=\"dist-seg pct-${p.pct}\" data-color=\"${p.color}\"></div>`).join('')}
         </div>
         <div class="dist-legend">
           ${parts.map(p => `<div class=\"dist-legend-item\"><span class=\"dist-swatch\" data-color=\"${p.color}\"></span><span class=\"dist-legend-label\">${p.label}</span><span class=\"dist-legend-pct\">${p.pct}%</span></div>`).join('')}
@@ -332,10 +332,12 @@ export const MapView: React.FC<MapViewProps> = ({
       removeVertexMarkers(poly);
       const latlngs = poly.getLatLngs() as LatLng[];
       const markers: L.Marker[] = [];
-      for (let idx = 0; idx < latlngs.length; idx++) {
-        const pt = latlngs[idx];
-        const vertexMarker = L.marker(pt, { draggable: true });
-        vertexMarker.addTo(map);
+  for (let idx = 0; idx < latlngs.length; idx++) {
+  const pt = latlngs[idx];
+  // Use a DivIcon so CSS classes (.vertex-marker-icon) control appearance
+  const vertexIcon = L.divIcon({ className: 'vertex-marker-icon' });
+  const vertexMarker = L.marker(pt, { draggable: true, icon: vertexIcon });
+  vertexMarker.addTo(map);
         vertexMarker.on('drag', () => {
           const pts = poly.getLatLngs() as LatLng[]; pts[idx] = vertexMarker.getLatLng(); poly.setLatLngs(pts);
         });
@@ -351,7 +353,9 @@ export const MapView: React.FC<MapViewProps> = ({
         if (idx < latlngs.length - 1) {
           const a = latlngs[idx]; const b = latlngs[idx + 1];
           const mid = new LatLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
-          const midMarker = L.marker(mid, { draggable: true, opacity: 0.8 });
+          // Midpoint should be a transparent circle with outline; use DivIcon class
+          const midIcon = L.divIcon({ className: 'midpoint-marker-icon' });
+          const midMarker = L.marker(mid, { draggable: true, icon: midIcon });
           midMarker.addTo(map);
           ((insertionIndex) => {
             midMarker.on('dragend', async () => {

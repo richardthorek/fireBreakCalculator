@@ -19,7 +19,19 @@ export const OverlapMatrix: React.FC<OverlapMatrixProps> = ({ trackAnalysis, veg
     [trackAnalysis, vegetationAnalysis]
   );
   const total = trackAnalysis.totalDistance || 1;
-  const vegRows = VEGETATION_CATEGORIES.map(v => v.key);
+  // Precompute column totals (meters per slope column) for secondary percent calculations
+  const colTotals: Record<string, number> = {};
+  Object.entries(overlap).forEach(([slopeCat, vegMap]) => {
+    colTotals[slopeCat] = Object.values(vegMap).reduce((a, b) => a + b, 0);
+  });
+  // Order vegetation rows by descending total coverage to show largest concentration at top
+  const vegTotals: Record<string, number> = {};
+  Object.entries(overlap).forEach(([slopeCat, vegMap]) => {
+    Object.entries(vegMap).forEach(([veg, meters]) => {
+      vegTotals[veg] = (vegTotals[veg] || 0) + meters;
+    });
+  });
+  const vegRows = VEGETATION_CATEGORIES.map(v => v.key).sort((a, b) => (vegTotals[b] || 0) - (vegTotals[a] || 0));
   const slopeCols = SLOPE_CATEGORIES.map(s => s.key);
   const heavyVegKey = Object.entries(vegetationAnalysis.vegetationDistribution).sort((a,b)=>b[1]-a[1])[0]?.[0];
 
@@ -45,25 +57,31 @@ export const OverlapMatrix: React.FC<OverlapMatrixProps> = ({ trackAnalysis, veg
         const rowTotalPct = Math.round((rowTotalMeters / total) * 100);
         const rowCells = slopeCols.map(col => {
           const meters = rowMeters[col] || 0;
-          const pct = (meters / total) * 100;
-          return { col, meters, pct };
+          const pctOfRoute = (meters / total) * 100; // used for bar sizing
+          const pctOfRow = rowTotalMeters > 0 ? (meters / rowTotalMeters) * 100 : 0; // percent of this vegetation row
+          const colTotal = colTotals[col] || 1;
+          const pctOfCol = colTotal > 0 ? (meters / colTotal) * 100 : 0; // percent of the slope column
+          return { col, meters, pctOfRoute, pctOfRow, pctOfCol };
         });
-        const maxCell = rowCells.reduce((m,c)=> c.pct>m.pct?c:m, rowCells[0]);
+        const maxCell = rowCells.reduce((m,c)=> c.pctOfRoute>m.pctOfRoute?c:m, rowCells[0]);
         return (
           <div key={rowKey} className={`overlap-row ${heavyVegKey===rowKey? 'dominant-row':''}`} role="row">
             <div className="overlap-row-header" role="rowheader" title={vegDef.label}>{vegDef.label}</div>
             {rowCells.map(cell => {
-              const pctRounded = Math.round(cell.pct);
+              const pctRouteRounded = Math.round(cell.pctOfRoute);
+              const pctRowRounded = Math.round(cell.pctOfRow);
+              const pctColRounded = Math.round(cell.pctOfCol);
               return (
                 <div
                   key={cell.col}
                   role="cell"
-                  className={`overlap-cell ${maxCell.col===cell.col && pctRounded>0 ? 'max-in-row':''}`}
-                  aria-label={`${vegDef.label} in ${cell.col} slope: ${pctRounded}%`}
-                  title={`${vegDef.label} + ${cell.col}: ${pctRounded}% (${Math.round(cell.meters)} m)`}
+                  className={`overlap-cell ${maxCell.col===cell.col && pctRouteRounded>0 ? 'max-in-row':''}`}
+                  aria-label={`${vegDef.label} on ${cell.col} slope: ${pctRouteRounded}% of route; ${pctRowRounded}% of ${vegDef.label}; ${pctColRounded}% of ${cell.col} slope`}
+                  title={`${vegDef.label} on ${cell.col} slope: ${pctRouteRounded}% of route (${Math.round(cell.meters)} m); ${pctRowRounded}% of this vegetation; ${pctColRounded}% of this slope category`}
                 >
-                  <div className={`cell-bar dist-pct-${pctRounded}`} data-color={vegDef.color} />
-                  {pctRounded >= 6 && <span className="cell-label" aria-hidden="true">{pctRounded}%</span>}
+                      <div className={`cell-bar pct-${pctRouteRounded}`} data-color={vegDef.color} />
+                      {/* Always show a small percent label to make the matrix explicit; hide visually when zero */}
+                      <span className={`cell-label ${pctRouteRounded === 0 ? 'cell-label-empty' : ''}`} aria-hidden="true">{pctRouteRounded}%</span>
                 </div>
               );
             })}
