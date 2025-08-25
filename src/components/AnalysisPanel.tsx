@@ -6,6 +6,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis } from '../types/config';
+import { deriveTerrainFromSlope, VEGETATION_TYPES } from '../config/classification';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -142,10 +143,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   handCrews,
   onDropPreviewChange
 }) => {
-  const [terrain, setTerrain] = useState<TerrainType>('easy');
-  const [vegetation, setVegetation] = useState<VegetationType>('grassland');
-  const [slopeDeg, setSlopeDeg] = useState<number>(5); // degrees
-  const [expectedObjectDiameter, setExpectedObjectDiameter] = useState<number>(0.2); // meters
+  // User-selected vegetation context (was previously removed)
+  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
 
@@ -177,24 +176,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   // Map max slope to a minimum terrain class requirement
   const derivedTerrainRequirement: TerrainType | null = useMemo(() => {
     if (!trackAnalysis) return null;
-    const maxSlope = trackAnalysis.maxSlope;
-    if (maxSlope <= 10) return 'easy';
-    if (maxSlope <= 20) return 'moderate';
-    if (maxSlope <= 30) return 'difficult';
-    return 'extreme';
+    return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
   }, [trackAnalysis]);
 
   const calculations = useMemo(() => {
     if (!distance) return [];
 
     const results: CalculationResult[] = [];
-    const terrainFactor = terrainFactors[terrain];
-    const vegetationFactor = vegetationFactors[vegetation];
+  const effectiveTerrain = derivedTerrainRequirement || 'easy';
+  const terrainFactor = terrainFactors[effectiveTerrain];
+  const vegetationFactor = vegetationFactors[selectedVegetation];
 
     // Calculate machinery results
-    const requiredTerrain = derivedTerrainRequirement || terrain; // fallback to user selection if no analysis
+  const requiredTerrain = effectiveTerrain;
     machinery.forEach(machine => {
-      const compatible = isCompatible(machine, requiredTerrain, vegetation);
+  const compatible = isCompatible(machine, requiredTerrain, selectedVegetation);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
       const fullCompatibility = compatible && slopeCheck.compatible;
       
@@ -217,7 +213,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate aircraft results
     aircraft.forEach(plane => {
-      const compatible = isCompatible(plane, requiredTerrain, vegetation);
+  const compatible = isCompatible(plane, requiredTerrain, selectedVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -238,7 +234,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate hand crew results
     handCrews.forEach(crew => {
-      const compatible = isCompatible(crew, requiredTerrain, vegetation);
+  const compatible = isCompatible(crew, requiredTerrain, selectedVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
@@ -266,7 +262,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       }
       return a.time - b.time;
     });
-  }, [distance, trackAnalysis, terrain, vegetation, machinery, aircraft, handCrews]);
+  }, [distance, trackAnalysis, selectedVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
@@ -299,42 +295,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       </div>
 
       <div className="analysis-content">
-        {/* Terrain and Vegetation Controls - Always visible */}
+        {/* Vegetation selector */}
         <div className="conditions-section">
-          <h4>Site Conditions</h4>
-          <div className="condition-controls">
-            <label>
-              Terrain:
-              <select 
-                value={terrain} 
-                onChange={(e) => setTerrain(e.target.value as TerrainType)}
-              >
-                <option value="easy">Easy (Flat)</option>
-                <option value="moderate">Moderate (Rolling)</option>
-                <option value="difficult">Difficult (Steep)</option>
-                <option value="extreme">Extreme (Very Steep)</option>
-              </select>
-            </label>
-            <label>
-              Slope (degrees):
-              <input type="number" value={slopeDeg} min={0} max={60} step={1} onChange={(e) => setSlopeDeg(Number(e.target.value))} />
-            </label>
-            <label>
-              Expected object diameter (m):
-              <input type="number" value={expectedObjectDiameter} min={0} max={5} step={0.05} onChange={(e) => setExpectedObjectDiameter(Number(e.target.value))} />
-            </label>
-            <label>
-              Vegetation:
-              <select 
-                value={vegetation} 
-                onChange={(e) => setVegetation(e.target.value as VegetationType)}
-              >
-                <option value="grassland">Grassland (very light)</option>
-                <option value="lightshrub">Light shrub/scrub (&lt;10cm diameter)</option>
-                <option value="mediumscrub">Medium scrub/forest (10-50cm)</option>
-                <option value="heavyforest">Heavy forest (50cm+)</option>
-              </select>
-            </label>
+          <div className="conditions-group">
+            <label htmlFor="vegetation-select">Vegetation</label>
+            <select
+              id="vegetation-select"
+              value={selectedVegetation}
+              onChange={(e) => setSelectedVegetation(e.target.value as VegetationType)}
+            >
+              {VEGETATION_TYPES.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
           </div>
         </div>
 

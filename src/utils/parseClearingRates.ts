@@ -71,13 +71,14 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
 
     const performances: MachineryPerformance[] = group.map(row => {
       const slopeMax = Number(row.slopeMax || row['slopemax'] || row['slope max'] || 0);
-      const rawDensity = ((row.density || 'moderate') as string).toLowerCase().trim();
-      let density: MachineryPerformance['density'];
-      if (rawDensity.startsWith('lig')) density = 'light';
-      else if (rawDensity.startsWith('mod') || rawDensity.startsWith('med')) density = 'moderate';
-      else if (rawDensity.startsWith('hea')) density = 'heavy';
-      else if (rawDensity.startsWith('ext') || rawDensity.startsWith('very')) density = 'extreme';
-      else density = 'moderate';
+  const rawDensity = ((row.density || 'mediumscrub') as string).toLowerCase().trim();
+  let density: MachineryPerformance['density'];
+  // Map legacy or shorthand density strings to the new taxonomy used across the app
+  if (rawDensity.startsWith('grass') || rawDensity.startsWith('gra') || rawDensity.startsWith('g')) density = 'grassland';
+  else if (rawDensity.startsWith('lig') || rawDensity.startsWith('light')) density = 'lightshrub';
+  else if (rawDensity.startsWith('med') || rawDensity.startsWith('mod') || rawDensity.startsWith('medium')) density = 'mediumscrub';
+  else if (rawDensity.startsWith('hea') || rawDensity.startsWith('for') || rawDensity.startsWith('heavy')) density = 'heavyforest';
+  else density = 'mediumscrub';
       const metersPerHour = Number(row.metersPerHour || row['mperhour'] || row['m per hour'] || 0);
       const costPerHour = Number(row.costPerHour || row['$perhour'] || row['$ per hour'] || 0) || undefined;
 

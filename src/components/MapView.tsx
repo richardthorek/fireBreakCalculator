@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
-import { TrackAnalysis } from '../types/config';
+import { TrackAnalysis, AircraftSpec } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 
@@ -54,6 +54,9 @@ const DEFAULT_ZOOM = 6;
 interface MapViewProps {
   onDistanceChange: (distance: number | null) => void;
   onTrackAnalysisChange?: (analysis: TrackAnalysis | null) => void;
+  /** Aircraft list and selected aircraft for drop preview - provided by App */
+  selectedAircraftForPreview?: string[];
+  aircraft?: AircraftSpec[];
 }
 
 export const MapView: React.FC<MapViewProps> = ({ onDistanceChange, onTrackAnalysisChange }) => {

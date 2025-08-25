@@ -5,6 +5,7 @@
 
 import { LatLng } from 'leaflet';
 import { SlopeSegment, SlopeCategory, TrackAnalysis } from '../types/config';
+import { classifySlope, slopeCategoryColor } from '../config/classification';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 
 /**
@@ -42,25 +43,12 @@ export const calculateSlope = (
 /**
  * Categorize slope based on angle in degrees
  */
-export const categorizeSlope = (slope: number): SlopeCategory => {
-  if (slope <= 10) return 'flat';
-  if (slope <= 20) return 'medium';
-  if (slope <= 30) return 'steep';
-  return 'very_steep';
-};
+export const categorizeSlope = (slope: number): SlopeCategory => classifySlope(slope) as SlopeCategory;
 
 /**
  * Get color for slope visualization
  */
-export const getSlopeColor = (category: SlopeCategory): string => {
-  switch (category) {
-    case 'flat': return '#00ff00'; // Green
-    case 'medium': return '#ffff00'; // Yellow
-    case 'steep': return '#ff8800'; // Orange
-    case 'very_steep': return '#ff0000'; // Red
-    default: return '#888888'; // Gray fallback
-  }
-};
+export const getSlopeColor = (category: SlopeCategory): string => slopeCategoryColor(category);
 
 /**
  * Mock elevation service for development/testing fallback.
