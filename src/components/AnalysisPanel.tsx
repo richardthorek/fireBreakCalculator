@@ -7,6 +7,7 @@
 import React, { useState, useMemo } from 'react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES } from '../config/classification';
+import { computeSlopeVegetationOverlap } from '../utils/analysisOverlap';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -152,7 +153,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
-    if (useAutoDetected && vegetationAnalysis) return vegetationAnalysis.predominantVegetation;
+    // If auto-detected vegetation is enabled, choose the heaviest vegetation
+    // present in the analysis for suitability checks (heaviest wins even if
+    // it occupies a small fraction). Order: heavyforest > mediumscrub > lightshrub > grassland
+    if (useAutoDetected && vegetationAnalysis) {
+      const dist = vegetationAnalysis.vegetationDistribution;
+      if (dist.heavyforest > 0) return 'heavyforest';
+      if (dist.mediumscrub > 0) return 'mediumscrub';
+      if (dist.lightshrub > 0) return 'lightshrub';
+      if (dist.grassland > 0) return 'grassland';
+      // fallback to predominant if distribution empty for some reason
+      return vegetationAnalysis.predominantVegetation;
+    }
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
@@ -303,6 +315,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
   const quickAircraft = selectedQuickAircraft ? calculations.find(c => c.id === selectedQuickAircraft) : undefined;
   const quickHandCrew = selectedQuickHandCrew ? calculations.find(c => c.id === selectedQuickHandCrew) : undefined;
 
+  // Helper to render vegetation breakdown for a given slope category
+  const renderSlopeVegetationBreakdown = (category: string) => {
+    if (!trackAnalysis || !vegetationAnalysis) return null;
+    const overlap = computeSlopeVegetationOverlap(trackAnalysis.segments, vegetationAnalysis.segments);
+    const cat = overlap[category] || {};
+    const totalForCat = Object.values(cat).reduce((s, v) => s + v, 0) || 1;
+    const items = Object.entries(cat).map(([veg, meters]) => {
+      const pct = Math.round((meters / totalForCat) * 100);
+      return (
+        <div key={veg} className="veg-mini-item">{veg}: {pct}%</div>
+      );
+    });
+    return <div className="veg-mini-list">{items.length ? items : <div className="veg-mini-item">No data</div>}</div>;
+  };
+
   return (
     <div className="analysis-panel-permanent">
       <div className="analysis-header" onClick={() => setIsExpanded(!isExpanded)}>
@@ -322,7 +349,6 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
             {vegetationAnalysis && (
               <div className="auto-detected-vegetation">
                 <div className="auto-detected-header">
-                  <span className="auto-detected-label">Auto-detected: <strong>{vegetationAnalysis.predominantVegetation}</strong></span>
                   <span className="confidence-badge">{Math.round(vegetationAnalysis.overallConfidence * 100)}% confidence</span>
                 </div>
                 <div className="vegetation-toggle">
@@ -331,6 +357,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
                     Use auto-detected vegetation
                   </label>
                 </div>
+                <div className="vegetation-breakdown">
+                  {/** Show percentage breakdown for each detected vegetation type */}
+                  <div className="vegetation-breakdown-title">Distribution:</div>
+                  <div className="vegetation-breakdown-list">
+                    <div className="vegetation-breakdown-item"><div className="veg-percent">{Math.round((vegetationAnalysis.vegetationDistribution.grassland / Math.max(1, vegetationAnalysis.totalDistance)) * 100)}%</div><div className="veg-label">Grass</div></div>
+                    <div className="vegetation-breakdown-item"><div className="veg-percent">{Math.round((vegetationAnalysis.vegetationDistribution.lightshrub / Math.max(1, vegetationAnalysis.totalDistance)) * 100)}%</div><div className="veg-label">Light</div></div>
+                    <div className="vegetation-breakdown-item"><div className="veg-percent">{Math.round((vegetationAnalysis.vegetationDistribution.mediumscrub / Math.max(1, vegetationAnalysis.totalDistance)) * 100)}%</div><div className="veg-label">Medium</div></div>
+                    <div className="vegetation-breakdown-item"><div className="veg-percent">{Math.round((vegetationAnalysis.vegetationDistribution.heavyforest / Math.max(1, vegetationAnalysis.totalDistance)) * 100)}%</div><div className="veg-label">Heavy</div></div>
+                  </div>
+                </div>
+                <div className="vegetation-disclaimer">Note: auto-detection selects the heaviest detected vegetation for equipment suitability (heavy &gt; medium &gt; light &gt; grass). Vegetation types are sourced from a global landcover API and may be imprecise — verify and use the manual override below if you spot discrepancies.</div>
               </div>
             )}
             {(!vegetationAnalysis || !useAutoDetected) && (
@@ -344,7 +381,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
                 {VEGETATION_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
               </select>
             )}
-            <div className="effective-vegetation">Using: <strong>{effectiveVegetation}</strong></div>
+            <div className="effective-vegetation">{useAutoDetected && vegetationAnalysis ? (
+              <>Using (heaviest detected): <strong>{effectiveVegetation}</strong></>
+            ) : (
+              <>Using: <strong>{effectiveVegetation}</strong></>
+            )}</div>
           </div>
         </div>
         {trackAnalysis && (
@@ -358,10 +399,26 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps & { selectedAircraftForP
               </div>
               {isExpanded && (
                 <div className="slope-distribution">
-                  <div className="slope-category flat"><span>Flat (0-10°):</span><span>{Math.round(trackAnalysis.slopeDistribution.flat / 1000)} km</span></div>
-                  <div className="slope-category medium"><span>Medium (10-20°):</span><span>{Math.round(trackAnalysis.slopeDistribution.medium / 1000)} km</span></div>
-                  <div className="slope-category steep"><span>Steep (20-30°):</span><span>{Math.round(trackAnalysis.slopeDistribution.steep / 1000)} km</span></div>
-                  <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{Math.round(trackAnalysis.slopeDistribution.very_steep / 1000)} km</span></div>
+                  <div className="slope-category flat"><span>Flat (0-10°):</span><span>{Math.round(trackAnalysis.slopeDistribution.flat / 1000)} km</span>
+                    {vegetationAnalysis && (
+                      <div className="slope-veg-breakdown">{renderSlopeVegetationBreakdown('flat')}</div>
+                    )}
+                  </div>
+                  <div className="slope-category medium"><span>Medium (10-20°):</span><span>{Math.round(trackAnalysis.slopeDistribution.medium / 1000)} km</span>
+                    {vegetationAnalysis && (
+                      <div className="slope-veg-breakdown">{renderSlopeVegetationBreakdown('medium')}</div>
+                    )}
+                  </div>
+                  <div className="slope-category steep"><span>Steep (20-30°):</span><span>{Math.round(trackAnalysis.slopeDistribution.steep / 1000)} km</span>
+                    {vegetationAnalysis && (
+                      <div className="slope-veg-breakdown">{renderSlopeVegetationBreakdown('steep')}</div>
+                    )}
+                  </div>
+                  <div className="slope-category very-steep"><span>Very Steep (30°+):</span><span>{Math.round(trackAnalysis.slopeDistribution.very_steep / 1000)} km</span>
+                    {vegetationAnalysis && (
+                      <div className="slope-veg-breakdown">{renderSlopeVegetationBreakdown('very_steep')}</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

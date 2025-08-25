@@ -73,7 +73,7 @@ html, body, #root, .app-shell {
   .analysis-section {
     flex: 0 0 400px;
     height: auto;
-    min-height: auto;
+  min-height: 0;
   }
 }
 
@@ -109,14 +109,16 @@ html, body, #root, .app-shell {
 
 .map-info {
   position: absolute;
-  top: 0.75rem;
+  /* place the info box below the header (header is 10vh tall) */
+  top: calc(10vh + 0.75rem);
   right: 0.75rem;
   background: rgba(30,36,51,0.95);
   color: #d0d6dd;
   padding: 0.6rem 1rem;
   border-radius: 4px;
   font-size: 0.85rem;
-  z-index: 800;
+  /* lower than header (header z-index: 500) so header remains on top */
+  z-index: 400;
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
   border: 1px solid #2a3442;
 }
@@ -165,6 +167,7 @@ html, body, #root, .app-shell {
   background: rgba(15,17,21,0.95);
   border: 1px solid #2a3442;
   border-radius: 8px;
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   overflow: hidden;
@@ -1243,3 +1246,40 @@ html, body, #root, .app-shell {
 .effective-vegetation strong {
   color: #e1e7ef;
 }
+
+/* Vegetation percentage breakdown inside auto-detect box */
+.vegetation-breakdown { margin-top: 0.5rem; font-size: 0.85rem; color: #cbd5e1; }
+.vegetation-breakdown-title { font-size: 0.85rem; margin-bottom: 0.25rem; }
+.vegetation-breakdown-list { display:flex; gap:0.5rem; }
+.vegetation-breakdown-item { text-align:center; min-width:48px; }
+.veg-percent { font-weight:700; }
+.veg-label { font-size:0.75rem; color:#94a3b8; }
+
+.vegetation-disclaimer { margin-top:8px; font-size:0.75rem; color:#94a3b8; background: rgba(255,255,255,0.02); padding:0.5rem; border-radius:4px; }
+
+.popup-veg-disclaimer { margin-top:6px; font-size:11px; color:#475569; background: rgba(255,255,255,0.02); padding:6px; border-radius:4px; }
+.effective-vegetation { margin-top: 0.5rem; padding: 0.5rem; background: rgba(45,54,70,0.3); border-radius: 4px; color: #94a3b8; font-size: 0.8rem; text-align: center; }
+
+/* Inline popup styling replacement for Leaflet popups */
+.popup-container { min-width: 260px; font-family: inherit; color: #1e2633; }
+.popup-header { font-weight: 700; margin-bottom: 6px; }
+.popup-distance { margin-bottom: 4px; font-size: 13px; }
+.popup-slope-summary { font-size: 13px; color: #334155; margin-bottom: 6px; }
+.popup-bar-row { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:11px; }
+.popup-bar-label { width:60px; }
+.popup-bar-track { flex:1; background:#eee; height:8px; position:relative; border-radius:4px; overflow:hidden; }
+.popup-bar-fill { position:absolute; left:0; top:0; height:100%; }
+.popup-bar-value { width:55px; text-align:right; }
+.popup-veg-section { margin-top:8px; border-top:1px solid #ddd; padding-top:6px; font-size:11px; color:#334155; }
+.popup-veg-title { font-weight:700; margin-bottom:4px; }
+.popup-slope-veg-line { font-size:11px; color:#444; margin-top:4px; }
+
+/* Panel mini-list for per-category vegetation breakdown */
+.veg-mini-list { display:flex; gap:0.5rem; margin-top:4px; }
+.veg-mini-item { font-size:0.85rem; color:#94a3b8; }
+.slope-veg-breakdown { margin-top:6px; }
+
+/* Individual slope segment popup styling */
+.popup-segment { font-size: 13px; color: #1e2633; }
+.popup-segment-title { font-weight: 700; margin-bottom: 4px; }
+.popup-segment-body { color: #334155; margin-top: 2px; font-size: 12px; }
