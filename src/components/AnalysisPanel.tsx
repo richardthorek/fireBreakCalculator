@@ -16,16 +16,18 @@ interface AnalysisPanelProps {
   aircraft: AircraftSpec[];
   /** Available hand crew options */
   handCrews: HandCrewSpec[];
+  /** Callback for when drop preview selection changes */
+  onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
 type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
-type VegetationType = 'light' | 'moderate' | 'heavy' | 'extreme';
+type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
 
 interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for machinery/handCrew, total drops for aircraft
+  time: number; // hours for all types now
   cost: number;
   compatible: boolean;
   unit: string;
@@ -100,21 +102,49 @@ const calculateHandCrewTime = (
 const isCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
   terrain: TerrainType,
-  vegetation: VegetationType
+  vegetation: VegetationType,
+  expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
 ): boolean => {
-  return equipment.allowedTerrain.includes(terrain) && 
-         equipment.allowedVegetation.includes(vegetation);
+  // Basic allowed terrain / vegetation check
+  const basic = equipment.allowedTerrain.includes(terrain) && 
+                equipment.allowedVegetation.includes(vegetation);
+
+  if (!basic) return false;
+
+  // If equipment declares a minClearDiameter, ensure it can handle expected objects
+  // Use a type-guard to safely access machinery-specific field
+  if ((equipment as MachinerySpec).minClearDiameter !== undefined) {
+    const m = equipment as MachinerySpec;
+    return m.minClearDiameter! <= expectedObjectDiameter;
+  }
+
+  // For aircraft and hand crews, assume they can handle small items; keep basic result
+  return true;
 };
 
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   distance,
   machinery,
   aircraft,
-  handCrews
+  handCrews,
+  onDropPreviewChange
 }) => {
   const [terrain, setTerrain] = useState<TerrainType>('easy');
-  const [vegetation, setVegetation] = useState<VegetationType>('light');
+  const [vegetation, setVegetation] = useState<VegetationType>('grassland');
+  const [slopeDeg, setSlopeDeg] = useState<number>(5); // degrees
+  const [expectedObjectDiameter, setExpectedObjectDiameter] = useState<number>(0.2); // meters
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
+
+  // Handle drop preview selection changes
+  const handleDropPreviewChange = (aircraftId: string, isSelected: boolean) => {
+    const updatedSelection = isSelected 
+      ? [...selectedAircraftForPreview, aircraftId]
+      : selectedAircraftForPreview.filter(id => id !== aircraftId);
+    
+    setSelectedAircraftForPreview(updatedSelection);
+    onDropPreviewChange?.(updatedSelection);
+  };
 
   // Terrain and vegetation factors
   const terrainFactors = {
@@ -123,12 +153,41 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     difficult: 1.7,
     extreme: 2.2
   };
-
+  // Map new vegetation taxonomy to numeric factors (lower is easier)
   const vegetationFactors = {
-    light: 1.0,
-    moderate: 1.4,
-    heavy: 1.8,
-    extreme: 2.5
+    grassland: 1.0,     // very light
+    lightshrub: 1.1,    // <10cm diameter
+    mediumscrub: 1.5,   // 10-50cm
+    heavyforest: 2.0    // 50cm+
+  } as const;
+
+  // Additional slope time factor: additional percent time per degree (2% = 0.02)
+  const slopeTimeFactor = 0.02;
+
+  // Helper: pick a per-condition rate for machinery if available
+  const selectMachineRate = (
+    machine: MachinerySpec,
+    slope: number,
+    veg: VegetationType,
+    terrainFactor: number,
+    vegetationFactor: number
+  ): number => {
+    // Try to find a performance row matching vegetation
+    const perfs = machine.performances?.filter(p => p.density === veg) ?? [];
+    if (perfs.length > 0) {
+      // Find first perf with slopeMax >= requested slope (smallest such slopeMax)
+      const higher = perfs.filter(p => p.slopeMax >= slope).sort((a,b) => a.slopeMax - b.slopeMax);
+      if (higher.length > 0) return higher[0].metersPerHour;
+      // else use the highest available slope performance (worst-case)
+      const fallback = perfs.sort((a,b) => b.slopeMax - a.slopeMax)[0];
+      if (fallback) return fallback.metersPerHour;
+    }
+
+    // No explicit performance row: fall back to penalty-adjusted base rate
+    // penalize rate by terrain and vegetation and slope
+    const base = machine.clearingRate || 1;
+    const slopePenalty = 1 + slope * slopeTimeFactor; // e.g., 5deg -> 1.1
+    return base / (terrainFactor * vegetationFactor * slopePenalty);
   };
 
   const calculations = useMemo(() => {
@@ -138,11 +197,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const terrainFactor = terrainFactors[terrain];
     const vegetationFactor = vegetationFactors[vegetation];
 
-    // Calculate machinery results
+    // Calculate machinery results using per-condition rates when available
     machinery.forEach(machine => {
-      const compatible = isCompatible(machine, terrain, vegetation);
-      const time = compatible ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
-      const cost = compatible && machine.costPerHour ? time * machine.costPerHour : 0;
+      const compatible = isCompatible(machine, terrain, vegetation, expectedObjectDiameter);
+      const rate = compatible ? selectMachineRate(machine, slopeDeg, vegetation, terrainFactor, vegetationFactor) : 0;
+      const time = compatible ? distance / Math.max(rate, 0.0001) : 0;
+      const cost = compatible && machine.costPerHour ? time * (machine.costPerHour ?? 0) : 0;
 
       results.push({
         id: machine.id,
@@ -158,7 +218,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Calculate aircraft results
     aircraft.forEach(plane => {
-      const compatible = isCompatible(plane, terrain, vegetation);
+      const compatible = isCompatible(plane, terrain, vegetation, expectedObjectDiameter);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const cost = compatible && plane.costPerHour ? totalTime * plane.costPerHour : 0;
@@ -167,17 +227,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         id: plane.id,
         name: plane.name,
         type: 'aircraft',
-        time: drops,
+        time: totalTime,
         cost,
         compatible,
-        unit: 'drops',
-        description: plane.description
+        unit: 'hours',
+        description: plane.description,
+        // Store additional aircraft-specific info for display
+        drops: drops
       });
     });
 
     // Calculate hand crew results
     handCrews.forEach(crew => {
-      const compatible = isCompatible(crew, terrain, vegetation);
+      const compatible = isCompatible(crew, terrain, vegetation, expectedObjectDiameter);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const cost = compatible && crew.costPerHour ? time * crew.costPerHour : 0;
 
@@ -199,14 +261,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (a.compatible && !b.compatible) return -1;
       if (!a.compatible && !b.compatible) return 0;
       
-      // For aircraft, convert drops to estimated time for sorting
-      const aTime = a.type === 'aircraft' ? a.time * 0.5 : a.time; // rough estimate
-      const bTime = b.type === 'aircraft' ? b.time * 0.5 : b.time;
-      
-      if (Math.abs(aTime - bTime) < 0.1) {
+      // All types now use time in hours, so direct comparison
+      if (Math.abs(a.time - b.time) < 0.1) {
         return a.cost - b.cost; // If time is similar, sort by cost
       }
-      return aTime - bTime;
+      return a.time - b.time;
     });
   }, [distance, terrain, vegetation, machinery, aircraft, handCrews]);
 
@@ -251,15 +310,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </select>
             </label>
             <label>
+              Slope (degrees):
+              <input type="number" value={slopeDeg} min={0} max={60} step={1} onChange={(e) => setSlopeDeg(Number(e.target.value))} />
+            </label>
+            <label>
+              Expected object diameter (m):
+              <input type="number" value={expectedObjectDiameter} min={0} max={5} step={0.05} onChange={(e) => setExpectedObjectDiameter(Number(e.target.value))} />
+            </label>
+            <label>
               Vegetation:
               <select 
                 value={vegetation} 
                 onChange={(e) => setVegetation(e.target.value as VegetationType)}
               >
-                <option value="light">Light (Grass)</option>
-                <option value="moderate">Moderate (Mixed)</option>
-                <option value="heavy">Heavy (Dense Forest)</option>
-                <option value="extreme">Extreme (Very Dense)</option>
+                <option value="grassland">Grassland (very light)</option>
+                <option value="lightshrub">Light shrub/scrub (&lt;10cm diameter)</option>
+                <option value="mediumscrub">Medium scrub/forest (10-50cm)</option>
+                <option value="heavyforest">Heavy forest (50cm+)</option>
               </select>
             </label>
           </div>
@@ -299,9 +366,27 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   </div>
                   {bestOptions.aircraft ? (
                     <div className="option-details">
-                      <span className="option-name">{bestOptions.aircraft.name}</span>
+                      <div className="drop-preview-toggle">
+                        <span className="option-name">{bestOptions.aircraft.name}</span>
+                        {/* Toggle button placed top-right via CSS */}
+                        <button
+                          type="button"
+                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'active' : ''}`}
+                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft?.id ?? '') ? 'Drop preview on' : 'Drop preview off'}
+                          title="Toggle drop preview"
+                          onClick={() => bestOptions.aircraft && handleDropPreviewChange(bestOptions.aircraft.id, !selectedAircraftForPreview.includes(bestOptions.aircraft.id))}
+                        >
+                          {/* Simple plane SVG icon */}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      </div>
                       <span className="option-time">
-                        {bestOptions.aircraft.time.toFixed(0)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}
+                        {bestOptions.aircraft.drops && (
+                          <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>
+                        )}
                       </span>
                     </div>
                   ) : (
@@ -327,6 +412,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Drop preview toggles are now available inline on aircraft option cards and rows */}
 
             {/* Full Equipment Table - Only when expanded */}
             {isExpanded && (

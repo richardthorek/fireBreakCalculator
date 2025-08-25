@@ -12,6 +12,7 @@ import { MachinerySpec, AircraftSpec, HandCrewSpec } from './types/config';
  */
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   
   // State for configurable equipment
   const [machinery, setMachinery] = useState<MachinerySpec[]>(defaultConfig.machinery);
@@ -26,7 +27,11 @@ const App: React.FC = () => {
       </header>
       <main className="app-main">
         <div className="map-section">
-          <MapView onDistanceChange={setFireBreakDistance} />
+          <MapView 
+            onDistanceChange={setFireBreakDistance} 
+            selectedAircraftForPreview={selectedAircraftForPreview}
+            aircraft={aircraft}
+          />
         </div>
         <div className="analysis-section">
           <AnalysisPanel 
@@ -34,6 +39,7 @@ const App: React.FC = () => {
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}
+            onDropPreviewChange={setSelectedAircraftForPreview}
           />
         </div>
         <EquipmentConfigPanel

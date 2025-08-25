@@ -60,9 +60,28 @@ Select the types of equipment and crews you want to include in your analysis:
 
 ### Step 4: Review Results
 For each selected resource, the system displays:
-- **Estimated completion time** (in hours)
-- **Number of aircraft drops** (for aircraft resources)  
+- **Estimated completion time** (in hours for all resource types)
+- **Number of aircraft drops** (shown alongside completion time for aircraft)  
 - **Estimated operational cost** (when cost data is available)
+
+### Step 5: Drop Preview for Aircraft (New Feature)
+When you have drawn a fire break line, you can visualize aircraft drop patterns:
+
+1. **Access Drop Preview**: Look for the "Drop Preview" section in the analysis panel
+2. **Select Aircraft**: Check the boxes next to aircraft you want to preview
+3. **View Drop Information**: Each aircraft shows:
+   - Number of drops required
+   - Drop interval distance (e.g., 100m, 150m, 300m)
+   - Total completion time including turnaround time
+4. **Visual Markers**: Selected aircraft will show colored markers on the map at each drop interval
+   - Different colors for each aircraft type
+   - Tooltips show aircraft name and drop number
+5. **Multiple Aircraft**: Select multiple aircraft to compare different drop patterns
+
+#### Aircraft Drop Calculations
+- **Drop intervals** based on each aircraft's effective drop length
+- **Total completion time** = (Number of drops) × (Turnaround time)
+- **Turnaround time** includes flight time between drops and reloading
 
 ## Understanding the Calculations
 
