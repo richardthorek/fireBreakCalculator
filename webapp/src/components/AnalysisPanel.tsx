@@ -40,14 +40,27 @@ interface CalculationResult {
   id: string;
   name: string;
   type: 'machinery' | 'aircraft' | 'handCrew';
-  time: number; // hours for all types
+  /** Estimated total time in hours */
+  time: number;
+  /** Estimated total cost (0 if unknown) */
   cost: number;
+  /** True when either fully or partially compatible */
   compatible: boolean;
+  /** Granular compatibility state for clearer UX */
+  compatibilityLevel?: 'full' | 'partial' | 'incompatible';
+  /** Slope constraint result for machinery */
   slopeCompatible?: boolean;
+  /** If slope exceeds capability the encountered (max) slope value */
   maxSlopeExceeded?: number;
-  drops?: number; // aircraft specific
-  unit: string; // always 'hours'
+  /** Aircraft-only: number of required drops */
+  drops?: number;
+  /** Output unit (presently always 'hours') */
+  unit: string;
   description?: string;
+  /** For partial compatibility: percentage (0–1) of distance outside spec */
+  overLimitPercent?: number;
+  /** Reason / notes shown in tooltip or future detailed view */
+  note?: string;
 }
 
 /**
@@ -113,18 +126,76 @@ const calculateHandCrewTime = (
 };
 
 /**
- * Check if equipment is compatible with terrain and vegetation
+ * Basic terrain & vegetation membership check (used for aircraft & hand crew, and as a first pass for machinery).
  */
-const isCompatible = (
+const baseEnvironmentCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
   requiredTerrain: TerrainType,
-  vegetation: VegetationType,
-  expectedObjectDiameter = 0.2 // meters - default expected diameter of objects to clear
+  vegetation: VegetationType
 ): boolean => {
-  // Basic compatibility checks: terrain and vegetation membership
-  return equipment.allowedTerrain.includes(requiredTerrain) &&
-         equipment.allowedVegetation.includes(vegetation as any);
+  return equipment.allowedTerrain.includes(requiredTerrain) && equipment.allowedVegetation.includes(vegetation as any);
 };
+
+/** Ordinal ordering helper for terrain difficulty */
+const terrainRank: Record<TerrainType, number> = { easy: 0, moderate: 1, difficult: 2, extreme: 3 };
+
+/** Map slope category key → terrain level (mirrors deriveTerrainFromSlope logic) */
+const slopeCategoryToTerrain: Record<string, TerrainType> = {
+  flat: 'easy',
+  medium: 'moderate',
+  steep: 'difficult',
+  very_steep: 'extreme'
+};
+
+/**
+ * Determine machinery compatibility allowing partial matches when only a small portion
+ * of the line exceeds the machine's rated terrain class. This addresses prior overly
+ * strict exclusion where any presence of a higher terrain class removed otherwise viable equipment.
+ *
+ * Partial rule: if distance percentage above machine capability ≤ 15%, treat as partial (time penalty applied).
+ */
+function evaluateMachineryTerrainCompatibility(
+  machine: MachinerySpec,
+  trackAnalysis: TrackAnalysis | null,
+  vegetation: VegetationType,
+  requiredTerrain: TerrainType
+): { level: 'full' | 'partial' | 'incompatible'; overLimitPercent?: number; note?: string } {
+  // If we lack detailed track data fall back to simple membership logic
+  if (!trackAnalysis) {
+    return baseEnvironmentCompatible(machine, requiredTerrain, vegetation)
+      ? { level: 'full' }
+      : { level: 'incompatible', note: 'Terrain/vegetation not permitted' };
+  }
+
+  const simpleOk = baseEnvironmentCompatible(machine, requiredTerrain, vegetation);
+  // Fast path: if highest required terrain is within machine allowance we are full compatible.
+  const highestAllowed = machine.allowedTerrain.reduce((max, t) => Math.max(max, terrainRank[t as TerrainType]), 0);
+  const requiredRank = terrainRank[requiredTerrain];
+  if (requiredRank <= highestAllowed && simpleOk) return { level: 'full' };
+
+  // Compute percentage distance that exceeds machine capability (terrain-wise)
+  const distByCat = trackAnalysis.slopeDistribution; // assumed in meters
+  const overDistance = Object.entries(distByCat).reduce((acc, [cat, dist]) => {
+    const terr = slopeCategoryToTerrain[cat] as TerrainType | undefined;
+    if (!terr) return acc;
+    const r = terrainRank[terr];
+    return r > highestAllowed ? acc + (dist as number) : acc;
+  }, 0);
+  const total = trackAnalysis.totalDistance || 0;
+  const overPercent = total > 0 ? overDistance / total : 0;
+
+  if (overPercent === 0 && simpleOk) return { level: 'full' };
+  // Allow partial if within threshold and vegetation permitted overall (otherwise reject)
+  const PARTIAL_THRESHOLD = 0.15; // 15% of distance
+  if (overPercent > 0 && overPercent <= PARTIAL_THRESHOLD && machine.allowedVegetation.includes(vegetation)) {
+    return {
+      level: 'partial',
+      overLimitPercent: overPercent,
+      note: `~${Math.round(overPercent * 100)}% of route exceeds rated terrain; applying time penalty.`
+    };
+  }
+  return { level: 'incompatible', overLimitPercent: overPercent, note: overPercent > 0 ? 'Too much difficult terrain' : 'Terrain/vegetation not permitted' };
+}
 
 /**
  * Check if machinery is compatible with the slope requirements
@@ -203,14 +274,24 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const vegetationFactor = vegetationFactors[effectiveVegetation];
     const requiredTerrain = effectiveTerrain;
 
-    // Machinery
-  machinery.forEach((machine: MachinerySpec) => {
-      const compatible = isCompatible(machine, requiredTerrain, effectiveVegetation);
+    // Machinery with partial compatibility support
+    machinery.forEach((machine: MachinerySpec) => {
+      const terrainEval = evaluateMachineryTerrainCompatibility(machine, trackAnalysis, effectiveVegetation, requiredTerrain);
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
-      const fullCompatibility = compatible && slopeCheck.compatible;
+      const fullyEnvOk = terrainEval.level === 'full' && slopeCheck.compatible;
+      const partiallyOk = terrainEval.level === 'partial' && slopeCheck.compatible;
+      const compatible = fullyEnvOk || partiallyOk; // treat partial as compatible for selection purposes
 
-      const time = fullCompatibility ? calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor) : 0;
-      const costVal = fullCompatibility && (machine as any).costPerHour ? time * (machine as any).costPerHour : 0;
+      let time = 0;
+      if (compatible) {
+        time = calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor);
+        // Apply time penalty for partial compatibility proportional to over-limit percent (scaled *2)
+        if (terrainEval.level === 'partial' && terrainEval.overLimitPercent) {
+          const penaltyMultiplier = 1 + terrainEval.overLimitPercent * 2; // e.g. 10% over → +20% time
+          time *= penaltyMultiplier;
+        }
+      }
+      const costVal = compatible && (machine as any).costPerHour ? time * (machine as any).costPerHour : 0;
 
       results.push({
         id: machine.id,
@@ -218,17 +299,22 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         type: 'machinery',
         time,
         cost: costVal,
-        compatible: fullCompatibility,
+        compatible,
+        compatibilityLevel: terrainEval.level === 'incompatible' || !slopeCheck.compatible ? 'incompatible' : terrainEval.level,
         slopeCompatible: slopeCheck.compatible,
         maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         unit: 'hours',
-        description: machine.description
+        description: machine.description,
+        overLimitPercent: terrainEval.overLimitPercent,
+        note: !slopeCheck.compatible
+          ? 'Slope exceeds capability'
+          : terrainEval.note
       });
     });
 
-    // Aircraft
-  aircraft.forEach((plane: AircraftSpec) => {
-      const compatible = isCompatible(plane, requiredTerrain, effectiveVegetation);
+    // Aircraft (strict membership – no partial logic currently required)
+    aircraft.forEach((plane: AircraftSpec) => {
+      const compatible = baseEnvironmentCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
       const costVal = compatible && (plane as any).costPerHour ? totalTime * (plane as any).costPerHour : 0;
@@ -240,15 +326,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         time: totalTime,
         cost: costVal,
         compatible,
+        compatibilityLevel: compatible ? 'full' : 'incompatible',
         unit: 'hours',
         description: plane.description,
         drops
       });
     });
 
-    // Hand Crews
-  handCrews.forEach((crew: HandCrewSpec) => {
-      const compatible = isCompatible(crew, requiredTerrain, effectiveVegetation);
+    // Hand Crews (strict membership – no partial logic currently required)
+    handCrews.forEach((crew: HandCrewSpec) => {
+      const compatible = baseEnvironmentCompatible(crew, requiredTerrain, effectiveVegetation);
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const costVal = compatible && (crew as any).costPerHour ? time * (crew as any).costPerHour : 0;
 
@@ -259,21 +346,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         time,
         cost: costVal,
         compatible,
+        compatibilityLevel: compatible ? 'full' : 'incompatible',
         unit: 'hours',
         description: crew.description
       });
     });
 
-    // Sort by time (ascending) - quickest first, then by cost
+    // Sort: full compatible first, then partial, then incompatible; within each by time then cost
     return results.sort((a, b) => {
-      if (!a.compatible && b.compatible) return 1;
-      if (a.compatible && !b.compatible) return -1;
-      if (!a.compatible && !b.compatible) return 0;
-
-      // All types now use time in hours, so direct comparison
-      if (Math.abs(a.time - b.time) < 0.1) {
-        return a.cost - b.cost;
-      }
+      const rank = (r?: CalculationResult) => {
+        if (!r || !r.compatibilityLevel) return 3;
+        if (r.compatibilityLevel === 'full') return 0;
+        if (r.compatibilityLevel === 'partial') return 1;
+        return 2; // incompatible
+      };
+      const ar = rank(a);
+      const br = rank(b);
+      if (ar !== br) return ar - br;
+      if (ar === 2) return 0; // both incompatible – keep input order
+      if (Math.abs(a.time - b.time) < 0.1) return a.cost - b.cost;
       return a.time - b.time;
     });
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
@@ -479,17 +570,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <div className="equipment-table">
                       <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
                       {calculations.filter(r => r.type === 'machinery').map(result => (
-                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''}`}>
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''} ${result.compatibilityLevel === 'partial' ? 'partial' : ''}`} title={result.note || ''}>
                           <div className="equipment-info">
                             <span className="equipment-icon">{getEquipmentIcon(result)}</span>
                             <div className="equipment-details">
                               <span className="equipment-name">{result.name}</span>
-                              <span className="equipment-type">{result.type}</span>
+                              <span className="equipment-type">{result.compatibilityLevel === 'partial' ? 'Partial' : result.type}</span>
                             </div>
                           </div>
                           <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(1)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
                           <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
-                          <div className="status-info">{result.compatible ? <span className="compatible">✓ Compatible</span> : <span className="incompatible-status">✗ Incompatible</span>}</div>
+                          <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'partial' && <span className="partial-status">△ Partial</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
                         </div>
                       ))}
                     </div>
