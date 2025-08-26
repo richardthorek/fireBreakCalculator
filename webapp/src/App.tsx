@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { MapView } from './components/MapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
@@ -75,22 +75,23 @@ const App: React.FC = () => {
     }));
   }, [equipment]);
 
-  // Initial load
-  useEffect(() => {
-    const loadEquipment = async () => {
-      setLoadingEquip(true); 
-      setEquipError(null);
-      try { 
-        setEquipment(await listEquipment()); 
-      } catch (error: unknown) { 
-        const errorMessage = error instanceof Error ? error.message : 'Failed to load equipment';
-        setEquipError(errorMessage); 
-      } finally { 
-        setLoadingEquip(false); 
-      }
-    };
-    loadEquipment();
+  // Shared loader so we can refresh after CRUD ops to pull canonical server state (e.g. version, defaults)
+  const loadEquipment = useCallback(async () => {
+    setLoadingEquip(true);
+    setEquipError(null);
+    try {
+      const data = await listEquipment();
+      setEquipment(data);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load equipment';
+      setEquipError(errorMessage);
+    } finally {
+      setLoadingEquip(false);
+    }
   }, []);
+
+  // Initial load
+  useEffect(() => { loadEquipment(); }, [loadEquipment]);
 
   // CRUD helpers passed to config panel
   const handleCreate = async (partial: Partial<EquipmentApi> & { type: EquipmentApi['type']; name: string; }) => {
@@ -107,19 +108,19 @@ const App: React.FC = () => {
       ...(partial.type === 'Aircraft' && 'dropLength' in partial ? { dropLength: partial.dropLength, turnaroundMinutes: partial.turnaroundMinutes } : {}),
       ...(partial.type === 'HandCrew' && 'crewSize' in partial ? { crewSize: partial.crewSize, clearingRatePerPerson: partial.clearingRatePerPerson, equipmentList: partial.equipmentList } : {})
     } as CreateEquipmentInput;
-
-    const created = await createEquipment(payload);
-    setEquipment(prev => [...prev, created]);
+    await createEquipment(payload);
+    // Always reload full list to capture server-assigned fields & maintain consistency
+    await loadEquipment();
   };
 
   const handleUpdate = async (item: EquipmentApi) => {
-    const updated = await updateEquipmentItem(item);
-    setEquipment(prev => prev.map(e => e.id === updated.id ? updated : e));
+    await updateEquipmentItem(item);
+    await loadEquipment();
   };
 
   const handleDelete = async (item: EquipmentApi) => {
     await deleteEquipment(item.type, item.id);
-    setEquipment(prev => prev.filter(e => e.id !== item.id));
+    await loadEquipment();
   };
 
   return (
