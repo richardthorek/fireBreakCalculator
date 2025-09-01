@@ -1913,3 +1913,55 @@ button:focus,
 @media (max-width: 640px) {
   .touch-drawing-hint { max-width: 70vw; }
 }
+
+/* Vegetation zoom hint overlay */
+.vegetation-zoom-hint {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(20,25,34,0.95);
+  border: 1px solid #314152;
+  color: #e2f1ff;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 300px;
+  box-shadow: 0 4px 10px -2px rgba(0,0,0,0.5);
+  z-index: 1002;
+  border-left: 3px solid #10b981;
+}
+
+.vegetation-zoom-hint-content {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.vegetation-zoom-hint strong { 
+  color: #10b981; 
+}
+
+.vegetation-zoom-hint-dismiss {
+  background: transparent;
+  border: none;
+  color: #93aac2;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.vegetation-zoom-hint-dismiss:hover { 
+  color: #fff; 
+}
+
+@media (max-width: 640px) {
+  .vegetation-zoom-hint { 
+    max-width: 80vw; 
+    right: 8px;
+    top: 8px;
+  }
+}

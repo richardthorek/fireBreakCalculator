@@ -123,6 +123,9 @@ export const MapView: React.FC<MapViewProps> = ({
   const [showTouchHint, setShowTouchHint] = useState(() => {
     try { return isTouchDevice(); } catch { return false; }
   });
+  // NSW vegetation layer feedback state
+  const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
+  const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -140,13 +143,17 @@ export const MapView: React.FC<MapViewProps> = ({
   // Try Mapbox first, fallback to OpenStreetMap
   const token = MAPBOX_TOKEN;
 
-    // Create NSW vegetation tile layer
-    const nswVegetationLayer = L.tileLayer(
-      'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer/tile/{z}/{y}/{x}',
+    // Create NSW vegetation tile layer with alternative service format
+    const nswVegetationLayer = L.tileLayer.wms(
+      'https://mapprod3.environment.nsw.gov.au/arcgis/services/VIS/SVTM_NSW_Extant_PCT/MapServer/WMSServer',
       {
+        layers: '3',
+        format: 'image/png',
+        transparent: true,
         maxZoom: 20,
         attribution: '© <a href="https://www.environment.nsw.gov.au/" target="_blank" rel="noreferrer">NSW Government</a>',
-        opacity: 0.7
+        opacity: 0.7,
+        zIndex: 100 // Ensure vegetation layer appears above base layers
       }
     );
     
@@ -188,6 +195,32 @@ export const MapView: React.FC<MapViewProps> = ({
         { position: 'topleft' }
       ).addTo(map);
     }
+
+    // Add vegetation layer event handlers for user feedback
+    nswVegetationLayer.on('add', () => {
+      setVegetationLayerEnabled(true);
+      const currentZoom = map.getZoom();
+      if (currentZoom < 10) {
+        setShowVegetationZoomHint(true);
+        // Auto-hide hint after 8 seconds
+        setTimeout(() => setShowVegetationZoomHint(false), 8000);
+      }
+    });
+    
+    nswVegetationLayer.on('remove', () => {
+      setVegetationLayerEnabled(false);
+      setShowVegetationZoomHint(false);
+    });
+    
+    // Monitor zoom changes to show/hide vegetation zoom hint
+    map.on('zoomend', () => {
+      const currentZoom = map.getZoom();
+      if (vegetationLayerEnabled && currentZoom < 10) {
+        setShowVegetationZoomHint(true);
+      } else {
+        setShowVegetationZoomHint(false);
+      }
+    });
 
 
 
@@ -614,6 +647,19 @@ export const MapView: React.FC<MapViewProps> = ({
               >×</button>
             </div>
           )}
+        </div>
+      )}
+      {showVegetationZoomHint && (
+        <div className="vegetation-zoom-hint" role="alert" aria-live="assertive">
+          <div className="vegetation-zoom-hint-content">
+            <strong>NSW Vegetation Layer:</strong> Zoom in closer (level 10+) to view vegetation data
+            <button
+              type="button"
+              className="vegetation-zoom-hint-dismiss"
+              aria-label="Dismiss vegetation zoom hint"
+              onClick={() => setShowVegetationZoomHint(false)}
+            >×</button>
+          </div>
         </div>
       )}
       {/* {fireBreakDistance && (
