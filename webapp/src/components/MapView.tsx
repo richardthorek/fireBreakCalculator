@@ -5,7 +5,7 @@ import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
-import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
+import { analyzeTrackVegetation, generateVegetationOverlay, VegetationOverlayPoint } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { isTouchDevice } from '../utils/deviceDetection';
@@ -71,6 +71,47 @@ const buildAnalysisPopupHTML = (analysis: TrackAnalysis, vegetationAnalysis: Veg
     </div>`;
 };
 
+// Helper to get vegetation color by type
+const getVegetationColor = (vegetationType: string): string => {
+  const category = VEGETATION_CATEGORIES.find(c => c.key === vegetationType);
+  return category?.color || '#808080'; // Default gray for unknown types
+};
+
+// Helper to render vegetation overlay points as colored circles
+const renderVegetationOverlay = (
+  overlayPoints: VegetationOverlayPoint[], 
+  vegetationLayer: L.LayerGroup
+): void => {
+  vegetationLayer.clearLayers();
+  
+  overlayPoints.forEach(point => {
+    const color = getVegetationColor(point.vegetationType);
+    const opacity = Math.max(0.3, point.confidence); // Use confidence for opacity
+    
+    const circle = L.circle([point.lat, point.lng], {
+      radius: 250, // 250m radius circles
+      color: color,
+      fillColor: color,
+      fillOpacity: opacity * 0.4,
+      stroke: true,
+      weight: 1,
+      opacity: opacity * 0.8
+    });
+    
+    // Add popup with vegetation info
+    circle.bindPopup(`
+      <div>
+        <strong>Vegetation Data</strong><br/>
+        Type: ${point.vegetationType}<br/>
+        Confidence: ${Math.round(point.confidence * 100)}%<br/>
+        Source: ${point.landcoverClass}
+      </div>
+    `);
+    
+    vegetationLayer.addLayer(circle);
+  });
+};
+
 // Default map center (latitude, longitude) & zoom. Centered on New South Wales, Australia.
 // This center (~ -32, 147) and zoom ~6 gives a state-level view of NSW.
 const DEFAULT_CENTER: L.LatLngExpression = [-32.0, 147.0]; // NSW, Australia
@@ -106,12 +147,14 @@ export const MapView: React.FC<MapViewProps> = ({
   // Map from polyline leaflet internal id to vertex markers
   const vertexMarkersRef = useRef<Map<number, L.Marker[]>>(new Map());
   const slopeLayersRef = useRef<L.LayerGroup | null>(null);
+  const vegetationOverlayRef = useRef<L.LayerGroup | null>(null);
   const drawControlRef = useRef<L.Control.Draw | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showVegetationOverlay, setShowVegetationOverlay] = useState(false);
   // Drawing state for touch device support
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentDrawingLayer, setCurrentDrawingLayer] = useState<L.Polyline | null>(null);
@@ -166,6 +209,51 @@ export const MapView: React.FC<MapViewProps> = ({
       osm.addTo(map);
     }
 
+    // Add vegetation overlay toggle control
+    const VegetationControl = L.Control.extend({
+      onAdd: function(map: L.Map) {
+        const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+        container.style.backgroundColor = 'white';
+        container.style.padding = '5px';
+        container.style.fontSize = '12px';
+        container.style.cursor = 'pointer';
+        container.innerHTML = `
+          <div style="padding: 5px;">
+            <label>
+              <input type="checkbox" id="vegetation-overlay-toggle" style="margin-right: 5px;">
+              Vegetation Overlay
+            </label>
+            <div style="font-size: 10px; color: #666;">
+              (Zoom level 12+ required)
+            </div>
+          </div>
+        `;
+        
+        const checkbox = container.querySelector('#vegetation-overlay-toggle') as HTMLInputElement;
+        if (checkbox) {
+          checkbox.checked = showVegetationOverlay;
+          L.DomEvent.on(checkbox, 'change', () => {
+            setShowVegetationOverlay(checkbox.checked);
+          });
+          L.DomEvent.disableClickPropagation(container);
+        }
+        
+        return container;
+      }
+    });
+    
+    const vegetationControl = new VegetationControl({ position: 'bottomleft' });
+    vegetationControl.addTo(map);
+
+    // Add zoom event listener to manage vegetation overlay visibility
+    map.on('zoomend', () => {
+      const currentZoom = map.getZoom();
+      if (currentZoom < 12 && vegetationOverlayRef.current) {
+        // Clear overlay when zoomed out too far
+        vegetationOverlayRef.current.clearLayers();
+      }
+    });
+
     // Initialize drawing tools for fire break planning
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
@@ -175,6 +263,11 @@ export const MapView: React.FC<MapViewProps> = ({
     const slopeLayer = new L.LayerGroup();
     map.addLayer(slopeLayer);
     slopeLayersRef.current = slopeLayer;
+
+    // Initialize vegetation overlay layer
+    const vegetationOverlay = new L.LayerGroup();
+    map.addLayer(vegetationOverlay);
+    vegetationOverlayRef.current = vegetationOverlay;
 
   // Configure drawing controls - only allow polylines for fire breaks
     // On touch devices, we'll use repeatMode to prevent premature line completion
@@ -275,6 +368,11 @@ export const MapView: React.FC<MapViewProps> = ({
           slopeLayersRef.current.clearLayers();
         }
         
+        // Clear existing vegetation overlay
+        if (vegetationOverlayRef.current) {
+          vegetationOverlayRef.current.clearLayers();
+        }
+        
         // Perform slope analysis
         const analysis = await analyzeTrackSlopes(latlngs);
         setTrackAnalysis(analysis);
@@ -317,6 +415,18 @@ export const MapView: React.FC<MapViewProps> = ({
             slopeLayersRef.current.addLayer(line);
           }
         });
+        
+        // Generate and display vegetation overlay if enabled and zoomed in enough
+        if (showVegetationOverlay && mapRef.current && mapRef.current.getZoom() >= 12) {
+          try {
+            const overlayPoints = await generateVegetationOverlay(latlngs, 1.0, 500);
+            if (vegetationOverlayRef.current) {
+              renderVegetationOverlay(overlayPoints, vegetationOverlayRef.current);
+            }
+          } catch (overlayError) {
+            logger.warn('Vegetation overlay generation failed:', overlayError);
+          }
+        }
         
         return analysis;
         
@@ -465,6 +575,10 @@ export const MapView: React.FC<MapViewProps> = ({
         if (slopeLayersRef.current) {
           slopeLayersRef.current.clearLayers();
         }
+        // Clear vegetation overlay
+        if (vegetationOverlayRef.current) {
+          vegetationOverlayRef.current.clearLayers();
+        }
         // Clear vertex markers map
   vertexMarkersRef.current.forEach((markers: L.Marker[]) => markers.forEach((m: L.Marker) => m.remove()));
         vertexMarkersRef.current.clear();
@@ -478,11 +592,44 @@ export const MapView: React.FC<MapViewProps> = ({
       mapRef.current = null;
       drawnItemsRef.current = null;
       slopeLayersRef.current = null;
+      vegetationOverlayRef.current = null;
       dropMarkersRef.current = null;
       drawControlRef.current = null;
       vertexMarkersRef.current.clear();
     };
   }, []);
+
+  // Handle vegetation overlay toggle changes
+  useEffect(() => {
+    if (!mapRef.current || !vegetationOverlayRef.current || !drawnItemsRef.current) return;
+    
+    if (!showVegetationOverlay) {
+      // Clear overlay when disabled
+      vegetationOverlayRef.current.clearLayers();
+      return;
+    }
+    
+    // Regenerate overlay if enabled and there's a drawn line
+    const drawnLayers = drawnItemsRef.current.getLayers();
+    if (drawnLayers.length > 0 && mapRef.current.getZoom() >= 12) {
+      const polyline = drawnLayers.find(layer => layer instanceof L.Polyline) as L.Polyline;
+      if (polyline) {
+        const latlngs = polyline.getLatLngs() as LatLng[];
+        if (latlngs.length >= 2) {
+          // Generate vegetation overlay asynchronously
+          generateVegetationOverlay(latlngs, 1.0, 500)
+            .then(overlayPoints => {
+              if (vegetationOverlayRef.current && showVegetationOverlay) {
+                renderVegetationOverlay(overlayPoints, vegetationOverlayRef.current);
+              }
+            })
+            .catch(error => {
+              logger.warn('Failed to generate vegetation overlay:', error);
+            });
+        }
+      }
+    }
+  }, [showVegetationOverlay]);
 
   // Re-render drop previews when selected aircraft change or when map/drawn items update.
   // We use dropsVersion to also trigger on topology changes.
