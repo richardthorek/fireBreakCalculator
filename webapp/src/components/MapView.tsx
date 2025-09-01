@@ -126,6 +126,7 @@ export const MapView: React.FC<MapViewProps> = ({
   // NSW vegetation layer feedback state
   const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
   const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
+  const vegetationLayerEnabledRef = useRef(false);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -199,23 +200,27 @@ export const MapView: React.FC<MapViewProps> = ({
     // Add vegetation layer event handlers for user feedback
     nswVegetationLayer.on('add', () => {
       setVegetationLayerEnabled(true);
+      vegetationLayerEnabledRef.current = true;
       const currentZoom = map.getZoom();
       if (currentZoom < 10) {
         setShowVegetationZoomHint(true);
-        // Auto-hide hint after 8 seconds
-        setTimeout(() => setShowVegetationZoomHint(false), 8000);
+        // Auto-hide hint after 10 seconds
+        setTimeout(() => {
+          setShowVegetationZoomHint(false);
+        }, 10000);
       }
     });
     
     nswVegetationLayer.on('remove', () => {
       setVegetationLayerEnabled(false);
+      vegetationLayerEnabledRef.current = false;
       setShowVegetationZoomHint(false);
     });
     
     // Monitor zoom changes to show/hide vegetation zoom hint
     map.on('zoomend', () => {
       const currentZoom = map.getZoom();
-      if (vegetationLayerEnabled && currentZoom < 10) {
+      if (vegetationLayerEnabledRef.current && currentZoom < 10) {
         setShowVegetationZoomHint(true);
       } else {
         setShowVegetationZoomHint(false);
