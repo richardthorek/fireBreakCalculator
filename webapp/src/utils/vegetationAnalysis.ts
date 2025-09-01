@@ -407,3 +407,127 @@ export const analyzeTrackVegetation = async (points: LatLng[]): Promise<Vegetati
     overallConfidence
   };
 };
+
+/**
+ * Interface for vegetation overlay data
+ */
+export interface VegetationOverlayPoint {
+  lat: number;
+  lng: number;
+  vegetationType: VegetationType;
+  confidence: number;
+  landcoverClass: string;
+}
+
+/**
+ * Generate vegetation overlay data for an area buffer around a line
+ * Uses NSW vegetation service exclusively for authoritative data
+ * Creates a grid of points within the specified buffer distance
+ */
+export const generateVegetationOverlay = async (
+  points: LatLng[], 
+  bufferDistanceKm: number = 1.0,
+  gridSpacingM: number = 500
+): Promise<VegetationOverlayPoint[]> => {
+  if (points.length < 2) {
+    return [];
+  }
+
+  const overlayPoints: VegetationOverlayPoint[] = [];
+
+  // Calculate bounds of the line with buffer
+  let minLat = Infinity, maxLat = -Infinity;
+  let minLng = Infinity, maxLng = -Infinity;
+  
+  for (const point of points) {
+    minLat = Math.min(minLat, point.lat);
+    maxLat = Math.max(maxLat, point.lat);
+    minLng = Math.min(minLng, point.lng);
+    maxLng = Math.max(maxLng, point.lng);
+  }
+
+  // Add buffer (convert km to degrees approximately)
+  const bufferDegrees = bufferDistanceKm / 111; // rough conversion
+  minLat -= bufferDegrees;
+  maxLat += bufferDegrees;
+  minLng -= bufferDegrees;
+  maxLng += bufferDegrees;
+
+  // Generate grid points within the buffer
+  const gridSpacingDegrees = gridSpacingM / 111000; // convert meters to degrees
+  
+  for (let lat = minLat; lat <= maxLat; lat += gridSpacingDegrees) {
+    for (let lng = minLng; lng <= maxLng; lng += gridSpacingDegrees) {
+      // Check if point is within buffer distance of the line
+      const gridPoint = new LatLng(lat, lng);
+      let withinBuffer = false;
+      
+      for (let i = 0; i < points.length - 1; i++) {
+        const lineStart = points[i];
+        const lineEnd = points[i + 1];
+        const distanceToLine = distanceToLineSegment(gridPoint, lineStart, lineEnd);
+        
+        if (distanceToLine <= bufferDistanceKm * 1000) { // convert km to meters
+          withinBuffer = true;
+          break;
+        }
+      }
+      
+      if (withinBuffer) {
+        try {
+          // Use only NSW vegetation data - authoritative source for this region
+          const nswVeg = await fetchNSWVegetation(lat, lng);
+          
+          if (nswVeg) {
+            // Only include points where we have NSW vegetation data
+            overlayPoints.push({
+              lat,
+              lng,
+              vegetationType: nswVeg.vegetationType as VegetationType,
+              confidence: nswVeg.confidence,
+              landcoverClass: nswVeg.source || 'NSW vegetation data'
+            });
+          }
+          // If no NSW data available, skip this point (don't show overlay)
+          
+        } catch (error) {
+          logger.warn(`Failed to fetch NSW vegetation data for point ${lat}, ${lng}:`, error);
+        }
+      }
+    }
+  }
+
+  return overlayPoints;
+};
+
+/**
+ * Calculate distance from a point to a line segment
+ */
+const distanceToLineSegment = (point: LatLng, lineStart: LatLng, lineEnd: LatLng): number => {
+  const A = point.lat - lineStart.lat;
+  const B = point.lng - lineStart.lng;
+  const C = lineEnd.lat - lineStart.lat;
+  const D = lineEnd.lng - lineStart.lng;
+
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  
+  if (lenSq === 0) {
+    // Line segment is a point
+    return point.distanceTo(lineStart);
+  }
+  
+  let param = dot / lenSq;
+  
+  if (param < 0) {
+    return point.distanceTo(lineStart);
+  } else if (param > 1) {
+    return point.distanceTo(lineEnd);
+  } else {
+    const projection = new LatLng(
+      lineStart.lat + param * C,
+      lineStart.lng + param * D
+    );
+    return point.distanceTo(projection);
+  }
+};
