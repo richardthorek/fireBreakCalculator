@@ -421,6 +421,7 @@ export interface VegetationOverlayPoint {
 
 /**
  * Generate vegetation overlay data for an area buffer around a line
+ * Uses NSW vegetation service exclusively for authoritative data
  * Creates a grid of points within the specified buffer distance
  */
 export const generateVegetationOverlay = async (
@@ -432,7 +433,6 @@ export const generateVegetationOverlay = async (
     return [];
   }
 
-  const token = MAPBOX_TOKEN;
   const overlayPoints: VegetationOverlayPoint[] = [];
 
   // Calculate bounds of the line with buffer
@@ -475,33 +475,23 @@ export const generateVegetationOverlay = async (
       
       if (withinBuffer) {
         try {
-          // First try NSW vegetation data
+          // Use only NSW vegetation data - authoritative source for this region
           const nswVeg = await fetchNSWVegetation(lat, lng);
-          let vegetation: VegetationType;
-          let confidence: number;
-          let landcoverClass: string;
           
           if (nswVeg) {
-            vegetation = nswVeg.vegetationType as VegetationType;
-            confidence = Math.min(1, nswVeg.confidence + 0.1);
-            landcoverClass = nswVeg.source || '(nsw)';
-          } else {
-            // Fallback to Mapbox data
-            landcoverClass = await fetchLandcoverData(lat, lng, token || '');
-            const mapped = mapLandcoverToVegetation(landcoverClass);
-            vegetation = mapped.vegetation;
-            confidence = mapped.confidence;
+            // Only include points where we have NSW vegetation data
+            overlayPoints.push({
+              lat,
+              lng,
+              vegetationType: nswVeg.vegetationType as VegetationType,
+              confidence: nswVeg.confidence,
+              landcoverClass: nswVeg.source || 'NSW vegetation data'
+            });
           }
+          // If no NSW data available, skip this point (don't show overlay)
           
-          overlayPoints.push({
-            lat,
-            lng,
-            vegetationType: vegetation,
-            confidence,
-            landcoverClass
-          });
         } catch (error) {
-          logger.warn(`Failed to fetch vegetation data for point ${lat}, ${lng}:`, error);
+          logger.warn(`Failed to fetch NSW vegetation data for point ${lat}, ${lng}:`, error);
         }
       }
     }
