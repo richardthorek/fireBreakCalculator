@@ -136,6 +136,10 @@ const getElevation = async (lat: number, lng: number): Promise<number> => {
   return getElevationMapbox(lat, lng);
 };
 
+// Configuration: sampling distance along track and terrain zoom used for high-detail sampling
+const DEFAULT_SAMPLE_METERS = 10; // sample every 10m along the track for detailed profiles
+const DEFAULT_TERRAIN_ZOOM = 15; // higher zoom gives ~4-8m/pixel depending on latitude
+
 /**
  * Generate points every 100m along a polyline (default). Interval can be overridden.
  */
@@ -217,19 +221,48 @@ export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysi
     // Skip zero-length segments
     if (distance <= 0.001) continue;
 
-    const startElevation = await getElevation(start.lat, start.lng);
-    const endElevation = await getElevation(end.lat, end.lng);
-    const slope = calculateSlope(startElevation, endElevation, distance);
-    const category = categorizeSlope(slope);
+    // Detailed profile sampling: sample along the segment at DEFAULT_SAMPLE_METERS
+    // and use Mapbox Terrain-RGB at a higher zoom to capture narrow gullies/peaks.
+    const sampleMeters = DEFAULT_SAMPLE_METERS;
+    const numSamples = Math.max(1, Math.ceil(distance / sampleMeters));
+    const profilePoints: LatLng[] = [];
+    for (let s = 0; s <= numSamples; s++) {
+      const t = s / numSamples;
+      const lat = start.lat + (end.lat - start.lat) * t;
+      const lng = start.lng + (end.lng - start.lng) * t;
+      profilePoints.push(new LatLng(lat, lng));
+    }
+
+    // Fetch elevations for profile points (use higher terrain zoom for detail)
+    const elevPromises = profilePoints.map(p => getElevationMapbox(p.lat, p.lng, { zoom: DEFAULT_TERRAIN_ZOOM }));
+    const elevs = await Promise.all(elevPromises);
+
+    // Compute sub-step slopes and aggregate
+    let maxSubSlope = 0;
+    let weightedSlopeSum = 0;
+    let totalSubDist = 0;
+    for (let k = 0; k < profilePoints.length - 1; k++) {
+      const a = profilePoints[k];
+      const b = profilePoints[k + 1];
+      const subDist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
+      const subSlope = calculateSlope(elevs[k], elevs[k + 1], subDist);
+      if (subSlope > maxSubSlope) maxSubSlope = subSlope;
+      weightedSlopeSum += subSlope * subDist;
+      totalSubDist += subDist;
+    }
+
+    // Use maxSubSlope to detect steep gullies; use weighted average as segment slope
+    const slope = totalSubDist > 0 ? (weightedSlopeSum / totalSubDist) : 0;
+    const category = categorizeSlope(maxSubSlope); // categorize by max local slope to flag hazards
 
     rawSegments.push({
       start: [start.lat, start.lng],
       end: [end.lat, end.lng],
-      coords: [ [start.lat, start.lng], [end.lat, end.lng] ],
+      coords: profilePoints.map(p => [p.lat, p.lng]),
       slope,
       category,
-      startElevation,
-      endElevation,
+      startElevation: elevs[0],
+      endElevation: elevs[elevs.length - 1],
       distance
     });
 
