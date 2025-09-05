@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
+// Import vector tile layer for Mapbox Terrain v2 contours
+import vectorTileLayer from 'leaflet-vector-tile-layer';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
@@ -175,18 +177,35 @@ export const MapView: React.FC<MapViewProps> = ({
         attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
       });
       
-      // Create contour lines overlay using Mapbox outdoors style as transparent overlay
-      // The outdoors style includes contour lines which can be used as an overlay
-      // This addresses issue #30 - restoring contour line visibility for terrain reference
-      const contourLayer = L.tileLayer(tileUrl, {
-        id: 'mapbox/outdoors-v12',
-        tileSize: 512,
-        zoomOffset: -1,
-        maxZoom: 18,
-        attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>',
-        opacity: 0.6,
+      // Create contour lines overlay using Mapbox Terrain v2 vector tiles
+      // This addresses issue #32 - Fix contour lines visibility to display proper terrain contours
+      // Use the official Mapbox Terrain v2 vector tileset for accurate contour data
+      const contourTileUrl = `https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.mvt?access_token=${token}`;
+      
+      const contourLayer = vectorTileLayer(contourTileUrl, {
+        // Configure vector tile layer for contour display
+        interactive: false, // Contours should not be interactive
         zIndex: 50, // Ensure contours appear above base layers but below vegetation
-        className: 'contour-overlay'
+        maxZoom: 18,
+        
+        // Style only contour features from the vector tileset
+        style: {
+          // Target the 'contour' source layer from Mapbox Terrain v2
+          'contour': {
+            stroke: true,
+            color: '#8B4513', // Brown color for contour lines (visible on both light/dark)
+            weight: 1, // Thin lines as specified in requirements
+            opacity: 0.8,
+            fill: false, // No fill for contour lines
+            lineCap: 'round',
+            lineJoin: 'round'
+          }
+        },
+        
+        // Filter to show only contour features, hide other tileset data
+        filter: (feature: any) => feature.layer === 'contour',
+        
+        attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
       });
       
       satellite.addTo(map);
