@@ -1958,6 +1958,21 @@ button:focus,
   color: #fff; 
 }
 
+/* Contour overlay styles */
+.contour-overlay {
+  /* Use blend modes to enhance contour line visibility */
+  mix-blend-mode: multiply;
+  /* Apply a filter to emphasize contour lines and reduce background elements */
+  filter: contrast(1.5) brightness(0.8) saturate(0);
+}
+
+/* Alternative contour overlay for better visibility on satellite imagery */
+.leaflet-tile-pane .contour-overlay img {
+  /* Enhance contour lines while reducing other map elements */
+  filter: contrast(2) brightness(0.7) saturate(0) hue-rotate(180deg);
+  mix-blend-mode: overlay;
+}
+
 @media (max-width: 640px) {
   .vegetation-zoom-hint { 
     max-width: 80vw; 

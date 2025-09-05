@@ -174,12 +174,30 @@ export const MapView: React.FC<MapViewProps> = ({
         maxZoom: 20,
         attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
       });
+      
+      // Create contour lines overlay using Mapbox outdoors style as transparent overlay
+      // The outdoors style includes contour lines which can be used as an overlay
+      // This addresses issue #30 - restoring contour line visibility for terrain reference
+      const contourLayer = L.tileLayer(tileUrl, {
+        id: 'mapbox/outdoors-v12',
+        tileSize: 512,
+        zoomOffset: -1,
+        maxZoom: 18,
+        attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>',
+        opacity: 0.6,
+        zIndex: 50, // Ensure contours appear above base layers but below vegetation
+        className: 'contour-overlay'
+      });
+      
       satellite.addTo(map);
       
-      // Add layers control with vegetation overlay option
+      // Add layers control with vegetation and contour overlay options
       L.control.layers(
         { Satellite: satellite, Streets: streets }, 
-        { 'NSW Vegetation': nswVegetationLayer }, 
+        { 
+          'NSW Vegetation': nswVegetationLayer,
+          'Contour Lines': contourLayer
+        }, 
         { position: 'topleft' }
       ).addTo(map);
     } else {
