@@ -4,7 +4,7 @@ import L, { Map as LeafletMap, LatLng } from 'leaflet';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 // Import vector tile layer for Mapbox Terrain v2 contours
-import vectorTileLayer from 'leaflet-vector-tile-layer';
+// (Removed vector tile layer import – using custom Mapbox Studio style instead of separate contour overlay)
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
@@ -161,62 +161,71 @@ export const MapView: React.FC<MapViewProps> = ({
     );
     
     if (token && token !== 'YOUR_MAPBOX_TOKEN_HERE') {
-      const tileUrl = `https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token=${token}`;
-      const satellite = L.tileLayer(tileUrl, {
-        id: 'mapbox/satellite-streets-v12',
-        tileSize: 512,
-        zoomOffset: -1,
+      // Use custom Mapbox Studio style (includes satellite + contours) instead of manual contour overlay
+      // Style URL (Studio): mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t
+      // Build proper Styles API tile URL: tilesize must be part of the path.
+      const styleId = 'richardbt/cmf7esv62000n01qw0khz891t';
+      const streetsStyleId = 'mapbox/streets-v12';
+      const isRetina = (typeof window !== 'undefined') && (window.devicePixelRatio && window.devicePixelRatio > 1);
+      const tileSize = 512;
+      const retinaSuffix = isRetina ? '@2x' : '';
+
+      const customStyleUrl = `https://api.mapbox.com/styles/v1/${styleId}/tiles/${tileSize}/{z}/{x}/{y}${retinaSuffix}?access_token=${token}`;
+      const streetsStyleUrl = `https://api.mapbox.com/styles/v1/${streetsStyleId}/tiles/${tileSize}/{z}/{x}/{y}${retinaSuffix}?access_token=${token}`;
+
+      // Log a sample tile URL for quick debugging (z=8,x=236,y=154)
+      try {
+        const sample = customStyleUrl.replace('{z}', '8').replace('{x}', '236').replace('{y}', '154');
+        // eslint-disable-next-line no-console
+        console.debug('[MapView] sample custom style tile URL:', sample);
+      } catch {}
+
+      const customSatellite = L.tileLayer(customStyleUrl, {
+        tileSize: tileSize,
         maxZoom: 20,
         attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
       });
-      const streets = L.tileLayer(tileUrl, {
-        id: 'mapbox/streets-v12',
-        tileSize: 512,
-        zoomOffset: -1,
-        maxZoom: 20,
-        attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
-      });
-      
-      // Create contour lines overlay using Mapbox Terrain v2 vector tiles
-      // This addresses issue #32 - Fix contour lines visibility to display proper terrain contours
-      // Use the official Mapbox Terrain v2 vector tileset for accurate contour data
-      const contourTileUrl = `https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.mvt?access_token=${token}`;
-      
-      const contourLayer = vectorTileLayer(contourTileUrl, {
-        // Configure vector tile layer for contour display
-        interactive: false, // Contours should not be interactive
-        zIndex: 50, // Ensure contours appear above base layers but below vegetation
-        maxZoom: 18,
-        
-        // Style only contour features from the vector tileset
-        style: {
-          // Target the 'contour' source layer from Mapbox Terrain v2
-          'contour': {
-            stroke: true,
-            color: '#8B4513', // Brown color for contour lines (visible on both light/dark)
-            weight: 1, // Thin lines as specified in requirements
-            opacity: 0.8,
-            fill: false, // No fill for contour lines
-            lineCap: 'round',
-            lineJoin: 'round'
+
+      // Track tile load errors and fallback automatically to streets if style tiles fail repeatedly
+      let tileErrorCount = 0;
+      const tileErrorHandler = (err: any) => {
+        tileErrorCount += 1;
+        // eslint-disable-next-line no-console
+        console.warn('[MapView] style tileerror', { count: tileErrorCount, err });
+        // After several failures, show message and fallback
+        if (tileErrorCount >= 6) {
+          setError('Map tiles failed to load from custom Mapbox style. Check your Mapbox token and style access. Falling back to Streets.');
+          try {
+            if (map.hasLayer(customSatellite)) map.removeLayer(customSatellite);
+            streets.addTo(map);
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('[MapView] failed to switch to fallback tiles', e);
           }
-        },
-        
-        // Filter to show only contour features, hide other tileset data
-        filter: (feature: any) => feature.layer === 'contour',
-        
+        }
+      };
+
+      const tileLoadHandler = () => {
+        // On successful tile loads, reset any error message and error count
+        tileErrorCount = 0;
+        if (error) setError(null);
+      };
+
+      customSatellite.on('tileerror', tileErrorHandler);
+      customSatellite.on('tileload', tileLoadHandler);
+
+      const streets = L.tileLayer(streetsStyleUrl, {
+        tileSize: tileSize,
+        maxZoom: 20,
         attribution: '<a href="https://www.mapbox.com/" target="_blank" rel="noreferrer">Mapbox</a>'
       });
-      
-      satellite.addTo(map);
-      
-      // Add layers control with vegetation and contour overlay options
+
+      customSatellite.addTo(map);
+
+      // Layers control: custom satellite (with contours baked in), streets, vegetation overlay
       L.control.layers(
-        { Satellite: satellite, Streets: streets }, 
-        { 
-          'NSW Vegetation': nswVegetationLayer,
-          'Contour Lines': contourLayer
-        }, 
+        { 'Satellite (Contours)': customSatellite, Streets: streets },
+        { 'NSW Vegetation': nswVegetationLayer },
         { position: 'topleft' }
       ).addTo(map);
     } else {
