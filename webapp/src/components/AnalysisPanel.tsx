@@ -523,38 +523,67 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <div className="best-options-grid">
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">🛠️</span><span className="category-label">Machinery</span></div>
-                  {bestOptions.machinery ? (
+                  {calculations.filter(c => c.type === 'machinery' && c.compatible).length > 0 ? (
                     <div className="option-details">
-                      <span className="option-name">{bestOptions.machinery.name}</span>
+                      <select
+                        className="quick-select"
+                        value={selectedQuickMachinery || ''}
+                        onChange={(e) => setSelectedQuickMachinery(e.target.value)}
+                        aria-label="Select machinery option"
+                      >
+                        {calculations.filter(c => c.type === 'machinery' && c.compatible).map(result => (
+                          <option key={result.id} value={result.id}>{result.name}</option>
+                        ))}
+                      </select>
                       {quickMachinery && <span className="option-time">{quickMachinery.time.toFixed(1)} {quickMachinery.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">✈️</span><span className="category-label">Aircraft</span></div>
-                  {bestOptions.aircraft ? (
+                  {calculations.filter(c => c.type === 'aircraft' && c.compatible).length > 0 ? (
                     <div className="option-details">
-                      <div className="drop-preview-toggle">
-                        <span className="option-name">{bestOptions.aircraft.name}</span>
-                        <button
-                          type="button"
-                          className={`drop-toggle-button ${selectedAircraftForPreview.includes(bestOptions.aircraft.id) ? 'active' : ''}`}
-                          aria-label={selectedAircraftForPreview.includes(bestOptions.aircraft.id) ? 'Drop preview on' : 'Drop preview off'}
-                          title="Toggle drop preview"
-                          onClick={() => handleDropPreviewChange(bestOptions.aircraft!.id, !selectedAircraftForPreview.includes(bestOptions.aircraft!.id))}
+                      <div className="aircraft-selection-row">
+                        <select
+                          className="quick-select"
+                          value={selectedQuickAircraft || ''}
+                          onChange={(e) => setSelectedQuickAircraft(e.target.value)}
+                          aria-label="Select aircraft option"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" /></svg>
-                        </button>
+                          {calculations.filter(c => c.type === 'aircraft' && c.compatible).map(result => (
+                            <option key={result.id} value={result.id}>{result.name}</option>
+                          ))}
+                        </select>
+                        {quickAircraft && (
+                          <button
+                            type="button"
+                            className={`drop-toggle-button ${selectedAircraftForPreview.includes(quickAircraft.id) ? 'active' : ''}`}
+                            aria-label={selectedAircraftForPreview.includes(quickAircraft.id) ? 'Drop preview on' : 'Drop preview off'}
+                            title="Toggle drop preview"
+                            onClick={() => handleDropPreviewChange(quickAircraft.id, !selectedAircraftForPreview.includes(quickAircraft.id))}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor" /></svg>
+                          </button>
+                        )}
                       </div>
-                      <span className="option-time">{bestOptions.aircraft.time.toFixed(1)} {bestOptions.aircraft.unit}{bestOptions.aircraft.drops && <span className="drops-info"> ({bestOptions.aircraft.drops} drops)</span>}</span>
+                      {quickAircraft && <span className="option-time">{quickAircraft.time.toFixed(1)} {quickAircraft.unit}{quickAircraft.drops && <span className="drops-info"> ({quickAircraft.drops} drops)</span>}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">👨‍🚒</span><span className="category-label">Hand Crew</span></div>
-                  {bestOptions.handCrew ? (
+                  {calculations.filter(c => c.type === 'handCrew' && c.compatible).length > 0 ? (
                     <div className="option-details">
-                      <span className="option-name">{bestOptions.handCrew.name}</span>
+                      <select
+                        className="quick-select"
+                        value={selectedQuickHandCrew || ''}
+                        onChange={(e) => setSelectedQuickHandCrew(e.target.value)}
+                        aria-label="Select hand crew option"
+                      >
+                        {calculations.filter(c => c.type === 'handCrew' && c.compatible).map(result => (
+                          <option key={result.id} value={result.id}>{result.name}</option>
+                        ))}
+                      </select>
                       {quickHandCrew && <span className="option-time">{quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}

@@ -958,6 +958,18 @@ button:focus,
   box-shadow: 0 0 0 2px rgba(79,195,247,0.25);
 }
 
+/* Aircraft selection row layout */
+.aircraft-selection-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.aircraft-selection-row .quick-select {
+  flex: 1;
+  min-width: 120px;
+}
+
 /* Small icon in row */
 .table-row { position: relative; }
 
