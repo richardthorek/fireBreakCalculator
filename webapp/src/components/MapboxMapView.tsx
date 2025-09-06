@@ -539,22 +539,27 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const addLayerControl = (map: MapboxMap) => {
     const layerControl = document.createElement('div');
     layerControl.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    layerControl.style.background = 'white';
+    layerControl.style.background = 'rgba(30,36,51,0.98)';
     layerControl.style.padding = '10px';
     layerControl.style.borderRadius = '4px';
+    layerControl.style.border = '1px solid #2a3442';
+    layerControl.style.color = '#f5f7fa';
+    layerControl.style.backdropFilter = 'blur(8px)';
+    (layerControl.style as any).webkitBackdropFilter = 'blur(8px)';
+    layerControl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
     
     layerControl.innerHTML = `
       <div style="margin-bottom: 8px;">
-        <label style="display: block; margin-bottom: 4px;">
-          <input type="radio" name="basemap" value="satellite" checked> Satellite (Contours)
+        <label style="display: block; margin-bottom: 4px; color: #f5f7fa; cursor: pointer; font-size: 13px;">
+          <input type="radio" name="basemap" value="satellite" checked style="margin-right: 6px;"> Satellite (Contours)
         </label>
-        <label style="display: block;">
-          <input type="radio" name="basemap" value="streets"> Streets
+        <label style="display: block; color: #f5f7fa; cursor: pointer; font-size: 13px;">
+          <input type="radio" name="basemap" value="streets" style="margin-right: 6px;"> Streets
         </label>
       </div>
       <div>
-        <label style="display: block;">
-          <input type="checkbox" id="vegetation-toggle"> NSW Vegetation
+        <label style="display: block; color: #f5f7fa; cursor: pointer; font-size: 13px;">
+          <input type="checkbox" id="vegetation-toggle" style="margin-right: 6px;"> NSW Vegetation
         </label>
       </div>
     `;
