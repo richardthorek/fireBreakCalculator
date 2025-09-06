@@ -496,9 +496,9 @@ html, body, #root, .app-shell {
 }
 .equip-row.editing { background: #223547; }
 .equip-row.adding { background: #1f3444; border-style: dashed; }
-.eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; }
-.eq-small { width:100%; min-width:0; box-sizing:border-box; }
-.eq-xsmall { width:100%; min-width:0; box-sizing:border-box; }
+.eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; color:#e2e8f0; font-weight:500; }
+.eq-small { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }
+.eq-xsmall { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }
 .eq-tags { display:flex; gap:4px; flex-wrap:wrap; max-width:100%; }
 .eq-tags.readonly { opacity:0.8; }
 .tag { background:#2b3b4a; border:none; color:#bcd0e0; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:11px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
