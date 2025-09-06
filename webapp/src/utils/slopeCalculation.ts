@@ -3,16 +3,48 @@
  * Calculates slope along track segments with elevation data
  */
 
-import { LatLng } from 'leaflet';
 import { SlopeSegment, SlopeCategory, TrackAnalysis } from '../types/config';
 import { classifySlope, slopeCategoryColor } from '../config/classification';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
+
+// Coordinate type compatibility for both Leaflet and Mapbox GL JS
+type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
+
+// Helper to normalize coordinates
+const normalizeCoord = (coord: LatLngLike): { lat: number; lng: number } => {
+  if ('lng' in coord) {
+    return { lat: coord.lat, lng: coord.lng };
+  }
+  return { lat: coord.lat, lng: (coord as any).lon };
+};
+
+/**
+ * Calculate total distance of a polyline
+ * Accepts array of coordinate objects
+ */
+export function calculateDistance(points: LatLngLike[]): number;
+export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number;
+export function calculateDistance(pointsOrLat: LatLngLike[] | number, lng1?: number, lat2?: number, lng2?: number): number {
+  // Handle array of points
+  if (Array.isArray(pointsOrLat)) {
+    let totalDistance = 0;
+    for (let i = 0; i < pointsOrLat.length - 1; i++) {
+      const start = normalizeCoord(pointsOrLat[i]);
+      const end = normalizeCoord(pointsOrLat[i + 1]);
+      totalDistance += calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
+    }
+    return totalDistance;
+  }
+  
+  // Handle individual coordinates
+  return calculateDistanceBetweenPoints(pointsOrLat, lng1!, lat2!, lng2!);
+}
 
 /**
  * Calculate distance between two lat/lng points using Haversine formula
  * Returns distance in meters
  */
-export const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+const calculateDistanceBetweenPoints = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
   const R = 6371000; // Earth's radius in meters
   const dLat = toRadians(lat2 - lat1);
   const dLng = toRadians(lng2 - lng1);
@@ -144,20 +176,20 @@ const DEFAULT_TERRAIN_ZOOM = 15; // higher zoom gives ~4-8m/pixel depending on l
  * Generate points every 100m along a polyline (default). Interval can be overridden.
  */
 export const generateInterpolatedPoints = (
-  points: LatLng[], 
+  points: LatLngLike[], 
   intervalDistance: number = 100
-): LatLng[] => {
+): LatLngLike[] => {
   if (points.length < 2) return points;
-  const interpolatedPoints: LatLng[] = [];
+  const interpolatedPoints: LatLngLike[] = [];
   let accumulatedDistance = 0;
 
   // Ensure we always include every user-provided point, and also add
   // interpolated points at regular intervals between them. This avoids
   // "cutting corners" by omitting user drop points.
   for (let i = 0; i < points.length - 1; i++) {
-    const start = points[i];
-    const end = points[i + 1];
-    const segmentDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
+    const start = normalizeCoord(points[i]);
+    const end = normalizeCoord(points[i + 1]);
+    const segmentDistance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
 
     // If this is the first point, include it
     if (i === 0) interpolatedPoints.push(start);
@@ -171,18 +203,22 @@ export const generateInterpolatedPoints = (
         const ratio = distanceAlongSegment / segmentDistance;
         const interpolatedLat = start.lat + (end.lat - start.lat) * ratio;
         const interpolatedLng = start.lng + (end.lng - start.lng) * ratio;
-        const pt = new LatLng(interpolatedLat, interpolatedLng);
+        const pt = { lat: interpolatedLat, lng: interpolatedLng };
         // Avoid duplicates if an interpolated point coincides with the last added
-        const last = interpolatedPoints[interpolatedPoints.length - 1];
-        if (!last || last.distanceTo(pt) > 0.001) interpolatedPoints.push(pt);
+        const lastPoint = interpolatedPoints[interpolatedPoints.length - 1];
+        if (!lastPoint || calculateDistanceBetweenPoints(normalizeCoord(lastPoint).lat, normalizeCoord(lastPoint).lng, pt.lat, pt.lng) > 0.001) {
+          interpolatedPoints.push(pt);
+        }
         distanceAlongSegment += intervalDistance;
       }
     }
 
     // Always include the original end point of this segment (user-dropped)
     const last = interpolatedPoints[interpolatedPoints.length - 1];
-    const endPt = new LatLng(end.lat, end.lng);
-    if (!last || last.distanceTo(endPt) > 0.001) interpolatedPoints.push(endPt);
+    const endPt = { lat: end.lat, lng: end.lng };
+    if (!last || calculateDistanceBetweenPoints(normalizeCoord(last).lat, normalizeCoord(last).lng, endPt.lat, endPt.lng) > 0.001) {
+      interpolatedPoints.push(endPt);
+    }
 
     accumulatedDistance += segmentDistance;
   }
@@ -193,7 +229,7 @@ export const generateInterpolatedPoints = (
 /**
  * Analyze track for slope information
  */
-export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysis> => {
+export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAnalysis> => {
   if (points.length < 2) {
     return {
       totalDistance: 0,
@@ -214,10 +250,10 @@ export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysi
   let maxSlope = 0;
 
   for (let i = 0; i < interpolatedPoints.length - 1; i++) {
-    const start = interpolatedPoints[i];
-    const end = interpolatedPoints[i + 1];
+    const start = normalizeCoord(interpolatedPoints[i]);
+    const end = normalizeCoord(interpolatedPoints[i + 1]);
 
-    const distance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
+    const distance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
     // Skip zero-length segments
     if (distance <= 0.001) continue;
 
@@ -225,16 +261,19 @@ export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysi
     // and use Mapbox Terrain-RGB at a higher zoom to capture narrow gullies/peaks.
     const sampleMeters = DEFAULT_SAMPLE_METERS;
     const numSamples = Math.max(1, Math.ceil(distance / sampleMeters));
-    const profilePoints: LatLng[] = [];
+    const profilePoints: LatLngLike[] = [];
     for (let s = 0; s <= numSamples; s++) {
       const t = s / numSamples;
       const lat = start.lat + (end.lat - start.lat) * t;
       const lng = start.lng + (end.lng - start.lng) * t;
-      profilePoints.push(new LatLng(lat, lng));
+      profilePoints.push({ lat, lng });
     }
 
     // Fetch elevations for profile points (use higher terrain zoom for detail)
-    const elevPromises = profilePoints.map(p => getElevationMapbox(p.lat, p.lng, { zoom: DEFAULT_TERRAIN_ZOOM }));
+    const elevPromises = profilePoints.map(p => {
+      const norm = normalizeCoord(p);
+      return getElevationMapbox(norm.lat, norm.lng, { zoom: DEFAULT_TERRAIN_ZOOM });
+    });
     const elevs = await Promise.all(elevPromises);
 
     // Compute sub-step slopes and aggregate
@@ -242,9 +281,9 @@ export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysi
     let weightedSlopeSum = 0;
     let totalSubDist = 0;
     for (let k = 0; k < profilePoints.length - 1; k++) {
-      const a = profilePoints[k];
-      const b = profilePoints[k + 1];
-      const subDist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
+      const a = normalizeCoord(profilePoints[k]);
+      const b = normalizeCoord(profilePoints[k + 1]);
+      const subDist = calculateDistanceBetweenPoints(a.lat, a.lng, b.lat, b.lng);
       const subSlope = calculateSlope(elevs[k], elevs[k + 1], subDist);
       if (subSlope > maxSubSlope) maxSubSlope = subSlope;
       weightedSlopeSum += subSlope * subDist;
@@ -258,7 +297,10 @@ export const analyzeTrackSlopes = async (points: LatLng[]): Promise<TrackAnalysi
     rawSegments.push({
       start: [start.lat, start.lng],
       end: [end.lat, end.lng],
-      coords: profilePoints.map(p => [p.lat, p.lng]),
+      coords: profilePoints.map(p => {
+        const norm = normalizeCoord(p);
+        return [norm.lat, norm.lng];
+      }),
       slope,
       category,
       startElevation: elevs[0],
