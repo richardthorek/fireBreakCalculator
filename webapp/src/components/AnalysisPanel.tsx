@@ -262,7 +262,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   // Derive effective terrain requirement from max slope
   const derivedTerrainRequirement = useMemo<TerrainType | null>(() => {
     if (!trackAnalysis) return null;
-    return deriveTerrainFromSlope(trackAnalysis.maxSlope) as TerrainType;
+    return deriveTerrainFromSlope(trackAnalysis.maxSlope);
   }, [trackAnalysis]);
 
   const calculations = useMemo<CalculationResult[]>(() => {
