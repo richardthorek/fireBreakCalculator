@@ -11,6 +11,7 @@ import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchNSWVegetation } from './nswVegetationService';
 import { logger } from './logger';
+import { mapFormationToVegetationType } from './vegetationMappingHelper';
 
 /**
  * Helper function to get longitude from coordinate object that may use lng or lon

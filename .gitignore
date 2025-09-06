@@ -70,3 +70,4 @@ profile-*.json
 # generated-sdk/
 
 # End of root .gitignore
+vegetation.csv

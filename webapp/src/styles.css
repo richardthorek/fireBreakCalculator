@@ -14,6 +14,9 @@
   }
 }
 
+/* Import configuration panel styles */
+@import url('./styles-config.css');
+
 /* Basic CSS reset / layout */
 html, body, #root, .app-shell {
   margin: 0;
@@ -28,6 +31,168 @@ html, body, #root, .app-shell {
 .app-shell {
   display: flex;
   flex-direction: column;
+}
+
+/* App header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background-color: #1e293b;
+}
+
+.app-title {
+  font-size: 1.5rem;
+  margin: 0;
+}
+
+.app-subtitle {
+  margin-left: 1rem;
+  font-size: 1rem;
+  color: #94a3b8;
+}
+
+/* Config buttons */
+.config-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.config-panel-toggle {
+  background-color: #334155;
+  color: #f8fafc;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.config-panel-toggle:hover {
+  background-color: #475569;
+}
+
+.integrated-config-panel {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #1e293b;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  overflow: hidden;
+  padding: 1.5rem;
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.config-header h3 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.config-header .close-button {
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.config-header .close-button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* Tabs in the integrated panel */
+.integrated-config-panel .config-tabs {
+  display: flex;
+  border-bottom: 1px solid #334155;
+  margin-bottom: 1rem;
+}
+
+.integrated-config-panel .tab-button {
+  padding: 0.75rem 1.5rem;
+  margin-right: 0.5rem;
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-size: 1rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.integrated-config-panel .tab-button:hover {
+  color: #ffffff;
+}
+
+.integrated-config-panel .tab-button.active {
+  color: #ffffff;
+  border-bottom-color: #3b82f6;
+}
+
+.integrated-config-panel .config-content {
+  flex: 1;
+  overflow-y: auto;
+  height: calc(100vh - 150px); /* Account for header, tabs, and notice */
+  padding-right: 0.5rem; /* Add padding for scrollbar */
+}
+
+/* Shared config notice styling */
+.shared-config-notice {
+  display: flex;
+  background-color: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  align-items: center;
+}
+
+.notice-icon {
+  margin-right: 1rem;
+  font-size: 1.25rem;
+}
+
+.notice-content {
+  font-size: 0.875rem;
+  color: #e2e8f0;
+}
+
+.notice-content strong {
+  color: #ffffff;
+}
+
+/* Override badge for vegetation mappings */
+.override-badge {
+  display: inline-block;
+  background-color: #9333ea;
+  color: white;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
 }
 .veg-pct {
   color: #94a3b8;
@@ -2347,4 +2512,378 @@ button:focus {
     right: 8px;
     top: 8px;
   }
+}
+
+/* VegetationConfigPanel Styles */
+.vegetation-config-panel {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  color: #f5f7fa;
+  display: flex;
+  flex-direction: column;
+}
+
+.vegetation-config-toggle {
+  margin: 1rem 0;
+}
+
+.vegetation-mapping-form {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-top: 1rem;
+  border: 1px solid #334155;
+}
+
+.vegetation-mapping-form .form-group {
+  margin-bottom: 1rem;
+}
+
+.vegetation-mapping-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.vegetation-mapping-form input,
+.vegetation-mapping-form select,
+.vegetation-mapping-form textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #3a4559;
+  border-radius: 4px;
+  background: #1a2332;
+  color: #f5f7fa;
+  margin-top: 0.25rem;
+}
+
+.vegetation-mapping-form .checkbox-group {
+  display: flex;
+  align-items: center;
+}
+
+.vegetation-mapping-form .checkbox-group input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.5rem;
+}
+
+.vegetation-mapping-form .checkbox-group label {
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.vegetation-mapping-form .form-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.vegetation-mapping-form button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.vegetation-mapping-form button[type="submit"] {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.vegetation-mapping-form button[type="button"] {
+  background-color: #3a4559;
+  color: #f5f7fa;
+}
+
+/* Hierarchical mappings view */
+.mappings-container {
+  margin-top: 1rem;
+  border-radius: 8px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  overflow: hidden;
+}
+
+.hierarchical-mappings,
+.flat-mappings {
+  padding: 1rem;
+}
+
+.formation-group,
+.class-group {
+  margin-bottom: 0.75rem;
+}
+
+.formation-header,
+.class-header {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #263244;
+  border-bottom: 1px solid #334155;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.formation-header:hover,
+.class-header:hover {
+  background: #2d3a4d;
+}
+
+.formation-expand-icon,
+.class-expand-icon {
+  margin-right: 0.5rem;
+  width: 16px;
+}
+
+.formation-title,
+.class-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.formation-classes {
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.class-types {
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.type-item {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  background: #263244;
+  border-radius: 4px;
+}
+
+.vegetation-type-badge {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  margin-left: 0.5rem;
+}
+
+.vegetation-type-badge.grassland {
+  background: #8bc34a;
+  color: #1a2332;
+}
+
+.vegetation-type-badge.lightshrub {
+  background: #ffc107;
+  color: #1a2332;
+}
+
+.vegetation-type-badge.mediumscrub {
+  background: #ff9800;
+  color: #1a2332;
+}
+
+.vegetation-type-badge.heavyforest {
+  background: #f44336;
+  color: white;
+}
+
+.override-badge {
+  font-size: 0.7rem;
+  background: #9c27b0;
+  color: white;
+  padding: 0.15rem 0.3rem;
+  border-radius: 8px;
+  margin-left: 0.5rem;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  background: #1a2332;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.mapping-name {
+  flex: 1;
+}
+
+.mapping-type {
+  margin: 0 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.mapping-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mapping-actions button,
+.formation-actions button,
+.class-actions button,
+.type-actions button {
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.edit-button {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.delete-button {
+  background-color: #dc3545;
+  color: white;
+}
+
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.search-container {
+  position: relative;
+  flex: 1;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.5rem 2rem 0.5rem 0.75rem;
+  border: 1px solid #3a4559;
+  border-radius: 4px;
+  background: #1a2332;
+  color: #f5f7fa;
+}
+
+.clear-search {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #6c757d;
+  cursor: pointer;
+}
+
+.view-toggles {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.create-button {
+  padding: 0.5rem 1rem;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.bulk-vegetation-editor {
+  background: #263244;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.editor-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.bulk-type-select {
+  padding: 0.5rem;
+  background: #1a2332;
+  border: 1px solid #3a4559;
+  color: #f5f7fa;
+  border-radius: 4px;
+}
+
+.apply-button {
+  padding: 0.5rem 1rem;
+  background-color: #0d6efd;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.editor-help {
+  margin-top: 0.5rem;
+  color: #adb5bd;
+}
+
+.selection-checkbox {
+  margin-right: 0.5rem;
+}
+
+.selected {
+  outline: 2px solid #0d6efd;
+}
+
+.no-mappings {
+  padding: 2rem;
+  text-align: center;
+  color: #6c757d;
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: #f5f7fa;
+}
+
+.error-message {
+  background: #dc3545;
+  color: white;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.mapping-stats {
+  margin-bottom: 1rem;
+  color: #adb5bd;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.panel-description {
+  margin-bottom: 1.5rem;
+  color: #e2e8f0;
+}
+
+.panel-description h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.panel-description p {
+  margin-top: 0;
+  line-height: 1.5;
+  font-size: 0.9rem;
 }

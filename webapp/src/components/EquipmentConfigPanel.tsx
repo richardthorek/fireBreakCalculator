@@ -6,6 +6,8 @@
 
 import React, { useState } from 'react';
 import { EquipmentApi, EquipmentCoreType, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from '../types/equipmentApi';
+import { getVegetationTypeDisplayName, getVegetationTypeExample, getTerrainLevelDisplayName, getTerrainLevelExample } from '../utils/formatters';
+import { VegetationType, TerrainLevel } from '../config/classification';
 
 interface EquipmentConfigPanelProps {
   equipment: EquipmentApi[];
@@ -16,6 +18,7 @@ interface EquipmentConfigPanelProps {
   onDelete: (item: EquipmentApi) => Promise<void>;
   isOpen?: boolean;
   onToggle?: () => void;
+  initialTab?: EquipmentCoreType;
 }
 
 type EquipmentTab = EquipmentCoreType;
@@ -268,9 +271,9 @@ const EquipmentListComponent: React.FC<{
 };
 
 export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
-  equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle
+  equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle, initialTab = 'Machinery'
 }) => {
-  const [activeTab, setActiveTab] = useState<EquipmentTab>('Machinery');
+  const [activeTab, setActiveTab] = useState<EquipmentTab>(initialTab);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Record<string, any>>({ 
@@ -286,45 +289,11 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const terrainOptions: EquipmentApi['allowedTerrain'] = ['easy','moderate','difficult','extreme'];
   const vegetationOptions: EquipmentApi['allowedVegetation'] = ['grassland','lightshrub','mediumscrub','heavyforest'];
 
-  // Short, compact labels for the tag buttons and helpful examples shown as tooltips.
-  const terrainLabel = (t: string) => {
-    switch (t) {
-      case 'easy': return 'Easy';
-      case 'moderate': return 'Moderate';
-      case 'difficult': return 'Difficult';
-      case 'extreme': return 'Extreme';
-      default: return t;
-    }
-  };
-  const terrainExample = (t: string) => {
-    // Updated to reflect standardized slope bands: 0–10, 10–20, 20–30, 30°+
-    switch (t) {
-      case 'easy': return '0–10° — flat or gentle slopes (paddock, grass)';
-      case 'moderate': return '10–20° — rolling hills, light obstacles';
-      case 'difficult': return '20–30° — steep slopes, rocky or dense scrub';
-      case 'extreme': return '30°+ — very steep / technical terrain';
-      default: return '';
-    }
-  };
-
-  const vegLabel = (v: string) => {
-    switch (v) {
-      case 'grassland': return 'Grass';
-      case 'lightshrub': return 'Light shrub';
-      case 'mediumscrub': return 'Medium scrub';
-      case 'heavyforest': return 'Heavy forest';
-      default: return v;
-    }
-  };
-  const vegExample = (v: string) => {
-    switch (v) {
-      case 'grassland': return 'Grassland — open grass, low fuel loads';
-      case 'lightshrub': return 'Light shrub / scrub — low bushes, scattered shrubs';
-      case 'mediumscrub': return 'Medium scrub — dense shrub, mixed groundcover';
-      case 'heavyforest': return 'Heavy timber / forest — tall trees, closed canopy';
-      default: return '';
-    }
-  };
+  // Use the shared formatters for consistent labeling across the application
+  const terrainLabel = (t: string) => getTerrainLevelDisplayName(t as TerrainLevel);
+  const terrainExample = (t: string) => getTerrainLevelExample(t as TerrainLevel);
+  const vegLabel = (v: string) => getVegetationTypeDisplayName(v as VegetationType);
+  const vegExample = (v: string) => getVegetationTypeExample(v as VegetationType);
 
   const filtered = equipment.filter(e => e.type === activeTab);
 
@@ -384,44 +353,37 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="equipment-config-panel fullscreen">
-      <div className="config-header">
+    <div className="equipment-config-panel">
+      <div className="panel-description">
         <h3>Equipment Configuration</h3>
-        <button 
-          className="close-button"
-          onClick={() => onToggle?.()}
-        >
-          ✕
-        </button>
-      </div>
-      
-      {/* User notice about shared configuration */}
-      <div className="shared-config-notice">
-        <div className="notice-icon">⚠️</div>
-        <div className="notice-content">
-          <strong>Important:</strong> This equipment configuration is shared among all users. 
-          Any changes you make to machinery, aircraft, or hand tool settings will be visible to everyone using the system.
-        </div>
+        <p>
+          Configure machinery, aircraft, and hand crews available for fire break operations.
+        </p>
       </div>
 
-      <div className="config-tabs equip-tabs">
+      {/* Equipment subcategory tabs */}
+      <div className="subcategory-tabs">
         {(['Machinery','Aircraft','HandCrew'] as EquipmentTab[]).map(t => (
-          <button key={t} className={`tab-button ${activeTab === t ? 'active' : ''}`} onClick={() => { setActiveTab(t); setAdding(false); setEditingId(null); }}>
+          <button 
+            key={t} 
+            className={`tab-button ${activeTab === t ? 'active' : ''}`} 
+            onClick={() => { setActiveTab(t); setAdding(false); setEditingId(null); }}
+          >
             {t} ({equipment.filter(e => e.type === t).length})
           </button>
         ))}
-        <div className="equip-tab-spacer" />
-        <button className="quick-add" onClick={startAdd} disabled={adding}>＋ Add {activeTab}</button>
+        <div className="tab-spacer" />
+        <button className="add-button" onClick={startAdd} disabled={adding}>＋ Add {activeTab}</button>
       </div>
 
-      {/* Single top-level guide for the visible tab to avoid repeating helpers in every row */}
+      {/* Equipment tab guide */}
       <div className="tab-guide" aria-hidden>
-  <div className="guide-line"><strong>Slope guide:</strong> 0–10° (Easy), 10–20° (Moderate), 20–30° (Difficult), &gt;=30° (Extreme)</div>
+        <div className="guide-line"><strong>Slope guide:</strong> 0–10° (Easy), 10–20° (Moderate), 20–30° (Difficult), &gt;=30° (Extreme)</div>
         <div className="guide-line"><strong>Vegetation examples:</strong> Grassland · Light shrub · Medium scrub · Heavy timber</div>
         <div className="guide-line"><small className="muted">Tip: click tags to toggle terrain/vegetation inclusion for each equipment item.</small></div>
       </div>
 
-      <div className="config-content equip-content">
+      <div className="config-content">
         {error && <div className="equip-error">{error}</div>}
         {localError && <div className="equip-error">{localError}</div>}
         {loading && <div className="equip-loading">Loading...</div>}

@@ -10,6 +10,7 @@ import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType 
 import { DistributionBar } from './DistributionBar';
 import { OverlapMatrix } from './OverlapMatrix';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
+import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */

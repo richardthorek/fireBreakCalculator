@@ -10,6 +10,8 @@
  */
 
 import { logger } from './logger';
+import { mapFormationToVegetationType } from './vegetationMappingHelper';
+import { VegetationType } from '../config/classification';
 
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
 const FEATURE_LAYER_ID = 3;
@@ -89,6 +91,9 @@ export function mapNSWToInternal(vegClass?: string | null, vegForm?: string | nu
 /**
  * Query the NSW ArcGIS Feature Layer for vegetation attributes at a point.
  * Returns null if outside NSW or if the service yields no match / error.
+ * 
+ * Uses dynamic vegetation mappings from the database if available, with hardcoded
+ * mappings as fallback.
  */
 export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWVegResultRaw | null> {
   if (!inNSW(lat, lng)) return null; // Skip network outside region
@@ -113,16 +118,65 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
     const feat = json?.features?.[0];
     if (!feat || !feat.attributes) { cache[key] = null; return null; }
     const { vegClass, vegForm, PCTName } = feat.attributes as Record<string, string | null>;
-    const mapped = mapNSWToInternal(vegClass, vegForm, PCTName);
-    cache[key] = mapped;
-    return mapped;
+    
+    let vegetationType: VegetationType;
+    let confidence: number;
+    let source: string;
+    
+    // First try to use the dynamic vegetation mapping
+    try {
+      // Use the hierarchical mapping system: formation > class > type (PCT)
+      const formationName = vegForm || '';
+      const className = vegClass || undefined;
+      const typeName = PCTName || undefined; // We can use PCT name as the type name
+      
+      const result = await mapFormationToVegetationType(formationName, className, typeName);
+      vegetationType = result.vegetation;
+      confidence = result.confidence;
+      source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
+      logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
+    } catch (error) {
+      // Fall back to hardcoded mapping if dynamic mapping fails
+      logger.warn('Dynamic vegetation mapping failed, falling back to hardcoded mapping', error);
+      const fallbackResult = mapNSWToInternal(vegClass, vegForm, PCTName);
+      if (!fallbackResult) { 
+        cache[key] = null; 
+        return null; 
+      }
+      vegetationType = fallbackResult.vegetationType;
+      confidence = fallbackResult.confidence;
+      source = fallbackResult.source;
+    }
+    
+    const result: NSWVegResultRaw = {
+      vegetationType,
+      confidence,
+      source,
+      vegClass,
+      vegForm,
+      pctName: PCTName
+    };
+    
+    cache[key] = result;
+    return result;
   } catch (e) {
     logger.warn('NSW vegetation query failed', e);
     cache[key] = null; return null;
   }
 }
 
-/** For diagnostics */
-export function _clearNSWCache() { Object.keys(cache).forEach(k => delete cache[k]); }
+/** 
+ * For diagnostics - clears both NSW vegetation cache and vegetation mapping cache 
+ */
+export function _clearNSWCache() { 
+  // Clear NSW vegetation cache
+  Object.keys(cache).forEach(k => delete cache[k]); 
+  // Re-import is needed here to avoid circular dependency
+  import('./vegetationMappingHelper').then(module => {
+    if (module._clearVegetationMappingCache) {
+      module._clearVegetationMappingCache();
+    }
+  });
+}
 
 export type NSWVegetationResult = NSWVegResultRaw;

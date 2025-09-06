@@ -13,6 +13,7 @@ Modern geospatial planning tool to help rural firefighters estimate time, cost, 
 * **Optimized touch controls** for mobile devices with tap-by-tap point placement
 * Automated slope & vegetation difficulty analysis with visual overlays
 * Equipment library: machinery, aircraft, hand crews (configurable)
+* **Configurable vegetation mapping system** for NSW vegetation formations
 * Time, cost, and aircraft drop estimations with terrain / vegetation multipliers
 * Slope compatibility checks per machinery type
 * Drop pattern preview for aircraft (interval markers along route)
@@ -28,6 +29,17 @@ scripts/          Helper / seed scripts
 
 ## ✅ Prerequisites
 * Node.js 18+
+
+## 🔄 Seeding Initial Data
+The application comes with a seed script to populate the database with initial equipment and vegetation mappings:
+
+```bash
+# Set the API base URL if not running locally
+export API_BASE_URL=https://your-api-url.azurewebsites.net/api
+
+# Run the seed script
+node scripts/seed_data.js
+```
 * Azure Functions Core Tools v4 (for local API)
 * An Azure Storage account (Table Storage) OR Azurite for local dev
 * Mapbox access token (for map tiles & terrain)
