@@ -19,6 +19,8 @@ interface EquipmentConfigPanelProps {
   isOpen?: boolean;
   onToggle?: () => void;
   initialTab?: EquipmentCoreType;
+  showOwnTabs?: boolean; // Control whether to show its own tabs
+  triggerAdd?: number; // Trigger add mode when this value changes
 }
 
 type EquipmentTab = EquipmentCoreType;
@@ -271,7 +273,7 @@ const EquipmentListComponent: React.FC<{
 };
 
 export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
-  equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle, initialTab = 'Machinery'
+  equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle, initialTab = 'Machinery', showOwnTabs = true, triggerAdd
 }) => {
   const [activeTab, setActiveTab] = useState<EquipmentTab>(initialTab);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -285,6 +287,18 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   });
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  // Sync activeTab with initialTab when it changes (from IntegratedConfigPanel)
+  React.useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  // Trigger add mode when triggerAdd prop changes
+  React.useEffect(() => {
+    if (triggerAdd && triggerAdd > 0) {
+      startAdd();
+    }
+  }, [triggerAdd]);
 
   const terrainOptions: EquipmentApi['allowedTerrain'] = ['easy','moderate','difficult','extreme'];
   const vegetationOptions: EquipmentApi['allowedVegetation'] = ['grassland','lightshrub','mediumscrub','heavyforest'];
@@ -361,20 +375,17 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         </p>
       </div>
 
-      {/* Equipment subcategory tabs */}
-      <div className="subcategory-tabs">
-        {(['Machinery','Aircraft','HandCrew'] as EquipmentTab[]).map(t => (
-          <button 
-            key={t} 
-            className={`tab-button ${activeTab === t ? 'active' : ''}`} 
-            onClick={() => { setActiveTab(t); setAdding(false); setEditingId(null); }}
-          >
-            {t} ({equipment.filter(e => e.type === t).length})
+      {showOwnTabs && (
+        <div className="equipment-toolbar">
+          <div className="equipment-toolbar-title">
+            <span className="current-tab-name">{activeTab}</span>
+            <span className="equipment-count">({equipment.filter(e => e.type === activeTab).length} items)</span>
+          </div>
+          <button className="add-equipment-btn" onClick={startAdd} disabled={adding}>
+            ＋ Add {activeTab}
           </button>
-        ))}
-        <div className="tab-spacer" />
-        <button className="add-button" onClick={startAdd} disabled={adding}>＋ Add {activeTab}</button>
-      </div>
+        </div>
+      )}
 
       {/* Equipment tab guide */}
       <div className="tab-guide" aria-hidden>

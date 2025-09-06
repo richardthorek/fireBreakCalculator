@@ -55,16 +55,23 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('equipment');
   const [activeEquipmentSubTab, setActiveEquipmentSubTab] = useState<EquipmentSubTab>('machinery');
-  
-  if (!isOpen) return null;
+  // State to trigger equipment add mode
+  const [triggerEquipmentAdd, setTriggerEquipmentAdd] = useState(0);
   
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
   };
-  
+
   const handleEquipmentSubTabChange = (subTab: EquipmentSubTab) => {
     setActiveEquipmentSubTab(subTab);
   };
+
+  const handleAddEquipment = () => {
+    // Trigger add mode in the equipment panel
+    setTriggerEquipmentAdd(prev => prev + 1);
+  };
+
+  if (!isOpen) return null;
   
   return (
     <div className="integrated-config-panel">
@@ -117,42 +124,53 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
         >
           {activeTab === 'equipment' && (
             <>
-              {/* Equipment subtabs */}
+              {/* Equipment subtabs with actions */}
               <div 
                 className="config-tabs sub-tabs"
                 role="tablist"
                 aria-label="Equipment Types"
               >
-                <button
-                  id="machinery-tab"
-                  className={`tab-button ${activeEquipmentSubTab === 'machinery' ? 'active' : ''}`}
-                  onClick={() => handleEquipmentSubTabChange('machinery')}
-                  role="tab"
-                  aria-selected={activeEquipmentSubTab === 'machinery'} 
-                  aria-controls="machinery-panel"
-                >
-                  Machinery ({equipment.filter(e => e.type === 'Machinery').length})
-                </button>
-                <button
-                  id="aircraft-tab"
-                  className={`tab-button ${activeEquipmentSubTab === 'aircraft' ? 'active' : ''}`}
-                  onClick={() => handleEquipmentSubTabChange('aircraft')}
-                  role="tab"
-                  aria-selected={activeEquipmentSubTab === 'aircraft'} 
-                  aria-controls="aircraft-panel"
-                >
-                  Aircraft ({equipment.filter(e => e.type === 'Aircraft').length})
-                </button>
-                <button
-                  id="handcrew-tab"
-                  className={`tab-button ${activeEquipmentSubTab === 'handcrew' ? 'active' : ''}`}
-                  onClick={() => handleEquipmentSubTabChange('handcrew')}
-                  role="tab"
-                  aria-selected={activeEquipmentSubTab === 'handcrew'} 
-                  aria-controls="handcrew-panel"
-                >
-                  Hand Crews ({equipment.filter(e => e.type === 'HandCrew').length})
-                </button>
+                <div className="sub-tabs-container">
+                  <div className="sub-tabs-buttons">
+                    <button
+                      id="machinery-tab"
+                      className={`tab-button ${activeEquipmentSubTab === 'machinery' ? 'active' : ''}`}
+                      onClick={() => handleEquipmentSubTabChange('machinery')}
+                      role="tab"
+                      aria-selected={activeEquipmentSubTab === 'machinery'} 
+                      aria-controls="machinery-panel"
+                    >
+                      Machinery ({equipment.filter(e => e.type === 'Machinery').length})
+                    </button>
+                    <button
+                      id="aircraft-tab"
+                      className={`tab-button ${activeEquipmentSubTab === 'aircraft' ? 'active' : ''}`}
+                      onClick={() => handleEquipmentSubTabChange('aircraft')}
+                      role="tab"
+                      aria-selected={activeEquipmentSubTab === 'aircraft'} 
+                      aria-controls="aircraft-panel"
+                    >
+                      Aircraft ({equipment.filter(e => e.type === 'Aircraft').length})
+                    </button>
+                    <button
+                      id="handcrew-tab"
+                      className={`tab-button ${activeEquipmentSubTab === 'handcrew' ? 'active' : ''}`}
+                      onClick={() => handleEquipmentSubTabChange('handcrew')}
+                      role="tab"
+                      aria-selected={activeEquipmentSubTab === 'handcrew'} 
+                      aria-controls="handcrew-panel"
+                    >
+                      Hand Crews ({equipment.filter(e => e.type === 'HandCrew').length})
+                    </button>
+                  </div>
+                  <button 
+                    className="add-equipment-btn"
+                    onClick={handleAddEquipment}
+                  >
+                    ＋ Add {activeEquipmentSubTab === 'machinery' ? 'Machinery' : 
+                           activeEquipmentSubTab === 'aircraft' ? 'Aircraft' : 'Hand Crew'}
+                  </button>
+                </div>
               </div>
               
               <div id="equipment-panels-container">
@@ -165,6 +183,8 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
                   onDelete={onDeleteEquipment}
                   isOpen={true}
                   onToggle={onToggle}
+                  showOwnTabs={false}
+                  triggerAdd={triggerEquipmentAdd}
                   initialTab={activeEquipmentSubTab === 'machinery' ? 'Machinery' : 
                             activeEquipmentSubTab === 'aircraft' ? 'Aircraft' : 'HandCrew'}
                 />
