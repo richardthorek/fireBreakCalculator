@@ -1,3 +1,16 @@
-// Centralized Mapbox access token retrieval
-// Consumed by map rendering and elevation (terrain) utilities
-export const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined;
+// Centralized Mapbox access token retrieval.
+// Supports both VITE_MAPBOX_ACCESS_TOKEN (preferred) and legacy VITE_MAPBOX_TOKEN.
+// Consumers should treat an empty string as undefined.
+export const MAPBOX_TOKEN = (
+	import.meta.env?.VITE_MAPBOX_ACCESS_TOKEN ||
+	import.meta.env?.VITE_MAPBOX_TOKEN ||
+	undefined
+) as string | undefined;
+interface ImportMetaEnv {
+	VITE_MAPBOX_ACCESS_TOKEN?: string;
+	VITE_MAPBOX_TOKEN?: string;
+}
+
+interface ImportMeta {
+	readonly env: ImportMetaEnv;
+}
