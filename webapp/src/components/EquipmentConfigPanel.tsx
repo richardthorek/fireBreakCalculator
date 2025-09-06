@@ -394,7 +394,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         <div className="guide-line"><small className="muted">Tip: click tags to toggle terrain/vegetation inclusion for each equipment item.</small></div>
       </div>
 
-      <div className="config-content">
+  <div className="equipment-scroll-area">
         {error && <div className="equip-error">{error}</div>}
         {localError && <div className="equip-error">{localError}</div>}
         {loading && <div className="equip-loading">Loading...</div>}

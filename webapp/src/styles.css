@@ -481,7 +481,9 @@ html, body, #root, .app-shell {
 .equipment-config-panel.sidebar .tab-guide .muted { color:#94a3b8; font-size:12px; }
 
 .equip-list { display:flex; flex-direction:column; gap:4px; }
-.equip-row {
+/* NOTE: Global .equip-row layout intentionally left to flex version in styles-config.css for narrow integrated panel.
+   The wide grid layout is now scoped only to the legacy sidebar / fullscreen variants to prevent overflow clipping. */
+.equipment-config-panel.sidebar .equip-row {
   display: grid;
   /* Name | dynamic numeric fields (up to 6) | terrain tags | vegetation tags | actions */
   grid-template-columns: minmax(140px, 1.2fr) repeat(4, minmax(70px, 110px)) minmax(70px,110px) minmax(120px, 1fr) minmax(120px, 1fr) 90px;
@@ -494,8 +496,8 @@ html, body, #root, .app-shell {
   font-size: 13px;
   box-sizing: border-box;
 }
-.equip-row.editing { background: #223547; }
-.equip-row.adding { background: #1f3444; border-style: dashed; }
+.equipment-config-panel.sidebar .equip-row.editing { background: #223547; }
+.equipment-config-panel.sidebar .equip-row.adding { background: #1f3444; border-style: dashed; }
 .eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; color:#e2e8f0; font-weight:500; }
 .eq-small { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }
 .eq-xsmall { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }

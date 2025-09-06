@@ -35,7 +35,9 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
     confidence: 0.95,
     active: true,
     description: 'Dense tropical rainforest formations',
-    version: 1
+  version: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
   },
   {
     id: '2',
@@ -47,7 +49,9 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
     confidence: 0.9,
     active: true,
     description: 'Tall eucalyptus forests with dense understory',
-    version: 1
+  version: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
   },
   {
     id: '3',
@@ -59,7 +63,9 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
     confidence: 0.85,
     active: true,
     description: 'Open eucalyptus forests with scattered understory',
-    version: 1
+  version: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
   },
   {
     id: '4',
@@ -71,7 +77,9 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
     confidence: 0.95,
     active: true,
     description: 'Open grassland areas',
-    version: 1
+  version: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
   },
   {
     id: '5',
@@ -83,7 +91,9 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
     confidence: 0.9,
     active: true,
     description: 'Low shrubland with heathy vegetation',
-    version: 1
+  version: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
   }
 ];
 
@@ -133,7 +143,9 @@ export async function createVegetationMapping(input: CreateVegetationMappingInpu
       id: Math.random().toString(36).substr(2, 9),
       version: 1,
       active: true,
-      confidence: 0.8
+  confidence: 0.8,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
     } as VegetationFormationMappingApi
   );
 }
@@ -155,7 +167,8 @@ export async function updateVegetationMapping(
     {
       ...payload,
       id,
-      version: payload.version + 1
+  version: payload.version + 1,
+  updatedAt: new Date().toISOString()
     } as VegetationFormationMappingApi
   );
 }
