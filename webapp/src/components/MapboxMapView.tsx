@@ -133,9 +133,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     mapboxgl.accessToken = token;
 
     // Initialize the map with custom satellite style
+    const customStyleURL = 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+    logger.info(`Initializing map with custom satellite style: ${customStyleURL}`);
+    
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t', // Custom satellite style with contours
+      style: customStyleURL, // Custom satellite style with contours
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       accessToken: token
@@ -256,12 +259,44 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     // Handle style loading and setup layers
     map.on('style.load', () => {
-      logger.info(`Style loaded: ${map.getStyle().name || 'Unknown'}`);
+      const style = map.getStyle();
+      logger.info(`Style loaded: ${style.name || 'Unknown'}`);
+      logger.info(`Style metadata:`, style.metadata);
+      logger.info(`Style sources:`, Object.keys(style.sources || {}));
+      logger.info(`Style layers:`, (style.layers || []).map(l => l.id));
       
       // Verify the style is the expected custom style when satellite is selected
       if (currentStyle === 'satellite') {
-        const styleURL = map.getStyle().sprite;
+        const styleURL = style.sprite;
         logger.info(`Satellite style loaded, sprite URL: ${styleURL}`);
+        
+        // Check if contour/elevation related sources are present
+        const sources = style.sources || {};
+        const contourSources = Object.keys(sources).filter(key => 
+          key.includes('contour') || key.includes('elevation') || key.includes('hillshade') ||
+          key.includes('terrain') || key.includes('mapbox-dem') || key.includes('mapbox-terrain')
+        );
+        logger.info(`Contour-related sources found:`, contourSources);
+        
+        // Check if contour/elevation related layers are present
+        const layers = style.layers || [];
+        const contourLayers = layers.filter(layer => 
+          layer.id.includes('contour') || layer.id.includes('elevation') || layer.id.includes('hillshade') ||
+          layer.id.includes('terrain') || layer.id.includes('slope')
+        );
+        logger.info(`Contour-related layers found:`, contourLayers.map(l => ({ id: l.id, type: l.type })));
+        
+        // Log all satellite layer IDs for debugging
+        logger.info(`All layer IDs in satellite style:`, layers.map(l => ({ id: l.id, type: l.type })));
+        
+        // Specific check for terrain/elevation data
+        if (contourSources.length === 0 && contourLayers.length === 0) {
+          logger.warn('⚠ No contour-related sources or layers found in the custom satellite style!');
+          logger.warn('This might indicate the style does not include contour/elevation data.');
+          logger.warn('Consider checking the Mapbox Studio style configuration.');
+        } else {
+          logger.info(`✓ Found ${contourSources.length} contour sources and ${contourLayers.length} contour layers`);
+        }
       }
       
       // Add NSW vegetation WMS layer as a raster source
@@ -276,7 +311,31 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       }
 
       // Add vegetation layer (preserve previous visibility state)
+      // Insert vegetation layer BEFORE any contour layers to ensure contours stay visible
       if (!map.getLayer('nsw-vegetation-layer')) {
+        // Find the first contour/elevation/hillshade layer to insert vegetation before it
+        const layers = map.getStyle().layers || [];
+        let beforeLayer: string | undefined = undefined;
+        
+        for (const layer of layers) {
+          if (layer.id.includes('contour') || layer.id.includes('elevation') || layer.id.includes('hillshade')) {
+            beforeLayer = layer.id;
+            logger.info(`Inserting vegetation layer before contour layer: ${beforeLayer}`);
+            break;
+          }
+        }
+        
+        if (!beforeLayer) {
+          // If no contour layers found, insert before any satellite/raster layers
+          for (const layer of layers) {
+            if (layer.type === 'raster' || layer.id.includes('satellite')) {
+              beforeLayer = layer.id;
+              logger.info(`Inserting vegetation layer before raster layer: ${beforeLayer}`);
+              break;
+            }
+          }
+        }
+        
         map.addLayer({
           id: 'nsw-vegetation-layer',
           type: 'raster',
@@ -287,7 +346,29 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           paint: {
             'raster-opacity': 0.7
           }
-        });
+        }, beforeLayer); // Insert before the specified layer to keep contours on top
+        
+        // Log layer order after adding vegetation layer
+        const layerIds = map.getStyle().layers?.map(l => l.id) || [];
+        logger.info(`Layer order after adding vegetation layer:`, layerIds);
+        
+        // Check if vegetation layer might be hiding contours
+        const vegetationLayerIndex = layerIds.indexOf('nsw-vegetation-layer');
+        const contourLayerIndices = layerIds
+          .map((id, index) => ({ id, index }))
+          .filter(item => item.id.includes('contour') || item.id.includes('elevation') || item.id.includes('hillshade'))
+          .map(item => item.index);
+        
+        if (contourLayerIndices.length > 0) {
+          logger.info(`Contour layers found at indices: ${contourLayerIndices}, vegetation at: ${vegetationLayerIndex}`);
+          if (vegetationLayerIndex > Math.max(...contourLayerIndices)) {
+            logger.warn(`Vegetation layer (index ${vegetationLayerIndex}) may be covering contour layers (indices ${contourLayerIndices})`);
+          } else {
+            logger.info(`✓ Vegetation layer properly positioned below contour layers`);
+          }
+        } else {
+          logger.warn(`No contour-related layers found in the current style`);
+        }
       }
 
       // Add layer control only if it doesn't exist
@@ -305,6 +386,27 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       logger.warn('Style image missing:', e.id);
     });
 
+    // Add data loading verification
+    map.on('styledata', (e) => {
+      if (e.dataType === 'style') {
+        logger.info(`Style data loaded for ${currentStyle} view`);
+        
+        // Verify custom satellite style is properly loaded
+        if (currentStyle === 'satellite') {
+          const style = map.getStyle();
+          const styleId = style.metadata?.['mapbox:id'] || style.id || 'unknown';
+          logger.info(`Satellite style ID: ${styleId}`);
+          
+          // Check if this matches our expected custom style
+          if (styleId.includes('cmf7esv62000n01qw0khz891t') || styleId.includes('richardbt')) {
+            logger.info('✓ Custom satellite style with contours loaded successfully');
+          } else {
+            logger.warn(`⚠ Unexpected style loaded: ${styleId}, expected: cmf7esv62000n01qw0khz891t`);
+          }
+        }
+      }
+    });
+
     // Handle errors
     map.on('error', (e) => {
       logger.error('Mapbox GL error:', e);
@@ -313,6 +415,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       if (e.error && e.error.message) {
         if (e.error.message.includes('style') || e.error.message.includes('unauthorized')) {
           setError('Failed to load map style. Please check that the Mapbox style URL is accessible and the token has proper permissions.');
+          
+          // Important: Don't fallback to a different style automatically as this might hide the real issue
+          logger.error('Custom satellite style failed to load - keeping error visible for debugging');
         } else {
           setError('Map failed to load. Please check your connection and try again.');
         }
@@ -599,10 +704,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           <input type="radio" name="basemap" value="streets" ${currentStyle === 'streets' ? 'checked' : ''}> Streets
         </label>
       </div>
-      <div>
+      <div style="margin-bottom: 8px;">
         <label style="display: block;">
           <input type="checkbox" id="vegetation-toggle" ${vegetationLayerEnabled ? 'checked' : ''}> NSW Vegetation
         </label>
+      </div>
+      <div style="border-top: 1px solid #ddd; padding-top: 8px;">
+        <button id="debug-style" style="font-size: 11px; padding: 2px 6px; cursor: pointer;">Debug Style</button>
       </div>
     `;
 
@@ -614,7 +722,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (target.value === 'satellite') {
           logger.info('Switching to satellite style with contours');
           setCurrentStyle('satellite');
-          map.setStyle('mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t');
+          const customStyleURL = 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+          logger.info(`Loading custom satellite style: ${customStyleURL}`);
+          map.setStyle(customStyleURL);
         } else if (target.value === 'streets') {
           logger.info('Switching to streets style');
           setCurrentStyle('streets');
@@ -639,6 +749,47 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           setTimeout(() => setShowVegetationZoomHint(false), 10000);
         }
       }
+    });
+
+    // Handle debug style button
+    const debugButton = layerControl.querySelector('#debug-style') as HTMLButtonElement;
+    debugButton.addEventListener('click', () => {
+      const style = map.getStyle();
+      logger.info('=== STYLE DEBUG REPORT ===');
+      logger.info(`Style Name: ${style.name || 'Unknown'}`);
+      logger.info(`Style ID: ${style.metadata?.['mapbox:id'] || 'Unknown'}`);
+      logger.info(`Current zoom: ${map.getZoom()}`);
+      logger.info(`Current center: ${map.getCenter().lng}, ${map.getCenter().lat}`);
+      
+      // Check all sources
+      const sources = style.sources || {};
+      logger.info(`Sources (${Object.keys(sources).length}):`, Object.keys(sources));
+      
+      // Check all layers with types
+      const layers = style.layers || [];
+      logger.info(`Layers (${layers.length}):`);
+      layers.forEach((layer, index) => {
+        const contourRelated = layer.id.includes('contour') || layer.id.includes('elevation') || layer.id.includes('hillshade');
+        logger.info(`  ${index}: ${layer.id} (${layer.type})${contourRelated ? ' [CONTOUR-RELATED]' : ''}`);
+      });
+      
+      // Check specifically for contour patterns
+      const contourLayers = layers.filter(l => 
+        l.id.includes('contour') || l.id.includes('elevation') || l.id.includes('hillshade') ||
+        l.id.includes('terrain') || l.id.includes('topo')
+      );
+      logger.info(`Potential contour layers found: ${contourLayers.length}`);
+      contourLayers.forEach(layer => {
+        logger.info(`  Contour layer: ${layer.id} (${layer.type})`);
+      });
+      
+      // Check vegetation layer position
+      const vegIndex = layers.findIndex(l => l.id === 'nsw-vegetation-layer');
+      if (vegIndex >= 0) {
+        logger.info(`Vegetation layer position: ${vegIndex} of ${layers.length}`);
+      }
+      
+      logger.info('=== END DEBUG REPORT ===');
     });
 
     // Add to map
