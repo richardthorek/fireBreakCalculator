@@ -4,12 +4,13 @@ Modern geospatial planning tool to help rural firefighters estimate time, cost, 
 
 | Package | Path | Purpose |
 |---------|------|---------|
-| Web App | `webapp/` | React + Vite + TypeScript interactive mapping UI (Leaflet) & analysis engine |
+| Web App | `webapp/` | React + Vite + TypeScript interactive mapping UI (Mapbox GL JS) & analysis engine |
 | API | `api/` | Azure Functions (TypeScript) providing CRUD for equipment catalogue via Azure Table Storage |
 | Scripts | `scripts/` | Utility scripts (e.g. seeding equipment) |
 
 ## ✨ Key Features
 * Interactive map drawing of proposed fire break routes with real‑time distance
+* **Optimized touch controls** for mobile devices with tap-by-tap point placement
 * Automated slope & vegetation difficulty analysis with visual overlays
 * Equipment library: machinery, aircraft, hand crews (configurable)
 * Time, cost, and aircraft drop estimations with terrain / vegetation multipliers

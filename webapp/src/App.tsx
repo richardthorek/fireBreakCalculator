@@ -9,7 +9,7 @@ import { listEquipment, createEquipment, updateEquipmentItem, deleteEquipment } 
 
 /**
  * Root application component for the RFS Fire Break Calculator.
- * Renders a fixed-height header (10% of viewport), responsive Leaflet map,
+ * Renders a fixed-height header (10% of viewport), responsive Mapbox GL JS map,
  * and analysis panel for fire break calculations.
  */
 const App: React.FC = () => {

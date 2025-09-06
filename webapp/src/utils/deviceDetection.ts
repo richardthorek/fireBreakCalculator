@@ -1,10 +1,16 @@
 /**
  * Utility functions for detecting device capabilities and input methods
+ * Used to optimize touch controls for Mapbox GL JS fire break drawing
  */
 
 /**
  * Detects if the current device is primarily touch-based
  * This helps determine appropriate drawing behavior for fire break lines
+ * 
+ * Optimized for Mapbox GL JS touch interaction:
+ * - Touch devices get larger touch buffers and visual feedback
+ * - Mouse devices get precise click handling
+ * - Automatically shows touch hints on appropriate devices
  */
 export const isTouchDevice = (): boolean => {
   // Check for touch support in multiple ways for better accuracy
@@ -20,6 +26,7 @@ export const isTouchDevice = (): boolean => {
   const isSmallScreen = window.innerWidth <= 768;
   
   // Device is considered touch-primary if it has touch AND (coarse pointer OR small screen)
+  // This helps differentiate between touch-first devices and desktop with touch support
   return hasTouch && (hasCoarsePointer || isSmallScreen);
 };
 

@@ -1,3 +1,19 @@
+/* Touch feedback animation for point placement */
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
 /* Basic CSS reset / layout */
 html, body, #root, .app-shell {
   margin: 0;
@@ -588,105 +604,39 @@ html, body, #root, .app-shell {
 }
 .map-analyzing-badge .map-analyzing-text { font-weight:600; color:#cbefff; }
 
-/* Improve Leaflet default control look for dark background */
-.leaflet-control-attribution, .leaflet-control-scale, .leaflet-bar a {
-  background: rgba(245,247,250,0.95) !important;
-  color: #1e2633 !important;
-  border: 1px solid #d0d6dd !important;
-}
-.leaflet-bar a:hover {
-  background: rgba(225,230,235,0.95) !important;
+/* Mapbox GL Draw control styling for better touch experience */
+.mapboxgl-ctrl-group {
+  background: rgba(30,36,51,0.98) !important;
+  border-radius: 4px !important;
+  border: 1px solid #2a3442 !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
 }
 
-/* Style the drawing controls for better contrast */
-.leaflet-draw-toolbar a {
-  background-color: rgba(245,247,250,0.95) !important;
-  color: #1e2633 !important;
-  border: 1px solid #d0d6dd !important;
-  width: 30px !important;
-  height: 30px !important;
-  line-height: 30px !important;
-  text-align: center !important;
-}
-.leaflet-draw-toolbar a:hover {
-  background-color: rgba(225,230,235,0.95) !important;
-}
-.leaflet-draw-toolbar a.leaflet-disabled {
-  background-color: rgba(180,190,200,0.7) !important;
-  color: #6b7280 !important;
+.mapboxgl-ctrl-group button {
+  background: transparent !important;
+  color: #f5f7fa !important;
+  border: none !important;
+  padding: 8px !important;
+  min-width: 36px !important;
+  min-height: 36px !important;
+  cursor: pointer !important;
 }
 
-/* Add proper icons for drawing tools */
-.leaflet-draw-toolbar a.leaflet-draw-draw-polyline {
-  background-image: url("data:image/svg+xml;charset=utf-8,%3csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M2 8L8 2L14 8L18 4' stroke='%23ff6b35' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3ccircle cx='2' cy='8' r='2' fill='%23ff6b35'/%3e%3ccircle cx='8' cy='2' r='2' fill='%23ff6b35'/%3e%3ccircle cx='14' cy='8' r='2' fill='%23ff6b35'/%3e%3ccircle cx='18' cy='4' r='2' fill='%23ff6b35'/%3e%3c/svg%3e") !important;
-  background-repeat: no-repeat !important;
-  background-position: center !important;
-  background-size: 18px 18px !important;
+.mapboxgl-ctrl-group button:hover {
+  background: rgba(79,195,247,0.12) !important;
 }
 
-.leaflet-draw-toolbar a.leaflet-draw-edit-edit {
-  background-image: url("data:image/svg+xml;charset=utf-8,%3csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M11 4H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7' stroke='%231e2633' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3cpath d='m13.5 2.5 3 3L10 12l-4 1 1-4 6.5-6.5z' stroke='%231e2633' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e") !important;
-  background-repeat: no-repeat !important;
-  background-position: center !important;
-  background-size: 16px 16px !important;
+.mapboxgl-ctrl-group button.active {
+  background: rgba(79,195,247,0.2) !important;
 }
 
-.leaflet-draw-toolbar a.leaflet-draw-edit-remove {
-  background-image: url("data:image/svg+xml;charset=utf-8,%3csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M3 6h14' stroke='%23e11d48' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3cpath d='M8 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2m3 0v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h10z' stroke='%23e11d48' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e") !important;
-  background-repeat: no-repeat !important;
-  background-position: center !important;
-  background-size: 16px 16px !important;
-}
-
-/* Hide text content in favor of icons and improve accessibility */
-.leaflet-draw-toolbar a {
-  text-indent: -9999px !important;
-  overflow: hidden !important;
-  white-space: nowrap !important;
-}
-
-.leaflet-draw-toolbar a .sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* Ensure proper touch targets for mobile */
+/* Larger touch targets on mobile */
 @media (max-width: 768px) {
-  .leaflet-draw-toolbar a {
-  .equip-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
-    height: 44px !important;
-    line-height: 44px !important;
+  .mapboxgl-ctrl-group button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 10px !important;
   }
-  
-  .leaflet-draw-toolbar a.leaflet-draw-draw-polyline {
-    background-size: 20px 20px !important;
-  }
-  
-  .leaflet-draw-toolbar a.leaflet-draw-edit-edit,
-  .leaflet-draw-toolbar a.leaflet-draw-edit-remove {
-    background-size: 18px 18px !important;
-  }
-}
-
-/* Style the drawing tooltips */
-.leaflet-draw-tooltip {
-  background: rgba(245,247,250,0.95) !important;
-  color: #1e2633 !important;
-  border: 1px solid #d0d6dd !important;
-}
-
-/* Improve popup styling */
-.leaflet-popup-content-wrapper {
-  background: rgba(245,247,250,0.95) !important;
-  color: #1e2633 !important;
-  border-radius: 6px !important;
 }
 
 /* Improve focus indicators for better accessibility */
@@ -743,8 +693,7 @@ html, body, #root, .app-shell {
 }
 
 /* Improve button focus states */
-button:focus,
-.leaflet-draw-toolbar a:focus {
+button:focus {
   outline: 2px solid #4fc3f7 !important;
   outline-offset: 2px !important;
 }
@@ -1452,9 +1401,6 @@ button:focus,
   border: 2px solid rgba(255,107,53,0.9); /* outline color matching fire break */
   box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
-
-/* Ensure DivIcon content has no extra padding or text */
-.leaflet-div-icon { display:block; }
 
 /* Equipment Configuration Panel Styles */
 .config-panel-toggle {

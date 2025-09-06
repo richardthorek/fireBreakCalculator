@@ -39,6 +39,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
+  const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // Touch controls state and configuration
+  // Automatically detect touch devices and show appropriate hints
+  // Touch workflow: tap line tool -> tap points individually -> tap line tool again or press Enter to finish
+  const [showTouchHint, setShowTouchHint] = useState(() => {
+    try { return isTouchDevice(); } catch { return false; }
+  });
+  const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
+  const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
+  
+  // Aircraft drop markers state
   const [showTouchHint, setShowTouchHint] = useState(() => { try { return isTouchDevice(); } catch { return false; } });
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
   const [dropsVersion, setDropsVersion] = useState(0);
@@ -58,10 +72,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl(), 'top-left');
 
+    // Initialize MapboxDraw for drawing functionality
+    // Configure for optimal touch experience: tap-by-tap point placement with separate finalization
     const draw = new MapboxDraw({
       displayControlsDefault: false,
       controls: { line_string: true, trash: true },
       defaultMode: 'draw_line_string',
+      // Touch-optimized options
+      touchEnabled: true,
+      touchBuffer: 25, // Larger touch target for mobile
+      clickBuffer: 5,  // Smaller click buffer for precise mouse input
       styles: [
         { id: 'gl-draw-line', type: 'line', filter: ['all', ['==', '$type', 'LineString'], ['!=', 'mode', 'static']], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ff6b35', 'line-width': 4, 'line-opacity': 0.85 } },
         { id: 'gl-draw-vertex-halo-active', type: 'circle', filter: ['all', ['==', 'meta', 'vertex'], ['==', '$type', 'Point'], ['!=', 'mode', 'static']], paint: { 'circle-radius': 8, 'circle-color': '#FFF' } },
@@ -70,6 +90,55 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     });
     map.addControl(draw, 'top-right');
     drawRef.current = draw;
+
+    // Enhanced touch controls for better mobile experience
+    if (isTouchDevice()) {
+      // Add touch-specific event listeners for improved interaction
+      let touchStartTime = 0;
+      let touchStartTarget: EventTarget | null = null;
+      
+      map.getContainer().addEventListener('touchstart', (e) => {
+        touchStartTime = Date.now();
+        touchStartTarget = e.target;
+      }, { passive: true });
+      
+      map.getContainer().addEventListener('touchend', (e) => {
+        const touchDuration = Date.now() - touchStartTime;
+        
+        // Only treat as tap if touch was brief (< 300ms) and didn't move much
+        if (touchDuration < 300 && touchStartTarget === e.target) {
+          // On touch devices, provide better feedback for drawing actions
+          const mode = draw.getMode();
+          if (mode === 'draw_line_string') {
+            // Add visual feedback for successful point placement
+            const container = map.getContainer();
+            const feedback = document.createElement('div');
+            feedback.style.cssText = `
+              position: absolute;
+              pointer-events: none;
+              background: #ff6b35;
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              z-index: 999;
+              opacity: 0.8;
+              animation: pulse 0.3s ease-out;
+            `;
+            
+            // Position feedback at touch point (approximate)
+            const rect = container.getBoundingClientRect();
+            const touch = e.changedTouches[0];
+            if (touch) {
+              feedback.style.left = (touch.clientX - rect.left - 4) + 'px';
+              feedback.style.top = (touch.clientY - rect.top - 4) + 'px';
+            }
+            
+            container.appendChild(feedback);
+            setTimeout(() => feedback.remove(), 300);
+          }
+        }
+      }, { passive: true });
+    }
 
     const handleLineChange = async (feature: any) => {
       if (!feature || feature.geometry?.type !== 'LineString') return;
@@ -187,6 +256,31 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         </div>
       )}
       {showTouchHint && (
+        <div className="touch-hint" style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          background: 'rgba(0, 0, 0, 0.8)',
+          color: 'white',
+          padding: '12px',
+          borderRadius: '6px',
+          fontSize: '14px',
+          maxWidth: '200px',
+          zIndex: 1000
+        }}>
+          Tap the line tool, then tap points to draw your fire break route. Tap the line tool again or press Enter to finish.
+          <button 
+            onClick={() => setShowTouchHint(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'white',
+              marginLeft: '8px',
+              cursor: 'pointer'
+            }}
+          >
+            ×
+          </button>
         <div className="touch-hint-overlay">
           Tap to add points, double‑tap to finish.
           <button onClick={() => setShowTouchHint(false)}>×</button>
