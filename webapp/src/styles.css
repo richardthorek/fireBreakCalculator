@@ -1,3 +1,6 @@
+/* Import configuration panel styles */
+@import url('./styles-config.css');
+
 /* Touch feedback animation for point placement */
 @keyframes pulse {
   0% {
@@ -13,9 +16,6 @@
     opacity: 0;
   }
 }
-
-/* Import configuration panel styles */
-@import url('./styles-config.css');
 
 /* Basic CSS reset / layout */
 html, body, #root, .app-shell {

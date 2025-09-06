@@ -1,3 +1,13 @@
+/**
+ * Vegetation Mapping API Utility Functions
+ * 
+ * Provides CRUD operations for vegetation formation mappings used in fire break analysis.
+ * Handles communication with the Azure Functions backend API for vegetation mapping data.
+ * 
+ * @module vegetationMappingApi
+ * @version 1.0.0
+ */
+
 import { CreateVegetationMappingInput, VegetationFormationMappingApi } from '../types/vegetationMappingApi';
 
 // Use relative /api by default so Vite dev server proxy (configured in vite.config.ts)

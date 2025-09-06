@@ -15,7 +15,8 @@ const normalizeCoord = (coord: LatLngLike): { lat: number; lng: number } => {
   if ('lng' in coord) {
     return { lat: coord.lat, lng: coord.lng };
   }
-  return { lat: coord.lat, lng: (coord as any).lon };
+  // Handle lon format
+  return { lat: coord.lat, lng: (coord as { lat: number; lon: number }).lon };
 };
 
 /**

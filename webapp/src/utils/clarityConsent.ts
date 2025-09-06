@@ -1,3 +1,13 @@
+/**
+ * Microsoft Clarity Consent Management
+ * 
+ * Manages user consent for Microsoft Clarity analytics integration.
+ * Provides GDPR/privacy-compliant consent handling with banner UI.
+ * 
+ * @module clarityConsent
+ * @version 1.0.0
+ */
+
 // Minimal Clarity consent helper
 // Shows a non-blocking consent banner and calls Clarity Consent API v2
 

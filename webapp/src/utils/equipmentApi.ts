@@ -1,3 +1,13 @@
+/**
+ * Equipment API Utility Functions
+ * 
+ * Provides CRUD operations for fire break equipment including machinery, aircraft, and hand crews.
+ * Handles communication with the Azure Functions backend API for equipment catalogue management.
+ * 
+ * @module equipmentApi
+ * @version 1.0.0
+ */
+
 import { CreateEquipmentInput, EquipmentApi, EquipmentCoreType, UpdateEquipmentInput } from '../types/equipmentApi';
 
 // Use relative /api by default so Vite dev server proxy (configured in vite.config.ts)
