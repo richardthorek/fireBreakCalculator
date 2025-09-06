@@ -1442,6 +1442,155 @@ button:focus,
   overflow: hidden;
 }
 
+.equipment-config-panel.fullscreen .config-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #2a3442;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(30,36,51,0.8);
+}
+
+.equipment-config-panel.fullscreen .config-header h3 {
+  margin: 0;
+  color: #f5f7fa;
+  font-size: 1.25rem;
+}
+
+/* User notice about shared configuration */
+.shared-config-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, rgba(255,193,7,0.15), rgba(255,193,7,0.08));
+  border: 1px solid rgba(255,193,7,0.3);
+  border-left: 4px solid #ffc107;
+  color: #f8f9fa;
+  padding: 12px 20px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.shared-config-notice .notice-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.shared-config-notice .notice-content {
+  flex: 1;
+}
+
+.shared-config-notice strong {
+  color: #ffc107;
+  font-weight: 600;
+}
+
+/* Improve fullscreen layout for equipment tabs and content */
+.equipment-config-panel.fullscreen .equip-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: #16202b;
+  border-bottom: 1px solid #233040;
+  flex-wrap: wrap;
+}
+
+.equipment-config-panel.fullscreen .equip-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Better responsive grid for fullscreen edit mode */
+.equipment-config-panel.fullscreen .equip-row {
+  display: grid;
+  /* Optimized for fullscreen: Name | up to 4 numeric fields | terrain tags | vegetation tags | actions */
+  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(80px, 120px)) minmax(140px, 1.2fr) minmax(140px, 1.2fr) 110px;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1d2732;
+  border: 1px solid #233040;
+  border-radius: 6px;
+  align-items: center;
+  font-size: 13px;
+  box-sizing: border-box;
+  min-height: 48px;
+}
+
+.equipment-config-panel.fullscreen .equip-row.editing {
+  background: #223547;
+  padding: 12px;
+  gap: 10px;
+}
+
+.equipment-config-panel.fullscreen .equip-row.adding {
+  background: #1f3444;
+  border-style: dashed;
+  padding: 12px;
+  gap: 10px;
+}
+
+/* Fullscreen tab-guide styling - missing from original implementation */
+.equipment-config-panel.fullscreen .tab-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px;
+  margin: 0 0 8px 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: #cfe8ff;
+  font-size: 13px;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .guide-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+  margin: 0;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .guide-line strong {
+  color: #e6f7ff;
+  font-weight: 600;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .muted {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* Enhanced responsive behavior for fullscreen */
+@media (max-width: 1200px) {
+  .equipment-config-panel.fullscreen .equip-row {
+    grid-template-columns: minmax(160px, 1.3fr) repeat(3, minmax(75px, 110px)) minmax(120px, 1fr) minmax(120px, 1fr) 100px;
+  }
+}
+
+@media (max-width: 900px) {
+  .equipment-config-panel.fullscreen .equip-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    grid-template-columns: none;
+  }
+  
+  .equipment-config-panel.fullscreen .eq-actions {
+    justify-content: flex-start;
+  }
+  
+  .equipment-config-panel.fullscreen .eq-tags {
+    justify-content: flex-start;
+  }
+}
+
 .config-header {
   padding: 1.5rem;
   border-bottom: 1px solid #2a3442;
