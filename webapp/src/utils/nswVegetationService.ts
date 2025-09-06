@@ -42,20 +42,22 @@ export function mapNSWToInternal(vegClass?: string | null, vegForm?: string | nu
   if (!base) return null;
 
   // Broad heuristic grouping – can be refined over time.
-  // Order matters (first matching rule wins)
+  // Order matters (first matching rule wins) - more specific rules should come first
   const tests: Array<{ re: RegExp; type: NSWVegResultRaw['vegetationType']; confidence: number } > = [
+    // Alpine formations - prioritize over other patterns, but be more specific to avoid capturing forest types
+    { re: /(alpine\s+(heath|grassland|herbfield|shrubland)|montane\s+(grass|herbfield))/, type: 'grassland', confidence: 0.8 },
     // Rainforests, sclerophyll forests, wet forested types -> heavy
-    { re: /(rainforest|wet\s+sclerophyll|dry\s+sclerophyll|sclerophyll\s+forest|forest|wet\s+sclerophyll|wet\s+sclerophyll\s+forest|forested)/, type: 'heavyforest', confidence: 0.95 },
+    { re: /(rainforest|wet\s+sclerophyll|dry\s+sclerophyll|sclerophyll\s+forest|forest|wet\s+sclerophyll|wet\s+sclerophyll\s+forest|forested|montane\s+wet\s+sclerophyll)/, type: 'heavyforest', confidence: 0.95 },
     // Woodlands and grassy woodlands considered lighter than closed forest but often treated as heavy for machine constraints
-    { re: /(grassy\s+woodland|woodland|semi-arid\s+woodlands|woodland\b|woodlands|montane\s+wet\s+sclerophyll)/, type: 'heavyforest', confidence: 0.9 },
+    { re: /(grassy\s+woodland|woodland|semi-arid\s+woodlands|woodland\b|woodlands)/, type: 'heavyforest', confidence: 0.9 },
     // Grasslands and grassy formations -> grassland
-    { re: /(grassland|grassy|meadow|montane\s+grass|temperate\s+montane\s+grass|maritime|riverine\s+plain\s+grasslands|floodplain)/, type: 'grassland', confidence: 0.9 },
-    // Heaths, shrublands, mallee, chenopod, arid shrublands -> medium scrub
-    { re: /(heath|heathland|shrubland|shrub|scrub|mallee|chenopod|acacia|arid\s+shrub|semi-arid)/, type: 'mediumscrub', confidence: 0.85 },
+    { re: /(grassland|grassy|meadow|temperate\s+montane\s+grass|maritime|riverine\s+plain\s+grasslands|floodplain)/, type: 'grassland', confidence: 0.9 },
     // Wetlands, marshes, swamps, saline wetlands -> light (lower fuel / wet areas)
     { re: /(saltmarsh|wetland|fen|swamp|sedgeland|rushland|freshwater|saline|mangrove|coastal\s+swamp|lagoon)/, type: 'lightshrub', confidence: 0.75 },
-    // Alpine formations - many are herbfields / heath; default to grassland for open alpine herbfields
-    { re: /(alpine|montane)/, type: 'grassland', confidence: 0.8 },
+    // Heaths, shrublands, mallee, chenopod, arid shrublands -> medium scrub
+    { re: /(heath|heathland|shrubland|shrub|scrub|mallee|chenopod|acacia|arid\s+shrub|semi-arid)/, type: 'mediumscrub', confidence: 0.85 },
+    // Catch remaining alpine/montane types that weren't caught by more specific patterns above
+    { re: /(alpine|montane)/, type: 'grassland', confidence: 0.7 },
   ];
 
   for (const t of tests) {

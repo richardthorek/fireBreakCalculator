@@ -32,6 +32,8 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
     case 'tree':
     case 'trees':
     case 'woodland':
+    case 'mixed forest':
+    case 'dense forest':
       return { vegetation: 'heavyforest', confidence: 0.9 };
     
     // Scrub and shrubland
@@ -40,6 +42,10 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
     case 'shrubland':
     case 'bush':
     case 'bushland':
+    case 'heath':
+    case 'heathland':
+    case 'savanna':
+    case 'mallee':
       return { vegetation: 'mediumscrub', confidence: 0.85 };
     
     // Grassland and open areas
@@ -48,15 +54,27 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
     case 'meadow':
     case 'pasture':
     case 'field':
+    case 'dry grass':
+    case 'wet grass':
+    case 'prairie':
+    case 'steppe':
       return { vegetation: 'grassland', confidence: 0.9 };
     
-    // Agricultural and cultivated areas
+    // Light vegetation and sparse areas
     case 'crop':
     case 'farmland':
     case 'agriculture':
     case 'cultivated':
     case 'farm':
+    case 'sparse vegetation':
+    case 'sparse':
       return { vegetation: 'lightshrub', confidence: 0.7 };
+    
+    // Dense vegetation that's not forest (treat as heavy for machinery constraints)
+    case 'dense vegetation':
+    case 'dense scrub':
+    case 'thick vegetation':
+      return { vegetation: 'heavyforest', confidence: 0.8 };
     
     // Snow and ice areas
     case 'snow':
@@ -104,8 +122,8 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
     
     default:
       // Log unknown landcover classes for debugging
-      logger.warn(`Unknown landcover class: "${landcoverClass}" - defaulting to mediumscrub`);
-      return { vegetation: 'mediumscrub', confidence: 0.4 };
+      logger.warn(`Unknown landcover class: "${landcoverClass}" - defaulting to lightshrub`);
+      return { vegetation: 'lightshrub', confidence: 0.4 };
   }
 };
 
