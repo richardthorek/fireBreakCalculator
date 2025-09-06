@@ -294,6 +294,40 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           logger.warn('⚠ No contour-related sources or layers found in the custom satellite style!');
           logger.warn('This might indicate the style does not include contour/elevation data.');
           logger.warn('Consider checking the Mapbox Studio style configuration.');
+          
+          // Add fallback contour data from Mapbox terrain source
+          logger.info('Adding fallback contour data to ensure visibility...');
+          
+          try {
+            // Add Mapbox terrain source if not present
+            if (!map.getSource('mapbox-dem')) {
+              map.addSource('mapbox-dem', {
+                type: 'raster-dem',
+                url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                tileSize: 512,
+                maxzoom: 14
+              });
+            }
+            
+            // Add hillshade layer for terrain visualization
+            if (!map.getLayer('hillshade')) {
+              map.addLayer({
+                id: 'hillshade',
+                type: 'hillshade',
+                source: 'mapbox-dem',
+                layout: {},
+                paint: {
+                  'hillshade-shadow-color': '#473B24',
+                  'hillshade-highlight-color': '#FFFFFF',
+                  'hillshade-exaggeration': 0.25
+                }
+              });
+            }
+            
+            logger.info('✓ Added fallback terrain visualization');
+          } catch (error) {
+            logger.error('Failed to add fallback terrain data:', error);
+          }
         } else {
           logger.info(`✓ Found ${contourSources.length} contour sources and ${contourLayers.length} contour layers`);
         }
@@ -708,6 +742,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         <label style="display: block;">
           <input type="checkbox" id="vegetation-toggle" ${vegetationLayerEnabled ? 'checked' : ''}> NSW Vegetation
         </label>
+        <label style="display: block;">
+          <input type="checkbox" id="terrain-toggle" checked> Terrain/Contours
+        </label>
       </div>
       <div style="border-top: 1px solid #ddd; padding-top: 8px;">
         <button id="debug-style" style="font-size: 11px; padding: 2px 6px; cursor: pointer;">Debug Style</button>
@@ -731,6 +768,92 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           map.setStyle('mapbox://styles/mapbox/streets-v12');
         }
       });
+    });
+
+    // Handle terrain/contours layer toggle
+    const terrainToggle = layerControl.querySelector('#terrain-toggle') as HTMLInputElement;
+    terrainToggle.addEventListener('change', (e) => {
+      const target = e.target as HTMLInputElement;
+      
+      if (target.checked) {
+        // Ensure terrain data sources are available
+        if (!map.getSource('mapbox-dem')) {
+          try {
+            map.addSource('mapbox-dem', {
+              type: 'raster-dem',
+              url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+              tileSize: 512,
+              maxzoom: 14
+            });
+            logger.info('Added Mapbox terrain source');
+          } catch (error) {
+            logger.error('Failed to add terrain source:', error);
+            return;
+          }
+        }
+        
+        // Add/show hillshade layer
+        if (!map.getLayer('hillshade')) {
+          try {
+            map.addLayer({
+              id: 'hillshade',
+              type: 'hillshade',
+              source: 'mapbox-dem',
+              layout: {},
+              paint: {
+                'hillshade-shadow-color': '#473B24',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-exaggeration': 0.25,
+                'hillshade-accent-color': '#000000'
+              }
+            });
+            logger.info('Added hillshade layer for terrain visualization');
+          } catch (error) {
+            logger.error('Failed to add hillshade layer:', error);
+          }
+        } else {
+          map.setLayoutProperty('hillshade', 'visibility', 'visible');
+        }
+        
+        // Add contour lines if available
+        if (!map.getLayer('contour-lines')) {
+          try {
+            // Use a different approach for contour lines - this requires terrain data
+            map.addLayer({
+              id: 'contour-lines',
+              type: 'line',
+              source: {
+                type: 'vector',
+                url: 'mapbox://mapbox.mapbox-terrain-v2'
+              },
+              'source-layer': 'contour',
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': '#877b59',
+                'line-width': 1,
+                'line-opacity': 0.6
+              },
+              filter: ['==', 'index', 5] // Show every 5th contour line
+            });
+            logger.info('Added contour lines');
+          } catch (error) {
+            logger.warn('Could not add contour lines:', error);
+          }
+        } else {
+          map.setLayoutProperty('contour-lines', 'visibility', 'visible');
+        }
+      } else {
+        // Hide terrain layers
+        if (map.getLayer('hillshade')) {
+          map.setLayoutProperty('hillshade', 'visibility', 'none');
+        }
+        if (map.getLayer('contour-lines')) {
+          map.setLayoutProperty('contour-lines', 'visibility', 'none');
+        }
+      }
     });
 
     // Handle vegetation layer toggle
@@ -781,6 +904,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       logger.info(`Potential contour layers found: ${contourLayers.length}`);
       contourLayers.forEach(layer => {
         logger.info(`  Contour layer: ${layer.id} (${layer.type})`);
+      });
+      
+      // Check for added terrain layers
+      const addedTerrainLayers = ['hillshade', 'contour-lines'];
+      addedTerrainLayers.forEach(layerId => {
+        if (map.getLayer(layerId)) {
+          const visibility = map.getLayoutProperty(layerId, 'visibility') || 'visible';
+          logger.info(`  Added terrain layer: ${layerId} (visibility: ${visibility})`);
+        }
       });
       
       // Check vegetation layer position
