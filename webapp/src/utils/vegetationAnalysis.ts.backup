@@ -1,23 +1,15 @@
 /**
- * Vegetation analysis utilities using NSW vegetation service and Mapbox Terrain v2 
+ * Vegetation analysis utilities using Mapbox Terrain v2 vector tiles
  * Automatically extracts landcover data to determine vegetation type/density
  */
 
 // Coordinate type compatibility for both Leaflet and Mapbox GL JS
 type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
-
 import { VegetationType } from '../config/classification';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchNSWVegetation } from './nswVegetationService';
 import { logger } from './logger';
-
-/**
- * Helper function to get longitude from coordinate object that may use lng or lon
- */
-const getLng = (coord: LatLngLike): number => {
-  return 'lng' in coord ? coord.lng : coord.lon;
-};
 
 /**
  * Map Mapbox Terrain v2 landcover class to application vegetation type
@@ -110,8 +102,15 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
 };
 
 /**
- * Fetch landcover data from Mapbox Tilequery API
+ * Convert lat/lon to tile coordinates for Mapbox vector tiles
  */
+const latLngToTile = (lat: number, lng: number, zoom: number) => {
+  const latRad = lat * Math.PI / 180;
+  const n = Math.pow(2, zoom);
+  const x = Math.floor(n * (lng + 180) / 360);
+  const y = Math.floor(n * (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2);
+  return { x, y, z: zoom };
+};
 const fetchLandcoverData = async (lat: number, lng: number, token: string): Promise<string> => {
   // If no token or placeholder token, provide mock variation instead of throwing error
   if (!token || token === 'YOUR_MAPBOX_TOKEN_HERE') {
@@ -119,7 +118,8 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
   }
 
   try {
-    // Use Mapbox Tilequery API for point queries
+    // Use Mapbox Tilequery API for point queries (simpler than parsing MVT)
+    // Example: https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/tilequery/{lon},{lat}.json?layers=landcover&limit=5&radius=50&access_token={token}
     const lon = lng;
     const latQ = lat;
     const limit = 5;
@@ -160,6 +160,7 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
  */
 const getMockLandcoverClass = (lat: number, lng: number): string => {
   // Create pseudo-random but deterministic variation based on coordinates
+  // Use a different approach to ensure more variation
   const latSeed = Math.floor(Math.abs(lat * 10000)) % 1000;
   const lngSeed = Math.floor(Math.abs(lng * 10000)) % 1000;
   const combinedSeed = (latSeed + lngSeed * 37) % 1000;
@@ -184,6 +185,7 @@ const getMockLandcoverClass = (lat: number, lng: number): string => {
     return 'rock';
   }
 };
+
 
 /**
  * Calculate distance between two lat/lng points using Haversine formula
@@ -216,7 +218,7 @@ export const generateVegetationSamplePoints = (
   for (let i = 0; i < points.length - 1; i++) {
     const start = points[i];
     const end = points[i + 1];
-    const segmentDistance = calculateDistance(start.lat, getLng(start), end.lat, getLng(end));
+    const segmentDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
 
     // Always include the first point
     if (i === 0) samplePoints.push(start);
@@ -229,12 +231,12 @@ export const generateVegetationSamplePoints = (
       while (distanceAlongSegment < segmentDistance) {
         const ratio = distanceAlongSegment / segmentDistance;
         const interpolatedLat = start.lat + (end.lat - start.lat) * ratio;
-        const interpolatedLng = getLng(start) + (getLng(end) - getLng(start)) * ratio;
-        const pt = { lat: interpolatedLat, lng: interpolatedLng };
+        const interpolatedLng = start.lng + (end.lng - start.lng) * ratio;
+        const pt = new LatLng(interpolatedLat, interpolatedLng);
         
         // Avoid duplicates
         const last = samplePoints[samplePoints.length - 1];
-        if (!last || calculateDistance(last.lat, getLng(last), pt.lat, pt.lng) > 1) {
+        if (!last || last.distanceTo(pt) > 0.001) {
           samplePoints.push(pt);
         }
         
@@ -244,8 +246,8 @@ export const generateVegetationSamplePoints = (
 
     // Always include the end point
     const last = samplePoints[samplePoints.length - 1];
-    const endPt = { lat: end.lat, lng: getLng(end) };
-    if (!last || calculateDistance(last.lat, getLng(last), endPt.lat, endPt.lng) > 1) {
+    const endPt = new LatLng(end.lat, end.lng);
+    if (!last || last.distanceTo(endPt) > 0.001) {
       samplePoints.push(endPt);
     }
 
@@ -256,7 +258,7 @@ export const generateVegetationSamplePoints = (
 };
 
 /**
- * Analyze track for vegetation information using NSW vegetation service and Mapbox Terrain v2
+ * Analyze track for vegetation information using Mapbox Terrain v2
  */
 export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<VegetationAnalysis> => {
   if (points.length < 2) {
@@ -288,12 +290,12 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
     const start = samplePoints[i];
     const end = samplePoints[i + 1];
     
-    const distance = calculateDistance(start.lat, getLng(start), end.lat, getLng(end));
+    const distance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
     if (distance <= 0.001) continue; // Skip zero-length segments
     
     // Sample landcover at the midpoint of the segment
     const midLat = (start.lat + end.lat) / 2;
-    const midLng = (getLng(start) + getLng(end)) / 2;
+    const midLng = (start.lng + end.lng) / 2;
     
     try {
       // 1. Try high‑fidelity NSW government vegetation layer first (if in region)
@@ -314,9 +316,9 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       }
       
       rawSegments.push({
-        start: [start.lat, getLng(start)],
-        end: [end.lat, getLng(end)],
-        coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
+        start: [start.lat, start.lng],
+        end: [end.lat, end.lng],
+        coords: [[start.lat, start.lng], [end.lat, end.lng]],
         vegetationType: vegetation,
         confidence,
         landcoverClass,
@@ -331,16 +333,16 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       
       totalDistance += distance;
       totalConfidence += confidence;
-    } catch (segmentError) {
+  } catch (segmentError) {
       // If individual segment fails, use fallback vegetation based on position
       logger.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
       const fallbackClass = getMockLandcoverClass(midLat, midLng);
       const { vegetation, confidence } = mapLandcoverToVegetation(fallbackClass);
       
       rawSegments.push({
-        start: [start.lat, getLng(start)],
-        end: [end.lat, getLng(end)],
-        coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
+        start: [start.lat, start.lng],
+        end: [end.lat, end.lng],
+        coords: [[start.lat, start.lng], [end.lat, end.lng]],
         vegetationType: vegetation,
         confidence: confidence * 0.5, // Reduce confidence for fallback data
         landcoverClass: fallbackClass + ' (fallback)',
@@ -441,8 +443,8 @@ export const generateVegetationOverlay = async (
   for (const point of points) {
     minLat = Math.min(minLat, point.lat);
     maxLat = Math.max(maxLat, point.lat);
-    minLng = Math.min(minLng, getLng(point));
-    maxLng = Math.max(maxLng, getLng(point));
+    minLng = Math.min(minLng, point.lng);
+    maxLng = Math.max(maxLng, point.lng);
   }
 
   // Add buffer (convert km to degrees approximately)
@@ -458,7 +460,7 @@ export const generateVegetationOverlay = async (
   for (let lat = minLat; lat <= maxLat; lat += gridSpacingDegrees) {
     for (let lng = minLng; lng <= maxLng; lng += gridSpacingDegrees) {
       // Check if point is within buffer distance of the line
-      const gridPoint = { lat, lng };
+      const gridPoint = new LatLng(lat, lng);
       let withinBuffer = false;
       
       for (let i = 0; i < points.length - 1; i++) {
@@ -502,29 +504,31 @@ export const generateVegetationOverlay = async (
 /**
  * Calculate distance from a point to a line segment
  */
-const distanceToLineSegment = (point: LatLngLike, lineStart: LatLngLike, lineEnd: LatLngLike): number => {
+const distanceToLineSegment = (point: LatLng, lineStart: LatLng, lineEnd: LatLng): number => {
   const A = point.lat - lineStart.lat;
-  const B = getLng(point) - getLng(lineStart);
+  const B = point.lng - lineStart.lng;
   const C = lineEnd.lat - lineStart.lat;
-  const D = getLng(lineEnd) - getLng(lineStart);
+  const D = lineEnd.lng - lineStart.lng;
 
   const dot = A * C + B * D;
   const lenSq = C * C + D * D;
   
   if (lenSq === 0) {
     // Line segment is a point
-    return calculateDistance(point.lat, getLng(point), lineStart.lat, getLng(lineStart));
+    return point.distanceTo(lineStart);
   }
   
   let param = dot / lenSq;
   
   if (param < 0) {
-    return calculateDistance(point.lat, getLng(point), lineStart.lat, getLng(lineStart));
+    return point.distanceTo(lineStart);
   } else if (param > 1) {
-    return calculateDistance(point.lat, getLng(point), lineEnd.lat, getLng(lineEnd));
+    return point.distanceTo(lineEnd);
   } else {
-    const projectionLat = lineStart.lat + param * C;
-    const projectionLng = getLng(lineStart) + param * D;
-    return calculateDistance(point.lat, getLng(point), projectionLat, projectionLng);
+    const projection = new LatLng(
+      lineStart.lat + param * C,
+      lineStart.lng + param * D
+    );
+    return point.distanceTo(projection);
   }
 };

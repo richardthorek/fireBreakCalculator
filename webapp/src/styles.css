@@ -1970,19 +1970,26 @@ button:focus,
   color: #fff; 
 }
 
-/* Contour overlay styles */
+/* Contour overlay styles - Updated for Mapbox Terrain v2 vector tiles */
 .contour-overlay {
-  /* Use blend modes to enhance contour line visibility */
-  mix-blend-mode: multiply;
-  /* Apply a filter to emphasize contour lines and reduce background elements */
-  filter: contrast(1.5) brightness(0.8) saturate(0);
+  /* Enhanced styling for vector tile contour lines */
+  opacity: 1.0; /* Full opacity for crisp vector lines */
+  pointer-events: none; /* Ensure contours don't interfere with map interaction */
 }
 
-/* Alternative contour overlay for better visibility on satellite imagery */
-.leaflet-tile-pane .contour-overlay img {
-  /* Enhance contour lines while reducing other map elements */
-  filter: contrast(2) brightness(0.7) saturate(0) hue-rotate(180deg);
-  mix-blend-mode: overlay;
+/* Vector tile contour line styling for better visibility */
+.contour-overlay svg {
+  /* Ensure SVG contour lines render crisply */
+  shape-rendering: geometricPrecision;
+}
+
+.contour-overlay path {
+  /* Style vector contour paths for optimal visibility */
+  stroke-width: 1px; /* Thin lines as per requirements */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  vector-effect: non-scaling-stroke; /* Maintain consistent line width at all zoom levels */
 }
 
 @media (max-width: 640px) {

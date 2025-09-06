@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { MapView } from './components/MapView';
+import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import { EquipmentConfigPanel } from './components/EquipmentConfigPanel';
 import { defaultConfig } from './config/defaultConfig';
@@ -140,7 +140,7 @@ const App: React.FC = () => {
       </header>
       <main className="app-main" id="main-content">
         <div className="map-section">
-          <MapView 
+          <MapboxMapView 
             onDistanceChange={setFireBreakDistance}
             onTrackAnalysisChange={setTrackAnalysis}
             onVegetationAnalysisChange={setVegetationAnalysis}
