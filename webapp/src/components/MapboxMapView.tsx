@@ -102,7 +102,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
   // Aircraft drop markers
   useEffect(() => {
-    const map = mapRef.current; const draw = drawRef.current;
+    const map = mapRef.current;
+    const draw = drawRef.current;
     if (!map || !draw || !selectedAircraftForPreview.length) {
       dropMarkersRef.current.forEach(mks => mks.forEach(m => m.remove()));
       dropMarkersRef.current.clear();
