@@ -114,6 +114,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   });
   const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
   const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
+  const [currentStyle, setCurrentStyle] = useState('satellite');
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
@@ -253,38 +254,84 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       setDropsVersion(v => v + 1);
     });
 
-    // Add streets layer as an alternative
+    // Handle style loading and setup layers
     map.on('style.load', () => {
+      logger.info(`Style loaded: ${map.getStyle().name || 'Unknown'}`);
+      
+      // Verify the style is the expected custom style when satellite is selected
+      if (currentStyle === 'satellite') {
+        const styleURL = map.getStyle().sprite;
+        logger.info(`Satellite style loaded, sprite URL: ${styleURL}`);
+      }
+      
       // Add NSW vegetation WMS layer as a raster source
-      map.addSource('nsw-vegetation', {
-        type: 'raster',
-        tiles: [
-          'https://mapprod3.environment.nsw.gov.au/arcgis/services/VIS/SVTM_NSW_Extant_PCT/MapServer/WMSServer?bbox={bbox-epsg-3857}&format=image/png&service=WMS&version=1.1.1&request=GetMap&srs=EPSG:3857&transparent=true&width=256&height=256&layers=3'
-        ],
-        tileSize: 256
-      });
+      if (!map.getSource('nsw-vegetation')) {
+        map.addSource('nsw-vegetation', {
+          type: 'raster',
+          tiles: [
+            'https://mapprod3.environment.nsw.gov.au/arcgis/services/VIS/SVTM_NSW_Extant_PCT/MapServer/WMSServer?bbox={bbox-epsg-3857}&format=image/png&service=WMS&version=1.1.1&request=GetMap&srs=EPSG:3857&transparent=true&width=256&height=256&layers=3'
+          ],
+          tileSize: 256
+        });
+      }
 
-      // Add vegetation layer (initially hidden)
-      map.addLayer({
-        id: 'nsw-vegetation-layer',
-        type: 'raster',
-        source: 'nsw-vegetation',
-        layout: {
-          visibility: 'none'
-        },
-        paint: {
-          'raster-opacity': 0.7
-        }
-      });
+      // Add vegetation layer (preserve previous visibility state)
+      if (!map.getLayer('nsw-vegetation-layer')) {
+        map.addLayer({
+          id: 'nsw-vegetation-layer',
+          type: 'raster',
+          source: 'nsw-vegetation',
+          layout: {
+            visibility: vegetationLayerEnabled ? 'visible' : 'none'
+          },
+          paint: {
+            'raster-opacity': 0.7
+          }
+        });
+      }
 
-      // Add layer control
-      addLayerControl(map);
+      // Add layer control only if it doesn't exist
+      if (!map.getContainer().querySelector('.layer-control-container')) {
+        addLayerControl(map);
+      }
+    });
+
+    // Add specific error handling for style loading
+    map.on('styleloadstart', () => {
+      logger.info(`Loading style for ${currentStyle} view...`);
+    });
+
+    map.on('styleimagemissing', (e) => {
+      logger.warn('Style image missing:', e.id);
     });
 
     // Handle errors
     map.on('error', (e) => {
       logger.error('Mapbox GL error:', e);
-      setError('Map failed to load. Please check your connection and try again.');
+      
+      // Provide more specific error handling for different error types
+      if (e.error && e.error.message) {
+        if (e.error.message.includes('style') || e.error.message.includes('unauthorized')) {
+          setError('Failed to load map style. Please check that the Mapbox style URL is accessible and the token has proper permissions.');
+        } else {
+          setError('Map failed to load. Please check your connection and try again.');
+        }
+      } else {
+        setError('Map failed to load. Please check your connection and try again.');
+      }
+    });
+
+    // Add data loading error handler specifically for style issues
+    map.on('dataloading', (e) => {
+      if ('sourceDataType' in e && e.sourceDataType === 'visibility') {
+        logger.debug(`Data loading: ${('sourceId' in e) ? e.sourceId : 'unknown'} - ${e.sourceDataType}`);
+      }
+    });
+
+    map.on('sourcedata', (e) => {
+      if ('sourceId' in e && e.sourceId === 'composite' && 'isSourceLoaded' in e && e.isSourceLoaded) {
+        logger.info('Base style tiles loaded successfully');
+      }
     });
 
     return () => {
@@ -538,7 +585,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // Helper function to add layer control
   const addLayerControl = (map: MapboxMap) => {
     const layerControl = document.createElement('div');
-    layerControl.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    layerControl.className = 'mapboxgl-ctrl mapboxgl-ctrl-group layer-control-container';
     layerControl.style.background = 'white';
     layerControl.style.padding = '10px';
     layerControl.style.borderRadius = '4px';
@@ -546,15 +593,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     layerControl.innerHTML = `
       <div style="margin-bottom: 8px;">
         <label style="display: block; margin-bottom: 4px;">
-          <input type="radio" name="basemap" value="satellite" checked> Satellite (Contours)
+          <input type="radio" name="basemap" value="satellite" ${currentStyle === 'satellite' ? 'checked' : ''}> Satellite (Contours)
         </label>
         <label style="display: block;">
-          <input type="radio" name="basemap" value="streets"> Streets
+          <input type="radio" name="basemap" value="streets" ${currentStyle === 'streets' ? 'checked' : ''}> Streets
         </label>
       </div>
       <div>
         <label style="display: block;">
-          <input type="checkbox" id="vegetation-toggle"> NSW Vegetation
+          <input type="checkbox" id="vegetation-toggle" ${vegetationLayerEnabled ? 'checked' : ''}> NSW Vegetation
         </label>
       </div>
     `;
@@ -565,8 +612,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       radio.addEventListener('change', (e) => {
         const target = e.target as HTMLInputElement;
         if (target.value === 'satellite') {
+          logger.info('Switching to satellite style with contours');
+          setCurrentStyle('satellite');
           map.setStyle('mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t');
         } else if (target.value === 'streets') {
+          logger.info('Switching to streets style');
+          setCurrentStyle('streets');
           map.setStyle('mapbox://styles/mapbox/streets-v12');
         }
       });
@@ -578,9 +629,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const target = e.target as HTMLInputElement;
       const visibility = target.checked ? 'visible' : 'none';
       
+      setVegetationLayerEnabled(target.checked);
+      
       if (map.getLayer('nsw-vegetation-layer')) {
         map.setLayoutProperty('nsw-vegetation-layer', 'visibility', visibility);
-        setVegetationLayerEnabled(target.checked);
         
         if (target.checked && map.getZoom() < 10) {
           setShowVegetationZoomHint(true);
