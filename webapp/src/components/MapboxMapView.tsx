@@ -936,16 +936,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         }
         
         // Add contour lines if available
-        if (!map.getLayer('contour-lines')) {
-          try {
-            // Use a different approach for contour lines - this requires terrain data
+        try {
+          if (!map.getSource('contours')) {
+            map.addSource('contours', {
+              type: 'vector',
+              url: 'mapbox://mapbox.mapbox-terrain-v2'
+            });
+            logger.info('Added contours vector source');
+          }
+          if (!map.getLayer('contour-lines')) {
             map.addLayer({
               id: 'contour-lines',
               type: 'line',
-              source: {
-                type: 'vector',
-                url: 'mapbox://mapbox.mapbox-terrain-v2'
-              },
+              source: 'contours',
               'source-layer': 'contour',
               layout: {
                 'line-join': 'round',
@@ -956,14 +959,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
                 'line-width': 1,
                 'line-opacity': 0.6
               },
-              filter: ['==', 'index', 5] // Show every 5th contour line
+              filter: ['==', 'index', 5]
             });
-            logger.info('Added contour lines');
-          } catch (error) {
-            logger.warn('Could not add contour lines:', error);
+            logger.info('Added contour lines layer');
+          } else {
+            map.setLayoutProperty('contour-lines', 'visibility', 'visible');
           }
-        } else {
-          map.setLayoutProperty('contour-lines', 'visibility', 'visible');
+        } catch (error) {
+          logger.warn('Could not add contour lines:', error);
         }
       } else {
         // Hide terrain layers
