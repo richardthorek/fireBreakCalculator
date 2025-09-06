@@ -136,8 +136,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           // Create marker element
           const markerElement = document.createElement('div');
           markerElement.className = 'aircraft-drop-marker';
-          markerElement.style.cssText =
-            'width:12px;height:12px;border-radius:50%;background:#4fc3f7;border:2px solid #fff;box-shadow:0 2px 4px rgba(0,0,0,.3);cursor:pointer;';
 
           // Create and add marker to map
           const marker = new mapboxgl.Marker(markerElement)
@@ -145,6 +143,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             .addTo(map);
           markers.push(marker);
         }
+      });
       dropMarkersRef.current.set(id, markers);
     });
   }, [selectedAircraftForPreview, aircraft, dropsVersion]);
@@ -179,12 +178,26 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   };
 
   return (
-    <div className="mapbox-map-container" style={{ position:'relative', width:'100%', height:'100%' }}>
-      <div ref={mapContainerRef} className="mapbox-map" style={{ width:'100%', height:'100%' }} />
-      {error && (<div style={{ position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',background:'rgba(255,255,255,0.95)',padding:16,borderRadius:8,maxWidth:320,zIndex:1000,boxShadow:'0 4px 12px rgba(0,0,0,0.25)',fontSize:14 }}><strong style={{ display:'block', color:'#c62828', marginBottom:8 }}>Map Error</strong>{error}</div>)}
-      {showTouchHint && (<div style={{ position:'absolute', top:20, right:20, background:'rgba(0,0,0,0.75)', color:'#fff', padding:'10px 12px', borderRadius:6, fontSize:13, maxWidth:220, zIndex:1000 }}>Tap to add points, double‑tap to finish.<button onClick={()=>setShowTouchHint(false)} style={{ background:'none', border:'none', color:'#fff', marginLeft:8, cursor:'pointer' }}>×</button></div>)}
-      {isAnalyzing && (<div style={{ position:'absolute', bottom:16, right:16, background:'rgba(0,0,0,0.6)', color:'#fff', padding:'6px 10px', borderRadius:4, fontSize:12 }}>Analyzing…</div>)}
-      {fireBreakDistance!=null && (<div style={{ position:'absolute', bottom:16, left:16, background:'rgba(0,0,0,0.6)', color:'#fff', padding:'6px 10px', borderRadius:4, fontSize:12 }}>Distance: {Math.round(fireBreakDistance)} m</div>)}
+    <div className="mapbox-map-container">
+      <div ref={mapContainerRef} className="mapbox-map" />
+      {error && (
+        <div className="map-error-overlay">
+          <strong>Map Error</strong>
+          {error}
+        </div>
+      )}
+      {showTouchHint && (
+        <div className="touch-hint-overlay">
+          Tap to add points, double‑tap to finish.
+          <button onClick={() => setShowTouchHint(false)}>×</button>
+        </div>
+      )}
+      {isAnalyzing && (
+        <div className="analyzing-badge">Analyzing…</div>
+      )}
+      {fireBreakDistance!=null && (
+        <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
+      )}
     </div>
   );
 };
