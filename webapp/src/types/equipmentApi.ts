@@ -1,6 +1,8 @@
 /**
  * API equipment types mirroring the Azure Functions backend.
  */
+import { TerrainLevel, VegetationType } from '../config/classification';
+
 export type EquipmentCoreType = 'Machinery' | 'Aircraft' | 'HandCrew';
 
 export interface EquipmentBase {
@@ -8,8 +10,8 @@ export interface EquipmentBase {
   type: EquipmentCoreType;
   name: string;
   description?: string;
-  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
-  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
+  allowedTerrain: TerrainLevel[];
+  allowedVegetation: VegetationType[];
   costPerHour?: number;
   active: boolean;
   version: number;

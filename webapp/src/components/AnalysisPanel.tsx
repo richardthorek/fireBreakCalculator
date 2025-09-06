@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { deriveTerrainFromSlope, VEGETATION_TYPES } from '../config/classification';
+import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
 import { OverlapMatrix } from './OverlapMatrix';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
@@ -32,8 +32,8 @@ interface AnalysisPanelProps {
   onDropPreviewChange?: (aircraftIds: string[]) => void;
 }
 
-type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
-type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+// Use centralized type definitions from classification.ts
+type TerrainType = TerrainLevel;
 
 
 interface CalculationResult {
@@ -133,7 +133,7 @@ const baseEnvironmentCompatible = (
   requiredTerrain: TerrainType,
   vegetation: VegetationType
 ): boolean => {
-  return equipment.allowedTerrain.includes(requiredTerrain) && equipment.allowedVegetation.includes(vegetation as any);
+  return equipment.allowedTerrain.includes(requiredTerrain) && equipment.allowedVegetation.includes(vegetation);
 };
 
 /** Ordinal ordering helper for terrain difficulty */
@@ -169,7 +169,7 @@ function evaluateMachineryTerrainCompatibility(
 
   const simpleOk = baseEnvironmentCompatible(machine, requiredTerrain, vegetation);
   // Fast path: if highest required terrain is within machine allowance we are full compatible.
-  const highestAllowed = machine.allowedTerrain.reduce((max, t) => Math.max(max, terrainRank[t as TerrainType]), 0);
+  const highestAllowed = machine.allowedTerrain.reduce((max, t) => Math.max(max, terrainRank[t]), 0);
   const requiredRank = terrainRank[requiredTerrain];
   if (requiredRank <= highestAllowed && simpleOk) return { level: 'full' };
 

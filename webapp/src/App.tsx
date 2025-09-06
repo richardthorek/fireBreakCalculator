@@ -36,8 +36,8 @@ const App: React.FC = () => {
       clearingRate: m.clearingRate || 0,
       costPerHour: m.costPerHour || 0,
       description: m.description || '',
-      allowedTerrain: m.allowedTerrain as MachinerySpec['allowedTerrain'],
-      allowedVegetation: m.allowedVegetation as MachinerySpec['allowedVegetation'],
+      allowedTerrain: m.allowedTerrain,
+      allowedVegetation: m.allowedVegetation,
       maxSlope: m.maxSlope
     }));
   }, [equipment]);
@@ -54,8 +54,8 @@ const App: React.FC = () => {
       turnaroundTime: a.turnaroundMinutes || 0,
       costPerHour: a.costPerHour || 0,
       description: a.description || '',
-      allowedTerrain: a.allowedTerrain as AircraftSpec['allowedTerrain'],
-      allowedVegetation: a.allowedVegetation as AircraftSpec['allowedVegetation']
+      allowedTerrain: a.allowedTerrain,
+      allowedVegetation: a.allowedVegetation
     }));
   }, [equipment]);
 
@@ -70,8 +70,8 @@ const App: React.FC = () => {
       tools: c.equipmentList || [],
       costPerHour: c.costPerHour || 0,
       description: c.description || '',
-      allowedTerrain: c.allowedTerrain as HandCrewSpec['allowedTerrain'],
-      allowedVegetation: c.allowedVegetation as HandCrewSpec['allowedVegetation']
+      allowedTerrain: c.allowedTerrain,
+      allowedVegetation: c.allowedVegetation
     }));
   }, [equipment]);
 
