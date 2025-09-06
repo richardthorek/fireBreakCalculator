@@ -384,7 +384,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="equipment-config-panel sidebar">
+    <div className="equipment-config-panel fullscreen">
       <div className="config-header">
         <h3>Equipment Configuration</h3>
         <button 
@@ -393,6 +393,15 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
         >
           ✕
         </button>
+      </div>
+      
+      {/* User notice about shared configuration */}
+      <div className="shared-config-notice">
+        <div className="notice-icon">⚠️</div>
+        <div className="notice-content">
+          <strong>Important:</strong> This equipment configuration is shared among all users. 
+          Any changes you make to machinery, aircraft, or hand tool settings will be visible to everyone using the system.
+        </div>
       </div>
 
       <div className="config-tabs equip-tabs">
