@@ -131,6 +131,22 @@ The expanded view organizes equipment into three distinct categories:
 
 ## Accessibility Features
 
+### Consent Banner and Layer Controls Accessibility (v2.1)
+
+**Microsoft Clarity Consent Banner**
+- **High Contrast Design**: Dark background (rgba(30,36,51,0.98)) with white text (#f5f7fa) ensuring 4.5:1+ contrast ratio
+- **Interactive Feedback**: Hover states with color transitions for Accept (emerald green) and Reject (gray) buttons
+- **Focus Management**: Clear focus indicators with 2px blue outline following WCAG guidelines
+- **Modern Styling**: Backdrop blur effects and consistent dark theme integration
+- **Keyboard Accessibility**: Full keyboard navigation support with proper tab order
+
+**Map Layer Controls**
+- **Consistent Theme**: Dark background matching the application's design language
+- **Readable Labels**: White text with sufficient contrast on dark control panels
+- **Interactive States**: Hover effects for labels and focus indicators for form inputs
+- **Touch Targets**: Properly sized controls for both desktop and mobile interaction
+- **Visual Hierarchy**: Clear grouping of basemap options and layer toggles
+
 ### WCAG 2.1 AA Compliance
 - **Color Contrast**: All text maintains minimum 4.5:1 contrast ratio
 - **Keyboard Navigation**: Full keyboard support for all interactive elements including drawing tools

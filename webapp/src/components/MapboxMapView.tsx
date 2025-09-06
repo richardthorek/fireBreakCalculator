@@ -728,9 +728,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     layerControl.style.background = 'white';
     layerControl.style.padding = '10px';
     layerControl.style.borderRadius = '4px';
+    layerControl.style.border = '1px solid #2a3442';
+    layerControl.style.color = '#f5f7fa';
+    layerControl.style.backdropFilter = 'blur(8px)';
+    (layerControl.style as any).webkitBackdropFilter = 'blur(8px)';
+    layerControl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
     
     layerControl.innerHTML = `
       <div style="margin-bottom: 8px;">
+
         <label style="display: block; margin-bottom: 4px;">
           <input type="radio" name="basemap" value="satellite" ${currentStyle === 'satellite' ? 'checked' : ''}> Satellite (Contours)
         </label>
@@ -741,6 +747,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       <div style="margin-bottom: 8px;">
         <label style="display: block;">
           <input type="checkbox" id="vegetation-toggle" ${vegetationLayerEnabled ? 'checked' : ''}> NSW Vegetation
+
         </label>
         <label style="display: block;">
           <input type="checkbox" id="terrain-toggle" checked> Terrain/Contours
