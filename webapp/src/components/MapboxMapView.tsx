@@ -41,7 +41,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   // Touch controls state and configuration
   // Automatically detect touch devices and show appropriate hints
@@ -53,7 +52,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
   
   // Aircraft drop markers state
-  const [showTouchHint, setShowTouchHint] = useState(() => { try { return isTouchDevice(); } catch { return false; } });
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
   const [dropsVersion, setDropsVersion] = useState(0);
 
@@ -70,7 +68,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     logger.info(`Map init (hosted style only): ${styleURL}`);
     const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
     mapRef.current = map;
-    map.addControl(new mapboxgl.NavigationControl(), 'top-left');
+    
+    // Add standard Mapbox navigation controls (zoom, rotate, pitch)
+    map.addControl(new mapboxgl.NavigationControl({
+      showCompass: true,
+      showZoom: true,
+      visualizePitch: true
+    }), 'top-left');
+    
+    // Add full screen control
+    map.addControl(new mapboxgl.FullscreenControl(), 'top-left');
 
     // Initialize MapboxDraw for drawing functionality
     // Configure for optimal touch experience: tap-by-tap point placement with separate finalization
@@ -88,7 +95,35 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         { id: 'gl-draw-vertex-active', type: 'circle', filter: ['all', ['==', 'meta', 'vertex'], ['==', '$type', 'Point'], ['!=', 'mode', 'static']], paint: { 'circle-radius': 5, 'circle-color': '#ff6b35' } }
       ]
     });
+    
+    // Position the drawing tools in the top right with spacing for better visibility
     map.addControl(draw, 'top-right');
+    
+    // Add custom class to draw control container for enhanced styling
+    setTimeout(() => {
+      const drawContainer = document.querySelector('.mapboxgl-ctrl-top-right .mapbox-gl-draw_ctrl');
+      if (drawContainer && drawContainer.parentElement) {
+        drawContainer.parentElement.classList.add('mapboxgl-ctrl-group-draw');
+      }
+      
+      // Apply custom styling to the draw buttons to make them more visible
+      const lineStringBtn = document.querySelector('.mapbox-gl-draw_line');
+      if (lineStringBtn) {
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = 'Draw';
+        labelSpan.className = 'draw-button-label';
+        lineStringBtn.appendChild(labelSpan);
+      }
+      
+      const trashBtn = document.querySelector('.mapbox-gl-draw_trash');
+      if (trashBtn) {
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = 'Delete';
+        labelSpan.className = 'draw-button-label';
+        trashBtn.appendChild(labelSpan);
+      }
+    }, 500);
+    
     drawRef.current = draw;
 
     // Enhanced touch controls for better mobile experience
@@ -256,31 +291,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         </div>
       )}
       {showTouchHint && (
-        <div className="touch-hint" style={{
-          position: 'absolute',
-          top: '20px',
-          right: '20px',
-          background: 'rgba(0, 0, 0, 0.8)',
-          color: 'white',
-          padding: '12px',
-          borderRadius: '6px',
-          fontSize: '14px',
-          maxWidth: '200px',
-          zIndex: 1000
-        }}>
-          Tap the line tool, then tap points to draw your fire break route. Tap the line tool again or press Enter to finish.
-          <button 
-            onClick={() => setShowTouchHint(false)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'white',
-              marginLeft: '8px',
-              cursor: 'pointer'
-            }}
-          >
-            ×
-          </button>
         <div className="touch-hint-overlay">
           Tap to add points, double‑tap to finish.
           <button onClick={() => setShowTouchHint(false)}>×</button>

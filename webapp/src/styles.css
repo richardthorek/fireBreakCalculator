@@ -386,92 +386,7 @@ html, body, #root, .app-shell {
   position: relative; /* allow absolutely positioned controls */
 }
 
-/* Mapbox Map Container Styles */
-.mapbox-map-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.mapbox-map {
-  width: 100%;
-  height: 100%;
-}
-
-/* Mapbox UI Overlays */
-.map-error-overlay {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(255, 255, 255, 0.95);
-  padding: 16px;
-  border-radius: 8px;
-  max-width: 320px;
-  z-index: 1000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  font-size: 14px;
-}
-
-.map-error-overlay strong {
-  display: block;
-  color: #c62828;
-  margin-bottom: 8px;
-}
-
-.touch-hint-overlay {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  padding: 10px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  max-width: 220px;
-  z-index: 1000;
-}
-
-.touch-hint-overlay button {
-  background: none;
-  border: none;
-  color: #fff;
-  margin-left: 8px;
-  cursor: pointer;
-}
-
-.analyzing-badge {
-  position: absolute;
-  bottom: 16px;
-  right: 16px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.distance-badge {
-  position: absolute;
-  bottom: 16px;
-  left: 16px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-/* Aircraft drop marker */
-.aircraft-drop-marker {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #4fc3f7;
-  border: 2px solid #fff;
-  box-shadow: 0 2px 4px rgba(0,0,0,.3);
-  cursor: pointer;
-}
+/* Mapbox Map Container Styles - Removed duplicates */
 
 .app-title {
   margin: 0;
@@ -2037,6 +1952,229 @@ button:focus {
 
 .effective-vegetation strong {
   color: #e1e7ef;
+}
+
+/* Map container and related elements */
+.mapbox-map-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.mapbox-map {
+  width: 100%;
+  height: 100%;
+}
+
+.map-error-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(220, 38, 38, 0.9);
+  color: white;
+  padding: 16px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 1000;
+  text-align: center;
+  max-width: 80%;
+}
+
+.map-error-overlay strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.touch-hint-overlay {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  max-width: 200px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.touch-hint-overlay button {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  margin-left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.analyzing-badge {
+  position: absolute;
+  bottom: 20px;
+  right: 20px; /* Moved to right side to avoid overlapping with distance badge */
+  background: rgba(2, 132, 199, 0.8);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 990;
+}
+
+.distance-badge {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 990;
+  font-weight: 500;
+  width: auto;
+  height: auto;
+  max-width: 200px;
+  display: inline-block;
+}
+
+.aircraft-drop-marker {
+  width: 12px;
+  height: 12px;
+  background: #ff4500;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 69, 0, 0.3);
+}
+
+/* Fix for MapboxGL Draw controls - make them visible with better contrast */
+.mapbox-gl-draw_ctrl-draw-btn {
+  background-color: #3773b3 !important; /* Dark blue background */
+  border-color: #aaaaaa !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+.mapbox-gl-draw_ctrl-draw-btn.active {
+  background-color: #2c5d91 !important; /* Even darker blue when active */
+  border-color: #ffffff !important;
+}
+
+.mapbox-gl-draw_ctrl-draw-btn svg {
+  fill: #ffffff !important; /* White icons for contrast against dark background */
+  stroke: #ffffff !important;
+  stroke-width: 0.5px !important;
+}
+
+/* Specific styling for line string button */
+.mapbox-gl-draw_line {
+  border-left: 3px solid #ffffff !important;
+}
+
+/* Specific styling for trash button */
+.mapbox-gl-draw_trash {
+  background-color: #b92d2b !important; /* Red background for delete */
+  border-left: 3px solid #ffffff !important;
+}
+
+.mapboxgl-ctrl-group {
+  background-color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4) !important;
+  border: 1px solid #cccccc !important;
+  margin-bottom: 10px !important; /* Add spacing between control groups */
+}
+
+/* Additional spacing for map controls to prevent overlapping */
+.mapboxgl-ctrl-top-left .mapboxgl-ctrl {
+  margin: 10px 0 0 10px !important;
+}
+
+.mapboxgl-ctrl-top-right .mapboxgl-ctrl {
+  margin: 10px 10px 0 0 !important;
+}
+
+/* Make the draw control container stand out */
+.mapboxgl-ctrl-group.mapboxgl-ctrl-group-draw {
+  background-color: rgba(0,0,0,0.1) !important;
+  padding: 2px !important;
+  border: 2px solid #ffffff !important;
+}
+
+.mapboxgl-ctrl button {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e0e0e0 !important;
+}
+
+/* Enhanced icon visibility for MapboxGL Draw */
+.mapbox-gl-draw_ctrl-draw-btn {
+  position: relative !important;
+  width: 30px !important;
+  height: 30px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* Style the line string icon */
+.mapbox-gl-draw_line::after {
+  content: "✏️";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 16px;
+  text-shadow: 0 0 2px rgba(0,0,0,0.5);
+}
+
+/* Style the trash icon */
+.mapbox-gl-draw_trash::after {
+  content: "🗑️";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 16px;
+  text-shadow: 0 0 2px rgba(0,0,0,0.5);
+}
+
+.mapboxgl-ctrl button:hover {
+  background-color: #f0f0f0 !important;
+}
+
+.mapbox-gl-draw_ctrl-draw-btn:hover {
+  background-color: #4a8bc5 !important; /* Lighter blue on hover */
+  cursor: pointer !important;
+}
+
+.mapbox-gl-draw_trash:hover {
+  background-color: #d13438 !important; /* Brighter red on hover */
+  cursor: pointer !important;
+}
+
+/* Text labels for draw buttons */
+.draw-button-label {
+  position: absolute;
+  top: 31px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000000;
+  color: #ffffff;
+  padding: 3px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+  font-weight: bold;
+  pointer-events: none; /* So clicks pass through */
+  display: none;
+}
+
+.mapbox-gl-draw_ctrl-draw-btn:hover .draw-button-label {
+  display: block; /* Show on hover */
 }
 
 /* Drawing controls for touch device support */
