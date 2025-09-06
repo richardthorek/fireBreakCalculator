@@ -121,7 +121,29 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         const coords = f.geometry.coordinates; if (coords.length < 2) return;
         const cumulative: { coord: [number,number]; dist: number }[] = []; let total=0; cumulative.push({ coord:[coords[0][0], coords[0][1]], dist:0 });
         for (let i=1;i<coords.length;i++){ const a=coords[i-1]; const b=coords[i]; const d=calculateDistance(a[1],a[0],b[1],b[0]); total+=d; cumulative.push({ coord:[b[0],b[1]], dist: total }); }
-        for (let d=dropLen; d<=total; d+=dropLen){ let idx=cumulative.findIndex(c=>c.dist>=d); if(idx===-1) idx=cumulative.length-1; const after=cumulative[idx]; const before=cumulative[Math.max(0,idx-1)]; const segLen=after.dist-before.dist||1; const t=(d-before.dist)/segLen; const lng=before.coord[0]+(after.coord[0]-before.coord[0])*t; const lat=before.coord[1]+(after.coord[1]-before.coord[1])*t; const el=document.createElement('div'); el.className='aircraft-drop-marker'; el.style.cssText='width:12px;height:12px;border-radius:50%;background:#4fc3f7;border:2px solid #fff;box-shadow:0 2px 4px rgba(0,0,0,.3);cursor:pointer;'; const marker=new mapboxgl.Marker(el).setLngLat([lng,lat]).addTo(map); markers.push(marker);}      });
+        for (let d = dropLen; d <= total; d += dropLen) {
+          // Find the index of the first cumulative distance >= d
+          let idx = cumulative.findIndex(c => c.dist >= d);
+          if (idx === -1) idx = cumulative.length - 1;
+          const after = cumulative[idx];
+          const before = cumulative[Math.max(0, idx - 1)];
+          const segmentLength = after.dist - before.dist || 1;
+          const t = (d - before.dist) / segmentLength;
+          const lng = before.coord[0] + (after.coord[0] - before.coord[0]) * t;
+          const lat = before.coord[1] + (after.coord[1] - before.coord[1]) * t;
+
+          // Create marker element
+          const markerElement = document.createElement('div');
+          markerElement.className = 'aircraft-drop-marker';
+          markerElement.style.cssText =
+            'width:12px;height:12px;border-radius:50%;background:#4fc3f7;border:2px solid #fff;box-shadow:0 2px 4px rgba(0,0,0,.3);cursor:pointer;';
+
+          // Create and add marker to map
+          const marker = new mapboxgl.Marker(markerElement)
+            .setLngLat([lng, lat])
+            .addTo(map);
+          markers.push(marker);
+        }
       dropMarkersRef.current.set(id, markers);
     });
   }, [selectedAircraftForPreview, aircraft, dropsVersion]);
