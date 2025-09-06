@@ -200,6 +200,72 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const fallbackInjectedRef = useRef(false);
   // Count style load attempts for diagnostics
   const styleLoadAttemptsRef = useRef(0);
+  // Ensure contour source/layers exist (idempotent)
+  const ensureContoursLayer = (map: mapboxgl.Map) => {
+    // Base (minor) contour lines
+    if (!map.getLayer('contour-lines') && map.getSource('contours')) {
+      try {
+        map.addLayer({
+          id: 'contour-lines',
+          type: 'line',
+          source: 'contours',
+          'source-layer': 'contour',
+          minzoom: 8,
+          paint: {
+            'line-color': '#b6a17a',
+            'line-width': ['interpolate',['linear'],['zoom'],8,0.3,12,0.8,14,1.2,16,2],
+            'line-opacity': 0.6
+          }
+        });
+        logger.info('ensureContoursLayer: added contour-lines layer');
+      } catch (err) { logger.warn('ensureContoursLayer: failed adding contour-lines', err); }
+    }
+    // Major contour lines
+    if (!map.getLayer('contour-lines-major') && map.getSource('contours')) {
+      try {
+        map.addLayer({
+          id: 'contour-lines-major',
+          type: 'line',
+            source: 'contours',
+            'source-layer': 'contour',
+            minzoom: 8,
+            filter: ['all', ['==',['get','index'],1]],
+            paint: {
+              'line-color': '#8c774e',
+              'line-width': ['interpolate',['linear'],['zoom'],8,0.6,12,1.2,14,1.6,16,2.4],
+              'line-opacity': 0.75
+            }
+        });
+        logger.info('ensureContoursLayer: added contour-lines-major layer');
+      } catch (err) { logger.warn('ensureContoursLayer: failed adding contour-lines-major', err); }
+    }
+  };
+  // Unified helper to add terrain + contours; used on style load and checkbox toggle
+  const addTerrainAndContours = (map: mapboxgl.Map) => {
+    if (!map) return;
+    // DEM source
+    if (!map.getSource('mapbox-dem')) {
+      try {
+        map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
+        logger.info('addTerrainAndContours: raster-dem source added');
+      } catch (e) { logger.warn('addTerrainAndContours: DEM add failed (maybe exists)', e); }
+    }
+    // Hillshade layer
+    if (!map.getLayer('hillshade')) {
+      try {
+        map.addLayer({ id: 'hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-exaggeration': 0.25 } });
+        logger.info('addTerrainAndContours: hillshade layer added');
+      } catch (e) { logger.warn('addTerrainAndContours: hillshade add failed', e); }
+    }
+    // Contours source
+    if (!map.getSource('contours')) {
+      try { map.addSource('contours', { type: 'vector', url: 'mapbox://mapbox.mapbox-terrain-v2' }); logger.info('addTerrainAndContours: contours source added'); } catch (e) { logger.warn('addTerrainAndContours: contours source failed', e); }
+    }
+    // Layers
+    ensureContoursLayer(map);
+    // Ensure visibility
+    ['hillshade','contour-lines','contour-lines-major'].forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','visible'); });
+  };
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
@@ -344,7 +410,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     });
 
     // Handle style loading and setup layers
-    map.on('style.load', async () => {
+  map.on('style.load', async () => {
       const style = map.getStyle();
       logger.info(`Style loaded: ${style.name || 'Unknown'}`);
       logger.info(`Style metadata:`, style.metadata);
@@ -372,6 +438,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   if (currentStyleRef.current === 'satellite') {
         const styleURL = style.sprite;
         logger.info(`Satellite style loaded, sprite URL: ${styleURL}`);
+        // Proactively attempt to add terrain + contours shortly after style load
+        setTimeout(() => { try { addTerrainAndContours(map); } catch (e) { logger.warn('Deferred addTerrainAndContours failed', e); } }, 300);
         
         // Check if contour/elevation related sources are present
         const sources = style.sources || {};
@@ -890,92 +958,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       });
     });
 
-    // Handle terrain/contours layer toggle
+    // Handle terrain/contours layer toggle (improved)
     const terrainToggle = layerControl.querySelector('#terrain-toggle') as HTMLInputElement;
     terrainToggle.addEventListener('change', (e) => {
       const target = e.target as HTMLInputElement;
-      
       if (target.checked) {
-        // Ensure terrain data sources are available
-        if (!map.getSource('mapbox-dem')) {
-          try {
-            map.addSource('mapbox-dem', {
-              type: 'raster-dem',
-              url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-              tileSize: 512,
-              maxzoom: 14
-            });
-            logger.info('Added Mapbox terrain source');
-          } catch (error) {
-            logger.error('Failed to add terrain source:', error);
-            return;
-          }
-        }
-        
-        // Add/show hillshade layer
-        if (!map.getLayer('hillshade')) {
-          try {
-            map.addLayer({
-              id: 'hillshade',
-              type: 'hillshade',
-              source: 'mapbox-dem',
-              layout: {},
-              paint: {
-                'hillshade-shadow-color': '#473B24',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-exaggeration': 0.25,
-                'hillshade-accent-color': '#000000'
-              }
-            });
-            logger.info('Added hillshade layer for terrain visualization');
-          } catch (error) {
-            logger.error('Failed to add hillshade layer:', error);
-          }
-        } else {
-          map.setLayoutProperty('hillshade', 'visibility', 'visible');
-        }
-        
-        // Add contour lines if available
-        try {
-          if (!map.getSource('contours')) {
-            map.addSource('contours', {
-              type: 'vector',
-              url: 'mapbox://mapbox.mapbox-terrain-v2'
-            });
-            logger.info('Added contours vector source');
-          }
-          if (!map.getLayer('contour-lines')) {
-            map.addLayer({
-              id: 'contour-lines',
-              type: 'line',
-              source: 'contours',
-              'source-layer': 'contour',
-              layout: {
-                'line-join': 'round',
-                'line-cap': 'round'
-              },
-              paint: {
-                'line-color': '#877b59',
-                'line-width': 1,
-                'line-opacity': 0.6
-              },
-              filter: ['==', 'index', 5]
-            });
-            logger.info('Added contour lines layer');
-          } else {
-            map.setLayoutProperty('contour-lines', 'visibility', 'visible');
-          }
-        } catch (error) {
-          logger.warn('Could not add contour lines:', error);
-        }
+        addTerrainAndContours(map);
       } else {
-        // Hide terrain layers
-        if (map.getLayer('hillshade')) {
-          map.setLayoutProperty('hillshade', 'visibility', 'none');
-        }
-        if (map.getLayer('contour-lines')) {
-          map.setLayoutProperty('contour-lines', 'visibility', 'none');
-        }
+        ['hillshade','contour-lines','contour-lines-major'].forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id,'visibility','none'); });
       }
     });
 
