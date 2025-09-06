@@ -65,7 +65,7 @@ This Fire Break Calculator application is built on a foundation of modern web te
 - Real-time updates based on distance changes and selections
 
 ### Configuration System
-- **config/defaultConfig.ts**: Resource specifications and calculation rules
+- **config/defaultConfig.ts**: Calculation rules (resource specifications now from API)
 - **types/config.ts**: TypeScript interfaces ensuring type safety
 - Machinery specifications: clearing rates, costs, descriptions
 - Aircraft capabilities: drop patterns, speeds, turnaround times
@@ -158,7 +158,7 @@ Time (hours) = Distance / Adjusted Rate
 
 ### Adding New Resource Types
 1. Extend configuration interfaces in `types/config.ts`
-2. Add resource specifications to `defaultConfig.ts`
+2. Add resource specifications via the API
 3. Implement calculation logic in `AnalysisPanel.tsx`
 4. Update UI sections for new resource category
 

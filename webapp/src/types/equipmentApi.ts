@@ -32,6 +32,7 @@ export interface AircraftApi extends EquipmentBase {
   turnaroundMinutes?: number; // minutes
   capacityLitres?: number;
   costPerDrop?: number;
+  speed?: number; // km/h
 }
 
 export interface HandCrewApi extends EquipmentBase {

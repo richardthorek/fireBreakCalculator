@@ -45,11 +45,10 @@ Modern React web application to assist rural firefighters in estimating the time
 
 ## Configuration
 
-Resource capabilities and calculation rules are defined in `src/config/defaultConfig.ts`. You can modify:
-- **Machinery specifications**: Clearing rates, operating costs, descriptions
-- **Aircraft capabilities**: Drop lengths, speeds, turnaround times
-- **Hand crew profiles**: Crew sizes, clearing rates per person, tool types
+Calculation rules are defined in `src/config/defaultConfig.ts`. You can modify:
 - **Calculation factors**: Terrain and vegetation difficulty multipliers
+
+Resource specifications (machinery, aircraft, hand crews) are now dynamically loaded from the API backend and stored in Azure Table Storage. No hardcoded equipment is used in the application.
 
 ## Environment Variables
 
@@ -68,7 +67,7 @@ Never commit real tokens. The `.gitignore` excludes `.env` files.
 | `src/components/MapView.tsx` | Leaflet map with drawing tools and distance calculation |
 | `src/components/AnalysisPanel.tsx` | Resource selection and calculation display |
 | `src/types/config.ts` | TypeScript interfaces for resource configurations |
-| `src/config/defaultConfig.ts` | Default resource specifications and calculation rules |
+| `src/config/defaultConfig.ts` | Default calculation rules (resource specifications come from API) |
 | `src/styles.css` | Global styles including analysis panel and drawing tools |
 
 ## Technical Details

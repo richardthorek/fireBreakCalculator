@@ -33,7 +33,7 @@ interface AnalysisPanelProps {
 }
 
 // Use centralized type definitions from classification.ts
-type TerrainType = TerrainLevel;
+// Using TerrainLevel directly from classification.ts for consistency
 
 
 interface CalculationResult {
@@ -108,7 +108,9 @@ const calculateMachineryTime = (
  * Calculate number of aircraft drops required
  */
 const calculateAircraftDrops = (distance: number, aircraft: AircraftSpec): number => {
-  return Math.ceil(distance / aircraft.dropLength);
+  // Ensure we have a valid drop length to avoid division by zero
+  const dropLength = aircraft.dropLength || 100; // Default to 100m if not specified
+  return Math.ceil(distance / dropLength);
 };
 
 /**
@@ -127,20 +129,29 @@ const calculateHandCrewTime = (
 
 /**
  * Basic terrain & vegetation membership check (used for aircraft & hand crew, and as a first pass for machinery).
+ * This has been enhanced to handle terrain hierarchies properly.
  */
 const baseEnvironmentCompatible = (
   equipment: MachinerySpec | AircraftSpec | HandCrewSpec,
-  requiredTerrain: TerrainType,
+  requiredTerrain: TerrainLevel,
   vegetation: VegetationType
 ): boolean => {
-  return equipment.allowedTerrain.includes(requiredTerrain) && equipment.allowedVegetation.includes(vegetation);
+  // For terrain compatibility, equipment can handle anything up to its maximum allowed difficulty
+  const highestAllowedRank = Math.max(...equipment.allowedTerrain.map(t => terrainRank[t]));
+  const requiredRank = terrainRank[requiredTerrain];
+  const terrainCompatible = requiredRank <= highestAllowedRank;
+  
+  // For vegetation, we need an exact match
+  const vegetationCompatible = equipment.allowedVegetation.includes(vegetation);
+  
+  return terrainCompatible && vegetationCompatible;
 };
 
 /** Ordinal ordering helper for terrain difficulty */
-const terrainRank: Record<TerrainType, number> = { easy: 0, moderate: 1, difficult: 2, extreme: 3 };
+const terrainRank: Record<TerrainLevel, number> = { easy: 0, moderate: 1, difficult: 2, extreme: 3 };
 
 /** Map slope category key → terrain level (mirrors deriveTerrainFromSlope logic) */
-const slopeCategoryToTerrain: Record<string, TerrainType> = {
+const slopeCategoryToTerrain: Record<string, TerrainLevel> = {
   flat: 'easy',
   medium: 'moderate',
   steep: 'difficult',
@@ -158,7 +169,7 @@ function evaluateMachineryTerrainCompatibility(
   machine: MachinerySpec,
   trackAnalysis: TrackAnalysis | null,
   vegetation: VegetationType,
-  requiredTerrain: TerrainType
+  requiredTerrain: TerrainLevel
 ): { level: 'full' | 'partial' | 'incompatible'; overLimitPercent?: number; note?: string } {
   // If we lack detailed track data fall back to simple membership logic
   if (!trackAnalysis) {
@@ -176,7 +187,7 @@ function evaluateMachineryTerrainCompatibility(
   // Compute percentage distance that exceeds machine capability (terrain-wise)
   const distByCat = trackAnalysis.slopeDistribution; // assumed in meters
   const overDistance = Object.entries(distByCat).reduce((acc, [cat, dist]) => {
-    const terr = slopeCategoryToTerrain[cat] as TerrainType | undefined;
+    const terr = slopeCategoryToTerrain[cat];
     if (!terr) return acc;
     const r = terrainRank[terr];
     return r > highestAllowed ? acc + (dist as number) : acc;
@@ -260,7 +271,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   };
 
   // Derive effective terrain requirement from max slope
-  const derivedTerrainRequirement = useMemo<TerrainType | null>(() => {
+  const derivedTerrainRequirement = useMemo<TerrainLevel | null>(() => {
     if (!trackAnalysis) return null;
     return deriveTerrainFromSlope(trackAnalysis.maxSlope);
   }, [trackAnalysis]);
@@ -314,9 +325,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     // Aircraft (strict membership – no partial logic currently required)
     aircraft.forEach((plane: AircraftSpec) => {
+      // Fix compatibility check for aircraft turnaround minutes property
       const compatible = baseEnvironmentCompatible(plane, requiredTerrain, effectiveVegetation);
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
-      const totalTime = compatible ? drops * (plane.turnaroundTime / 60) : 0; // convert minutes to hours
+      const totalTime = compatible ? drops * ((plane.turnaroundMinutes || 0) / 60) : 0; // convert minutes to hours
       const costVal = compatible && (plane as any).costPerHour ? totalTime * (plane as any).costPerHour : 0;
 
       results.push({

@@ -37,13 +37,13 @@ export interface MachinerySpec {
 export interface AircraftSpec {
   id: string;
   name: string;
-  type: 'helicopter' | 'fixed_wing' | 'other';
+  type: string;
   /** Drop length in meters */
   dropLength: number;
-  /** Operating speed in km/h */
-  speed: number;
+  /** Operating speed in km/h (optional) */
+  speed?: number;
   /** Time between drops in minutes */
-  turnaroundTime: number;
+  turnaroundMinutes?: number;
   /** Operating cost per hour (optional) */
   costPerHour?: number;
   /** Description of the aircraft */
