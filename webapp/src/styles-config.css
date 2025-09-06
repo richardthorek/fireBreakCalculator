@@ -776,28 +776,28 @@
   border-color:#3b82f6; 
 }
 
-/* column sizing helpers - more compact text */
+/* column sizing helpers - more compact text but still readable */
 .eq-name { 
   flex: 1 1 160px; 
   min-width:140px; 
   font-weight:500; 
   color:#e2e8f0; 
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 .eq-small { 
   width: 80px; 
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 .eq-xsmall { 
   width: 60px; 
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 .eq-name.text, .eq-small.text { 
   color:#e2e8f0; 
-  font-size: 0.7rem; 
+  font-size: 0.8rem; 
 }
 .inline-sub { 
-  font-size: 0.6rem; 
+  font-size: 0.65rem; 
   opacity: .75; 
 }
 
