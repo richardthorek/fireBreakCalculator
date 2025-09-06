@@ -114,6 +114,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   });
   const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
   const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
+  
+  // Aircraft drop markers state
+  const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
+  const [dropsVersion, setDropsVersion] = useState(0);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -204,6 +208,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
         // Perform analysis
         await analyzeAndVisualizeSlopes(latlngs);
+        
+        // Trigger aircraft drop visualization update
+        setDropsVersion(v => v + 1);
       }
     });
 
@@ -220,6 +227,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
         // Perform analysis
         await analyzeAndVisualizeSlopes(latlngs);
+        
+        // Trigger aircraft drop visualization update
+        setDropsVersion(v => v + 1);
       }
     });
 
@@ -238,6 +248,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       if (map.getSource('slope-segments')) {
         map.removeSource('slope-segments');
       }
+      
+      // Trigger aircraft drop visualization update
+      setDropsVersion(v => v + 1);
     });
 
     // Add streets layer as an alternative
@@ -279,6 +292,100 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     };
   }, []);
 
+  // Aircraft drop visualization effect
+  useEffect(() => {
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    
+    if (!map || !draw || !selectedAircraftForPreview.length) {
+      // Clear existing markers if no aircraft selected
+      dropMarkersRef.current.forEach(markers => {
+        markers.forEach(marker => marker.remove());
+      });
+      dropMarkersRef.current.clear();
+      return;
+    }
+
+    // Clear previous markers
+    dropMarkersRef.current.forEach(markers => {
+      markers.forEach(marker => marker.remove());
+    });
+    dropMarkersRef.current.clear();
+
+    // Get all drawn features
+    const features = draw.getAll();
+    
+    selectedAircraftForPreview.forEach(aircraftId => {
+      const spec = aircraft.find(a => a.id === aircraftId);
+      if (!spec) return;
+
+      const dropLength = spec.dropLength || 1000;
+      const markers: mapboxgl.Marker[] = [];
+
+      features.features.forEach(feature => {
+        if (feature.geometry.type !== 'LineString') return;
+        
+        const coordinates = feature.geometry.coordinates;
+        if (coordinates.length < 2) return;
+
+        // Calculate cumulative distances along the line
+        const cumulative: { coord: [number, number]; distFromStart: number }[] = [];
+        let totalDistance = 0;
+        
+        cumulative.push({ coord: [coordinates[0][0], coordinates[0][1]], distFromStart: 0 });
+        
+        for (let i = 1; i < coordinates.length; i++) {
+          const prev = coordinates[i - 1];
+          const curr = coordinates[i];
+          const segmentDistance = calculateDistance(prev[1], prev[0], curr[1], curr[0]); // lat1, lng1, lat2, lng2
+          totalDistance += segmentDistance;
+          cumulative.push({ coord: [curr[0], curr[1]], distFromStart: totalDistance });
+        }
+
+        // Place drop markers at intervals
+        for (let distance = dropLength; distance <= totalDistance; distance += dropLength) {
+          // Find the segment containing this distance
+          let segmentIndex = cumulative.findIndex(c => c.distFromStart >= distance);
+          if (segmentIndex === -1) segmentIndex = cumulative.length - 1;
+          
+          const after = cumulative[segmentIndex];
+          const before = cumulative[Math.max(0, segmentIndex - 1)];
+          
+          const segmentLength = after.distFromStart - before.distFromStart || 1;
+          const t = (distance - before.distFromStart) / segmentLength;
+          
+          // Interpolate position
+          const lng = before.coord[0] + (after.coord[0] - before.coord[0]) * t;
+          const lat = before.coord[1] + (after.coord[1] - before.coord[1]) * t;
+
+          // Create marker element
+          const markerElement = document.createElement('div');
+          markerElement.className = 'aircraft-drop-marker';
+          markerElement.style.cssText = `
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #4fc3f7;
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            cursor: pointer;
+          `;
+
+          // Create and add marker
+          const marker = new mapboxgl.Marker(markerElement)
+            .setLngLat([lng, lat])
+            .setPopup(new mapboxgl.Popup({ offset: 25 })
+              .setHTML(`<div><strong>${spec.name}</strong><br/>Aircraft Drop Point</div>`))
+            .addTo(map);
+
+          markers.push(marker);
+        }
+      });
+
+      dropMarkersRef.current.set(aircraftId, markers);
+    });
+  }, [selectedAircraftForPreview, aircraft, dropsVersion]);
+
   // Helper function to analyze and visualize slopes
   const analyzeAndVisualizeSlopes = async (latlngs: any[]): Promise<TrackAnalysis | null> => {
     setIsAnalyzing(true);
@@ -290,9 +397,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       setTrackAnalysis(analysis);
       onTrackAnalysisChange?.(analysis);
       
-      // Perform vegetation analysis in parallel (temporarily disabled during migration)
+      // Perform vegetation analysis in parallel
       let vegAnalysis: VegetationAnalysis | null = null;
-      /*
       try {
         vegAnalysis = await analyzeTrackVegetation(latlngs);
         setVegetationAnalysis(vegAnalysis);
@@ -300,7 +406,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       } catch (vegError) {
         logger.warn('Vegetation analysis failed, continuing with slope analysis only:', vegError);
       }
-      */
       
       // Visualize slope segments
       visualizeSlopeSegments(analysis);
@@ -384,16 +489,38 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         const feature = e.features[0];
         const properties = feature.properties!;
         
+        // Build popup content with slope and vegetation data
+        let popupHTML = `
+          <div>
+            <strong>Slope Segment</strong><br/>
+            Slope: ${properties.slope?.toFixed(1) || 0}° (${(properties.category || '').replace('_', ' ')})<br/>
+            Distance: ${properties.distance?.toFixed(0) || 0}m<br/>
+            Elevation change: ${properties.elevationChange?.toFixed(1) || 0}m
+          </div>
+        `;
+        
+        // Add vegetation analysis summary if available
+        if (vegetationAnalysis) {
+          const predominantVegLabels = {
+            grassland: 'Grassland',
+            lightshrub: 'Light Shrub',
+            mediumscrub: 'Medium Scrub',
+            heavyforest: 'Heavy Forest'
+          };
+          const predominantLabel = predominantVegLabels[vegetationAnalysis.predominantVegetation] || 'Unknown';
+          const confidencePercent = Math.round(vegetationAnalysis.overallConfidence * 100);
+          
+          popupHTML += `
+            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;">
+              <strong>Vegetation:</strong> ${predominantLabel}<br/>
+              <small>Confidence: ${confidencePercent}%</small>
+            </div>
+          `;
+        }
+        
         new mapboxgl.Popup()
           .setLngLat(e.lngLat)
-          .setHTML(`
-            <div>
-              <strong>Slope Segment</strong><br/>
-              Slope: ${properties.slope?.toFixed(1) || 0}° (${(properties.category || '').replace('_', ' ')})<br/>
-              Distance: ${properties.distance?.toFixed(0) || 0}m<br/>
-              Elevation change: ${properties.elevationChange?.toFixed(1) || 0}m
-            </div>
-          `)
+          .setHTML(popupHTML)
           .addTo(map);
       }
     });
