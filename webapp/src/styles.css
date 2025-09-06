@@ -1437,7 +1437,7 @@ button:focus,
   border: 1px solid rgba(255,193,7,0.3);
   border-left: 4px solid #ffc107;
   color: #f8f9fa;
-  padding: 12px 16px;
+  padding: 12px 20px;
   margin: 0;
   font-size: 14px;
   line-height: 1.4;
@@ -1462,7 +1462,7 @@ button:focus,
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 12px 20px;
   background: #16202b;
   border-bottom: 1px solid #233040;
   flex-wrap: wrap;
@@ -1504,6 +1504,37 @@ button:focus,
   border-style: dashed;
   padding: 12px;
   gap: 10px;
+}
+
+/* Fullscreen tab-guide styling - missing from original implementation */
+.equipment-config-panel.fullscreen .tab-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px;
+  margin: 0 0 8px 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: #cfe8ff;
+  font-size: 13px;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .guide-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+  margin: 0;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .guide-line strong {
+  color: #e6f7ff;
+  font-weight: 600;
+}
+
+.equipment-config-panel.fullscreen .tab-guide .muted {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 /* Enhanced responsive behavior for fullscreen */
