@@ -12,6 +12,83 @@ import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
 
+// --- Diagnostic helpers ----------------------------------------------------
+/**
+ * Attempt to fetch the raw style JSON (if it is a Mapbox style URL) so we can
+ * log why sources might be empty. For security reasons Mapbox GL JS normally
+ * does this internally; we replicate in a best‑effort manner using the Styles API.
+ */
+async function diagnoseStyleJSON(styleURL: string, token: string) {
+  try {
+    if (!styleURL.startsWith('mapbox://styles/')) {
+      logger.info('diagnoseStyleJSON: Non mapbox:// style skipped');
+      return;
+    }
+    // styleURL format: mapbox://styles/{user}/{style_id}
+    const parts = styleURL.replace('mapbox://styles/', '').split('/');
+    if (parts.length !== 2) return;
+    const user = parts[0];
+    const styleId = parts[1];
+    const apiURL = `https://api.mapbox.com/styles/v1/${user}/${styleId}?access_token=${token}`;
+    const resp = await fetch(apiURL);
+    if (!resp.ok) {
+      logger.warn(`diagnoseStyleJSON: Failed fetching style JSON (${resp.status})`);
+      return;
+    }
+    const json = await resp.json();
+    const srcKeys = Object.keys(json.sources || {});
+    const layerCount = Array.isArray(json.layers) ? json.layers.length : 0;
+    logger.info(`diagnoseStyleJSON: Raw style sources: ${srcKeys.length} [${srcKeys.join(', ')}], layers: ${layerCount}`);
+    if (srcKeys.length === 0) {
+      logger.warn('diagnoseStyleJSON: Style JSON truly has zero sources. Style in Studio may be empty or private.');
+    }
+  } catch (err) {
+    logger.error('diagnoseStyleJSON: Error while diagnosing style JSON', err);
+  }
+}
+
+/**
+ * Build and set a composite fallback style (satellite imagery + terrain + hillshade + contours)
+ * so the application remains functional when the custom Studio style fails or is empty.
+ */
+function injectFallbackCompositeStyle(map: mapboxgl.Map) {
+  try {
+    const fallbackStyle = {
+      version: 8,
+      name: 'Fallback Satellite Terrain',
+      sources: {
+        'satellite': {
+          type: 'raster',
+          url: 'mapbox://mapbox.satellite',
+          tileSize: 256
+        },
+        'mapbox-dem': {
+          type: 'raster-dem',
+          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+          tileSize: 512,
+          maxzoom: 14
+        },
+        'contours': {
+          type: 'vector',
+          url: 'mapbox://mapbox.mapbox-terrain-v2'
+        }
+      },
+      sprite: 'mapbox://sprites/mapbox/streets-v12',
+      glyphs: 'mapbox://fonts/mapbox/{fontstack}/{range}.pbf',
+      layers: [
+        { id: 'background', type: 'background', paint: { 'background-color': '#000' } },
+        { id: 'satellite-base', type: 'raster', source: 'satellite', paint: { 'raster-opacity': 1 } },
+        { id: 'hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-exaggeration': 0.25 } },
+        { id: 'contour-lines', type: 'line', source: 'contours', 'source-layer': 'contour', paint: { 'line-color': '#877b59', 'line-width': 1, 'line-opacity': 0.55 } }
+      ]
+    } as any; // minimal specification to satisfy runtime; not exporting as strongly typed
+    map.setStyle(fallbackStyle);
+    logger.info('Injected fallback composite style with satellite + terrain + contours');
+  } catch (err) {
+    logger.error('Failed to inject fallback composite style', err);
+  }
+}
+
 // Helper to convert LngLat to LatLng format for existing utilities
 const lngLatToLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
 
@@ -115,6 +192,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [showVegetationZoomHint, setShowVegetationZoomHint] = useState(false);
   const [vegetationLayerEnabled, setVegetationLayerEnabled] = useState(false);
   const [currentStyle, setCurrentStyle] = useState('satellite');
+  // Keep a ref in sync with currentStyle so event handlers (registered once) see latest value
+  const currentStyleRef = useRef(currentStyle);
+  useEffect(() => { currentStyleRef.current = currentStyle; }, [currentStyle]);
+  
+  // Track whether we've already attempted a manual fallback style inject to avoid loops
+  const fallbackInjectedRef = useRef(false);
+  // Count style load attempts for diagnostics
+  const styleLoadAttemptsRef = useRef(0);
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
@@ -133,7 +218,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     mapboxgl.accessToken = token;
 
     // Initialize the map with custom satellite style
-    const customStyleURL = 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+  const envCustomStyle = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE as string | undefined;
+  const customStyleURL = envCustomStyle || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
     logger.info(`Initializing map with custom satellite style: ${customStyleURL}`);
     
     const map = new mapboxgl.Map({
@@ -258,15 +344,32 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     });
 
     // Handle style loading and setup layers
-    map.on('style.load', () => {
+    map.on('style.load', async () => {
       const style = map.getStyle();
       logger.info(`Style loaded: ${style.name || 'Unknown'}`);
       logger.info(`Style metadata:`, style.metadata);
       logger.info(`Style sources:`, Object.keys(style.sources || {}));
       logger.info(`Style layers:`, (style.layers || []).map(l => l.id));
+      styleLoadAttemptsRef.current += 1;
+      
+      // If sources are unexpectedly empty, perform deep diagnostics & potential fallback build
+      if (Object.keys(style.sources || {}).length === 0) {
+        logger.warn('⚠ Style has zero sources after load. Running diagnostics...');
+        await diagnoseStyleJSON(customStyleURL, MAPBOX_TOKEN!);
+        // Schedule a re-check after a brief delay to allow imported style components to resolve
+        setTimeout(async () => {
+          const postDelayStyle = map.getStyle();
+            const srcCount = Object.keys(postDelayStyle.sources || {}).length;
+            if (srcCount === 0 && !fallbackInjectedRef.current) {
+              logger.warn('⚠ Style still has no sources after delay. Injecting programmatic fallback satellite + terrain style.');
+              injectFallbackCompositeStyle(map);
+              fallbackInjectedRef.current = true;
+            }
+        }, 750);
+      }
       
       // Verify the style is the expected custom style when satellite is selected
-      if (currentStyle === 'satellite') {
+  if (currentStyleRef.current === 'satellite') {
         const styleURL = style.sprite;
         logger.info(`Satellite style loaded, sprite URL: ${styleURL}`);
         
@@ -290,7 +393,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.info(`All layer IDs in satellite style:`, layers.map(l => ({ id: l.id, type: l.type })));
         
         // Specific check for terrain/elevation data
-        if (contourSources.length === 0 && contourLayers.length === 0) {
+  if (contourSources.length === 0 && contourLayers.length === 0) {
           logger.warn('⚠ No contour-related sources or layers found in the custom satellite style!');
           logger.warn('This might indicate the style does not include contour/elevation data.');
           logger.warn('Consider checking the Mapbox Studio style configuration.');
@@ -407,7 +510,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
       // Add layer control only if it doesn't exist
       if (!map.getContainer().querySelector('.layer-control-container')) {
-        addLayerControl(map);
+  addLayerControl(map);
       }
     });
 
@@ -426,9 +529,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.info(`Style data loaded for ${currentStyle} view`);
         
         // Verify custom satellite style is properly loaded
-        if (currentStyle === 'satellite') {
+        if (currentStyleRef.current === 'satellite') {
           const style = map.getStyle();
-          const styleId = style.metadata?.['mapbox:id'] || style.id || 'unknown';
+          const metaAny: any = style.metadata || {};
+          const styleId = metaAny['mapbox:id'] || metaAny['id'] || (style as any).id || 'unknown';
           logger.info(`Satellite style ID: ${styleId}`);
           
           // Check if this matches our expected custom style
@@ -436,6 +540,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             logger.info('✓ Custom satellite style with contours loaded successfully');
           } else {
             logger.warn(`⚠ Unexpected style loaded: ${styleId}, expected: cmf7esv62000n01qw0khz891t`);
+            // Attempt to extract style id from sprite URL if available
+            if (style.sprite) {
+              try {
+                const spriteMatch = /styles\/([^/]+)\/([a-z0-9]+)\//i.exec(style.sprite);
+                if (spriteMatch) {
+                  logger.info(`Derived owner from sprite: ${spriteMatch[1]}, style id: ${spriteMatch[2]}`);
+                }
+              } catch (_) { /* ignore */ }
+            }
           }
         }
       }
@@ -887,7 +1000,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const style = map.getStyle();
       logger.info('=== STYLE DEBUG REPORT ===');
       logger.info(`Style Name: ${style.name || 'Unknown'}`);
-      logger.info(`Style ID: ${style.metadata?.['mapbox:id'] || 'Unknown'}`);
+  const dbgMeta: any = style.metadata || {};
+  logger.info(`Style ID: ${dbgMeta['mapbox:id'] || dbgMeta['id'] || 'Unknown'}`);
       logger.info(`Current zoom: ${map.getZoom()}`);
       logger.info(`Current center: ${map.getCenter().lng}, ${map.getCenter().lat}`);
       
