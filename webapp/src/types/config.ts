@@ -3,6 +3,8 @@
  * Defines the structure for machinery, aircraft, and hand crew specifications.
  */
 
+import { TerrainLevel, VegetationType } from '../config/classification';
+
 export interface MachinerySpec {
   id: string;
   name: string;
@@ -23,11 +25,11 @@ export interface MachinerySpec {
   /** Description of the machinery */
   description?: string;
   /** Terrain types this machinery can operate in */
-  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  allowedTerrain: TerrainLevel[];
   /** Vegetation types this machinery can handle (new taxonomy)
    *  Use 'grassland', 'lightshrub', 'mediumscrub', 'heavyforest'
    */
-  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
+  allowedVegetation: VegetationType[];
   /** Maximum slope this machinery can handle (in degrees) */
   maxSlope?: number;
 }
@@ -47,9 +49,9 @@ export interface AircraftSpec {
   /** Description of the aircraft */
   description?: string;
   /** Terrain types this aircraft can operate over */
-  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  allowedTerrain: TerrainLevel[];
   /** Vegetation types this aircraft can effectively treat */
-  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
+  allowedVegetation: VegetationType[];
 }
 
 export interface HandCrewSpec {
@@ -66,26 +68,16 @@ export interface HandCrewSpec {
   /** Description of the crew type */
   description?: string;
   /** Terrain types this crew can work in */
-  allowedTerrain: ('easy' | 'moderate' | 'difficult' | 'extreme')[];
+  allowedTerrain: TerrainLevel[];
   /** Vegetation types this crew can handle */
-  allowedVegetation: ('grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest')[];
+  allowedVegetation: VegetationType[];
 }
 
 export interface CalculationRules {
   /** Factor to apply to base clearing rates based on terrain difficulty */
-  terrainFactors: {
-    easy: number;
-    moderate: number;
-    difficult: number;
-    extreme: number;
-  };
+  terrainFactors: Record<TerrainLevel, number>;
   /** Factor to apply based on vegetation density */
-  vegetationFactors: {
-    grassland: number;
-    lightshrub: number;
-    mediumscrub: number;
-    heavyforest: number;
-  };
+  vegetationFactors: Record<VegetationType, number>;
   /** Additional time factor for slopes (per degree) */
   slopeTimeFactor: number;
 }
@@ -101,7 +93,7 @@ export interface MachineryPerformance {
   /** Maximum slope (degrees) that this performance row applies to */
   slopeMax: number;
   /** Vegetation density key (new taxonomy) */
-  density: 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+  density: VegetationType;
   /** Meters per hour achieved under these conditions */
   metersPerHour: number;
   /** Cost per hour under these conditions (optional) */
@@ -159,7 +151,7 @@ export interface VegetationSegment {
   /** Full ordered coordinate path for this segment */
   coords?: [number, number][];
   /** Detected vegetation type */
-  vegetationType: 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+  vegetationType: VegetationType;
   /** Confidence level (0-1) of the detection */
   confidence: number;
   /** Original landcover class from Mapbox */
@@ -181,14 +173,9 @@ export interface VegetationAnalysis {
   /** Array of vegetation segments */
   segments: VegetationSegment[];
   /** Predominant vegetation type across the track */
-  predominantVegetation: 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
+  predominantVegetation: VegetationType;
   /** Distribution of vegetation types (distance in meters) */
-  vegetationDistribution: {
-    grassland: number;
-    lightshrub: number;
-    mediumscrub: number;
-    heavyforest: number;
-  };
+  vegetationDistribution: Record<VegetationType, number>;
   /** Overall confidence of the analysis */
   overallConfidence: number;
 }

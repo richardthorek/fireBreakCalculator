@@ -25,54 +25,144 @@ const App: React.FC = () => {
   const [loadingEquip, setLoadingEquip] = useState(false);
   const [equipError, setEquipError] = useState<string | null>(null);
 
+  // Helper function to safely parse terrain/vegetation arrays from API data
+  const safeParseAllowedValues = <T extends string>(
+    value: any, 
+    validValues: T[], 
+    fieldName: string, 
+    machineName: string
+  ): T[] => {
+    // Handle string case (CSV parsing failure in API)
+    if (typeof value === 'string') {
+      console.warn(`API returned CSV string for ${fieldName} on ${machineName}, parsing locally:`, value);
+      const parsed = value.split(',').map(v => v.trim()).filter(Boolean) as T[];
+      return parsed.filter(v => validValues.includes(v));
+    }
+    
+    // Handle array case (normal)
+    if (Array.isArray(value)) {
+      const validated = value.filter(v => validValues.includes(v as T));
+      if (validated.length === 0) {
+        console.warn(`${machineName} has empty/invalid ${fieldName} array, using fallback values`);
+        // Provide sensible fallbacks for machines with no valid values
+        if (fieldName === 'allowedTerrain') {
+          return ['easy', 'moderate'] as T[];
+        } else if (fieldName === 'allowedVegetation') {
+          return ['grassland'] as T[];
+        }
+      }
+      return validated;
+    }
+    
+    // Handle null/undefined/other (fallback)
+    console.warn(`${machineName} has invalid ${fieldName} format:`, typeof value, value);
+    if (fieldName === 'allowedTerrain') {
+      return ['easy', 'moderate'] as T[];
+    } else if (fieldName === 'allowedVegetation') {
+      return ['grassland'] as T[];
+    }
+    return [] as T[];
+  };
+
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
     const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
     if (!items.length) return defaultConfig.machinery;
-    return items.map(m => ({
-      id: m.id,
-      name: m.name,
-      type: 'other',
-      clearingRate: m.clearingRate || 0,
-      costPerHour: m.costPerHour || 0,
-      description: m.description || '',
-      allowedTerrain: m.allowedTerrain as MachinerySpec['allowedTerrain'],
-      allowedVegetation: m.allowedVegetation as MachinerySpec['allowedVegetation'],
-      maxSlope: m.maxSlope
-    }));
+    
+    return items.map(m => {
+      const allowedTerrain = safeParseAllowedValues(
+        m.allowedTerrain, 
+        ['easy', 'moderate', 'difficult', 'extreme'],
+        'allowedTerrain',
+        m.name
+      );
+      
+      const allowedVegetation = safeParseAllowedValues(
+        m.allowedVegetation,
+        ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
+        'allowedVegetation', 
+        m.name
+      );
+      
+      return {
+        id: m.id,
+        name: m.name,
+        type: 'other',
+        clearingRate: m.clearingRate || 0,
+        costPerHour: m.costPerHour || 0,
+        description: m.description || '',
+        allowedTerrain,
+        allowedVegetation,
+        maxSlope: m.maxSlope
+      };
+    });
   }, [equipment]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
     const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
     if (!items.length) return defaultConfig.aircraft;
-    return items.map(a => ({
-      id: a.id,
-      name: a.name,
-      type: 'other',
-      dropLength: a.dropLength || 0,
-      speed: 0,
-      turnaroundTime: a.turnaroundMinutes || 0,
-      costPerHour: a.costPerHour || 0,
-      description: a.description || '',
-      allowedTerrain: a.allowedTerrain as AircraftSpec['allowedTerrain'],
-      allowedVegetation: a.allowedVegetation as AircraftSpec['allowedVegetation']
-    }));
+    
+    return items.map(a => {
+      const allowedTerrain = safeParseAllowedValues(
+        a.allowedTerrain, 
+        ['easy', 'moderate', 'difficult', 'extreme'],
+        'allowedTerrain',
+        a.name
+      );
+      
+      const allowedVegetation = safeParseAllowedValues(
+        a.allowedVegetation,
+        ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
+        'allowedVegetation', 
+        a.name
+      );
+      
+      return {
+        id: a.id,
+        name: a.name,
+        type: 'other',
+        dropLength: a.dropLength || 0,
+        speed: 0,
+        turnaroundTime: a.turnaroundMinutes || 0,
+        costPerHour: a.costPerHour || 0,
+        description: a.description || '',
+        allowedTerrain,
+        allowedVegetation
+      };
+    });
   }, [equipment]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
     const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
     if (!items.length) return defaultConfig.handCrews;
-    return items.map(c => ({
-      id: c.id,
-      name: c.name,
-      crewSize: c.crewSize || 0,
-      clearingRatePerPerson: c.clearingRatePerPerson || 0,
-      tools: c.equipmentList || [],
-      costPerHour: c.costPerHour || 0,
-      description: c.description || '',
-      allowedTerrain: c.allowedTerrain as HandCrewSpec['allowedTerrain'],
-      allowedVegetation: c.allowedVegetation as HandCrewSpec['allowedVegetation']
-    }));
+    
+    return items.map(c => {
+      const allowedTerrain = safeParseAllowedValues(
+        c.allowedTerrain, 
+        ['easy', 'moderate', 'difficult', 'extreme'],
+        'allowedTerrain',
+        c.name
+      );
+      
+      const allowedVegetation = safeParseAllowedValues(
+        c.allowedVegetation,
+        ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
+        'allowedVegetation', 
+        c.name
+      );
+      
+      return {
+        id: c.id,
+        name: c.name,
+        crewSize: c.crewSize || 0,
+        clearingRatePerPerson: c.clearingRatePerPerson || 0,
+        tools: c.equipmentList || [],
+        costPerHour: c.costPerHour || 0,
+        description: c.description || '',
+        allowedTerrain,
+        allowedVegetation
+      };
+    });
   }, [equipment]);
 
   // Shared loader so we can refresh after CRUD ops to pull canonical server state (e.g. version, defaults)

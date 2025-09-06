@@ -1,4 +1,5 @@
 import { MachinerySpec, MachineryPerformance } from '../types/config';
+import { TerrainLevel, VegetationType } from '../config/classification';
 import { logger } from './logger';
 
 // Import the CSV as raw text using Vite's raw import handling
@@ -109,7 +110,7 @@ function mapRowsToMachinery(rows: Record<string, string>[]): MachinerySpec[] {
   
   // Use hierarchical vegetation compatibility: if a machine can handle heavier vegetation,
   // it can also handle lighter vegetation. Order: grassland < lightshrub < mediumscrub < heavyforest
-  const allVegetationTypes: Array<'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest'> = 
+  const allVegetationTypes: VegetationType[] = 
     ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'];
   
   // Find the heaviest vegetation type this machine can handle
