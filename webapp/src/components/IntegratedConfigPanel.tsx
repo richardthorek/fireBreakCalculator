@@ -55,6 +55,7 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('equipment');
   const [activeEquipmentSubTab, setActiveEquipmentSubTab] = useState<EquipmentSubTab>('machinery');
+  const [equipmentFilter, setEquipmentFilter] = useState('');
   // State to trigger equipment add mode
   const [triggerEquipmentAdd, setTriggerEquipmentAdd] = useState(0);
   
@@ -93,34 +94,6 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
           </div>
         </div>
         <div className="header-right">
-          {/* When on equipment show inline sub-tabs + add button here; vegetation has own internal controls */}
-          {activeTab === 'equipment' && (
-            <div className="equip-inline-tabs" aria-label="Equipment type sub tabs">
-              <button
-                id="machinery-tab"
-                className={`mini-tab ${activeEquipmentSubTab === 'machinery' ? 'active' : ''}`}
-                onClick={() => handleEquipmentSubTabChange('machinery')}
-                title="Machinery"
-              >Mach ({equipment.filter(e => e.type === 'Machinery').length})</button>
-              <button
-                id="aircraft-tab"
-                className={`mini-tab ${activeEquipmentSubTab === 'aircraft' ? 'active' : ''}`}
-                onClick={() => handleEquipmentSubTabChange('aircraft')}
-                title="Aircraft"
-              >Air ({equipment.filter(e => e.type === 'Aircraft').length})</button>
-              <button
-                id="handcrew-tab"
-                className={`mini-tab ${activeEquipmentSubTab === 'handcrew' ? 'active' : ''}`}
-                onClick={() => handleEquipmentSubTabChange('handcrew')}
-                title="Hand Crews"
-              >Crew ({equipment.filter(e => e.type === 'HandCrew').length})</button>
-              <button 
-                className="add-equipment-btn mini" 
-                onClick={handleAddEquipment}
-                aria-label={`Add ${activeEquipmentSubTab}`}
-              >＋</button>
-            </div>
-          )}
           <button 
             className="close-button"
             onClick={onToggle}
@@ -138,24 +111,69 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
           hidden={activeTab !== 'equipment'}
         >
           {activeTab === 'equipment' && (
-            <div id="equipment-panels-container">
-              <EquipmentConfigPanel
-                equipment={equipment}
-                loading={loadingEquipment}
-                error={equipmentError}
-                onCreate={onCreateEquipment}
-                onUpdate={onUpdateEquipment}
-                onDelete={onDeleteEquipment}
-                isOpen={true}
-                onToggle={onToggle}
-                showOwnTabs={false}
-                triggerAdd={triggerEquipmentAdd}
-                initialTab={activeEquipmentSubTab === 'machinery' ? 'Machinery' : 
-                          activeEquipmentSubTab === 'aircraft' ? 'Aircraft' : 'HandCrew'}
-                showDescription={false}
-                showGuide={false}
-              />
-            </div>
+            <>
+              {/* 20% Guidance area for equipment */}
+              <div className="panel-guidance">
+                <h4>Equipment Configuration</h4>
+                <div className="panel-guidance-content">
+                  <div className="panel-guidance-left">
+                    <div className="equipment-type-tabs">
+                      <button
+                        className={`equipment-type-tab ${activeEquipmentSubTab === 'machinery' ? 'active' : ''}`}
+                        onClick={() => handleEquipmentSubTabChange('machinery')}
+                        title="Machinery"
+                      >Machinery ({equipment.filter(e => e.type === 'Machinery').length})</button>
+                      <button
+                        className={`equipment-type-tab ${activeEquipmentSubTab === 'aircraft' ? 'active' : ''}`}
+                        onClick={() => handleEquipmentSubTabChange('aircraft')}
+                        title="Aircraft"
+                      >Aircraft ({equipment.filter(e => e.type === 'Aircraft').length})</button>
+                      <button
+                        className={`equipment-type-tab ${activeEquipmentSubTab === 'handcrew' ? 'active' : ''}`}
+                        onClick={() => handleEquipmentSubTabChange('handcrew')}
+                        title="Hand Crews"
+                      >Hand Crews ({equipment.filter(e => e.type === 'HandCrew').length})</button>
+                    </div>
+                  </div>
+                  <div className="panel-guidance-right">
+                    <input 
+                      type="text" 
+                      placeholder="Filter equipment..." 
+                      className="equipment-filter"
+                      value={equipmentFilter}
+                      onChange={(e) => setEquipmentFilter(e.target.value)}
+                    />
+                    <button 
+                      className="add-equipment-btn" 
+                      onClick={handleAddEquipment}
+                      aria-label={`Add ${activeEquipmentSubTab}`}
+                    >+ Add</button>
+                  </div>
+                </div>
+              </div>
+              
+              {/* 70% Content area */}
+              <div className="panel-content">
+                <EquipmentConfigPanel
+                  equipment={equipment}
+                  loading={loadingEquipment}
+                  error={equipmentError}
+                  onCreate={onCreateEquipment}
+                  onUpdate={onUpdateEquipment}
+                  onDelete={onDeleteEquipment}
+                  isOpen={true}
+                  onToggle={onToggle}
+                  showOwnTabs={false}
+                  triggerAdd={triggerEquipmentAdd}
+                  initialTab={activeEquipmentSubTab === 'machinery' ? 'Machinery' : 
+                            activeEquipmentSubTab === 'aircraft' ? 'Aircraft' : 'HandCrew'}
+                  showDescription={false}
+                  showGuide={false}
+                  filter={equipmentFilter}
+                  compactMode={true}
+                />
+              </div>
+            </>
           )}
         </div>
         
@@ -167,16 +185,38 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
           hidden={activeTab !== 'vegetation'}
         >
           {activeTab === 'vegetation' && (
-            <VegetationConfigPanel
-              mappings={vegetationMappings}
-              loading={loadingVegetationMappings}
-              error={vegetationMappingError}
-              onCreate={onCreateVegetationMapping}
-              onUpdate={onUpdateVegetationMapping}
-              onDelete={onDeleteVegetationMapping}
-              isOpen={true}
-              onToggle={onToggle}
-            />
+            <>
+              {/* 20% Guidance area for vegetation */}
+              <div className="panel-guidance">
+                <h4>Vegetation Formation Mappings</h4>
+                <div className="panel-guidance-content">
+                  <div className="panel-guidance-left">
+                    <span style={{fontSize: '0.75rem', color: '#94a3b8'}}>
+                      Configure how NSW vegetation data maps to equipment compatibility categories
+                    </span>
+                  </div>
+                  <div className="panel-guidance-right">
+                    <div className="vegetation-guidance-controls-inline">
+                      {/* These controls will be populated by the VegetationConfigPanel */}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* 70% Content area */}
+              <div className="panel-content">
+                <VegetationConfigPanel
+                  mappings={vegetationMappings}
+                  loading={loadingVegetationMappings}
+                  error={vegetationMappingError}
+                  onCreate={onCreateVegetationMapping}
+                  onUpdate={onUpdateVegetationMapping}
+                  onDelete={onDeleteVegetationMapping}
+                  isOpen={true}
+                  onToggle={onToggle}
+                />
+              </div>
+            </>
           )}
         </div>
       </div>

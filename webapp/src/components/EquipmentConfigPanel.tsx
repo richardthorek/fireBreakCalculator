@@ -22,6 +22,8 @@ interface EquipmentConfigPanelProps {
   triggerAdd?: number; // Trigger add mode when this value changes
   showDescription?: boolean;
   showGuide?: boolean;
+  filter?: string; // Filter text for equipment
+  compactMode?: boolean; // Use compact layout for integrated panel
 }
 
 type EquipmentTab = EquipmentCoreType;
@@ -90,13 +92,13 @@ const InlineEditComponent: React.FC<{
 
       <div className="eq-tags">
         {terrainOptions.map(t => (
-          <button key={t} type="button" className={(form.allowedTerrain ?? []).includes(t as any) ? 'tag on' : 'tag'} title={terrainExample(t)} onClick={() => toggleTerrain(t as any)}>{terrainLabel(t)}</button>
+          <button key={t} type="button" className={(form.allowedTerrain ?? []).includes(t as any) ? `tag on terrain-${t}` : 'tag'} title={terrainExample(t)} onClick={() => toggleTerrain(t as any)}>{terrainLabel(t)}</button>
         ))}
       </div>
 
       <div className="eq-tags">
         {vegetationOptions.map(v => (
-          <button key={v} type="button" className={(form.allowedVegetation ?? []).includes(v as any) ? 'tag on' : 'tag'} title={vegExample(v)} onClick={() => toggleVegetation(v as any)}>{vegLabel(v)}</button>
+          <button key={v} type="button" className={(form.allowedVegetation ?? []).includes(v as any) ? `tag on veg-${v}` : 'tag'} title={vegExample(v)} onClick={() => toggleVegetation(v as any)}>{vegLabel(v)}</button>
         ))}
       </div>
 
@@ -129,11 +131,15 @@ const EquipmentListComponent: React.FC<{
   vegLabel: (v: string) => string;
   terrainExample: (t: string) => string;
   vegExample: (v: string) => string;
-}> = ({ equipment, activeTab, adding, draft, setDraft, saveNew, setAdding, resetDraft, editingId, setEditingId, saveEdit, remove, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample }) => {
-  const filtered = equipment.filter(e => e.type === activeTab);
+  filter?: string;
+  compactMode?: boolean;
+}> = ({ equipment, activeTab, adding, draft, setDraft, saveNew, setAdding, resetDraft, editingId, setEditingId, saveEdit, remove, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample, filter = '', compactMode = false }) => {
+  const filtered = equipment
+    .filter(e => e.type === activeTab)
+    .filter(e => filter === '' || e.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <div className="equip-list">
+    <div className={`equip-list ${compactMode ? 'compact' : ''}`}>
       {adding && (
         <div className="equip-row adding">
           <label className="visually-hidden" htmlFor="draft-name">Name</label>
@@ -161,7 +167,7 @@ const EquipmentListComponent: React.FC<{
 
           <div className="eq-tags">
             {terrainOptions.map(t => (
-              <button key={t} type="button" className={(draft.allowedTerrain ?? []).includes(t) ? 'tag on' : 'tag'} title={terrainExample(t)} onClick={() => {
+              <button key={t} type="button" className={(draft.allowedTerrain ?? []).includes(t) ? `tag on terrain-${t}` : 'tag'} title={terrainExample(t)} onClick={() => {
                 const cur = draft.allowedTerrain ?? [];
                 const next = cur.includes(t) ? cur.filter((x: string) => x !== t) : [...cur, t];
                 setDraft({ ...draft, allowedTerrain: next });
@@ -171,7 +177,7 @@ const EquipmentListComponent: React.FC<{
 
           <div className="eq-tags">
             {vegetationOptions.map(v => (
-              <button key={v} type="button" className={(draft.allowedVegetation ?? []).includes(v) ? 'tag on' : 'tag'} title={vegExample(v)} onClick={() => {
+              <button key={v} type="button" className={(draft.allowedVegetation ?? []).includes(v) ? `tag on veg-${v}` : 'tag'} title={vegExample(v)} onClick={() => {
                 const cur = draft.allowedVegetation ?? [];
                 const next = cur.includes(v) ? cur.filter((x: string) => x !== v) : [...cur, v];
                 setDraft({ ...draft, allowedVegetation: next });
@@ -202,10 +208,10 @@ const EquipmentListComponent: React.FC<{
             {item.type === 'HandCrew' && <div className="eq-small text">{(item as HandCrewApi).crewSize || '-'} / {(item as HandCrewApi).clearingRatePerPerson || '-'} </div>}
             <div className="eq-small text">{item.costPerHour ? `$${item.costPerHour}` : '-'}</div>
             <div className="eq-tags readonly">
-              {item.allowedTerrain.map(t => <span key={t} className="tag on mini" title={terrainExample(t)}>{terrainLabel(t)}</span>)}
+              {item.allowedTerrain.map(t => <span key={t} className={`tag on mini terrain-${t}`} title={terrainExample(t)}>{terrainLabel(t)}</span>)}
             </div>
             <div className="eq-tags readonly">
-              {item.allowedVegetation.map(v => <span key={v} className="tag on mini" title={vegExample(v)}>{vegLabel(v)}</span>)}
+              {item.allowedVegetation.map(v => <span key={v} className={`tag on mini veg-${v}`} title={vegExample(v)}>{vegLabel(v)}</span>)}
             </div>
             <div className="eq-actions">
               <button className="btn edit" onClick={() => setEditingId(item.id)}>Edit</button>
@@ -224,7 +230,7 @@ const EquipmentListComponent: React.FC<{
 
 export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle, initialTab = 'Machinery', showOwnTabs = true, triggerAdd,
-  showDescription = true, showGuide = true
+  showDescription = true, showGuide = true, filter = '', compactMode = false
 }) => {
   const [activeTab, setActiveTab] = useState<EquipmentTab>(initialTab);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -270,6 +276,37 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   };
 
   if (!isOpen) return null;
+
+  // Compact mode for integrated panel - just show the equipment list
+  if (compactMode) {
+    return (
+      <div className="equipment-config-panel compact">
+        <EquipmentListComponent
+          equipment={equipment}
+          activeTab={activeTab}
+          adding={adding}
+          draft={draft}
+          setDraft={setDraft}
+          saveNew={saveNew}
+          setAdding={setAdding}
+          resetDraft={resetDraft}
+          editingId={editingId}
+          setEditingId={setEditingId}
+          saveEdit={saveEdit}
+          remove={remove}
+          saving={saving}
+          terrainOptions={terrainOptions}
+          vegetationOptions={vegetationOptions}
+          terrainLabel={terrainLabel}
+          vegLabel={vegLabel}
+          terrainExample={terrainExample}
+          vegExample={vegExample}
+          filter={filter}
+          compactMode={compactMode}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="equipment-config-panel two-column">
@@ -343,6 +380,8 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
             vegLabel={vegLabel}
             terrainExample={terrainExample}
             vegExample={vegExample}
+            filter={filter}
+            compactMode={compactMode}
           />
           <p className="equip-hint">Double-click a row to edit. Tags toggle inclusion. Changes save instantly.</p>
         </div>
