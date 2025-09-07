@@ -9,6 +9,7 @@ import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAna
 import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
 import { OverlapMatrix } from './OverlapMatrix';
+import { HelpContent } from './HelpContent';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 
@@ -528,7 +529,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           </div>
         )}
         {!distance ? (
-          <div className="no-line-message"><p>Draw a line on the map to see equipment analysis</p></div>
+          <HelpContent />
         ) : (
           <>
             <div className="best-options-summary">
