@@ -20,7 +20,7 @@
 
 ## 🎯 Overview
 
-The RFS Fire Break Calculator now includes comprehensive slope analysis functionality that calculates and visualizes terrain slope along fire break tracks. This feature helps evaluate whether machinery can handle the terrain conditions for a given route.
+The Fire Break Calculator includes comprehensive slope analysis functionality that calculates and visualizes terrain slope along fire break tracks. This feature helps evaluate whether machinery can handle the terrain conditions for a given route.
 
 ## ⚙️ Features
 

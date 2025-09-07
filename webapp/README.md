@@ -1,6 +1,6 @@
-# RFS Fire Break Calculator
+# Fire Break Calculator
 
-Modern React web application to assist rural firefighters in estimating the time and resources required to construct fire breaks and trails using machinery, aircraft, and hand crews. Built with React + Vite + TypeScript and featuring an interactive Leaflet map for geospatial analysis.
+Modern React web application to assist emergency responders in estimating the time and resources required to construct fire breaks and trails using machinery, aircraft, and hand crews. Built with React + Vite + TypeScript and featuring an interactive Leaflet map for geospatial analysis.
 
 ## Features
 

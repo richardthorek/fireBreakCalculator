@@ -16,7 +16,7 @@
 
 ## 🎯 Overview
 
-The **RFS Fire Break Calculator** is a modern web-based planning tool designed to help rural firefighters and emergency response teams efficiently plan fire breaks and trails. Get instant analysis of time, cost, and resource requirements using various machinery, aircraft, and hand crews.
+The **Fire Break Calculator** is a modern web-based planning tool designed to help rural firefighters and emergency response teams efficiently plan fire breaks and trails. Get instant analysis of time, cost, and resource requirements using various machinery, aircraft, and hand crews.
 
 ### Key Capabilities
 - 📏 **Interactive Route Planning**: Draw fire break routes directly on the map
@@ -160,6 +160,18 @@ Operating costs include:
 - **Zoom**: Use mouse wheel or +/- buttons
 - **Pan**: Click and drag to move around the map
 - **Mobile**: Use standard touch gestures (pinch, swipe)
+
+#### 📍 Locate Me Button
+
+- **What it does:** Centers the map on your current device location and (optionally) drops a temporary location marker so you can start planning from your exact position.
+- **How to use:** Tap or click the Locate Me button (compass/target icon) on the map controls. Your browser will ask for permission to share location data the first time.
+- **Permissions & privacy:** The browser prompts for permission; if you deny it the app will not access your location. Location coordinates are used locally in your browser only and are not sent to external services unless you explicitly share them (e.g., for troubleshooting). The feature requires a secure (HTTPS) connection on most browsers.
+- **Accuracy:** Location accuracy depends on your device and connection. GPS-enabled mobile devices are typically accurate to within a few meters; desktop devices may use Wi‑Fi or IP-based geolocation and be less precise.
+- **Fallback & troubleshooting:**
+   - If the browser blocks location access, open your browser site settings and allow location for this site, or use the search box to manually center the map.
+   - Ensure location services / GPS are enabled on your device and the browser has permission.
+   - The Locate Me feature requires a secure connection (HTTPS) in production and may not work from local file:// pages.
+
 
 ## 💡 Tips for Effective Planning
 

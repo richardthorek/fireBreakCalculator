@@ -1,6 +1,6 @@
 # Data Sources & API Documentation
 
-This document provides comprehensive details about all external data sources, APIs, and services used by the RFS Fire Break Calculator, including required attributions and licensing information.
+This document provides comprehensive details about all external data sources, APIs, and services used by the Fire Break Calculator, including required attributions and licensing information.
 
 ## 🗺️ Mapping & Geospatial Services
 

@@ -1,5 +1,5 @@
 /**
- * Script to seed initial data for the RFS Fire Break Calculator
+ * Script to seed initial data for the Fire Break Calculator
  * This creates sample equipment and vegetation formation mappings
  */
 
@@ -75,8 +75,8 @@ const aircraft = [
 const handCrews = [
   {
     type: 'HandCrew',
-    name: 'Standard RFS Crew',
-    description: 'Standard 5-person Rural Fire Service crew',
+  name: 'Standard Crew',
+  description: 'Standard 5-person fire response crew',
     crewSize: 5,
     clearingRatePerPerson: 0.02,
     equipmentList: ['chainsaws', 'rakehoes'],

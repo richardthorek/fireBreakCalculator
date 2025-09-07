@@ -1,7 +1,7 @@
 {
-  "name": "RFS Fire Break Calculator",
-  "short_name": "RFS Breaks",
-  "description": "Calculate optimal fire breaks and clearing widths for RFS planning.",
+  "name": "Fire Break Calculator",
+  "short_name": "FireBreak",
+  "description": "Calculate optimal fire breaks and clearing widths for fire planning.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0F1724",

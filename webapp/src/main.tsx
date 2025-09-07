@@ -1,7 +1,7 @@
 /**
  * Application Entry Point
  * 
- * Main entry point for the RFS Fire Break Calculator React application.
+ * Main entry point for the Fire Break Calculator React application.
  * Configures React rendering and Microsoft Clarity analytics integration.
  * 
  * @module main

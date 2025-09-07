@@ -1,5 +1,5 @@
 /**
- * Production-ready logging utility for the RFS Fire Break Calculator.
+ * Production-ready logging utility for the Fire Break Calculator.
  * Provides different log levels and can be configured for production use.
  */
 

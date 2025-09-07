@@ -13,7 +13,7 @@
 
 export function initClarityConsent() {
   // If clarity not available yet, still create banner — the script will honor consent when available
-  const storageKey = 'rfs_clarity_consent';
+  const storageKey = 'clarity_consent';
   const existing = localStorage.getItem(storageKey);
   if (existing) return; // already decided
 
@@ -84,7 +84,7 @@ export function initClarityConsent() {
 }
 
 export function applyStoredClarityConsent() {
-  const storageKey = 'rfs_clarity_consent';
+  const storageKey = 'clarity_consent';
   const existing = localStorage.getItem(storageKey);
   if (!existing) return;
   try {

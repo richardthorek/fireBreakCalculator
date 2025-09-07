@@ -16,7 +16,7 @@ export const HelpContent: React.FC = () => {
 
       <div className="help-sections">
         <section className="help-section">
-          <h5>📍 Drawing Your Fire Break Route</h5>
+          <h5>✏️ Drawing Your Fire Break Route</h5>
           <div className="help-steps">
             <ol>
               <li>
@@ -76,6 +76,21 @@ export const HelpContent: React.FC = () => {
                 <li><strong>Two-finger vertical:</strong> Tilt the map</li>
               </ul>
             </div>
+          </div>
+        </section>
+
+        <section className="help-section">
+          <h5>📍 Locate Me</h5>
+          <div className="help-steps">
+            <p>
+              The <strong>Locate Me</strong> control (pin/target icon) centers the map on your current device location and drops a temporary location marker. This is separate from the drawing tools which use the pencil icon.
+            </p>
+            <ul>
+              <li><strong>Tap/click the pin icon</strong> to center the map on your device.</li>
+              <li>Your browser will ask for location permission the first time; allow it to use the feature.</li>
+              <li>If location is denied or unavailable, use the search box to manually center the map.</li>
+            </ul>
+            <p className="help-note">Note: The drawing tool now uses the pencil icon (✏️) so the pin (📍) uniquely identifies the Locate Me control.</p>
           </div>
         </section>
 

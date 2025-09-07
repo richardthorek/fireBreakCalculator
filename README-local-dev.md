@@ -1,6 +1,6 @@
 # Local Development Setup
 
-Quick setup guide for developers working on the RFS Fire Break Calculator.
+Quick setup guide for developers working on the Fire Break Calculator.
 
 ## Prerequisites
 

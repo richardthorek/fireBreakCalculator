@@ -62,7 +62,7 @@ const mockEquipment: EquipmentApi[] = [
   {
     id: '4',
     type: 'HandCrew',
-    name: 'RFS Strike Team',
+  name: 'Strike Team',
     crewSize: 6,
     clearingRatePerPerson: 15,
     costPerHour: 120,

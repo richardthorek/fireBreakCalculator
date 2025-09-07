@@ -21,7 +21,7 @@ import { _clearNSWCache } from './utils/nswVegetationService';
 import logo96 from '../favicon-96x96.png';
 
 /**
- * Root application component for the RFS Fire Break Calculator.
+ * Root application component for the Fire Break Calculator.
  * Renders a fixed-height header (10% of viewport), responsive Mapbox GL JS map,
  * and analysis panel for fire break calculations.
  */
@@ -358,7 +358,7 @@ const App: React.FC = () => {
     <div className="app-shell">
       <header className="app-header">
         <div className="header-left">
-          <img src={logo96} alt="RFS logo" className="app-logo" />
+          <img src={logo96} alt="App logo" className="app-logo" />
           <div className="header-titles">
             <h1 className="app-title">Fire Break Calculator</h1>
             <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>

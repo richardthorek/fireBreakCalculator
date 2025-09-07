@@ -21,7 +21,7 @@
 
 ## 🎯 Overview
 
-The RFS Fire Break Calculator now includes automated vegetation analysis using Mapbox Terrain v2 vector tiles. This feature automatically detects vegetation type and density along fire break routes, replacing manual vegetation selection with intelligent analysis while maintaining the option for manual override.
+The Fire Break Calculator includes automated vegetation analysis using Mapbox Terrain v2 vector tiles. This feature automatically detects vegetation type and density along fire break routes, replacing manual vegetation selection with intelligent analysis while maintaining the option for manual override.
 
 ## ⚙️ Features
 

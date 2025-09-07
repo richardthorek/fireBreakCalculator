@@ -18,7 +18,7 @@
 
 ---
 
-The RFS Fire Break Calculator supports hierarchical vegetation mappings that allow administrators to specify how NSW vegetation formations, classes, and types map to the application's four vegetation categories:
+The Fire Break Calculator supports hierarchical vegetation mappings that allow administrators to specify how NSW vegetation formations, classes, and types map to the application's four vegetation categories:
 
 - **Grassland** - Open areas with minimal vegetation
 - **Light Shrub** - Sparse shrubland and low vegetation  

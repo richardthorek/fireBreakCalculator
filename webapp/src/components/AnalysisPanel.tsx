@@ -757,7 +757,7 @@ const BuyMeACoffee: React.FC = () => {
         </div>
         <a
           className="feature-suggestion-button"
-          href="https://github.com/richardthorek/rfsFireBreakCalculator/issues/new?template=feature_request.md&title=Feature%20Request%3A%20&labels=enhancement"
+          href="https://github.com/richardthorek/fireBreakCalculator/issues/new?template=feature_request.md&title=Feature%20Request%3A%20&labels=enhancement"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Suggest a feature or contact developer"

@@ -1,6 +1,6 @@
 # 🏗️ Architecture Overview
 
-**System design and technical implementation details for the RFS Fire Break Calculator**
+**System design and technical implementation details for the Fire Break Calculator**
 
 ---
 

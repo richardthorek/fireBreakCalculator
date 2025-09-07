@@ -1,6 +1,6 @@
 # 🎨 UI Design Documentation
 
-**Interface design patterns and visual principles for the RFS Fire Break Calculator**
+**Interface design patterns and visual principles for the Fire Break Calculator**
 
 ---
 
