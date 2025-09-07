@@ -491,6 +491,233 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
     return null;
   }
 
+  // Prepare the mappings content separately to avoid deeply nested JSX/ternary parsing issues
+  const mappingsContent = (() => {
+    if (loading) {
+      return <div className="loading">Loading vegetation mappings...</div>;
+    }
+
+    if (viewMode === 'hierarchical') {
+      return (
+        <div className="hierarchical-mappings">
+          {Array.from(formationGroups.keys()).sort().map(formationName => {
+            const formationGroup = formationGroups.get(formationName)!;
+            const isFormationExpanded = expandedFormations.has(formationName);
+            const formationId = formationGroup.mappingId;
+
+            return (
+              <div key={formationName} className="formation-group">
+                <div
+                  className={`formation-header ${formationId && selectedItems.has(formationId) ? 'selected' : ''}`}
+                  onClick={() => toggleFormation(formationName)}
+                >
+                  <div className="formation-expand-icon">
+                    {formationGroup.classes.size > 0 ? (isFormationExpanded ? '▼' : '▶') : '•'}
+                  </div>
+
+                  {formationId && (
+                    <input
+                      type="checkbox"
+                      checked={selectedItems.has(formationId)}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        toggleItemSelection(formationId);
+                      }}
+                      className="selection-checkbox"
+                      title={`Select ${formationName} formation for bulk operations`}
+                      aria-label={`Select ${formationName} formation for bulk operations`}
+                    />
+                  )}
+
+                  <div className="formation-title">
+                    <span className="formation-name">{formationName}</span>
+                    <span className={`vegetation-type-badge ${formationGroup.vegetationType}`}>
+                      {vegetationTypeLabels[formationGroup.vegetationType].label}
+                    </span>
+                  </div>
+
+                  <div className="formation-actions">
+                    {formationId && (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(formationGroup.mapping!);
+                          }}
+                          className="edit-button"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Delete formation mapping for "${formationName}"?`)) {
+                              onDelete(formationGroup.mapping!);
+                            }
+                          }}
+                          className="delete-button"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isFormationExpanded && formationGroup.classes.size > 0 && (
+                  <div className="formation-classes">
+                    {Array.from(formationGroup.classes.keys()).sort().map(className => {
+                      const classGroup = formationGroup.classes.get(className)!;
+                      const isClassExpanded = expandedClasses.has(`${formationName}|${className}`);
+                      const classId = classGroup.mappingId;
+
+                      return (
+                        <div key={`${formationName}|${className}`} className="class-group">
+                          <div
+                            className={`class-header ${classId && selectedItems.has(classId) ? 'selected' : ''}`}
+                            onClick={() => toggleClass(`${formationName}|${className}`)}
+                          >
+                            <div className="class-expand-icon">
+                              {classGroup.types.size > 0 ? (isClassExpanded ? '▼' : '▶') : '•'}
+                            </div>
+
+                            {classId && (
+                              <input
+                                type="checkbox"
+                                checked={selectedItems.has(classId)}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  toggleItemSelection(classId);
+                                }}
+                                className="selection-checkbox"
+                                title={`Select ${className} class for bulk operations`}
+                                aria-label={`Select ${className} class for bulk operations`}
+                              />
+                            )}
+
+                            <div className="class-title">
+                              <span className="class-name">{className}</span>
+                              <span className={`vegetation-type-badge ${classGroup.vegetationType}`}>
+                                {vegetationTypeLabels[classGroup.vegetationType].label}
+                              </span>
+                            </div>
+
+                            <div className="class-actions">
+                              {classId && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEdit(classGroup.mapping!);
+                                    }}
+                                    className="edit-button"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (window.confirm(`Delete class mapping for "${className}"?`)) {
+                                        onDelete(classGroup.mapping!);
+                                      }
+                                    }}
+                                    className="delete-button"
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {isClassExpanded && classGroup.types.size > 0 && (
+                            <div className="class-types">
+                              {Array.from(classGroup.types.keys()).sort().map(typeName => {
+                                const typeMapping = classGroup.types.get(typeName)!;
+
+                                return (
+                                  <div
+                                    key={`${formationName}|${className}|${typeName}`}
+                                    className={`type-item ${selectedItems.has(typeMapping.id) ? 'selected' : ''}`}
+                                  >
+                                    <div className="type-checkbox">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedItems.has(typeMapping.id)}
+                                        onChange={() => toggleItemSelection(typeMapping.id)}
+                                        className="selection-checkbox"
+                                        title={`Select ${typeName} for bulk operations`}
+                                        aria-label={`Select ${typeName} for bulk operations`}
+                                      />
+                                    </div>
+
+                                    <div className="type-title">
+                                      <span className="type-name">{typeName}</span>
+                                      <span className={`vegetation-type-badge ${typeMapping.vegetationType}`}>
+                                        {vegetationTypeLabels[typeMapping.vegetationType].label}
+                                      </span>
+                                    </div>
+
+                                    <div className="type-actions">
+                                      <button
+                                        onClick={() => handleEdit(typeMapping)}
+                                        className="edit-button"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (window.confirm(`Delete type mapping for "${typeName}"?`)) {
+                                            onDelete(typeMapping);
+                                          }
+                                        }}
+                                        className="delete-button"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {Array.from(formationGroups.keys()).length === 0 && !loading && (
+            <div className="no-mappings">No vegetation mappings found</div>
+          )}
+        </div>
+      );
+    }
+
+    // Flat view
+    return (
+      <div className="flat-mappings">
+        {filteredMappings.length === 0 ? (
+          <div className="no-mappings">No vegetation mappings found</div>
+        ) : (
+          filteredMappings.map(mapping => (
+            <VegetationMappingRow
+              key={mapping.id}
+              mapping={mapping}
+              onEdit={handleEdit}
+              onDelete={onDelete}
+              isSelected={selectedItems.has(mapping.id)}
+              onSelect={() => toggleItemSelection(mapping.id)}
+            />
+          ))
+        )}
+      </div>
+    );
+  })();
+
   return (
     <div className="vegetation-config-panel">
       {/* Guidance controls section - moved from toolbar */}
@@ -545,224 +772,8 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
       <div className="vegetation-scroll-area">
         {!showForm ? (
           <div className={`mappings-container ${viewMode === 'hierarchical' ? 'hierarchical-view' : 'flat-view'}`}>
-            {loading ? (
-              <div className="loading">Loading vegetation mappings...</div>
-            ) : viewMode === 'hierarchical' ? (
-            // Hierarchical view
-            <div className="hierarchical-mappings">
-              {Array.from(formationGroups.keys()).sort().map(formationName => {
-                const formationGroup = formationGroups.get(formationName)!;
-                const isFormationExpanded = expandedFormations.has(formationName);
-                const formationId = formationGroup.mappingId;
-                
-                return (
-                  <div key={formationName} className="formation-group">
-                    <div 
-                      className={`formation-header ${formationId && selectedItems.has(formationId) ? 'selected' : ''}`}
-                      onClick={() => toggleFormation(formationName)}
-                    >
-                      <div className="formation-expand-icon">
-                        {formationGroup.classes.size > 0 ? (isFormationExpanded ? '▼' : '▶') : '•'}
-                      </div>
-                      
-                      {formationId && (
-                        <input 
-                          type="checkbox"
-                          checked={selectedItems.has(formationId)}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            toggleItemSelection(formationId);
-                          }}
-                          className="selection-checkbox"
-                          title={`Select ${formationName} formation for bulk operations`}
-                          aria-label={`Select ${formationName} formation for bulk operations`}
-                        />
-                      )}
-                      
-                      <div className="formation-title">
-                        <span className="formation-name">{formationName}</span>
-                        <span className={`vegetation-type-badge ${formationGroup.vegetationType}`}>
-                          {vegetationTypeLabels[formationGroup.vegetationType].label}
-                        </span>
-                      </div>
-                      
-                      <div className="formation-actions">
-                        {formationId && (
-                          <>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEdit(formationGroup.mapping!);
-                              }}
-                              className="edit-button"
-                            >
-                              Edit
-                            </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (window.confirm(`Delete formation mapping for "${formationName}"?`)) {
-                                  onDelete(formationGroup.mapping!);
-                                }
-                              }}
-                              className="delete-button"
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {isFormationExpanded && formationGroup.classes.size > 0 && (
-                      <div className="formation-classes">
-                        {Array.from(formationGroup.classes.keys()).sort().map(className => {
-                          const classGroup = formationGroup.classes.get(className)!;
-                          const isClassExpanded = expandedClasses.has(`${formationName}|${className}`);
-                          const classId = classGroup.mappingId;
-                          
-                          return (
-                            <div key={`${formationName}|${className}`} className="class-group">
-                              <div 
-                                className={`class-header ${classId && selectedItems.has(classId) ? 'selected' : ''}`}
-                                onClick={() => toggleClass(`${formationName}|${className}`)}
-                              >
-                                <div className="class-expand-icon">
-                                  {classGroup.types.size > 0 ? (isClassExpanded ? '▼' : '▶') : '•'}
-                                </div>
-                                
-                                {classId && (
-                                  <input 
-                                    type="checkbox"
-                                    checked={selectedItems.has(classId)}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      toggleItemSelection(classId);
-                                    }}
-                                    className="selection-checkbox"
-                                    title={`Select ${className} class for bulk operations`}
-                                    aria-label={`Select ${className} class for bulk operations`}
-                                  />
-                                )}
-                                
-                                <div className="class-title">
-                                  <span className="class-name">{className}</span>
-                                  <span className={`vegetation-type-badge ${classGroup.vegetationType}`}>
-                                    {vegetationTypeLabels[classGroup.vegetationType].label}
-                                  </span>
-                                </div>
-                                
-                                <div className="class-actions">
-                                  {classId && (
-                                    <>
-                                      <button 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleEdit(classGroup.mapping!);
-                                        }}
-                                        className="edit-button"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (window.confirm(`Delete class mapping for "${className}"?`)) {
-                                            onDelete(classGroup.mapping!);
-                                          }
-                                        }}
-                                        className="delete-button"
-                                      >
-                                        Delete
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              {isClassExpanded && classGroup.types.size > 0 && (
-                                <div className="class-types">
-                                  {Array.from(classGroup.types.keys()).sort().map(typeName => {
-                                    const typeMapping = classGroup.types.get(typeName)!;
-                                    
-                                    return (
-                                      <div 
-                                        key={`${formationName}|${className}|${typeName}`} 
-                                        className={`type-item ${selectedItems.has(typeMapping.id) ? 'selected' : ''}`}
-                                      >
-                                        <div className="type-checkbox">
-                                          <input 
-                                            type="checkbox"
-                                            checked={selectedItems.has(typeMapping.id)}
-                                            onChange={() => toggleItemSelection(typeMapping.id)}
-                                            className="selection-checkbox"
-                                            title={`Select ${typeName} for bulk operations`}
-                                            aria-label={`Select ${typeName} for bulk operations`}
-                                          />
-                                        </div>
-                                        
-                                        <div className="type-title">
-                                          <span className="type-name">{typeName}</span>
-                                          <span className={`vegetation-type-badge ${typeMapping.vegetationType}`}>
-                                            {vegetationTypeLabels[typeMapping.vegetationType].label}
-                                          </span>
-                                        </div>
-                                        
-                                        <div className="type-actions">
-                                          <button 
-                                            onClick={() => handleEdit(typeMapping)}
-                                            className="edit-button"
-                                          >
-                                            Edit
-                                          </button>
-                                          <button 
-                                            onClick={() => {
-                                              if (window.confirm(`Delete type mapping for "${typeName}"?`)) {
-                                                onDelete(typeMapping);
-                                              }
-                                            }}
-                                            className="delete-button"
-                                          >
-                                            Delete
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              
-              {Array.from(formationGroups.keys()).length === 0 && !loading && (
-                <div className="no-mappings">No vegetation mappings found</div>
-              )}
-            </div>
-          ) : (
-            // Flat list view
-            <div className="flat-mappings">
-              {filteredMappings.length === 0 ? (
-                <div className="no-mappings">No vegetation mappings found</div>
-              ) : (
-                filteredMappings.map(mapping => (
-                  <VegetationMappingRow
-                    key={mapping.id}
-                    mapping={mapping}
-                    onEdit={handleEdit}
-                    onDelete={onDelete}
-                    isSelected={selectedItems.has(mapping.id)}
-                    onSelect={() => toggleItemSelection(mapping.id)}
-                  />
-                ))
-              )}
-            </div>
-          )}
+            {mappingsContent}
+          </div>
         ) : (
           <VegetationMappingForm
             initialValues={editMapping || {}}
