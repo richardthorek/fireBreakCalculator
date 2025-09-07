@@ -390,7 +390,8 @@
     flex-direction: column;
     gap: 0.5rem;
     padding: 0.75rem;
-    min-height: auto;
+    /* Use 0 instead of auto for min-height to avoid Firefox compatibility issues */
+    min-height: 0;
   }
   
   .equipment-card-header {

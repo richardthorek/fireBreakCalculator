@@ -41,6 +41,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
+  // Locating state for geolocation UX
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   
   // Touch controls state and configuration
   // Automatically detect touch devices and show appropriate hints
@@ -53,6 +56,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
+  const locationMarkerRef = useRef<any | null>(null);
   const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
   const [dropsVersion, setDropsVersion] = useState(0);
 
@@ -98,6 +102,120 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     
     // Add full screen control
     map.addControl(new mapboxgl.FullscreenControl(), 'top-left');
+
+    // Add custom geolocate button/control to request user location on demand
+    const geolocateControl = {
+      onAdd: function(m: any) {
+        const container = document.createElement('div');
+        container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group geolocate-control';
+        const btn = document.createElement('button');
+        btn.className = 'mapbox-geolocate-btn';
+        btn.title = 'Center map on your location';
+        btn.setAttribute('aria-label', 'Center map on your location');
+        btn.innerHTML = '📍';
+        btn.onclick = () => {
+          // request location when button clicked
+          tryRequestLocation();
+        };
+        container.appendChild(btn);
+        return container;
+      },
+      onRemove: function() {}
+    };
+    map.addControl(geolocateControl, 'top-left');
+
+  // If permission was already granted previously, try to auto-locate
+  const tryAutoLocate = async () => {
+      try {
+        if ((navigator as any).permissions && (navigator as any).permissions.query) {
+          const p = await (navigator as any).permissions.query({ name: 'geolocation' });
+          if (p.state === 'granted') {
+            tryRequestLocation();
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    tryAutoLocate();
+
+    // Helper: request browser geolocation and handle the result
+    function tryRequestLocation() {
+      if (!navigator.geolocation) {
+        setLocationError('Geolocation not supported by this browser');
+        return;
+      }
+      // show transient locating UI
+      setIsLocating(true);
+      setLocationError(null);
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        // center map and add pulsing marker
+        const userLngLat: [number, number] = [longitude, latitude];
+        // remove existing marker
+        if (locationMarkerRef.current) {
+          try { locationMarkerRef.current.remove(); } catch {}
+          locationMarkerRef.current = null;
+        }
+
+        // Create pulsing marker element
+        const el = document.createElement('div');
+        el.className = 'user-location-marker';
+        const pulse = document.createElement('div');
+        pulse.className = 'user-location-pulse';
+        el.appendChild(pulse);
+
+        // Use Mapbox Marker constructor from dynamically loaded lib if available
+        const MarkerCtor = mapLibRef.current?.Marker || (mapboxgl as any).Marker;
+        const marker = new MarkerCtor(el).setLngLat(userLngLat).addTo(map);
+        locationMarkerRef.current = marker;
+
+        // Build a circular sample of points ~10km from center, compute bbox and fit bounds.
+        const radius = 10000; // meters
+        const R = 6378137; // earth radius in m
+        const latRad = latitude * Math.PI / 180;
+        const angularDistance = radius / R; // in radians
+        const samples = 64;
+        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+        for (let i = 0; i < samples; i++) {
+          const theta = (i / samples) * (Math.PI * 2);
+          // approximate offsets
+          const latOffset = Math.asin(Math.sin(latitude * Math.PI / 180) * Math.cos(angularDistance) + Math.cos(latitude * Math.PI / 180) * Math.sin(angularDistance) * Math.cos(theta));
+          const lonOffset = (longitude * Math.PI / 180) + Math.atan2(Math.sin(theta) * Math.sin(angularDistance) * Math.cos(latitude * Math.PI / 180), Math.cos(angularDistance) - Math.sin(latitude * Math.PI / 180) * Math.sin(latOffset));
+          const sampleLat = latOffset * 180 / Math.PI;
+          const sampleLng = lonOffset * 180 / Math.PI;
+          if (sampleLng < minLng) minLng = sampleLng;
+          if (sampleLng > maxLng) maxLng = sampleLng;
+          if (sampleLat < minLat) minLat = sampleLat;
+          if (sampleLat > maxLat) maxLat = sampleLat;
+        }
+
+        // Fallback in case computation fails
+        if (!isFinite(minLng) || !isFinite(minLat)) {
+          map.setCenter(userLngLat);
+          map.setZoom(12);
+        } else {
+          map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 80, duration: 1000 });
+        }
+
+        // apply a mild tilt after move completes to ensure zoom/center happen first
+        map.once('moveend', () => {
+          try { map.easeTo({ pitch: 40, bearing: 0, duration: 1000 }); } catch (e) { /* ignore */ }
+        });
+        // clear locating state on success
+        setIsLocating(false);
+        setLocationError(null);
+      }, (err) => {
+        logger.warn('Geolocation failed', err);
+        // Distinguish permission denied vs other failures for clearer UX
+        if (err && (err.code === 1 || (err.PERMISSION_DENIED !== undefined && err.code === err.PERMISSION_DENIED))) {
+          setLocationError('Location permission denied');
+        } else {
+          setLocationError('Unable to access location');
+        }
+        setIsLocating(false);
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    };
 
   
     // Initialize MapboxDraw for drawing functionality
@@ -325,6 +443,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       )}
       {isAnalyzing && (
         <div className="analyzing-badge">Analyzing…</div>
+      )}
+      {/* transient locating UI */}
+      {isLocating && (
+        <div className="locating-badge">Locating…</div>
+      )}
+      {locationError && (
+        <div className="location-error-badge">{locationError}</div>
       )}
       {fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>

@@ -26,8 +26,9 @@ export const ConfigTab: React.FC<TabProps> = ({
     <button 
       id={id}
       className={`config-tab ${isActive ? 'active' : ''}`} 
-      onClick={onClick}
-      aria-selected={isActive ? true : false}
+  onClick={onClick}
+  type="button"
+  aria-selected={isActive ? 'true' : 'false'}
       role="tab"
       aria-controls={`${id}-panel`}
     >
@@ -63,14 +64,16 @@ interface TabPanelProps {
 }
 
 export const ConfigTabPanel: React.FC<TabPanelProps> = ({ id, isActive, children }) => {
-  if (!isActive) return null;
-  
+  // Always render tab panels so they are present in the DOM for accessibility APIs.
+  // Use aria-hidden and the hidden attribute to hide inactive panels from assistive tech and layout.
   return (
-    <div 
+    <div
       id={`${id}-panel`}
-      className="config-tab-panel"
+      className={`config-tab-panel ${isActive ? 'active' : 'inactive'}`}
       role="tabpanel"
       aria-labelledby={id}
+      aria-hidden={isActive ? 'false' : 'true'}
+      hidden={!isActive}
     >
       {children}
     </div>
