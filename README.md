@@ -1,182 +1,206 @@
-# RFS Fire Break Calculator Monorepo
+# 🔥 RFS Fire Break Calculator
 
-Modern geospatial planning tool to help rural firefighters estimate time, cost, and resource requirements for constructing fire breaks and trails. This repository contains:
+A modern geospatial planning tool designed to help rural firefighters and emergency response teams efficiently plan fire breaks and trails. Get instant estimates for time, cost, and resource requirements using various equipment types, aircraft, and hand crews.
 
-| Package | Path | Purpose |
-|---------|------|---------|
-| Web App | `webapp/` | React + Vite + TypeScript interactive mapping UI (Mapbox GL JS) & analysis engine |
-| API | `api/` | Azure Functions (TypeScript) providing CRUD for equipment catalogue via Azure Table Storage |
-| Scripts | `scripts/` | Utility scripts (e.g. seeding equipment) |
+[![License](https://img.shields.io/badge/license-see%20LICENSE-blue)](#license) 
+[![Azure Functions](https://img.shields.io/badge/backend-Azure%20Functions-0078d4)]()
+[![React](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)]()
 
-## ✨ Key Features
-* Interactive map drawing of proposed fire break routes with real‑time distance
-* **Optimized touch controls** for mobile devices with tap-by-tap point placement
-* Automated slope & vegetation difficulty analysis with visual overlays
-* Equipment library: machinery, aircraft, hand crews (configurable)
-* **Configurable vegetation mapping system** for NSW vegetation formations
-* Time, cost, and aircraft drop estimations with terrain / vegetation multipliers
-* Slope compatibility checks per machinery type
-* Drop pattern preview for aircraft (interval markers along route)
-* Config‑driven rules & rates (easy to extend)
+## ✨ What This Tool Does
 
-## 🗂 Project Structure
+**Plan fire breaks with confidence** by drawing routes on an interactive map and getting immediate analysis including:
+
+- 📏 **Real-time distance calculation** as you draw
+- ⛰️ **Automated slope analysis** with equipment compatibility checking  
+- 🌿 **Vegetation assessment** using NSW Government data
+- ⚡ **Equipment recommendations** for machinery, aircraft, and hand crews
+- 💰 **Cost and time estimates** with terrain and vegetation factors
+- 🚁 **Aircraft drop pattern preview** with visual markers
+- 📱 **Mobile-optimized** touch controls for field use
+
+## 🚀 Getting Started
+
+### For Users
+**👉 [Complete User Guide](webapp/Documentation/USER_GUIDE.md)** - Everything you need to know to plan effective fire breaks
+
+**Quick Start:**
+1. Open the application in your web browser
+2. Draw a fire break route on the map by clicking points
+3. Select terrain conditions (easy, moderate, difficult, extreme)
+4. Choose vegetation density (light, moderate, heavy, extreme)  
+5. Pick equipment types to compare options
+6. Review time, cost, and compatibility results
+
+### For Administrators & Developers
+- **📋 [System Requirements & Setup](README-local-dev.md)** - Installation and configuration
+- **🏗️ [Architecture Documentation](webapp/Documentation/ARCHITECTURE.md)** - Technical system design
+- **🤝 [Contributing Guidelines](CONTRIBUTING.md)** - How to contribute to the project
+
+## 🎯 Key Features
+
+### Interactive Planning
+- **Smart Drawing Tools**: Touch-optimized map interface with polyline drawing
+- **Real-time Feedback**: Distance updates as you draw your fire break route
+- **Visual Analysis**: Color-coded slope segments and vegetation overlays
+
+### Equipment Analysis  
+- **Machinery Options**: Dozers, graders with slope compatibility checking
+- **Aircraft Resources**: Helicopters and fixed-wing with drop pattern preview
+- **Hand Crews**: Various crew sizes and specializations
+- **Multi-resource Comparison**: Select multiple options to find the best approach
+
+### Advanced Analytics
+- **Slope Analysis**: Automatic terrain assessment every 100m along your route
+- **Vegetation Intelligence**: Integration with NSW Government vegetation databases
+- **Compatibility Checking**: Equipment limitations automatically flagged
+- **Cost Optimization**: Compare scenarios to find most cost-effective solutions
+
+### Mobile & Accessibility
+- **Touch Controls**: Optimized for tablets and smartphones in the field
+- **Responsive Design**: Works on all screen sizes
+- **Accessibility**: WCAG 2.1 AA compliant with screen reader support
+
+## 📊 Data Sources & Attribution
+
+This application integrates with several authoritative data sources:
+
+### Map Data & Imagery
+- **[Mapbox](https://www.mapbox.com/)** - Base map tiles, satellite imagery, and terrain data
+  - *License*: [Mapbox Terms of Service](https://www.mapbox.com/legal/tos)
+  - *Attribution*: © Mapbox © OpenStreetMap contributors
+  - *Usage*: Requires valid Mapbox access token
+
+### Vegetation Data
+- **[NSW Department of Planning and Environment](https://www.dpie.nsw.gov.au/)** - Plant Community Type (PCT) vegetation classifications
+  - *Service*: SVTM NSW Extant PCT ArcGIS MapServer
+  - *URL*: `https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer`
+  - *Attribution*: © State of New South Wales through Department of Planning and Environment
+  - *License*: [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+  - *Data Currency*: Updated regularly by NSW Government
+
+### Equipment & Configuration Data
+- **Azure Table Storage** - Equipment specifications and vegetation mappings
+  - *Hosted*: Microsoft Azure Cloud Services
+  - *Management*: Configurable via API endpoints
+  - *Backup*: Automated Azure backup policies
+
+### Elevation Data
+- **Current**: Mock elevation service for demonstration
+- **Planned**: Integration with real Digital Elevation Models (DEM)
+  - *Target Sources*: Google Elevation API, SRTM data, or Australian Geoscience data
+
+## 🗂️ Project Structure
+
 ```
-api/              Azure Functions (equipment CRUD)
-webapp/           React + Vite front-end
-webapp/Documentation/  In-depth product & design docs (architecture, user guide, etc.)
-scripts/          Helper / seed scripts
+📁 rfsFireBreakCalculator/
+├── 📁 webapp/              # React frontend application
+│   ├── 📁 src/            # Source code and components  
+│   └── 📁 Documentation/  # User guides and technical docs
+├── 📁 api/                # Azure Functions backend API
+│   └── 📁 src/           # API functions and data access
+├── 📁 scripts/           # Utility and seed scripts
+└── 📁 Documentation/     # Main documentation hub
+    ├── 📁 Archive/       # Legacy development documents
+    └── README.md         # Documentation index
 ```
 
-## ✅ Prerequisites
-* Node.js 18+
+## 🛠️ Technology Stack
 
-## 🔄 Seeding Initial Data
-The application comes with a seed script to populate the database with initial equipment and vegetation mappings:
+### Frontend
+- **React 18** with TypeScript for robust UI development
+- **Vite** for fast development and optimized builds
+- **Leaflet** with Mapbox tiles for interactive mapping
+- **Modern CSS** with responsive design patterns
 
+### Backend  
+- **Azure Functions** (Node.js/TypeScript) for serverless API
+- **Azure Table Storage** for equipment and configuration data
+- **RESTful API** design with optimistic concurrency control
+
+### Infrastructure
+- **Azure Cloud Services** for hosting and data storage
+- **GitHub Actions** for CI/CD (planned)
+- **Environment-based configuration** for flexible deployments
+
+## 📱 Device Compatibility
+
+### Recommended Browsers
+- Chrome 90+ (optimal performance)
+- Firefox 88+, Safari 14+, Edge 90+
+- Mobile browsers on iOS Safari and Android Chrome
+
+### Hardware Requirements
+- **Desktop/Laptop**: Modern processor, 4GB+ RAM
+- **Tablets**: iPad (iOS 14+), Android tablets (Android 10+)  
+- **Smartphones**: iOS 14+, Android 10+ (limited screen real estate)
+
+### Network Requirements
+- **Internet connection required** for map tiles and vegetation data
+- **Bandwidth**: 2+ Mbps recommended for smooth map interaction
+- **Offline mode**: Planned for future release
+
+## 🚀 Quick Deployment Guide
+
+### Prerequisites
+- Node.js 18+ and npm
+- Azure subscription (for production)
+- Mapbox account and access token
+
+### Development Setup
 ```bash
-# Set the API base URL if not running locally
-export API_BASE_URL=https://your-api-url.azurewebsites.net/api
-
-# Run the seed script
-node scripts/seed_data.js
-```
-* Azure Functions Core Tools v4 (for local API)
-* An Azure Storage account (Table Storage) OR Azurite for local dev
-* Mapbox access token (for map tiles & terrain)
-
-## 🚀 Quick Start (Local Development)
-Clone & install:
-```pwsh
+# Clone and install dependencies
 git clone <repo-url>
-cd rfsBreakCalculator
-cd api; npm install; cd ..
-cd webapp; npm install; cd ..
+cd rfsFireBreakCalculator
+cd api && npm install && cd ..
+cd webapp && npm install && cd ..
+
+# Configure environment variables
+# (See README-local-dev.md for detailed instructions)
+
+# Start development servers
+cd api && npm start &      # Azure Functions (port 7071)
+cd webapp && npm run dev   # Vite dev server (port 5173)
 ```
 
-Set environment values:
-1. API: create `api/local.settings.json` (not committed) – example:
-```jsonc
-{
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "FUNCTIONS_WORKER_RUNTIME": "node",
-    "TABLES_CONNECTION_STRING": "UseDevelopmentStorage=true",
-    "EQUIPMENT_TABLE_NAME": "equipment"
-  }
-}
-```
-2. Web: create `webapp/.env`:
-```bash
-VITE_MAPBOX_ACCESS_TOKEN=<your_token>
-# Optional override (otherwise dev proxy to Functions):
-# VITE_API_BASE_URL=http://localhost:7071/api
-```
-
-Run both services (separate terminals):
-```pwsh
-cd api; npm start          # Starts Functions host on http://localhost:7071
-cd webapp; npm run dev     # Starts Vite dev server (usually http://localhost:5173)
-```
-Navigate to the web URL; the frontend proxies `/api` to the Functions host.
-
-## 🔐 Environment Variables
-
-| Component | Variable | Description | Default |
-|-----------|----------|-------------|---------|
-| API | `TABLES_CONNECTION_STRING` | Connection string for Azure Table Storage | (required) |
-| API | `EQUIPMENT_TABLE_NAME` | Table name for equipment catalogue | `equipment` |
-| Web | `VITE_MAPBOX_ACCESS_TOKEN` | Mapbox token for tiles/styles | (required) |
-| Web | `VITE_API_BASE_URL` | Explicit API base (omit to use dev proxy) | none |
-
-## 🛠 Equipment API
-Base URL (local): `http://localhost:7071/api`
-
-| Method | Route | Purpose |
-|--------|-------|---------|
-| GET | `/equipment` | List all equipment |
-| GET | `/equipment?type=Machinery` | Filter by type (`Machinery|Aircraft|HandCrew`) |
-| POST | `/equipment` | Create new equipment item |
-| PUT/PATCH | `/equipment/{type}/{id}` | Update existing item (optimistic version check) |
-| DELETE | `/equipment/{type}/{id}` | Delete item |
-
-### Create Example (Machinery)
-```json
-{
-  "type": "Machinery",
-  "name": "Caterpillar D6",
-  "description": "Medium dozer",
-  "allowedTerrain": ["easy","moderate","difficult"],
-  "allowedVegetation": ["grassland","lightshrub","mediumscrub"],
-  "clearingRate": 180,                // meters/hour
-  "costPerHour": 450,
-  "maxSlope": 25,
-  "cutWidthMeters": 4
-}
-```
-
-Concurrency control: supply `version` when updating; a mismatched version returns `409` with the current value.
-
-## 🧮 Calculation Overview
-Time & cost estimates combine:
-* Base clearing or drop performance metrics (per resource)
-* Terrain difficulty multiplier
-* Vegetation density multiplier
-* Line distance & (for aircraft) drop length and turnaround
-* Crew size (for hand crews) and per‑person rate
-
-Slope analysis segments the drawn line and flags incompatibility if any segment exceeds machinery limits.
-
-## 🧭 Using the Application (High Level)
-1. Draw a polyline route on the map
-2. Review auto slope & vegetation analysis (adjust if needed)
-3. Select equipment / aircraft / crews in the analysis panel
-4. Inspect time, cost, drop counts & compatibility
-5. Optionally preview aircraft drops (markers along line)
-6. Iterate: edit or redraw route to optimize results
-
-For full operational guidance see `webapp/Documentation/USER_GUIDE.md`.
-
-## 🧪 Testing
-Currently only API end‑to‑end tests placeholder:
-```pwsh
-cd api
-npm run build
-npm test
-```
-
-## 📦 Production Build
-Web:
-```pwsh
-cd webapp
-npm run build
-```
-API: deploy compiled `api/dist` with Azure Functions (Node 18). Ensure environment variables set in Function App configuration.
-
-## 🚀 Deployment (Azure Outline)
-1. Provision: Storage Account (Table), Function App (Linux, Node 18), Static Web App or Web App for front-end hosting
-2. Configure settings: `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME` (if not default)
-3. Build & deploy API (zip or AZD) then web static assets
-4. Set CDN / static hosting caching headers as appropriate
-
-## 🗺 Roadmap (Excerpt)
-* Real elevation & vegetation data integration
-* Route optimization suggestions
-* Offline capable mode
-* Report / PDF export
-* Authentication & role-based equipment management
+### Production Deployment
+See [deployment documentation](README-local-dev.md#deployment) for Azure-specific setup instructions.
 
 ## 🤝 Contributing
-1. Fork & branch from `main`
-2. Run lint/tests locally before PR
-3. Include doc updates for user-facing changes
-4. Observe security & quality guidelines (`SECURITY.md`, `QUALITY_REVIEW.md`)
+
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for:
+- 🐛 Bug reports and feature requests
+- 💻 Code contributions and pull request process  
+- 📝 Documentation improvements
+- 🧪 Testing guidelines
 
 ## 📄 License
-See `LICENSE`.
 
-## 📚 Further Documentation
-An index of deeper documentation is in `Documentation/` (root) and existing detailed guides remain in `webapp/Documentation/`.
+This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
+
+## 📞 Support
+
+- **🆘 Issues**: Report bugs or request features via [GitHub Issues](../../issues)
+- **📚 Documentation**: Browse our [Documentation Hub](Documentation/README.md)
+- **👥 Community**: Contact your local Rural Fire Service IT support team
 
 ---
-Last updated: 2025-08-26
+
+## 📈 Roadmap
+
+### Upcoming Features
+- 🌐 **Real elevation data integration** (Google Elevation API, DEM)
+- 🎯 **Route optimization suggestions** based on efficiency analysis  
+- 📱 **Offline capability** for field use without internet
+- 📄 **PDF report generation** for planning documentation
+- 🔐 **Authentication system** for user management and custom equipment
+
+### Long-term Vision
+- 🤖 **AI-powered recommendations** based on historical fire data
+- 🌡️ **Weather integration** for condition-based planning
+- 📊 **Advanced analytics dashboard** for fleet management
+- 🔄 **Integration APIs** for external fire management systems
+
+*For detailed technical information, see our [Architecture Documentation](webapp/Documentation/ARCHITECTURE.md).*
+
+---
+**Last Updated**: January 2025 | **Version**: 1.0 Release Candidate

@@ -1,22 +1,46 @@
-# Fire Break Calculator User Guide
+# 🔥 Fire Break Calculator User Guide
 
-## Overview
+**Version 1.0** | *Complete operational guide for planning fire breaks and trails*
 
-The RFS Fire Break Calculator is a web-based tool designed to help rural firefighters and emergency response teams plan fire breaks and trails by estimating the time and resources required for construction using various types of machinery, aircraft, and hand crews.
+---
 
-## Getting Started
+## 📋 Quick Navigation
+- [🚀 Getting Started](#-getting-started) - First-time setup and access
+- [📏 Planning a Fire Break](#-planning-a-fire-break) - Step-by-step planning process
+- [🧮 Understanding Results](#-understanding-the-calculations) - Interpreting time, cost, and compatibility
+- [🛠️ Advanced Features](#-advanced-features) - Route editing and optimization
+- [💡 Tips & Best Practices](#-tips-for-effective-planning) - Expert planning guidance
+- [🆘 Troubleshooting](#-troubleshooting) - Common issues and solutions
 
-### Accessing the Application
+---
+
+## 🎯 Overview
+
+The **RFS Fire Break Calculator** is a modern web-based planning tool designed to help rural firefighters and emergency response teams efficiently plan fire breaks and trails. Get instant analysis of time, cost, and resource requirements using various machinery, aircraft, and hand crews.
+
+### Key Capabilities
+- 📏 **Interactive Route Planning**: Draw fire break routes directly on the map
+- ⛰️ **Automated Analysis**: Real-time slope and vegetation assessment  
+- 🚜 **Equipment Comparison**: Machinery, aircraft, and hand crew options
+- 💰 **Cost Estimation**: Time and financial planning with terrain factors
+- 📱 **Mobile Optimized**: Works on tablets and smartphones for field use
+
+**🔗 Related Documentation:**
+- [📊 Technical Architecture](ARCHITECTURE.md) - System design details
+- [🌱 Vegetation Mapping](../../Documentation/VEGETATION_MAPPING.md) - Classification system
+- [📈 Data Sources](../../Documentation/DATA_SOURCES.md) - External APIs and attribution
+
+## 🚀 Getting Started
 1. Open your web browser and navigate to the Fire Break Calculator URL
 2. The application loads with a map centered on New South Wales, Australia
 3. You'll see a map interface with drawing tools and a collapsible analysis panel
 
-### Initial Setup Requirements
+### ⚙️ Initial Setup Requirements
 - **Mapbox Token**: Contact your system administrator if you see a "Mapbox access token not configured" message
 - **Modern Browser**: Chrome, Firefox, Safari, or Edge with JavaScript enabled
 - **Internet Connection**: Required for map tiles and initial loading
 
-## Planning a Fire Break
+## 📏 Planning a Fire Break
 
 ### Step 1: Draw Your Fire Break Route
 1. Locate the **drawing tools** in the top-right corner of the map (pencil icon)
