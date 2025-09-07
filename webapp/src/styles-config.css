@@ -360,6 +360,37 @@
 .integrated-config-panel { padding-bottom: 0; }
 .integrated-config-panel .shared-config-notice { position: sticky; bottom: 0; z-index: 20; }
 
+/* Compact integrated panel variant */
+.integrated-config-panel.compact { padding: 0.5rem 0.5rem 0.25rem; }
+.integrated-config-panel.compact .config-content { padding: 0 0.25rem; }
+.compact-header { 
+  display:flex; align-items:center; justify-content:space-between; gap:0.5rem;
+  padding:0.25rem 0.5rem; border:1px solid #233040; border-radius:6px; background:#0f172a;
+  margin-bottom:0.25rem; flex:0 0 auto;
+}
+.compact-header .panel-title { font-size:0.75rem; margin:0 0.5rem 0 0; font-weight:600; color:#e2e8f0; letter-spacing:0.5px; }
+.compact-header .main-tabs { display:flex; gap:0.25rem; }
+.compact-header .tab-button { 
+  padding:0.35rem 0.6rem; font-size:0.65rem; line-height:1; border-radius:4px; background:#1e293b; border:1px solid #334155;
+}
+.compact-header .tab-button.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
+.equip-inline-tabs { display:flex; align-items:center; gap:0.25rem; }
+.equip-inline-tabs .mini-tab { 
+  padding:0.25rem 0.45rem; font-size:0.55rem; background:#1e293b; border:1px solid #334155; color:#bcd0e0; border-radius:4px; cursor:pointer;
+}
+.equip-inline-tabs .mini-tab.active { background:#2563eb; border-color:#2563eb; color:#fff; }
+.equip-inline-tabs .add-equipment-btn.mini { padding:0.25rem 0.4rem; font-size:0.6rem; line-height:1; }
+.integrated-config-panel.compact #equipment-panels-container { flex:1 1 auto; min-height:0; display:flex; }
+.integrated-config-panel.compact .equipment-config-panel { flex:1 1 auto; }
+.integrated-config-panel.compact .equipment-config-panel .panel-description,
+.integrated-config-panel.compact .equipment-config-panel .tab-guide { display:none; }
+/* Guarantee scroll area occupies majority (>70%) */
+.integrated-config-panel.compact .equipment-scroll-area { flex:1 1 auto; min-height:0; }
+/* Shared notice trimmed */
+.shared-config-notice.compact { margin:0.25rem 0.25rem 0; padding:0.35rem 0.5rem; font-size:0.55rem; }
+.shared-config-notice.compact .notice-icon { font-size:0.7rem; }
+.shared-config-notice.compact .notice-content { font-size:0.55rem; line-height:1.2; }
+
 /* Equipment configuration panel improvements */
 .equipment-config-panel {
   flex: 1;

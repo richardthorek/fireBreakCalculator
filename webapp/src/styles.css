@@ -93,6 +93,18 @@ html, body, #root, .app-shell {
   padding: 1.5rem;
 }
 
+/* Compact variant overrides (added) */
+.integrated-config-panel.compact { padding:0.5rem 0.5rem 0.25rem; }
+.integrated-config-panel.compact .config-content { height:auto; overflow:hidden; }
+.integrated-config-panel.compact .config-content > .equipment-section, 
+.integrated-config-panel.compact .config-content > .vegetation-section { flex:1 1 auto; min-height:0; }
+.integrated-config-panel.compact .config-header { margin:0 0 0.25rem; padding:0; border:none; }
+.integrated-config-panel.compact .config-header h3 { font-size:0.75rem; }
+.integrated-config-panel.compact .config-header .close-button { font-size:0.9rem; padding:0.15rem 0.35rem; }
+.integrated-config-panel.compact .shared-config-notice { margin-top:0.2rem; }
+.integrated-config-panel.compact .tab-button { padding:0.35rem 0.6rem; font-size:0.65rem; }
+.integrated-config-panel.compact .config-tabs { margin-bottom:0.25rem; }
+
 .config-header {
   display: flex;
   justify-content: space-between;
