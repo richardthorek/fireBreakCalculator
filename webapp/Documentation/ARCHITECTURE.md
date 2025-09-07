@@ -1,8 +1,26 @@
-# Architecture Overview
+# 🏗️ Architecture Overview
+
+**System design and technical implementation details for the RFS Fire Break Calculator**
+
+---
+
+## 📋 Quick Navigation
+- [🧩 Current Architecture](#-current-architecture) - Core technologies and structure
+- [📊 Component Responsibilities](#-component-responsibilities) - Detailed component breakdown
+- [🔄 Data Flow](#-data-flow) - Information processing pipeline
+- [🔧 Extensibility Points](#-extensibility-points) - Adding new features
+
+**🔗 Related Documentation:**
+- [📖 User Guide](USER_GUIDE.md) - Complete operational guide
+- [🌱 Vegetation Analysis](VEGETATION_ANALYSIS.md) - Vegetation data processing
+- [📊 Slope Analysis](SLOPE_ANALYSIS.md) - Terrain analysis implementation
+- [🎨 UI Design](UI_DESIGN.md) - Interface design patterns
+
+---
 
 This Fire Break Calculator application is built on a foundation of modern web technologies with a focus on geospatial analysis and resource planning for rural firefighting operations.
 
-## Current Architecture
+## 🧩 Current Architecture
 
 ### Core Technologies
 - **React 18** with functional components and hooks for state management
@@ -42,7 +60,7 @@ This Fire Break Calculator application is built on a foundation of modern web te
 | State management | Introduce Zustand for ephemeral UI state |
 | Theming | CSS variables / Tailwind optional integration |
 
-## Component Responsibilities
+## 📊 Component Responsibilities
 
 ### MapView Component
 - Leaflet map initialization and lifecycle management
@@ -72,7 +90,7 @@ This Fire Break Calculator application is built on a foundation of modern web te
 - Hand crew profiles: sizes, efficiency rates, tool types
 - Calculation factors: terrain and vegetation difficulty multipliers
 
-## Data Flow
+## 🔄 Data Flow
 
 1. **User draws line** → MapView calculates distance → Updates shared state
 2. **Distance change** → Triggers AnalysisPanel re-calculation
@@ -154,7 +172,7 @@ Time (hours) = Distance / Adjusted Rate
 - No user location data stored or transmitted
 - Map tiles cached according to Mapbox terms of service
 
-## Extensibility Points
+## 🔧 Extensibility Points
 
 ### Adding New Resource Types
 1. Extend configuration interfaces in `types/config.ts`
@@ -173,6 +191,17 @@ Time (hours) = Distance / Adjusted Rate
 2. Custom map layers through Leaflet layer system
 3. Elevation data integration via third-party APIs
 4. GPS coordinate import/export functionality
+
+---
+
+**📚 Additional Resources:**
+- [📖 User Guide](USER_GUIDE.md) - End-user operational instructions
+- [🌱 Vegetation Analysis](VEGETATION_ANALYSIS.md) - Data processing details
+- [📊 Slope Analysis](SLOPE_ANALYSIS.md) - Terrain calculation algorithms
+- [🎨 UI Design](UI_DESIGN.md) - Interface design principles
+- [🗄️ Data Sources](../../Documentation/DATA_SOURCES.md) - External APIs and attribution
+
+*Last updated: January 2025*
 
 ## Testing Strategy (Future Implementation)
 

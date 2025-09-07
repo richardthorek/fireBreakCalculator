@@ -10,7 +10,7 @@
  */
 
 import { logger } from './logger';
-import { mapFormationToVegetationType } from './vegetationMappingHelper';
+import { mapFormationToVegetationType, _clearVegetationMappingCache } from './vegetationMappingHelper';
 import { VegetationType } from '../config/classification';
 
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
@@ -171,12 +171,12 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
 export function _clearNSWCache() { 
   // Clear NSW vegetation cache
   Object.keys(cache).forEach(k => delete cache[k]); 
-  // Re-import is needed here to avoid circular dependency
-  import('./vegetationMappingHelper').then(module => {
-    if (module._clearVegetationMappingCache) {
-      module._clearVegetationMappingCache();
-    }
-  });
+  // Clear vegetation mapping cache (static import used to avoid mixed dynamic/static imports)
+  try {
+    _clearVegetationMappingCache();
+  } catch (err) {
+    logger.warn('Failed to clear vegetation mapping cache via static import', err);
+  }
 }
 
 export type NSWVegetationResult = NSWVegResultRaw;

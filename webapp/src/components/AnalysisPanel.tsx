@@ -4,7 +4,7 @@
  * based on the drawn fire break line and selected parameters.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
@@ -467,6 +467,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                       showLabels={false}
                     />
                     <FormationSummary vegetationAnalysis={vegetationAnalysis} />
+                    {/* Subtle data credit moved here from map overlay */}
+                    <div className="vegetation-credit">Data: NSW Department of Climate Change, Energy, the Environment and Water</div>
                   </div>
                 </div>
                 {!useAutoDetected && (
@@ -634,6 +636,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           </>
         )}
       </div>
+      {/* Buy Me a Coffee button - injected script will render the button into the DOM */}
+      <BuyMeACoffee />
     </div>
   );
 };
@@ -691,6 +695,65 @@ const FormationSummary: React.FC<{ vegetationAnalysis: VegetationAnalysis }> = (
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+/**
+ * Buy Me a Coffee button loader.
+ * This injects the remote script with the desired data attributes once when the component mounts.
+ */
+const BuyMeACoffee: React.FC = () => {
+  useEffect(() => {
+    // Avoid injecting multiple times
+    const existing = document.querySelector('script[src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"]');
+    if (existing) return;
+
+    const s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.src = 'https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js';
+    s.async = true;
+    // data attributes from user
+    s.setAttribute('data-name', 'bmc-button');
+    s.setAttribute('data-slug', 'richardbt');
+    s.setAttribute('data-color', '#FF5F5F');
+    s.setAttribute('data-emoji', '');
+    s.setAttribute('data-font', 'Inter');
+    s.setAttribute('data-text', 'Love it? buy me a coffee');
+    s.setAttribute('data-outline-color', '#000000');
+    s.setAttribute('data-font-color', '#ffffff');
+    s.setAttribute('data-coffee-color', '#FFDD00');
+
+    // Append the script inside the placeholder so the BuyMeACoffee widget renders there
+    const placeholder = document.getElementById('bmc-button-placeholder');
+    if (placeholder) {
+      placeholder.appendChild(s);
+    } else {
+      document.body.appendChild(s);
+    }
+
+    return () => {
+      // keep cleanup minimal: remove the script if it was added
+      if (s.parentNode) s.parentNode.removeChild(s);
+    };
+  }, []);
+
+  // The script will render a button where it finds the script tag or by its internal placement.
+  // Provide a small container at the bottom of the panel for the button to appear near.
+  // Also render a visible fallback anchor so users always see a way to support the project if the script fails.
+  return (
+    <div className="bmc-button-container">
+      <div id="bmc-button-placeholder">
+        <a
+          className="bmc-fallback"
+          href="https://www.buymeacoffee.com/richardbt"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Buy me a coffee"
+        >
+          Love it? buy me a coffee
+        </a>
+      </div>
     </div>
   );
 };

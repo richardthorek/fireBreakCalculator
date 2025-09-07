@@ -1,6 +1,22 @@
 /* Import configuration panel styles */
 @import url('./styles-config.css');
 
+/* Theme variables: use these to ensure UI elements (including map attribution)
+   remain visible in both light and dark modes. Consumers should toggle the
+   --bg and --text variables when switching themes. Defaults are dark-theme
+   friendly (project currently uses a darker theme). */
+:root {
+  --app-bg: #0f1115; /* main app background */
+  --app-text: #f5f7fa; /* main app text */
+  --muted-text: #94a3b8; /* secondary text */
+
+  /* Map attribution specifics */
+  --map-attrib-bg: rgba(0,0,0,0.35); /* slight translucent panel behind attribution */
+  --map-attrib-text: rgba(255,255,255,0.85);
+  --map-attrib-padding: 6px 8px;
+  --map-attrib-font-size: 11px;
+}
+
 /* Touch feedback animation for point placement */
 @keyframes pulse {
   0% {
@@ -32,6 +48,32 @@ html, body, #root, .app-shell {
   display: flex;
   flex-direction: column;
 }
+
+/* Map-specific attribution credit added by MapboxMapView
+   Use CSS variables so light/dark themes can override colors to avoid
+   white-on-white or dark-on-dark collisions. We add a subtle background
+   to increase contrast when map controls are shown over imagery. */
+.vegetation-credit {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-text);
+  background: transparent; /* subtle line in the panel — no block background */
+  padding: 0;
+  border-radius: 0;
+  display: block;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+
+/* Utility: allow theme switching by adjusting :root variables in a light theme */
+.theme-light {
+  --app-bg: #ffffff;
+  --app-text: #0b1220;
+  --muted-text: #475569;
+  --map-attrib-bg: rgba(255,255,255,0.85);
+  --map-attrib-text: rgba(0,0,0,0.8);
+}
+
 
 /* App header */
 .app-header {
@@ -398,6 +440,26 @@ html, body, #root, .app-shell {
 .cell-bar[data-color="#c8c800"] { background: linear-gradient(90deg,#c8c800,#a8a800); }
 .cell-bar[data-color="#ff8800"] { background: linear-gradient(90deg,#ff8800,#e06c00); }
 .cell-bar[data-color="#006400"] { background: linear-gradient(90deg,#006400,#004d00); }
+
+/* Buy Me a Coffee button container used by AnalysisPanel */
+.bmc-button-container {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+/* Fallback BMC link styling (visible if external widget doesn't render) */
+.bmc-fallback {
+  display:inline-block;
+  background: linear-gradient(90deg,#ff6b35,#ff8a4d);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+}
+.bmc-fallback:hover { opacity: 0.95; }
 .cell-bar[data-color="#ff0000"] { background: linear-gradient(90deg,#ff0000,#cc0000); }
 
 /* Emergency high-specificity fallback to ensure overlap matrix layout is applied
@@ -755,6 +817,17 @@ html, body, #root, .app-shell {
 
 .skip-link:focus {
   top: 6px;
+}
+
+/* Prefer :focus-visible (keyboard users) — keep :focus as a fallback for older browsers */
+.skip-link:focus-visible {
+  top: 6px;
+}
+
+/* Small note used in integrated config guidance panels */
+.panel-guidance-note {
+  font-size: 0.75rem;
+  color: #94a3b8;
 }
 
 /* Clarity Consent Banner Styling */

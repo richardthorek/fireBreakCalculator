@@ -1,13 +1,31 @@
-# Hierarchical Vegetation Mapping Configuration
+# 🌱 Hierarchical Vegetation Mapping Configuration
 
-The RFS Fire Break Calculator now supports hierarchical vegetation mappings that allow users to specify how NSW vegetation formations, classes, and types map to the application's four vegetation categories:
+**Administrative configuration system for NSW vegetation formation classification**
 
-- Grassland
-- Light Shrub
-- Medium Scrub
-- Heavy Forest
+---
 
-## Overview
+## 📋 Quick Navigation
+- [🎯 Overview](#-overview) - System purpose and configuration access
+- [🏗️ Hierarchical Structure](#-hierarchical-mapping-structure) - Three-level classification system
+- [📊 Default Mappings](#-default-mappings) - Pre-configured vegetation formations
+- [⚙️ Technical Details](#-technical-details) - Implementation and database design
+- [➕ Adding Custom Mappings](#-adding-custom-mappings) - Creating new classifications
+
+**🔗 Related Documentation:**
+- [📖 User Guide](../webapp/Documentation/USER_GUIDE.md) - End-user vegetation features
+- [🌿 Vegetation Analysis](../webapp/Documentation/VEGETATION_ANALYSIS.md) - Technical implementation details
+- [🗄️ Data Sources](DATA_SOURCES.md) - NSW Government data attribution
+
+---
+
+The RFS Fire Break Calculator supports hierarchical vegetation mappings that allow administrators to specify how NSW vegetation formations, classes, and types map to the application's four vegetation categories:
+
+- **Grassland** - Open areas with minimal vegetation
+- **Light Shrub** - Sparse shrubland and low vegetation  
+- **Medium Scrub** - Dense shrubland and mixed vegetation
+- **Heavy Forest** - Dense forest and woodland areas
+
+## 🎯 Overview
 
 The hierarchical vegetation mapping system allows administrators to:
 
@@ -19,11 +37,11 @@ The hierarchical vegetation mapping system allows administrators to:
 3. Update existing mappings to fine-tune how vegetation is classified
 4. Delete mappings that are no longer needed
 
-## Accessing the Configuration
+## 🌐 Accessing the Configuration
 
 The vegetation mapping configuration panel can be accessed by clicking the "🌱 Vegetation" button in the top navigation bar.
 
-## Hierarchical Mapping Structure
+## 🏗️ Hierarchical Mapping Structure
 
 Each vegetation mapping consists of:
 
@@ -41,11 +59,11 @@ Each vegetation mapping consists of:
 3. If neither type nor class is defined, the formation-level mapping (e.g., "Rainforest") is used
 4. If no mapping exists at any level, a default mapping is applied
 
-## Default Mappings
+## 📊 Default Mappings
 
 The application comes with a set of default mappings for common NSW vegetation formations. These provide a good starting point for most use cases.
 
-## Technical Details
+## ⚙️ Technical Details
 
 The vegetation mapping system consists of:
 
@@ -61,7 +79,7 @@ When vegetation analysis is performed, the system:
 3. Determines the appropriate vegetation category
 4. Falls back to hardcoded mappings if no matching formation is found
 
-## Adding Custom Mappings
+## ➕ Adding Custom Mappings
 
 To add a custom mapping:
 
@@ -82,7 +100,7 @@ node scripts/import_vegetation_csv.js
 
 This will parse the vegetation.csv file and create the appropriate hierarchy of mappings.
 
-## Impact on Calculations
+## 📈 Impact on Calculations
 
 The vegetation mapping directly affects:
 
@@ -90,7 +108,7 @@ The vegetation mapping directly affects:
 - Fire break calculations (different vegetation types have different clearing factors)
 - Resource allocation recommendations
 
-## Benefits
+## ✅ Benefits
 
 - **Flexibility**: Update vegetation classifications without code changes
 - **Accuracy**: Fine-tune mappings based on local knowledge
