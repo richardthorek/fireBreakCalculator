@@ -341,8 +341,13 @@ const App: React.FC = () => {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1 className="app-title">RFS Fire Break Calculator</h1>
-        <span className="app-subtitle">Geospatial Fire Break & Trail Planning Tool</span>
+        <div className="header-left">
+          <img src="/favicon-96x96.png" alt="RFS logo" className="app-logo" />
+          <div className="header-titles">
+            <h1 className="app-title">Fire Break Calculator</h1>
+            <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
+          </div>
+        </div>
         <div className="config-buttons">
           <button
             className="config-panel-toggle"

@@ -1,7 +1,7 @@
 # Comprehensive Code Review Improvements
 
 ## Overview
-This document details the improvements made during the comprehensive code review of the RFS Fire Break Calculator web application, completed prior to release to ensure compliance with PacePublicShare standards and organizational best practices.
+This document details the improvements made during the comprehensive code review of the Fire Break Calculator web application, completed prior to release to ensure compliance with PacePublicShare standards and organizational best practices.
 
 ## Issues Addressed
 

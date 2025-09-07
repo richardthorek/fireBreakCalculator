@@ -1,6 +1,6 @@
-# Contributing to RFS Fire Break Calculator
+# Contributing to Fire Break Calculator
 
-We love your input! We want to make contributing to the RFS Fire Break Calculator as easy and transparent as possible, whether it's:
+We love your input! We want to make contributing to the Fire Break Calculator as easy and transparent as possible, whether it's:
 
 - Reporting a bug
 - Discussing the current state of the code

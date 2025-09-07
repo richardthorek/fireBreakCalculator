@@ -1,4 +1,4 @@
-# 🔥 RFS Fire Break Calculator
+# 🔥 Fire Break Calculator
 
 A modern geospatial planning tool designed to help rural firefighters and emergency response teams efficiently plan fire breaks and trails. Get instant estimates for time, cost, and resource requirements using various equipment types, aircraft, and hand crews.
 
