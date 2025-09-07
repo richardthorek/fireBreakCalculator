@@ -211,7 +211,7 @@ Resource specifications and calculation rules can be modified by system administ
 
 ## 📞 Support and Feedback
 
-For technical support, training, or feature requests, contact your local Rural Fire Service IT support team or the application administrators.
+For technical support or feature requests, contact Richard the application administrator through this repo or submit an issue.
 
 ---
 
