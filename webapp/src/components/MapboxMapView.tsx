@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import mapboxgl, { Map as MapboxMap, LngLat } from 'mapbox-gl';
-import MapboxDraw from '@mapbox/mapbox-gl-draw';
-import 'mapbox-gl/dist/mapbox-gl.css';
-import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
+// Lazy-load heavy map libraries to keep initial bundle small. The actual
+// imports (mapbox-gl and mapbox-gl-draw) are performed inside the effect.
+import type { LngLat } from 'mapbox-gl';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
@@ -34,8 +33,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   aircraft = []
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MapboxMap | null>(null);
-  const drawRef = useRef<MapboxDraw | null>(null);
+  // Use any for dynamically loaded libs to avoid static type dependency
+  const mapRef = useRef<any | null>(null);
+  const drawRef = useRef<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
@@ -53,21 +53,41 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
+  const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
   const [dropsVersion, setDropsVersion] = useState(0);
 
   // Initialize map relying solely on hosted style
   useEffect(() => {
+    // mark effect body as async by creating and invoking an async function
+    (async () => {
     if (!mapContainerRef.current || mapRef.current) return;
+    // Dynamically import heavy map libraries so Vite can code-split them
+    let mapboxgl: any = null;
+    let MapboxDraw: any = null;
+    try {
+      // Load CSS side-effects via dynamic import
+      await Promise.all([
+        import('mapbox-gl/dist/mapbox-gl.css'),
+        import('@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css')
+      ]);
+  mapboxgl = (await import('mapbox-gl')).default;
+  MapboxDraw = (await import('@mapbox/mapbox-gl-draw')).default;
+  mapLibRef.current = mapboxgl;
+    } catch (err) {
+      logger.error('Failed to load map libraries dynamically', err);
+      setError('Failed to load mapping libraries.');
+      return;
+    }
     const token = MAPBOX_TOKEN;
     if (!token || token === 'YOUR_MAPBOX_TOKEN_HERE') {
       setError('Mapbox token missing. Set VITE_MAPBOX_ACCESS_TOKEN or VITE_MAPBOX_TOKEN.');
       return;
     }
-    mapboxgl.accessToken = token;
-    const styleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
-    logger.info(`Map init (hosted style only): ${styleURL}`);
-    const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
-    mapRef.current = map;
+  mapboxgl.accessToken = token;
+  const styleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+  logger.info(`Map init (hosted style only): ${styleURL}`);
+  const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
+  mapRef.current = map;
     
     // Add standard Mapbox navigation controls (zoom, rotate, pitch)
     map.addControl(new mapboxgl.NavigationControl({
@@ -79,9 +99,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // Add full screen control
     map.addControl(new mapboxgl.FullscreenControl(), 'top-left');
 
+  
     // Initialize MapboxDraw for drawing functionality
     // Configure for optimal touch experience: tap-by-tap point placement with separate finalization
-    const draw = new MapboxDraw({
+  const draw = new MapboxDraw({
       displayControlsDefault: false,
       controls: { line_string: true, trash: true },
       defaultMode: 'draw_line_string',
@@ -98,8 +119,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     
     // Position the drawing tools in the top right with spacing for better visibility
     map.addControl(draw, 'top-right');
-    
-    // Add custom class to draw control container for enhanced styling
+
+    // Add custom class to draw control container for enhanced styling and add labels
     setTimeout(() => {
       const drawContainer = document.querySelector('.mapboxgl-ctrl-top-right .mapbox-gl-draw_ctrl');
       if (drawContainer && drawContainer.parentElement) {
@@ -123,21 +144,21 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         trashBtn.appendChild(labelSpan);
       }
     }, 500);
-    
+
     drawRef.current = draw;
 
     // Enhanced touch controls for better mobile experience
-    if (isTouchDevice()) {
+  if (isTouchDevice()) {
       // Add touch-specific event listeners for improved interaction
       let touchStartTime = 0;
       let touchStartTarget: EventTarget | null = null;
       
-      map.getContainer().addEventListener('touchstart', (e) => {
+      map.getContainer().addEventListener('touchstart', (e: TouchEvent) => {
         touchStartTime = Date.now();
         touchStartTarget = e.target;
       }, { passive: true });
       
-      map.getContainer().addEventListener('touchend', (e) => {
+      map.getContainer().addEventListener('touchend', (e: TouchEvent) => {
         const touchDuration = Date.now() - touchStartTime;
         
         // Only treat as tap if touch was brief (< 300ms) and didn't move much
@@ -162,7 +183,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             
             // Position feedback at touch point (approximate)
             const rect = container.getBoundingClientRect();
-            const touch = e.changedTouches[0];
+            const touch = (e as TouchEvent).changedTouches[0];
             if (touch) {
               feedback.style.left = (touch.clientX - rect.left - 4) + 'px';
               feedback.style.top = (touch.clientY - rect.top - 4) + 'px';
@@ -177,7 +198,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     const handleLineChange = async (feature: any) => {
       if (!feature || feature.geometry?.type !== 'LineString') return;
-      const latlngs = feature.geometry.coordinates.map((c: number[]) => toLatLng(new LngLat(c[0], c[1])));
+      // mapboxgl.LngLat isn't available as a static import when loaded dynamically,
+      // so construct simple objects compatible with downstream utilities instead
+      const latlngs = feature.geometry.coordinates.map((c: number[]) => ({ lat: c[1], lng: c[0] }));
       const distance = calculateDistance(latlngs);
       setFireBreakDistance(distance);
       onDistanceChange(distance);
@@ -200,8 +223,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const style = map.getStyle();
       logger.info(`Hosted style loaded (${(style.layers || []).length} layers)`);
     });
-    map.on('error', e => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
+  map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
     return () => { map.remove(); };
+    })();
   }, []);
 
   // Aircraft drop markers
@@ -221,7 +245,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const spec = aircraft.find(a => a.id === id); if (!spec) return;
       const dropLen = spec.dropLength || 1000;
       const markers: mapboxgl.Marker[] = [];
-      features.features.forEach(f => {
+    features.features.forEach((f: any) => {
         if (f.geometry.type !== 'LineString') return;
         const coords = f.geometry.coordinates; if (coords.length < 2) return;
         const cumulative: { coord: [number,number]; dist: number }[] = []; let total=0; cumulative.push({ coord:[coords[0][0], coords[0][1]], dist:0 });
@@ -242,7 +266,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           markerElement.className = 'aircraft-drop-marker';
 
           // Create and add marker to map
-          const marker = new mapboxgl.Marker(markerElement)
+          // Use the dynamically-loaded Mapbox constructor from mapLibRef when available
+          const MarkerCtor = mapLibRef.current?.Marker;
+          if (!MarkerCtor) return;
+          const marker = new MarkerCtor(markerElement)
             .setLngLat([lng, lat])
             .addTo(map);
           markers.push(marker);

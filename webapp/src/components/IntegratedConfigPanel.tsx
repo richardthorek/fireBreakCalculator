@@ -191,7 +191,7 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
                 <h4>Vegetation Formation Mappings</h4>
                 <div className="panel-guidance-content">
                   <div className="panel-guidance-left">
-                    <span style={{fontSize: '0.75rem', color: '#94a3b8'}}>
+                    <span className="panel-guidance-note">
                       Configure how NSW vegetation data maps to equipment compatibility categories
                     </span>
                   </div>

@@ -13,6 +13,7 @@ import {
   updateVegetationMappingItem, 
   deleteVegetationMapping 
 } from './utils/vegetationMappingApi';
+import { _clearNSWCache } from './utils/nswVegetationService';
 
 /**
  * Root application component for the RFS Fire Break Calculator.
@@ -197,12 +198,8 @@ const App: React.FC = () => {
     setLoadingVegetationMappings(true);
     setVegetationMappingError(null);
     try {
-      // Clear the NSW vegetation cache to force using new mappings
-      import('./utils/nswVegetationService').then(module => {
-        if (module._clearNSWCache) {
-          module._clearNSWCache();
-        }
-      });
+  // Clear the NSW vegetation cache to force using new mappings
+  try { _clearNSWCache(); } catch (err) { console.warn('Failed to clear NSW cache', err); }
       
       const data = await listVegetationMappings();
       setVegetationMappings(data);
