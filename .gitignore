@@ -1,0 +1,73 @@
+# ---- Core Node / TypeScript Monorepo Ignores ----
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Package archives
+*.tgz
+
+# Build & dist output
+dist/
+out/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Azure Functions (TS/JS) artifacts
+bin/
+obj/
+local.settings.json
+appsettings.json
+
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Azure Storage Emulator / Azurite
+__blobstorage__/
+__queuestorage__/
+__azurite_db*__.json
+
+# IDE / Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+
+# OS / Misc
+.DS_Store
+Thumbs.db
+
+# Test output / temp
+reports/
+tmp/
+temp/
+*.tmp
+
+# Generated type definitions (if any custom generation)
+generated-types/
+
+# Coverage & profiling
+*.lcov
+profile-*.json
+
+# Lock files (optional: uncomment to enforce single lock strategy)
+# yarn.lock
+# pnpm-lock.yaml
+# package-lock.json
+
+# Function Core Tools artifacts
+.funcignore
+
+# Ignore OpenAPI or client SDKs if generated locally (uncomment if used)
+# generated-sdk/
+
+# End of root .gitignore
+vegetation.csv
