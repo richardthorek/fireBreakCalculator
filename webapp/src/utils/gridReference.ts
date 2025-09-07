@@ -102,28 +102,46 @@ export async function findPossibleGridLocations(
   userLocation?: { lat: number; lng: number }
 ): Promise<GridMatch[]> {
   const matches: GridMatch[] = [];
+  const MAX_RESULTS = 4; // Limit to 4 results as requested
   
   try {
     const utmConverter = await getUtmConverter();
     
-    // Common Australian UTM zones (49-56 cover most of Australia)
-    const australianZones = [49, 50, 51, 52, 53, 54, 55, 56];
-    
     // If we have user location, get their UTM zone for context
     let userUtmInfo: any = null;
+    let priorityZones: number[] = [];
+    
     if (userLocation) {
       try {
         userUtmInfo = (utmConverter as any).convertLatLngToUtm(userLocation.lat, userLocation.lng, 0);
+        // Prioritize user's zone and adjacent zones
+        const userZone = userUtmInfo.ZoneNumber;
+        priorityZones = [userZone, userZone - 1, userZone + 1].filter(z => z >= 49 && z <= 56);
       } catch (error) {
         console.warn('Failed to convert user location to UTM:', error);
       }
     }
     
+    // Common Australian UTM zones, prioritizing user's location
+    const australianZones = priorityZones.length > 0 
+      ? [...priorityZones, ...([49, 50, 51, 52, 53, 54, 55, 56].filter(z => !priorityZones.includes(z)))]
+      : [55, 56, 54, 53, 52, 51, 50, 49]; // Default priority: Sydney/Melbourne areas first
+    
     for (const zone of australianZones) {
+      // Early exit if we have enough high-quality results
+      if (matches.length >= MAX_RESULTS && matches.some(m => m.confidence > 0.8)) {
+        break;
+      }
+      
       // Generate possible full coordinates based on the input format
-      const possibleCoords = generatePossibleCoordinates(gridRef, zone, userUtmInfo);
+      const possibleCoords = generatePossibleCoordinates(gridRef, zone, userUtmInfo, MAX_RESULTS);
       
       for (const coord of possibleCoords) {
+        // Early exit if we have enough results
+        if (matches.length >= MAX_RESULTS * 2) { // Allow some buffer for sorting
+          break;
+        }
+        
         try {
           // Convert UTM to lat/lng using the library
           const result = (utmConverter as any).convertUtmToLatLng(
@@ -164,7 +182,7 @@ export async function findPossibleGridLocations(
     }
 
     // Sort by confidence (higher first), then by distance if available
-    return matches.sort((a, b) => {
+    const sortedMatches = matches.sort((a, b) => {
       const confDiff = b.confidence - a.confidence;
       if (Math.abs(confDiff) > 0.1) return confDiff;
       
@@ -174,6 +192,9 @@ export async function findPossibleGridLocations(
       
       return confDiff;
     });
+
+    // Return only the top 4 results
+    return sortedMatches.slice(0, MAX_RESULTS);
   } catch (error) {
     console.error('Error in grid reference search:', error);
     return [];
@@ -190,12 +211,14 @@ export async function findPossibleGridLocations(
  * @param gridRef - Parsed grid reference (easting/northing digits)
  * @param zone - UTM zone number
  * @param userUtmInfo - User's UTM information for context
+ * @param maxResults - Maximum number of results to generate per zone
  * @returns Array of possible coordinate combinations
  */
 function generatePossibleCoordinates(
   gridRef: { easting: string; northing: string },
   zone: number,
-  userUtmInfo?: any
+  userUtmInfo?: any,
+  maxResults: number = 4
 ): Array<{ easting: number; northing: number; contextMatch: boolean; zoneLetter: string }> {
   const coordinates: Array<{ easting: number; northing: number; contextMatch: boolean; zoneLetter: string }> = [];
   
@@ -207,20 +230,37 @@ function generatePossibleCoordinates(
     // Easting: digits 1-3 of 6-digit coordinate (X___YZ format where YZ are the input)
     // Northing: digits 2-4 of 7-digit coordinate (A_BC_DE format where BCD are the input)
     
-    // For easting: ?XXX?? where XXX is the input
-    for (let eastingFirst = 1; eastingFirst <= 9; eastingFirst++) {
-      for (let eastingLast2 = 0; eastingLast2 <= 99; eastingLast2++) {
+    // Optimize by prioritizing ranges based on user location or common Australian patterns
+    let eastingFirstValues = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let northingFirstValues = [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70];
+    let eastingLastValues = [0, 50]; // Prioritize 0 and 50 (common grid points)
+    let northingLastValues = [0, 50]; // Prioritize 0 and 50 (common grid points)
+    
+    // If we have user context, prioritize based on their location
+    if (userUtmInfo && userUtmInfo.ZoneNumber === zone) {
+      const userEasting = Math.floor(userUtmInfo.Easting / 100000);
+      const userNorthing = Math.floor(userUtmInfo.Northing / 100000);
+      
+      // Prioritize values close to user's location
+      eastingFirstValues = [userEasting, userEasting - 1, userEasting + 1, ...eastingFirstValues.filter(v => ![userEasting, userEasting - 1, userEasting + 1].includes(v))].filter(v => v >= 1 && v <= 9);
+      northingFirstValues = [userNorthing, userNorthing - 1, userNorthing + 1, ...northingFirstValues.filter(v => ![userNorthing, userNorthing - 1, userNorthing + 1].includes(v))].filter(v => v >= 60 && v <= 70);
+    }
+    
+    // Limit the search space to avoid generating too many combinations
+    let resultCount = 0;
+    
+    for (const eastingFirst of eastingFirstValues.slice(0, 3)) { // Only test top 3 easting prefixes
+      for (const eastingLast2 of eastingLastValues) {
         const fullEasting = eastingFirst * 100000 + parseInt(gridRef.easting) * 100 + eastingLast2;
         
-        // For northing: ??XXX?? where XXX is the input (positions 2-4)
-        // Australian UTM northings are typically 6000000-7000000 for the inhabited areas
-        for (let northingFirst2 = 60; northingFirst2 <= 70; northingFirst2++) {
-          for (let northingLast2 = 0; northingLast2 <= 99; northingLast2++) {
+        for (const northingFirst2 of northingFirstValues.slice(0, 3)) { // Only test top 3 northing prefixes
+          for (const northingLast2 of northingLastValues) {
+            if (resultCount >= maxResults * 3) break; // Generate a bit more than needed for filtering
+            
             const fullNorthing = northingFirst2 * 100000 + parseInt(gridRef.northing) * 100 + northingLast2;
             
             // Determine zone letter based on approximate latitude
             let zoneLetter = 'H'; // Default for most of Australia
-            
             let contextMatch = false;
             
             // Check if this matches user's approximate area if available
@@ -241,20 +281,40 @@ function generatePossibleCoordinates(
               contextMatch,
               zoneLetter
             });
+            
+            resultCount++;
           }
+          if (resultCount >= maxResults * 3) break;
         }
+        if (resultCount >= maxResults * 3) break;
       }
+      if (resultCount >= maxResults * 3) break;
     }
   } else if (eastingLength === 4 && northingLength === 4) {
     // 4-digit format: treat as more precise reference
-    // Similar pattern but with 4 digits
+    // Similar optimization but with 4 digits
     
-    for (let eastingFirst = 1; eastingFirst <= 9; eastingFirst++) {
-      for (let eastingLast = 0; eastingLast <= 9; eastingLast++) {
+    let eastingFirstValues = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let northingFirstValues = [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70];
+    
+    if (userUtmInfo && userUtmInfo.ZoneNumber === zone) {
+      const userEasting = Math.floor(userUtmInfo.Easting / 100000);
+      const userNorthing = Math.floor(userUtmInfo.Northing / 100000);
+      
+      eastingFirstValues = [userEasting, userEasting - 1, userEasting + 1, ...eastingFirstValues.filter(v => ![userEasting, userEasting - 1, userEasting + 1].includes(v))].filter(v => v >= 1 && v <= 9);
+      northingFirstValues = [userNorthing, userNorthing - 1, userNorthing + 1, ...northingFirstValues.filter(v => ![userNorthing, userNorthing - 1, userNorthing + 1].includes(v))].filter(v => v >= 60 && v <= 70);
+    }
+    
+    let resultCount = 0;
+    
+    for (const eastingFirst of eastingFirstValues.slice(0, 2)) { // Even more restrictive for 4-digit
+      for (let eastingLast = 0; eastingLast <= 9; eastingLast += 5) { // Test 0 and 5
         const fullEasting = eastingFirst * 100000 + parseInt(gridRef.easting) * 10 + eastingLast;
         
-        for (let northingFirst2 = 60; northingFirst2 <= 70; northingFirst2++) {
-          for (let northingLast = 0; northingLast <= 9; northingLast++) {
+        for (const northingFirst2 of northingFirstValues.slice(0, 2)) {
+          for (let northingLast = 0; northingLast <= 9; northingLast += 5) { // Test 0 and 5
+            if (resultCount >= maxResults * 2) break;
+            
             const fullNorthing = northingFirst2 * 100000 + parseInt(gridRef.northing) * 10 + northingLast;
             
             let zoneLetter = 'H';
@@ -276,13 +336,24 @@ function generatePossibleCoordinates(
               contextMatch,
               zoneLetter
             });
+            
+            resultCount++;
           }
+          if (resultCount >= maxResults * 2) break;
         }
+        if (resultCount >= maxResults * 2) break;
       }
+      if (resultCount >= maxResults * 2) break;
     }
   }
   
-  return coordinates;
+  // Prioritize context matches
+  return coordinates.sort((a, b) => {
+    if (a.contextMatch !== b.contextMatch) {
+      return a.contextMatch ? -1 : 1;
+    }
+    return 0;
+  });
 }
 
 /**

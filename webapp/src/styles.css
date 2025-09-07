@@ -82,6 +82,26 @@ html, body, #root, .app-shell {
   justify-content: space-between;
   padding: 0.5rem 1rem;
   background-color: #1e293b;
+  position: relative;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+}
+
+.header-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.header-right {
+  flex: 0 0 auto;
 }
 
 .header-left {
@@ -136,6 +156,7 @@ html, body, #root, .app-shell {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  transition: background-color 0.2s;
 }
 
 .config-panel-toggle:hover {

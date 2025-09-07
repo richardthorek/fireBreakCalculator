@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
+import { SearchControl } from './components/SearchControl';
 import { defaultConfig } from './config/defaultConfig';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAnalysis } from './types/config';
 import { EquipmentApi, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from './types/equipmentApi';
@@ -31,6 +32,13 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
+  
+  // Handler for when a search location is selected
+  const handleSearchLocationSelected = useCallback((location: { lat: number; lng: number; label: string }) => {
+    // This will be passed down to MapboxMapView to handle the actual map interaction
+    // For now, we don't need to do anything else here
+  }, []);
   
   // Raw remote equipment (backend canonical) + loading state
   const [equipment, setEquipment] = useState<EquipmentApi[]>([]);
@@ -352,7 +360,14 @@ const App: React.FC = () => {
             <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
           </div>
         </div>
-        <div className="config-buttons">
+        <div className="header-center">
+          <SearchControl 
+            onLocationSelected={handleSearchLocationSelected}
+            userLocation={userLocation}
+            className="header-search-control"
+          />
+        </div>
+        <div className="header-right">
           <button
             className="config-panel-toggle"
             onClick={() => setIsConfigOpen(v => !v)}
@@ -372,6 +387,8 @@ const App: React.FC = () => {
             onAnalyzingChange={setIsAnalyzing}
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
+            onUserLocationChange={setUserLocation}
+            onSearchLocationSelected={handleSearchLocationSelected}
           />
         </div>
         <div className="analysis-section">

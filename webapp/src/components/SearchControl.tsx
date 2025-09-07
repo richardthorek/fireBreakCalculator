@@ -115,7 +115,7 @@ export const SearchControl: React.FC<SearchControlProps> = ({
   // Perform address search using Mapbox Geocoding API
   const performAddressSearch = async (query: string): Promise<SearchResult[]> => {
     const geocodingResults = await searchAddresses(query, {
-      limit: 8,
+      limit: 4, // Limit to 4 results as requested
       proximity: currentUserLocation ? [currentUserLocation.lng, currentUserLocation.lat] : undefined,
       country: 'au', // Focus on Australia
       autocomplete: true
@@ -162,7 +162,7 @@ export const SearchControl: React.FC<SearchControlProps> = ({
 
     const gridMatches = await findPossibleGridLocations(parsed, locationForSearch || undefined);
     
-    return gridMatches.slice(0, 8).map((match: GridMatch, index: number) => ({
+    return gridMatches.slice(0, 4).map((match: GridMatch, index: number) => ({
       id: `grid-${index}`,
       label: match.fullGrid,
       sublabel: match.distance 
@@ -200,8 +200,8 @@ export const SearchControl: React.FC<SearchControlProps> = ({
       lng: result.lng,
       label: result.label
     });
-    setIsExpanded(false);
-    setQuery(result.label);
+    setIsExpanded(false); // Collapse back to subtle search bar
+    setQuery(''); // Clear the query
     setResults([]);
   };
 
@@ -235,85 +235,89 @@ export const SearchControl: React.FC<SearchControlProps> = ({
 
   return (
     <div className={`search-control ${className}`}>
-      <div className="search-toggle">
-        <button
-          className={`search-toggle-btn ${isExpanded ? 'active' : ''}`}
-          onClick={() => setIsExpanded(!isExpanded)}
-          title={isExpanded ? 'Collapse search' : 'Expand search'}
-          aria-label={isExpanded ? 'Collapse search panel' : 'Expand search panel'}
-        >
-          🔍
-        </button>
+      {isExpanded && (
+        <div className="search-modes-above">
+          <button
+            className={`search-mode-btn ${searchMode === 'address' ? 'active' : ''}`}
+            onClick={() => handleModeChange('address')}
+            title="Search by address"
+          >
+            📍 Address
+          </button>
+          <button
+            className={`search-mode-btn ${searchMode === 'coordinates' ? 'active' : ''}`}
+            onClick={() => handleModeChange('coordinates')}
+            title="Search by coordinates"
+          >
+            📐 Coordinates
+          </button>
+          <button
+            className={`search-mode-btn ${searchMode === 'grid' ? 'active' : ''}`}
+            onClick={() => handleModeChange('grid')}
+            title="Search by grid reference"
+          >
+            🗺️ Grid Ref
+          </button>
+        </div>
+      )}
+
+      <div className="search-input-container">
+        <div className="search-input-wrapper">
+          <span className="search-icon">🔍</span>
+          <input
+            ref={inputRef}
+            type="text"
+            className={`search-input ${isExpanded ? 'expanded' : 'collapsed'}`}
+            placeholder={isExpanded ? getPlaceholder() : 'Search locations...'}
+            value={query}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={() => setIsExpanded(true)}
+            autoComplete="off"
+          />
+          {isExpanded && (
+            <button
+              className="search-collapse-btn"
+              onClick={() => {
+                setIsExpanded(false);
+                setQuery('');
+                setResults([]);
+              }}
+              title="Collapse search"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        {isLoading && (
+          <div className="search-loading">⏳</div>
+        )}
       </div>
 
-      {isExpanded && (
-        <div className="search-panel">
-          <div className="search-modes">
-            <button
-              className={`search-mode-btn ${searchMode === 'address' ? 'active' : ''}`}
-              onClick={() => handleModeChange('address')}
-              title="Search by address"
-            >
-              📍 Address
-            </button>
-            <button
-              className={`search-mode-btn ${searchMode === 'coordinates' ? 'active' : ''}`}
-              onClick={() => handleModeChange('coordinates')}
-              title="Search by coordinates"
-            >
-              📐 Coordinates
-            </button>
-            <button
-              className={`search-mode-btn ${searchMode === 'grid' ? 'active' : ''}`}
-              onClick={() => handleModeChange('grid')}
-              title="Search by grid reference"
-            >
-              🗺️ Grid Ref
-            </button>
-          </div>
+      {error && (
+        <div className="search-error">
+          ⚠️ {error}
+        </div>
+      )}
 
-          <div className="search-input-container">
-            <input
-              ref={inputRef}
-              type="text"
-              className="search-input"
-              placeholder={getPlaceholder()}
-              value={query}
-              onChange={(e) => handleInputChange(e.target.value)}
-              autoComplete="off"
-            />
-            {isLoading && (
-              <div className="search-loading">⏳</div>
-            )}
-          </div>
-
-          {error && (
-            <div className="search-error">
-              ⚠️ {error}
-            </div>
-          )}
-
-          {results.length > 0 && (
-            <div ref={resultsRef} className="search-results">
-              {results.map((result) => (
-                <button
-                  key={result.id}
-                  className="search-result-item"
-                  onClick={() => handleResultSelect(result)}
-                >
-                  <div className="result-main">{result.label}</div>
-                  {result.sublabel && (
-                    <div className="result-sub">{result.sublabel}</div>
-                  )}
-                  {result.confidence !== undefined && result.confidence < 0.8 && (
-                    <div className="result-confidence">
-                      {Math.round(result.confidence * 100)}% match
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+      {results.length > 0 && (
+        <div ref={resultsRef} className="search-results">
+          {results.map((result) => (
+            <button
+              key={result.id}
+              className="search-result-item"
+              onClick={() => handleResultSelect(result)}
+            >
+              <div className="result-main">{result.label}</div>
+              {result.sublabel && (
+                <div className="result-sub">{result.sublabel}</div>
+              )}
+              {result.confidence !== undefined && result.confidence < 0.8 && (
+                <div className="result-confidence">
+                  {Math.round(result.confidence * 100)}% match
+                </div>
+              )}
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -23,6 +23,8 @@ interface MapboxMapViewProps {
   onAnalyzingChange?: (isAnalyzing: boolean) => void;
   selectedAircraftForPreview?: string[];
   aircraft?: AircraftSpec[];
+  onSearchLocationSelected?: (location: { lat: number; lng: number; label: string }) => void;
+  onUserLocationChange?: (location: { lat: number; lng: number } | undefined) => void;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -31,7 +33,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onVegetationAnalysisChange,
   onAnalyzingChange,
   selectedAircraftForPreview = [],
-  aircraft = []
+  aircraft = [],
+  onSearchLocationSelected,
+  onUserLocationChange
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -46,6 +50,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
+  
+  // Notify parent when user location changes
+  useEffect(() => {
+    if (onUserLocationChange) {
+      onUserLocationChange(userLocation);
+    }
+  }, [userLocation, onUserLocationChange]);
   
   // Touch controls state and configuration
   // Automatically detect touch devices and show appropriate hints
@@ -463,16 +474,17 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       duration: 1500
     });
 
+    // Call parent callback if provided
+    if (onSearchLocationSelected) {
+      onSearchLocationSelected(location);
+    }
+
     logger.info(`Search location selected: ${location.label} at ${location.lat}, ${location.lng}`);
   };
 
   return (
     <div className="mapbox-map-container">
       <div ref={mapContainerRef} className="mapbox-map" />
-      <SearchControl 
-        onLocationSelected={handleSearchLocationSelected}
-        userLocation={userLocation}
-      />
       {error && (
         <div className="map-error-overlay">
           <strong>Map Error</strong>
