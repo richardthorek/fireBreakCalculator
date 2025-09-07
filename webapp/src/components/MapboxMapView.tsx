@@ -8,6 +8,7 @@ import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
+import { SearchControl } from './SearchControl';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -44,6 +45,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // Locating state for geolocation UX
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
   
   // Touch controls state and configuration
   // Automatically detect touch devices and show appropriate hints
@@ -202,9 +204,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         map.once('moveend', () => {
           try { map.easeTo({ pitch: 40, bearing: 0, duration: 1000 }); } catch (e) { /* ignore */ }
         });
-        // clear locating state on success
+        // clear locating state on success and update user location for search
         setIsLocating(false);
         setLocationError(null);
+        setUserLocation({ lat: latitude, lng: longitude });
       }, (err) => {
         logger.warn('Geolocation failed', err);
         // Distinguish permission denied vs other failures for clearer UX
@@ -426,9 +429,50 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     map.addLayer({ id:'slope-segments', type:'line', source:'slope-segments', layout:{ 'line-join':'round','line-cap':'round'}, paint:{ 'line-color':['get','color'], 'line-width':6, 'line-opacity':0.8 } });
   };
 
+  // Handle location selection from search
+  const handleSearchLocationSelected = (location: { lat: number; lng: number; label: string }) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Remove existing search marker if any
+    if (locationMarkerRef.current) {
+      try { 
+        locationMarkerRef.current.remove(); 
+      } catch {}
+      locationMarkerRef.current = null;
+    }
+
+    // Create a marker for the selected location
+    const el = document.createElement('div');
+    el.className = 'search-location-marker';
+    el.innerHTML = '📍';
+    
+    // Use Mapbox Marker constructor from dynamically loaded lib
+    const MarkerCtor = mapLibRef.current?.Marker;
+    if (MarkerCtor) {
+      const marker = new MarkerCtor(el)
+        .setLngLat([location.lng, location.lat])
+        .addTo(map);
+      locationMarkerRef.current = marker;
+    }
+
+    // Fly to the selected location
+    map.flyTo({
+      center: [location.lng, location.lat],
+      zoom: 14,
+      duration: 1500
+    });
+
+    logger.info(`Search location selected: ${location.label} at ${location.lat}, ${location.lng}`);
+  };
+
   return (
     <div className="mapbox-map-container">
       <div ref={mapContainerRef} className="mapbox-map" />
+      <SearchControl 
+        onLocationSelected={handleSearchLocationSelected}
+        userLocation={userLocation}
+      />
       {error && (
         <div className="map-error-overlay">
           <strong>Map Error</strong>
