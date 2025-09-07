@@ -34,10 +34,14 @@ const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
   
-  // Handler for when a search location is selected
+  // Selected location from the global header search control. Stored here so we can
+  // pass it down to the map view which will actually pan/zoom to the point.
+  const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number; label: string } | null>(null);
+
+  // Handler invoked by the SearchControl in the header. We store the selection in
+  // state and let MapboxMapView react to it and perform the map interaction.
   const handleSearchLocationSelected = useCallback((location: { lat: number; lng: number; label: string }) => {
-    // This will be passed down to MapboxMapView to handle the actual map interaction
-    // For now, we don't need to do anything else here
+    setSearchLocation(location);
   }, []);
   
   // Raw remote equipment (backend canonical) + loading state
@@ -388,7 +392,7 @@ const App: React.FC = () => {
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
             onUserLocationChange={setUserLocation}
-            onSearchLocationSelected={handleSearchLocationSelected}
+            selectedSearchLocation={searchLocation}
           />
         </div>
         <div className="analysis-section">

@@ -25,6 +25,9 @@ interface MapboxMapViewProps {
   aircraft?: AircraftSpec[];
   onSearchLocationSelected?: (location: { lat: number; lng: number; label: string }) => void;
   onUserLocationChange?: (location: { lat: number; lng: number } | undefined) => void;
+  // Optional externally-controlled search selection — when provided the map should
+  // pan/zoom to this location. This is used so header search control can trigger map moves.
+  selectedSearchLocation?: { lat: number; lng: number; label: string } | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -36,6 +39,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   aircraft = [],
   onSearchLocationSelected,
   onUserLocationChange
+  ,
+  selectedSearchLocation
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -481,6 +486,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     logger.info(`Search location selected: ${location.label} at ${location.lat}, ${location.lng}`);
   };
+
+  // If an external selectedSearchLocation prop changes, trigger the same behaviour
+  // so UI that manages the search (e.g. header SearchControl) can move the map.
+  useEffect(() => {
+    if (!selectedSearchLocation) return;
+    // Defer to existing handler which creates marker and flies the map
+    handleSearchLocationSelected(selectedSearchLocation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSearchLocation]);
 
   return (
     <div className="mapbox-map-container">

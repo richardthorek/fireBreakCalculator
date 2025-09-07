@@ -75,14 +75,24 @@ html, body, #root, .app-shell {
 }
 
 
-/* App header */
+/* App header: use flexbox so the title group, search and config sit on one line.
+   This replaces earlier absolute/grid positioning which caused stacking. */
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   padding: 0.5rem 1rem;
   background-color: #1e293b;
   position: relative;
+}
+
+/* Ensure any older absolute rules are not applied to header children */
+.app-header .header-left,
+.app-header .header-center,
+.app-header .header-right {
+  position: static !important;
+  transform: none !important;
 }
 
 .header-left {
@@ -93,21 +103,23 @@ html, body, #root, .app-shell {
 }
 
 .header-center {
-  flex: 1;
   display: flex;
+  align-items: center;
   justify-content: center;
-  max-width: 600px;
-  margin: 0 auto;
+  flex: 1 1 auto;
+  min-width: 0; /* allow the search to shrink on small screens */
 }
 
 .header-right {
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+@media (max-width: 760px) {
+  /* Mobile: hide title text so search and config fit on one line; logo remains visible */
+  .header-titles { display: none; }
+  .header-center { justify-content: flex-start; padding-left: 8px; }
 }
 
 .app-logo {
@@ -134,7 +146,6 @@ html, body, #root, .app-shell {
 }
 
 .app-subtitle {
-  margin-left: 1rem;
   font-size: 1rem;
   color: #94a3b8;
 }
@@ -669,16 +680,30 @@ html, body, #root, .app-shell {
 
 /* Proper app-header block (repaired) */
 .app-header {
-  flex: 0 0 10vh; /* 10% of viewport height */
+  /* Horizontal header: keep title group, search, and config on one row. */
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
   padding: 0 1.25rem;
   background: linear-gradient(135deg, #1e2633, #19202a);
   border-bottom: 1px solid #222b36;
   box-shadow: 0 2px 4px rgba(0,0,0,0.4);
   z-index: 500;
-  position: relative; /* allow absolutely positioned controls */
+  position: relative;
+}
+
+/* Ensure header children are laid out inline and can shrink appropriately. */
+.app-header .header-left { display:flex; align-items:center; gap:0.75rem; flex:0 0 auto; }
+.app-header .header-center { display:flex; align-items:center; justify-content:center; flex:1 1 auto; min-width:0; }
+.app-header .header-right { display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; }
+
+@media (max-width: 760px) {
+  /* Collapse title text on small screens so the search has room. Logo remains visible. */
+  .app-header { padding: 0 0.75rem; }
+  .app-header .header-titles { display: none; }
+  .app-header .header-center { justify-content:flex-start; padding-left:8px; }
 }
 
 /* Mapbox Map Container Styles - Removed duplicates */

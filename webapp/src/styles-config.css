@@ -875,19 +875,20 @@
 .search-control {
   position: relative;
   width: 100%;
-  max-width: 400px;
+  max-width: 520px; /* make default search control wider so header variant has room */
 }
 
 .header-search-control {
   width: 100%;
+  max-width: 640px; /* header search should be longer to avoid overlaps */
 }
 
 .search-modes-above {
   position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 8px;
+  top: 100%;
+  left: 0;
+  transform: none;
+  margin-top: 8px;
   display: flex;
   background: rgba(15, 23, 42, 0.95);
   border: 1px solid #334155;
@@ -896,6 +897,28 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   overflow: hidden;
   z-index: 1001;
+  /* expose an offset that can be used by results positioning */
+  --search-modes-offset: 44px;
+}
+
+/* On small screens, the above positioning can place the mode buttons off-screen.
+   Render the modes below the input instead and expand to full width. */
+@media (max-width: 760px) {
+  .search-modes-above {
+    bottom: auto;
+    top: 100%;
+    left: 0;
+    transform: none;
+    width: 100%;
+    margin-top: 8px;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+  }
+  .search-modes-above .search-mode-btn {
+    flex: 1 1 auto;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
 }
 
 .search-input-container {
@@ -908,17 +931,22 @@
   align-items: center;
 }
 
+/* Place the icon in its own left area (outside the input's inner padding). This prevents overlap
+   and keeps the icon visually before the input zone. */
 .search-icon {
-  position: absolute;
-  left: 12px;
+  position: relative;
+  left: 0;
+  margin-left: 8px;
+  margin-right: 8px;
   font-size: 14px;
   color: #64748b;
-  z-index: 1;
+  z-index: 2;
+  flex: 0 0 auto;
 }
 
 .search-input {
   width: 100%;
-  padding: 12px 40px 12px 40px;
+  padding: 10px 40px 10px 8px; /* reduce left padding because icon sits outside */
   background: rgba(30, 41, 59, 0.8);
   border: 1px solid #475569;
   border-radius: 24px;
@@ -992,7 +1020,7 @@
 
 .search-results {
   position: absolute;
-  top: 100%;
+  top: calc(100% + var(--search-modes-offset, 44px));
   left: 0;
   right: 0;
   margin-top: 4px;
