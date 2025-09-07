@@ -90,7 +90,6 @@ export const HelpContent: React.FC = () => {
               <li>Your browser will ask for location permission the first time; allow it to use the feature.</li>
               <li>If location is denied or unavailable, use the search box to manually center the map.</li>
             </ul>
-            <p className="help-note">Note: The drawing tool now uses the pencil icon (✏️) so the pin (📍) uniquely identifies the Locate Me control.</p>
           </div>
         </section>
 
