@@ -196,7 +196,9 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
                     </span>
                   </div>
                   <div className="panel-guidance-right">
-                    {/* Vegetation panel controls will be managed by VegetationConfigPanel */}
+                    <div className="vegetation-guidance-controls-inline">
+                      {/* These controls will be populated by the VegetationConfigPanel */}
+                    </div>
                   </div>
                 </div>
               </div>

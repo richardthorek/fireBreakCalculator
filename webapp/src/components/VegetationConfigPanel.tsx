@@ -493,65 +493,61 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
 
   return (
     <div className="vegetation-config-panel">
-      <div className="vegetation-scroll-area">
-      <div className="panel-description">
-        <h3>Vegetation Formation Mappings</h3>
-        <p>
-          Configure how vegetation formations from NSW data are mapped to the application's 
-          vegetation categories. These mappings affect equipment compatibility and clearing rates.
-        </p>
-      </div>
-      
-      <div className="search-toolbar">
-        <input
-          type="text"
-          placeholder="Search vegetation mappings..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="search-box"
-        />
-        
-        <div className="view-controls">
-          <button 
-            className={`view-control-btn ${viewMode === 'hierarchical' ? 'active' : ''}`}
-            onClick={() => setViewMode('hierarchical')}
-          >
-            Hierarchical
-          </button>
-          <button 
-            className={`view-control-btn ${viewMode === 'flat' ? 'active' : ''}`}
-            onClick={() => setViewMode('flat')}
-          >
-            Flat List
+      {/* Guidance controls section - moved from toolbar */}
+      <div className="vegetation-guidance-controls">
+        <div className="search-toolbar">
+          <input
+            type="text"
+            placeholder="Search vegetation mappings..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="search-box"
+          />
+          
+          <div className="view-controls">
+            <button 
+              className={`view-control-btn ${viewMode === 'hierarchical' ? 'active' : ''}`}
+              onClick={() => setViewMode('hierarchical')}
+            >
+              Hierarchical
+            </button>
+            <button 
+              className={`view-control-btn ${viewMode === 'flat' ? 'active' : ''}`}
+              onClick={() => setViewMode('flat')}
+            >
+              Flat List
+            </button>
+          </div>
+          
+          <button onClick={handleCreateNew} className="add-mapping-btn">
+            + Add New Mapping
           </button>
         </div>
         
-        <button onClick={handleCreateNew} className="add-mapping-btn">
-          + Add New Mapping
-        </button>
+        <div className="mapping-stats">
+          {loading ? 'Loading mappings...' : `Found ${filteredMappings.length} vegetation mappings`}
+          {selectedItems.size > 0 && ` (${selectedItems.size} selected)`}
+        </div>
+
+        {error && <div className="error-message">{error}</div>}
+
+        {selectedItems.size > 0 && (
+          <BulkVegetationTypeEditor
+            selectedType={bulkVegetationType}
+            onTypeChange={setBulkVegetationType}
+            onApply={applyBulkVegetationType}
+            isApplying={isApplyingBulk}
+          />
+        )}
       </div>
-      
-      <div className="mapping-stats">
-        {loading ? 'Loading mappings...' : `Found ${filteredMappings.length} vegetation mappings`}
-        {selectedItems.size > 0 && ` (${selectedItems.size} selected)`}
-      </div>
 
-      {error && <div className="error-message">{error}</div>}
-
-      {selectedItems.size > 0 && (
-        <BulkVegetationTypeEditor
-          selectedType={bulkVegetationType}
-          onTypeChange={setBulkVegetationType}
-          onApply={applyBulkVegetationType}
-          isApplying={isApplyingBulk}
-        />
-      )}
-
-      {!showForm ? (
-        <div className={`mappings-container ${viewMode === 'hierarchical' ? 'hierarchical-view' : 'flat-view'}`}>
-          {loading ? (
-            <div className="loading">Loading vegetation mappings...</div>
-          ) : viewMode === 'hierarchical' ? (
+      {/* Scrollable content area */}
+      <div className="vegetation-scroll-area">
+        {!showForm ? (
+          <div className={`mappings-container ${viewMode === 'hierarchical' ? 'hierarchical-view' : 'flat-view'}`}>
+            {loading ? (
+              <div className="loading">Loading vegetation mappings...</div>
+            ) : viewMode === 'hierarchical' ? (
             // Hierarchical view
             <div className="hierarchical-mappings">
               {Array.from(formationGroups.keys()).sort().map(formationName => {
@@ -767,15 +763,14 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
               )}
             </div>
           )}
-        </div>
-      ) : (
-        <VegetationMappingForm
-          initialValues={editMapping || {}}
-          onSubmit={handleSubmit}
-          onCancel={handleCancelEdit}
-          isEdit={!!editMapping}
-        />
-      )}
+        ) : (
+          <VegetationMappingForm
+            initialValues={editMapping || {}}
+            onSubmit={handleSubmit}
+            onCancel={handleCancelEdit}
+            isEdit={!!editMapping}
+          />
+        )}
       </div>
     </div>
   );
