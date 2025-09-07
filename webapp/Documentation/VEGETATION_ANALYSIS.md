@@ -1,10 +1,29 @@
-# Vegetation Analysis Feature Documentation
+# 🌱 Vegetation Analysis Documentation
 
-## Overview
+**Automated vegetation detection and classification system for fire break planning**
+
+---
+
+## 📋 Quick Navigation
+- [🎯 Overview](#-overview) - System purpose and capabilities
+- [⚙️ Features](#️-features) - Automatic detection and classification
+- [🗄️ Data Sources](#️-data-sources) - Mapbox and NSW Government data
+- [🔄 Processing Pipeline](#-processing-pipeline) - Analysis workflow
+- [⚙️ Configuration](#️-configuration) - Mapping customization
+
+**🔗 Related Documentation:**
+- [📖 User Guide](USER_GUIDE.md) - End-user vegetation features
+- [🌱 Vegetation Mapping](../../Documentation/VEGETATION_MAPPING.md) - Admin configuration guide
+- [🗄️ Data Sources](../../Documentation/DATA_SOURCES.md) - External data attribution
+- [🏗️ Architecture](ARCHITECTURE.md) - System integration details
+
+---
+
+## 🎯 Overview
 
 The RFS Fire Break Calculator now includes automated vegetation analysis using Mapbox Terrain v2 vector tiles. This feature automatically detects vegetation type and density along fire break routes, replacing manual vegetation selection with intelligent analysis while maintaining the option for manual override.
 
-## Features
+## ⚙️ Features
 
 ### Automatic Vegetation Detection
 - Integrates with Mapbox Terrain v2 vector tileset (`mapbox://mapbox.mapbox-terrain-v2`)
@@ -12,6 +31,7 @@ The RFS Fire Break Calculator now includes automated vegetation analysis using M
 - Samples vegetation every 200m along the fire break route
 - Provides confidence scoring for detected vegetation types
 
+## 🗄️ Data Sources
 ### Vegetation Classification Mapping
 The system maps Mapbox landcover classes to the application's vegetation taxonomy:
 
@@ -79,7 +99,7 @@ The system maps Mapbox landcover classes to the application's vegetation taxonom
 4. User can review detailed breakdown in map popup
 5. Override to "mediumscrub" if planning for worst-case scenario
 
-## Configuration
+## ⚙️ Configuration
 
 ### Environment Variables
 The system reuses the existing Mapbox configuration:
@@ -122,4 +142,11 @@ The system reuses the existing Mapbox configuration:
 
 ---
 
-*This documentation follows the conventions established in the PacePublicShare repository for technical feature documentation.*
+**📚 Additional Resources:**
+- [📖 User Guide](USER_GUIDE.md) - End-user vegetation interface instructions
+- [🌱 Vegetation Mapping Config](../../Documentation/VEGETATION_MAPPING.md) - Admin configuration system
+- [🗄️ Data Sources](../../Documentation/DATA_SOURCES.md) - Mapbox data attribution and licensing
+- [🏗️ Architecture](ARCHITECTURE.md) - System integration and data flow
+- [📊 Slope Analysis](SLOPE_ANALYSIS.md) - Complementary terrain analysis
+
+*Last updated: January 2025*
