@@ -753,6 +753,12 @@ const BuyMeACoffee: React.FC = () => {
         >
           Love it? buy me a coffee
         </a>
+            {/* Flaticon attribution for icons used in the UI */}
+            <div className="flaticon-credit">
+              <a href="https://www.flaticon.com/free-icons/bull-dozer" title="bull dozer icons" target="_blank" rel="noopener noreferrer">
+                Bull dozer icons created by IYIKON - Flaticon
+              </a>
+            </div>
       </div>
     </div>
   );

@@ -462,6 +462,15 @@ html, body, #root, .app-shell {
 .bmc-fallback:hover { opacity: 0.95; }
 .cell-bar[data-color="#ff0000"] { background: linear-gradient(90deg,#ff0000,#cc0000); }
 
+/* Small credit for Flaticon icons used in the UI */
+.flaticon-credit {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  text-align: center;
+  color: #94a3b8;
+}
+.flaticon-credit a { color: inherit; text-decoration: underline; }
+
 /* Emergency high-specificity fallback to ensure overlap matrix layout is applied
    Targets the exact DOM path the app renders into so it wins over other rules. */
 #root > div > main .analysis-section .analysis-content .slope-analysis-section .overlap-section .overlap-matrix,
