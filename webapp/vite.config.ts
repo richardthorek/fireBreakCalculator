@@ -14,5 +14,19 @@ export default defineConfig({
       }
     }
   },
-  assetsInclude: ['**/*.csv']
+  assetsInclude: ['**/*.csv'],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vendor chunk for large external libraries
+          vendor: ['react', 'react-dom'],
+          // Mapbox chunk for mapping libraries
+          mapbox: ['mapbox-gl', '@mapbox/mapbox-gl-draw']
+        }
+      }
+    },
+    // Increase chunk size warning limit to 750KB since this is a mapping app
+    chunkSizeWarningLimit: 750
+  }
 });

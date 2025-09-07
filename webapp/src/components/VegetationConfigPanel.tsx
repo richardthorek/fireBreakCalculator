@@ -493,6 +493,7 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
 
   return (
     <div className="vegetation-config-panel">
+      <div className="vegetation-scroll-area">
       <div className="panel-description">
         <h3>Vegetation Formation Mappings</h3>
         <p>
@@ -775,6 +776,7 @@ const VegetationConfigPanel: React.FC<VegetationConfigPanelProps> = ({
           isEdit={!!editMapping}
         />
       )}
+      </div>
     </div>
   );
 }

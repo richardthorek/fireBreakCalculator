@@ -1,3 +1,6 @@
+/* Import configuration panel styles */
+@import url('./styles-config.css');
+
 /* Touch feedback animation for point placement */
 @keyframes pulse {
   0% {
@@ -13,9 +16,6 @@
     opacity: 0;
   }
 }
-
-/* Import configuration panel styles */
-@import url('./styles-config.css');
 
 /* Basic CSS reset / layout */
 html, body, #root, .app-shell {
@@ -92,6 +92,18 @@ html, body, #root, .app-shell {
   overflow: hidden;
   padding: 1.5rem;
 }
+
+/* Compact variant overrides (added) */
+.integrated-config-panel.compact { padding:0.5rem 0.5rem 0.25rem; }
+.integrated-config-panel.compact .config-content { height:auto; overflow:hidden; }
+.integrated-config-panel.compact .config-content > .equipment-section, 
+.integrated-config-panel.compact .config-content > .vegetation-section { flex:1 1 auto; min-height:0; }
+.integrated-config-panel.compact .config-header { margin:0 0 0.25rem; padding:0; border:none; }
+.integrated-config-panel.compact .config-header h3 { font-size:0.75rem; }
+.integrated-config-panel.compact .config-header .close-button { font-size:0.9rem; padding:0.15rem 0.35rem; }
+.integrated-config-panel.compact .shared-config-notice { margin-top:0.2rem; }
+.integrated-config-panel.compact .tab-button { padding:0.35rem 0.6rem; font-size:0.65rem; }
+.integrated-config-panel.compact .config-tabs { margin-bottom:0.25rem; }
 
 .config-header {
   display: flex;
@@ -481,7 +493,9 @@ html, body, #root, .app-shell {
 .equipment-config-panel.sidebar .tab-guide .muted { color:#94a3b8; font-size:12px; }
 
 .equip-list { display:flex; flex-direction:column; gap:4px; }
-.equip-row {
+/* NOTE: Global .equip-row layout intentionally left to flex version in styles-config.css for narrow integrated panel.
+   The wide grid layout is now scoped only to the legacy sidebar / fullscreen variants to prevent overflow clipping. */
+.equipment-config-panel.sidebar .equip-row {
   display: grid;
   /* Name | dynamic numeric fields (up to 6) | terrain tags | vegetation tags | actions */
   grid-template-columns: minmax(140px, 1.2fr) repeat(4, minmax(70px, 110px)) minmax(70px,110px) minmax(120px, 1fr) minmax(120px, 1fr) 90px;
@@ -494,11 +508,11 @@ html, body, #root, .app-shell {
   font-size: 13px;
   box-sizing: border-box;
 }
-.equip-row.editing { background: #223547; }
-.equip-row.adding { background: #1f3444; border-style: dashed; }
-.eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; }
-.eq-small { width:100%; min-width:0; box-sizing:border-box; }
-.eq-xsmall { width:100%; min-width:0; box-sizing:border-box; }
+.equipment-config-panel.sidebar .equip-row.editing { background: #223547; }
+.equipment-config-panel.sidebar .equip-row.adding { background: #1f3444; border-style: dashed; }
+.eq-name { width:100%; font-size:13px; min-width:0; box-sizing:border-box; color:#e2e8f0; font-weight:500; }
+.eq-small { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }
+.eq-xsmall { width:100%; min-width:0; box-sizing:border-box; color:#cbd5e1; }
 .eq-tags { display:flex; gap:4px; flex-wrap:wrap; max-width:100%; }
 .eq-tags.readonly { opacity:0.8; }
 .tag { background:#2b3b4a; border:none; color:#bcd0e0; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:11px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
