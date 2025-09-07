@@ -9,14 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "mapbox-gl": "^3.14.0",
     "@mapbox/mapbox-gl-draw": "^1.4.3",
+    "mapbox-gl": "^3.14.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "utm-latlng": "^1.0.8"
   },
   "devDependencies": {
-    "@types/mapbox-gl": "^3.4.0",
     "@types/mapbox__mapbox-gl-draw": "^1.4.6",
+    "@types/mapbox-gl": "^3.4.0",
+    "@types/node": "^24.3.1",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.3.1",

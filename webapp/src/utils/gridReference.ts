@@ -1,18 +1,35 @@
 /**
- * UTM Grid Reference utilities for six-digit grid reference search
+ * UTM Grid Reference utilities for grid reference search
  * 
- * Handles parsing and finding possible locations for six-digit grid references
- * within a 100km x 100km operational area.
+ * Handles parsing and finding possible locations for grid references
+ * using proper UTM coordinate conversion.
  * 
  * @module gridReference
- * @version 1.0.0
+ * @version 2.0.0
  */
+
+// Lazy load utm-latlng library
+let utm: any = null;
+
+async function getUtmConverter() {
+  if (!utm) {
+    try {
+      // Dynamic import for utm-latlng
+      const UtmLatLng = (await import('utm-latlng')).default;
+      utm = new UtmLatLng();
+    } catch (error) {
+      console.error('Failed to load utm-latlng library:', error);
+      throw new Error('UTM conversion library not available');
+    }
+  }
+  return utm;
+}
 
 export interface GridReference {
   easting: string;
   northing: string;
-  zone: string;
-  hemisphere: 'N' | 'S';
+  zone?: string;
+  hemisphere?: 'N' | 'S';
 }
 
 export interface GridMatch {
@@ -24,158 +41,248 @@ export interface GridMatch {
 }
 
 /**
- * Parse a six-digit grid reference
- * Format: 2nd,3rd,4th digits for Easting + 3rd,4th,5th digits for Northing
- * Example: "234567" -> Easting: 234, Northing: 567
+ * Parse grid reference input in various formats
+ * Supports:
+ * - "123 456" (6 digits in two groups)
+ * - "1234 5678" (8 digits in two groups) 
+ * - "12345678" (8 digits in one group, split in half)
+ * - "234567" (6 digits in one group, split in half)
  * 
- * @param input - Six-digit grid reference
+ * @param input - Grid reference input
  * @returns Parsed grid reference components
  */
-export function parseSixDigitGrid(input: string): { easting: string; northing: string } | null {
+export function parseGridReference(input: string): { easting: string; northing: string } | null {
   const cleaned = input.replace(/\s+/g, '').replace(/[^0-9]/g, '');
   
-  if (cleaned.length !== 6) {
-    return null;
+  // Handle different input formats
+  if (cleaned.length === 6) {
+    // Split 6 digits in half: "234567" -> "234", "567"
+    return {
+      easting: cleaned.substring(0, 3),
+      northing: cleaned.substring(3, 6)
+    };
+  } else if (cleaned.length === 8) {
+    // Split 8 digits in half: "12345678" -> "1234", "5678"
+    return {
+      easting: cleaned.substring(0, 4),
+      northing: cleaned.substring(4, 8)
+    };
   }
-
-  const easting = cleaned.substring(0, 3);
-  const northing = cleaned.substring(3, 6);
-
-  return { easting, northing };
+  
+  // Try to parse spaced input
+  const parts = input.trim().split(/\s+/);
+  if (parts.length === 2) {
+    const eastingClean = parts[0].replace(/[^0-9]/g, '');
+    const northingClean = parts[1].replace(/[^0-9]/g, '');
+    
+    if ((eastingClean.length === 3 && northingClean.length === 3) ||
+        (eastingClean.length === 4 && northingClean.length === 4)) {
+      return {
+        easting: eastingClean,
+        northing: northingClean
+      };
+    }
+  }
+  
+  return null;
 }
 
 /**
- * Generate all possible full grid references for a six-digit reference
- * within the Australian context (focusing on common UTM zones)
+ * Find possible grid reference locations based on user input
  * 
- * @param sixDigitRef - Parsed six-digit reference
- * @param userLocation - Optional user location for prioritization
+ * This function interprets partial grid references and finds the most likely
+ * full UTM coordinates, especially when user location is available.
+ * 
+ * @param gridRef - Parsed grid reference
+ * @param userLocation - User's current location for context
  * @returns Array of possible grid matches sorted by likelihood
  */
-export function findPossibleGridLocations(
-  sixDigitRef: { easting: string; northing: string },
+export async function findPossibleGridLocations(
+  gridRef: { easting: string; northing: string },
   userLocation?: { lat: number; lng: number }
-): GridMatch[] {
+): Promise<GridMatch[]> {
   const matches: GridMatch[] = [];
   
-  // Common Australian UTM zones (49-56 cover most of Australia)
-  const australianZones = [49, 50, 51, 52, 53, 54, 55, 56];
-  
-  // For six-digit grid, we need to enumerate possible 100km squares
-  // Easting: X23,000 where X can be 0-9 (represents hundreds of thousands)
-  // Northing: Y67,000 where Y can be 0-9 (represents hundreds of thousands)
-  
-  for (const zone of australianZones) {
-    for (let eastingPrefix = 0; eastingPrefix <= 9; eastingPrefix++) {
-      for (let northingPrefix = 0; northingPrefix <= 9; northingPrefix++) {
-        // Construct full 6-digit grid reference
-        const fullEasting = `${eastingPrefix}${sixDigitRef.easting}000`;
-        const fullNorthing = `${northingPrefix}${sixDigitRef.northing}000`;
-        
-        // Convert UTM to lat/lng
-        const coords = utmToLatLng(
-          parseInt(fullEasting),
-          parseInt(fullNorthing),
-          zone,
-          'S' // Australia is in Southern hemisphere
-        );
-        
-        if (coords && isWithinAustralia(coords.latitude, coords.longitude)) {
-          const confidence = calculateConfidence(
-            coords,
+  try {
+    const utmConverter = await getUtmConverter();
+    
+    // Common Australian UTM zones (49-56 cover most of Australia)
+    const australianZones = [49, 50, 51, 52, 53, 54, 55, 56];
+    
+    // If we have user location, get their UTM zone for context
+    let userUtmInfo: any = null;
+    if (userLocation) {
+      try {
+        userUtmInfo = (utmConverter as any).convertLatLngToUtm(userLocation.lat, userLocation.lng, 0);
+      } catch (error) {
+        console.warn('Failed to convert user location to UTM:', error);
+      }
+    }
+    
+    for (const zone of australianZones) {
+      // Generate possible full coordinates based on the input format
+      const possibleCoords = generatePossibleCoordinates(gridRef, zone, userUtmInfo);
+      
+      for (const coord of possibleCoords) {
+        try {
+          // Convert UTM to lat/lng using the library
+          const result = (utmConverter as any).convertUtmToLatLng(
+            coord.easting,
+            coord.northing,
             zone,
-            userLocation
-          );
+            coord.zoneLetter
+          ) as { lat: number; lng: number } | null;
           
-          const distance = userLocation 
-            ? calculateDistance(
-                userLocation.lat, userLocation.lng,
-                coords.latitude, coords.longitude
-              )
-            : undefined;
+          if (result && typeof result === 'object' && 'lat' in result && 'lng' in result && isWithinAustralia(result.lat, result.lng)) {
+            const confidence = calculateConfidence(
+              { latitude: result.lat, longitude: result.lng },
+              zone,
+              userLocation,
+              coord
+            );
+            
+            const distance = userLocation 
+              ? calculateDistance(
+                  userLocation.lat, userLocation.lng,
+                  result.lat, result.lng
+                )
+              : undefined;
 
-          matches.push({
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            fullGrid: `${zone}${getZoneLetter(coords.latitude)} ${fullEasting} ${fullNorthing}`,
-            confidence,
-            distance
-          });
+            matches.push({
+              latitude: result.lat,
+              longitude: result.lng,
+              fullGrid: `${zone}${coord.zoneLetter} ${coord.easting.toString().padStart(6, '0')} ${coord.northing.toString().padStart(7, '0')}`,
+              confidence,
+              distance
+            });
+          }
+        } catch (error) {
+          // Skip invalid coordinates
+          continue;
+        }
+      }
+    }
+
+    // Sort by confidence (higher first), then by distance if available
+    return matches.sort((a, b) => {
+      const confDiff = b.confidence - a.confidence;
+      if (Math.abs(confDiff) > 0.1) return confDiff;
+      
+      if (a.distance !== undefined && b.distance !== undefined) {
+        return a.distance - b.distance;
+      }
+      
+      return confDiff;
+    });
+  } catch (error) {
+    console.error('Error in grid reference search:', error);
+    return [];
+  }
+}
+
+/**
+ * Generate possible full UTM coordinates from partial grid reference
+ * 
+ * Based on the pattern where:
+ * - 3-digit easting input represents digits 1-3 of a 6-digit easting
+ * - 3-digit northing input represents digits 2-4 of a 7-digit northing
+ * 
+ * @param gridRef - Parsed grid reference (easting/northing digits)
+ * @param zone - UTM zone number
+ * @param userUtmInfo - User's UTM information for context
+ * @returns Array of possible coordinate combinations
+ */
+function generatePossibleCoordinates(
+  gridRef: { easting: string; northing: string },
+  zone: number,
+  userUtmInfo?: any
+): Array<{ easting: number; northing: number; contextMatch: boolean; zoneLetter: string }> {
+  const coordinates: Array<{ easting: number; northing: number; contextMatch: boolean; zoneLetter: string }> = [];
+  
+  const eastingLength = gridRef.easting.length;
+  const northingLength = gridRef.northing.length;
+  
+  if (eastingLength === 3 && northingLength === 3) {
+    // 3-digit format: specific pattern based on Australian grid reference system
+    // Easting: digits 1-3 of 6-digit coordinate (X___YZ format where YZ are the input)
+    // Northing: digits 2-4 of 7-digit coordinate (A_BC_DE format where BCD are the input)
+    
+    // For easting: ?XXX?? where XXX is the input
+    for (let eastingFirst = 1; eastingFirst <= 9; eastingFirst++) {
+      for (let eastingLast2 = 0; eastingLast2 <= 99; eastingLast2++) {
+        const fullEasting = eastingFirst * 100000 + parseInt(gridRef.easting) * 100 + eastingLast2;
+        
+        // For northing: ??XXX?? where XXX is the input (positions 2-4)
+        // Australian UTM northings are typically 6000000-7000000 for the inhabited areas
+        for (let northingFirst2 = 60; northingFirst2 <= 70; northingFirst2++) {
+          for (let northingLast2 = 0; northingLast2 <= 99; northingLast2++) {
+            const fullNorthing = northingFirst2 * 100000 + parseInt(gridRef.northing) * 100 + northingLast2;
+            
+            // Determine zone letter based on approximate latitude
+            let zoneLetter = 'H'; // Default for most of Australia
+            
+            let contextMatch = false;
+            
+            // Check if this matches user's approximate area if available
+            if (userUtmInfo && userUtmInfo.ZoneNumber === zone) {
+              const eastingDiff = Math.abs(fullEasting - userUtmInfo.Easting);
+              const northingDiff = Math.abs(fullNorthing - userUtmInfo.Northing);
+              
+              // Consider it a context match if within reasonable range (50km)
+              if (eastingDiff < 50000 && northingDiff < 50000) {
+                contextMatch = true;
+                zoneLetter = userUtmInfo.ZoneLetter;
+              }
+            }
+            
+            coordinates.push({
+              easting: fullEasting,
+              northing: fullNorthing,
+              contextMatch,
+              zoneLetter
+            });
+          }
+        }
+      }
+    }
+  } else if (eastingLength === 4 && northingLength === 4) {
+    // 4-digit format: treat as more precise reference
+    // Similar pattern but with 4 digits
+    
+    for (let eastingFirst = 1; eastingFirst <= 9; eastingFirst++) {
+      for (let eastingLast = 0; eastingLast <= 9; eastingLast++) {
+        const fullEasting = eastingFirst * 100000 + parseInt(gridRef.easting) * 10 + eastingLast;
+        
+        for (let northingFirst2 = 60; northingFirst2 <= 70; northingFirst2++) {
+          for (let northingLast = 0; northingLast <= 9; northingLast++) {
+            const fullNorthing = northingFirst2 * 100000 + parseInt(gridRef.northing) * 10 + northingLast;
+            
+            let zoneLetter = 'H';
+            let contextMatch = false;
+            
+            if (userUtmInfo && userUtmInfo.ZoneNumber === zone) {
+              const eastingDiff = Math.abs(fullEasting - userUtmInfo.Easting);
+              const northingDiff = Math.abs(fullNorthing - userUtmInfo.Northing);
+              
+              if (eastingDiff < 25000 && northingDiff < 25000) {
+                contextMatch = true;
+                zoneLetter = userUtmInfo.ZoneLetter;
+              }
+            }
+            
+            coordinates.push({
+              easting: fullEasting,
+              northing: fullNorthing,
+              contextMatch,
+              zoneLetter
+            });
+          }
         }
       }
     }
   }
-
-  // Sort by confidence (higher first), then by distance if available
-  return matches.sort((a, b) => {
-    const confDiff = b.confidence - a.confidence;
-    if (Math.abs(confDiff) > 0.1) return confDiff;
-    
-    if (a.distance !== undefined && b.distance !== undefined) {
-      return a.distance - b.distance;
-    }
-    
-    return confDiff;
-  });
-}
-
-/**
- * Convert UTM coordinates to latitude/longitude
- * Simplified conversion suitable for the operational area
- * 
- * @param easting - UTM easting
- * @param northing - UTM northing  
- * @param zone - UTM zone number
- * @param hemisphere - Hemisphere ('N' or 'S')
- * @returns Latitude/longitude coordinates
- */
-function utmToLatLng(
-  easting: number,
-  northing: number,
-  zone: number,
-  hemisphere: 'N' | 'S'
-): { latitude: number; longitude: number } | null {
-  // Simplified UTM to lat/lng conversion
-  // This is a basic implementation - for production use, consider a library like proj4js
   
-  const a = 6378137; // WGS84 equatorial radius
-  const e = 0.0818191908426; // WGS84 eccentricity
-  const k0 = 0.9996; // UTM scale factor
-  
-  const falseEasting = 500000;
-  const falseNorthing = hemisphere === 'S' ? 10000000 : 0;
-  
-  const x = easting - falseEasting;
-  const y = northing - falseNorthing;
-  
-  const centralMeridian = (zone - 1) * 6 - 180 + 3; // Central meridian for the zone
-  
-  // Basic conversion (simplified for Australian context)
-  const M = y / k0;
-  const mu = M / (a * (1 - e * e / 4 - 3 * e * e * e * e / 64));
-  
-  const lat1 = mu + (3 * e / 2 - 27 * e * e * e / 32) * Math.sin(2 * mu);
-  const latitude = lat1 * 180 / Math.PI;
-  
-  const longitude = centralMeridian + (x / (k0 * a)) * 180 / Math.PI;
-  
-  if (hemisphere === 'S') {
-    return { latitude: -Math.abs(latitude), longitude };
-  }
-  
-  return { latitude, longitude };
-}
-
-/**
- * Get UTM zone letter for latitude
- * @param latitude - Latitude value
- * @returns Zone letter
- */
-function getZoneLetter(latitude: number): string {
-  // Simplified for Australian context
-  const letters = 'CDEFGHJKLMNPQRSTUVWX';
-  const index = Math.floor((latitude + 80) / 8);
-  return letters[Math.max(0, Math.min(index, letters.length - 1))];
+  return coordinates;
 }
 
 /**
@@ -198,14 +305,21 @@ function isWithinAustralia(lat: number, lng: number): boolean {
  * @param coords - Coordinates to evaluate
  * @param zone - UTM zone
  * @param userLocation - User's current location
+ * @param coordInfo - Information about the coordinate generation
  * @returns Confidence score (0-1)
  */
 function calculateConfidence(
   coords: { latitude: number; longitude: number },
   zone: number,
-  userLocation?: { lat: number; lng: number }
+  userLocation?: { lat: number; lng: number },
+  coordInfo?: { contextMatch: boolean; zoneLetter: string }
 ): number {
-  let confidence = 0.5; // Base confidence
+  let confidence = 0.3; // Base confidence
+  
+  // Much higher confidence if this matches user's area context
+  if (coordInfo?.contextMatch) {
+    confidence += 0.5;
+  }
   
   // Higher confidence for more commonly used zones in populated areas
   const popularZones = [55, 56]; // Sydney/Melbourne area
@@ -216,7 +330,7 @@ function calculateConfidence(
   // Higher confidence for coordinates in populated regions
   if (coords.latitude > -37 && coords.latitude < -25 && 
       coords.longitude > 140 && coords.longitude < 155) {
-    confidence += 0.2; // Eastern Australia
+    confidence += 0.1; // Eastern Australia
   }
   
   // Distance-based confidence if user location is available
@@ -226,8 +340,8 @@ function calculateConfidence(
       coords.latitude, coords.longitude
     );
     
-    // Higher confidence for closer locations (within 500km gets max bonus)
-    const proximityBonus = Math.max(0, (500 - distance) / 500) * 0.3;
+    // Higher confidence for closer locations (within 100km gets max bonus)
+    const proximityBonus = Math.max(0, (100 - distance) / 100) * 0.2;
     confidence += proximityBonus;
   }
   
@@ -253,3 +367,6 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+// Backward compatibility - keep the old function name as an alias
+export const parseSixDigitGrid = parseGridReference;

@@ -11,7 +11,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { searchAddresses, debounce, type GeocodingResult } from '../utils/geocoding';
 import { parseCoordinates, formatDecimalDegrees, type ParsedCoordinates } from '../utils/coordinateParser';
-import { parseSixDigitGrid, findPossibleGridLocations, type GridMatch } from '../utils/gridReference';
+import { parseSixDigitGrid, findPossibleGridLocations, type GridMatch, parseGridReference } from '../utils/gridReference';
 
 export interface SearchControlProps {
   onLocationSelected: (location: { lat: number; lng: number; label: string }) => void;
@@ -42,9 +42,38 @@ export const SearchControl: React.FC<SearchControlProps> = ({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentUserLocation, setCurrentUserLocation] = useState(userLocation);
   
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Request user location if not available for grid search
+  const requestUserLocation = async (): Promise<{ lat: number; lng: number } | null> => {
+    if (currentUserLocation) {
+      return currentUserLocation;
+    }
+
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 300000 // 5 minutes
+        });
+      });
+
+      const newLocation = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
+      
+      setCurrentUserLocation(newLocation);
+      return newLocation;
+    } catch (error) {
+      console.warn('Could not get user location:', error);
+      return null;
+    }
+  };
 
   // Debounced search function
   const debouncedSearch = useCallback(
@@ -80,14 +109,14 @@ export const SearchControl: React.FC<SearchControlProps> = ({
         setIsLoading(false);
       }
     }, 300),
-    [userLocation]
+    [currentUserLocation]
   );
 
   // Perform address search using Mapbox Geocoding API
   const performAddressSearch = async (query: string): Promise<SearchResult[]> => {
     const geocodingResults = await searchAddresses(query, {
       limit: 8,
-      proximity: userLocation ? [userLocation.lng, userLocation.lat] : undefined,
+      proximity: currentUserLocation ? [currentUserLocation.lng, currentUserLocation.lat] : undefined,
       country: 'au', // Focus on Australia
       autocomplete: true
     });
@@ -123,14 +152,17 @@ export const SearchControl: React.FC<SearchControlProps> = ({
 
   // Perform grid reference search
   const performGridSearch = async (query: string): Promise<SearchResult[]> => {
-    const parsed = parseSixDigitGrid(query);
+    const parsed = parseGridReference(query);
     if (!parsed) {
       return [];
     }
 
-    const gridMatches = findPossibleGridLocations(parsed, userLocation);
+    // For grid search, try to get user location if not available
+    const locationForSearch = currentUserLocation || await requestUserLocation();
+
+    const gridMatches = await findPossibleGridLocations(parsed, locationForSearch || undefined);
     
-    return gridMatches.slice(0, 6).map((match: GridMatch, index: number) => ({
+    return gridMatches.slice(0, 8).map((match: GridMatch, index: number) => ({
       id: `grid-${index}`,
       label: match.fullGrid,
       sublabel: match.distance 
@@ -181,7 +213,7 @@ export const SearchControl: React.FC<SearchControlProps> = ({
       case 'coordinates':
         return 'Enter coordinates (e.g., -33.8688, 151.2093)';
       case 'grid':
-        return 'Enter 6-digit grid reference (e.g., 234567)';
+        return 'Enter grid reference (e.g., 219 967 or 12345678)';
       default:
         return 'Search...';
     }
