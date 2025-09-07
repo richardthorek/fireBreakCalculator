@@ -742,23 +742,34 @@ const BuyMeACoffee: React.FC = () => {
   // Provide a small container at the bottom of the panel for the button to appear near.
   // Also render a visible fallback anchor so users always see a way to support the project if the script fails.
   return (
-    <div className="bmc-button-container">
-      <div id="bmc-button-placeholder">
+    <div className="bottom-buttons-container">
+      <div className="buttons-row">
+        <div id="bmc-button-placeholder">
+          <a
+            className="bmc-fallback"
+            href="https://www.buymeacoffee.com/richardbt"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Buy me a coffee"
+          >
+            Love it? buy me a coffee
+          </a>
+        </div>
         <a
-          className="bmc-fallback"
-          href="https://www.buymeacoffee.com/richardbt"
+          className="feature-suggestion-button"
+          href="https://github.com/richardthorek/rfsFireBreakCalculator/issues/new?template=feature_request.md&title=Feature%20Request%3A%20&labels=enhancement"
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Buy me a coffee"
+          aria-label="Suggest a feature or contact developer"
         >
-          Love it? buy me a coffee
+          💡 Suggest Feature
         </a>
-            {/* Flaticon attribution for icons used in the UI */}
-            <div className="flaticon-credit">
-              <a href="https://www.flaticon.com/free-icons/bull-dozer" title="bull dozer icons" target="_blank" rel="noopener noreferrer">
-                Bull dozer icons created by IYIKON - Flaticon
-              </a>
-            </div>
+      </div>
+      {/* Flaticon attribution for icons used in the UI */}
+      <div className="flaticon-credit">
+        <a href="https://www.flaticon.com/free-icons/bull-dozer" title="bull dozer icons" target="_blank" rel="noopener noreferrer">
+          Bull dozer icons created by IYIKON - Flaticon
+        </a>
       </div>
     </div>
   );

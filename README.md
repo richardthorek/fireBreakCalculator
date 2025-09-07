@@ -179,9 +179,17 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 ## 📞 Support
 
+- **💡 Feature Suggestions**: Click the "💡 Suggest Feature" button in the analysis panel to submit feature requests directly
 - **🆘 Issues**: Report bugs or request features via [GitHub Issues](../../issues)
 - **📚 Documentation**: Browse our [Documentation Hub](Documentation/README.md)
 - **👥 Community**: Contact your local Rural Fire Service IT support team
+
+### Feature Suggestion Button
+The Fire Break Calculator includes a convenient "💡 Suggest Feature" button located at the bottom of the analysis panel, next to the "Buy Me A Coffee" button. This button:
+- Directs users to GitHub's issue creation page with a pre-filled feature request template
+- Automatically applies the "enhancement" label for easy categorization
+- Provides a direct channel for user feedback and feature suggestions
+- Opens in a new tab to preserve your current planning session
 
 ---
 

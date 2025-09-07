@@ -465,11 +465,20 @@ html, body, #root, .app-shell {
 .cell-bar[data-color="#ff8800"] { background: linear-gradient(90deg,#ff8800,#e06c00); }
 .cell-bar[data-color="#006400"] { background: linear-gradient(90deg,#006400,#004d00); }
 
-/* Buy Me a Coffee button container used by AnalysisPanel */
-.bmc-button-container {
+/* Bottom buttons container for Buy Me a Coffee and Feature Suggestion buttons */
+.bottom-buttons-container {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
   padding: 8px 0;
+}
+
+.buttons-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 /* Fallback BMC link styling (visible if external widget doesn't render) */
@@ -484,6 +493,20 @@ html, body, #root, .app-shell {
   box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 }
 .bmc-fallback:hover { opacity: 0.95; }
+
+/* Feature suggestion button styling */
+.feature-suggestion-button {
+  display: inline-block;
+  background: linear-gradient(90deg,#4c63d2,#5f73e0);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  transition: opacity 0.2s ease;
+}
+.feature-suggestion-button:hover { opacity: 0.95; }
 .cell-bar[data-color="#ff0000"] { background: linear-gradient(90deg,#ff0000,#cc0000); }
 
 /* Small credit for Flaticon icons used in the UI */
