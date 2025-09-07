@@ -15,6 +15,10 @@ import {
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
 
+// Import site logo/favicon as a module so the bundler rewrites the path
+// and the image is available regardless of deployment prefix or asset fingerprinting.
+import logo96 from '../favicon-96x96.png';
+
 /**
  * Root application component for the RFS Fire Break Calculator.
  * Renders a fixed-height header (10% of viewport), responsive Mapbox GL JS map,
@@ -342,7 +346,7 @@ const App: React.FC = () => {
     <div className="app-shell">
       <header className="app-header">
         <div className="header-left">
-          <img src="/favicon-96x96.png" alt="RFS logo" className="app-logo" />
+          <img src={logo96} alt="RFS logo" className="app-logo" />
           <div className="header-titles">
             <h1 className="app-title">Fire Break Calculator</h1>
             <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>

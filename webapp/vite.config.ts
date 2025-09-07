@@ -4,6 +4,10 @@ import react from '@vitejs/plugin-react';
 // Vite configuration for React project
 export default defineConfig({
   plugins: [react()],
+  // Use default publicDir so Vite processes `index.html` and rewrites
+  // development entry imports during build. Avoid setting publicDir to
+  // the project root ('.') because that causes the index to be copied
+  // verbatim into `dist` and leads to duplicate/incorrect script tags.
   server: {
     proxy: {
       '/api': {
