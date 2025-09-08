@@ -134,8 +134,11 @@ html, body, #root, .app-shell {
   .config-panel-toggle { display: inline-flex; align-items:center; justify-content:center; }
   .config-panel-toggle { white-space: nowrap; }
   .config-panel-toggle { overflow: hidden; }
-  .config-panel-toggle { text-indent: -9999px; }
-  .config-panel-toggle::before { content: '⚙️'; text-indent: 0; display: inline-block; text-indent: 0; }
+  /* Prefer hiding the label element rather than text-indent to avoid Safari rendering both ::before and actual text */
+  .config-panel-toggle .config-label { display: none !important; }
+  /* Remove any generated content that could duplicate the icon */
+  .config-panel-toggle::before, .config-panel-toggle::after { content: none !important; }
+  .config-panel-toggle .config-icon { display: inline-block; }
   /* make search smaller if still overlapping */
   .header-center .header-search-control { max-width: calc(100% - 56px); }
 }

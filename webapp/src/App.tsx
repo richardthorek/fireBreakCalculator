@@ -378,7 +378,8 @@ const App: React.FC = () => {
             title="Open Configuration Panel"
             aria-label="Open configuration panel for equipment and vegetation mappings"
           >
-            ⚙️ Configuration
+            <span className="config-icon" aria-hidden>⚙️</span>
+            <span className="config-label">Configuration</span>
           </button>
         </div>
       </header>
