@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../.wiki"
+		}
+	],
+	"settings": {
+		"azureAutomation.directory.basePath": "c:\\Users\\RichardBurgoyne-Thor",
+		"powershell.cwd": "rfsBreakCalculator"
+	}
+}
