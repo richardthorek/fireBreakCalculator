@@ -3,7 +3,7 @@
  */
 
 // Terrain levels in ascending difficulty order
-export const TERRAIN_LEVELS = ['easy','moderate','difficult','extreme'] as const;
+export const TERRAIN_LEVELS = ['flat','medium','steep','very_steep'] as const;
 export type TerrainLevel = typeof TERRAIN_LEVELS[number];
 
 // Vegetation taxonomy

@@ -84,10 +84,10 @@ export interface AnalysisResponse {
 
 // Default factors (can be overridden by request parameters)
 const DEFAULT_TERRAIN_FACTORS: Record<TerrainLevel, number> = {
-  easy: 1.0,
-  moderate: 1.3,
-  difficult: 1.7,
-  extreme: 2.2
+  flat: 1.0,
+  medium: 1.3,
+  steep: 1.7,
+  very_steep: 2.2
 };
 
 const DEFAULT_VEGETATION_FACTORS: Record<VegetationType, number> = {
@@ -98,17 +98,17 @@ const DEFAULT_VEGETATION_FACTORS: Record<VegetationType, number> = {
 };
 
 const TERRAIN_RANK: Record<TerrainLevel, number> = {
-  easy: 0,
-  moderate: 1,
-  difficult: 2,
-  extreme: 3
+  flat: 0,
+  medium: 1,
+  steep: 2,
+  very_steep: 3
 };
 
 const SLOPE_CATEGORY_TO_TERRAIN: Record<string, TerrainLevel> = {
-  flat: 'easy',
-  medium: 'moderate',
-  steep: 'difficult',
-  very_steep: 'extreme'
+  flat: 'flat',
+  medium: 'medium', 
+  steep: 'steep',
+  very_steep: 'very_steep'
 };
 
 export class EquipmentAnalysisService {
@@ -163,10 +163,10 @@ export class EquipmentAnalysisService {
    * Derive terrain level from maximum slope
    */
   private deriveTerrainFromSlope(maxSlope: number): TerrainLevel {
-    if (maxSlope < 10) return 'easy';
-    if (maxSlope < 20) return 'moderate';
-    if (maxSlope < 30) return 'difficult';
-    return 'extreme';
+    if (maxSlope < 10) return 'flat';
+    if (maxSlope < 25) return 'medium';
+    if (maxSlope < 45) return 'steep';
+    return 'very_steep';
   }
   
   /**
@@ -249,7 +249,7 @@ export class EquipmentAnalysisService {
     return {
       level: 'incompatible',
       overLimitPercent: overPercent,
-      note: 'Too much difficult terrain'
+      note: 'Too much challenging terrain'
     };
   }
   

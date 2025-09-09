@@ -71,10 +71,7 @@ const InlineEditComponent: React.FC<{
       <input id={`name-${item.id}`} aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
 
       {form.type === 'Machinery' && (
-        <>
-          <input aria-label="Clearing rate" className="eq-small" type="number" placeholder="Rate" value={(form as MachineryApi).clearingRate ?? ''} onChange={e => updateMachinery({ clearingRate: Number(e.target.value) })} />
-          <input aria-label="Max slope" className="eq-small" type="number" placeholder="Max °" value={(form as MachineryApi).maxSlope ?? ''} onChange={e => updateMachinery({ maxSlope: Number(e.target.value) })} />
-        </>
+        <input aria-label="Clearing rate" className="eq-small" type="number" placeholder="Rate" value={(form as MachineryApi).clearingRate ?? ''} onChange={e => updateMachinery({ clearingRate: Number(e.target.value) })} />
       )}
 
       {form.type === 'Aircraft' && (
@@ -149,10 +146,7 @@ const EquipmentListComponent: React.FC<{
           <input id="draft-name" className="eq-name" placeholder={`${activeTab} name`} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
 
           {activeTab === 'Machinery' && (
-            <>
-              <input id="draft-rate" type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
-              <input id="draft-maxslope" type="number" className="eq-small" placeholder="Max °" value={draft.maxSlope ?? ''} onChange={e => setDraft({ ...draft, maxSlope: Number(e.target.value) })} />
-            </>
+            <input id="draft-rate" type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
           )}
 
           {activeTab === 'Aircraft' && (
@@ -205,7 +199,6 @@ const EquipmentListComponent: React.FC<{
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
             <div className="eq-name text" title={item.name}>{item.name}</div>
             {item.type === 'Machinery' && <div className="eq-small text">{(item as MachineryApi).clearingRate || '-'} m/h</div>}
-            {item.type === 'Machinery' && <div className="eq-small text" title={`Max slope ${(item as MachineryApi).maxSlope ?? '-' }°`}>{(item as MachineryApi).maxSlope != null ? `${(item as MachineryApi).maxSlope}°` : '-'}</div>}
             {item.type === 'Aircraft' && (
               <div className="eq-small text" title={`Turnaround ${(item as AircraftApi).turnaroundMinutes ?? '-'} min`}>
                 {(item as AircraftApi).dropLength || '-'} m
@@ -245,7 +238,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const [draft, setDraft] = useState<Record<string, any>>({ 
     type: 'Machinery', 
     name: '', 
-    allowedTerrain: ['easy'], 
+    allowedTerrain: ['flat'], 
     allowedVegetation: ['grassland'], 
     active: true 
   });
@@ -255,7 +248,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
   useEffect(() => { if (triggerAdd && triggerAdd > 0) startAdd(); }, [triggerAdd]);
 
-  const terrainOptions: string[] = ['easy','moderate','difficult','extreme'];
+  const terrainOptions: string[] = ['flat','medium','steep','very_steep'];
   const vegetationOptions: string[] = ['grassland','lightshrub','mediumscrub','heavyforest'];
 
   const terrainLabel = (t: string) => getTerrainLevelDisplayName(t as TerrainLevel);
@@ -263,7 +256,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const vegLabel = (v: string) => getVegetationTypeDisplayName(v as VegetationType);
   const vegExample = (v: string) => getVegetationTypeExample(v as VegetationType);
 
-  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ type, name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true });
+  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ type, name: '', allowedTerrain: ['flat'], allowedVegetation: ['grassland'], active: true });
   const startAdd = () => { resetDraft(activeTab); setAdding(true); setEditingId(null); };
 
   const saveNew = async () => {
@@ -335,7 +328,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
 
         {showGuide && (
           <div className="tab-guide side-guide" aria-hidden>
-            <div className="guide-line"><strong>Slope:</strong> 0–10° Easy · 10–20° Moderate · 20–30° Difficult · ≥30° Extreme</div>
+            <div className="guide-line"><strong>Slope:</strong> 0–10° Flat · 10–25° Medium · 25–45° Steep · ≥45° Very Steep</div>
             <div className="guide-line"><strong>Veg examples:</strong> Grassland · Light shrub · Medium scrub · Heavy timber</div>
             <div className="guide-line muted small">Tip: click tags to toggle terrain/vegetation for each item.</div>
           </div>

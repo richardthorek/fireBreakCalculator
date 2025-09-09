@@ -17,7 +17,7 @@ const machinery = [
     clearingRate: 0.5,
     maxSlope: 20,
     costPerHour: 180,
-    allowedTerrain: ['easy', 'moderate'],
+    allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland', 'lightshrub'],
     active: true
   },
@@ -28,7 +28,7 @@ const machinery = [
     clearingRate: 0.8,
     maxSlope: 25,
     costPerHour: 220,
-    allowedTerrain: ['easy', 'moderate', 'difficult'],
+    allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true
   },
@@ -39,7 +39,7 @@ const machinery = [
     clearingRate: 1.1,
     maxSlope: 30,
     costPerHour: 280,
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true
   }
@@ -54,7 +54,7 @@ const aircraft = [
     dropLength: 100,
     turnaroundMinutes: 12,
     costPerHour: 3500,
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true
   },
@@ -65,7 +65,7 @@ const aircraft = [
     dropLength: 180,
     turnaroundMinutes: 25,
     costPerHour: 8000,
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true
   }
@@ -81,7 +81,7 @@ const handCrews = [
     clearingRatePerPerson: 0.02,
     equipmentList: ['chainsaws', 'rakehoes'],
     costPerHour: 240,
-    allowedTerrain: ['easy', 'moderate', 'difficult'],
+    allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true
   },
@@ -93,7 +93,7 @@ const handCrews = [
     clearingRatePerPerson: 0.018,
     equipmentList: ['chainsaws', 'rakehoes', 'pulaskis'],
     costPerHour: 300,
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true
   }

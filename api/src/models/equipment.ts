@@ -1,5 +1,5 @@
 // Equipment domain models and mapping helpers for Azure Table Storage
-export type TerrainType = 'easy' | 'moderate' | 'difficult' | 'extreme';
+export type TerrainType = 'flat' | 'medium' | 'steep' | 'very_steep';
 export type VegetationType = 'grassland' | 'lightshrub' | 'mediumscrub' | 'heavyforest';
 
 export interface EquipmentBase {

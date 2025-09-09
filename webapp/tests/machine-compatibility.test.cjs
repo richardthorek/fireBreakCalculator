@@ -7,7 +7,7 @@
  */
 
 // Import logic from the actual implementation (for real tests, this would use proper imports)
-const TERRAIN_LEVELS = ['easy', 'moderate', 'difficult', 'extreme'];
+const TERRAIN_LEVELS = ['flat', 'medium', 'steep', 'very_steep'];
 const VEGETATION_TYPES = ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'];
 
 // Test machines based on defaultConfig.ts
@@ -15,7 +15,7 @@ const TEST_MACHINES = [
   {
     id: 'dozer-d8',
     name: 'Caterpillar D8 Dozer',
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'], // ALL TERRAINS
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'], // ALL TERRAINS
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'], // ALL VEGETATION
     maxSlope: 35,
     description: 'Machine configured for all terrain and vegetation types'
@@ -23,7 +23,7 @@ const TEST_MACHINES = [
   {
     id: 'dozer-d6',
     name: 'Caterpillar D6 Dozer',
-    allowedTerrain: ['easy', 'moderate', 'difficult'],
+    allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     maxSlope: 25,
     description: 'Machine with most terrain, some vegetation'
@@ -31,7 +31,7 @@ const TEST_MACHINES = [
   {
     id: 'grader-140m',
     name: 'Motor Grader 140M',
-    allowedTerrain: ['easy', 'moderate'],
+    allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland'],
     maxSlope: 15,
     description: 'Machine with limited terrain and vegetation'
@@ -39,7 +39,7 @@ const TEST_MACHINES = [
 ];
 
 // Compatibility logic (replicated from AnalysisPanel.tsx)
-const terrainRank = { easy: 0, moderate: 1, difficult: 2, extreme: 3 };
+const terrainRank = { flat: 0, medium: 1, steep: 2, very_steep: 3 };
 
 function baseEnvironmentCompatible(equipment, requiredTerrain, vegetation) {
   return equipment.allowedTerrain.includes(requiredTerrain) && 
@@ -64,10 +64,10 @@ function evaluateMachineryTerrainCompatibility(machine, trackAnalysis, vegetatio
 
   // Detailed terrain analysis
   const slopeCategoryToTerrain = {
-    flat: 'easy',
-    medium: 'moderate', 
-    steep: 'difficult',
-    very_steep: 'extreme'
+    flat: 'flat',
+    medium: 'medium', 
+    steep: 'steep',
+    very_steep: 'very_steep'
   };
 
   const distByCat = trackAnalysis.slopeDistribution;
@@ -98,15 +98,15 @@ function evaluateMachineryTerrainCompatibility(machine, trackAnalysis, vegetatio
   return { 
     level: 'incompatible', 
     compatible: false,
-    note: overPercent > 0 ? 'Too much difficult terrain' : 'Terrain/vegetation not permitted' 
+    note: overPercent > 0 ? 'Too much challenging terrain' : 'Terrain/vegetation not permitted' 
   };
 }
 
 // Test scenarios
 const TEST_SCENARIOS = [
   {
-    name: 'Easy terrain, light vegetation',
-    terrain: 'easy',
+    name: 'Flat terrain, light vegetation',
+    terrain: 'flat',
     vegetation: 'grassland',
     trackAnalysis: {
       totalDistance: 1000,
@@ -115,8 +115,8 @@ const TEST_SCENARIOS = [
     }
   },
   {
-    name: 'Moderate terrain, medium vegetation',  
-    terrain: 'moderate',
+    name: 'Medium terrain, medium vegetation',  
+    terrain: 'medium',
     vegetation: 'mediumscrub',
     trackAnalysis: {
       totalDistance: 1000,
@@ -125,8 +125,8 @@ const TEST_SCENARIOS = [
     }
   },
   {
-    name: 'Difficult terrain, heavy vegetation',
-    terrain: 'difficult', 
+    name: 'Steep terrain, heavy vegetation',
+    terrain: 'steep', 
     vegetation: 'heavyforest',
     trackAnalysis: {
       totalDistance: 1000,
@@ -135,8 +135,8 @@ const TEST_SCENARIOS = [
     }
   },
   {
-    name: 'Extreme terrain, heavy vegetation',
-    terrain: 'extreme',
+    name: 'Very steep terrain, heavy vegetation',
+    terrain: 'very_steep',
     vegetation: 'heavyforest', 
     trackAnalysis: {
       totalDistance: 1000,

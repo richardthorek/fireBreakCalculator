@@ -16,10 +16,10 @@ export const defaultConfig: FireBreakConfig = {
 
   calculationRules: {
     terrainFactors: {
-      easy: 1.0,     // Flat, accessible terrain
-      moderate: 1.3,  // Rolling hills, some obstacles
-      difficult: 1.7, // Steep slopes, rocky terrain
-      extreme: 2.2    // Very steep, inaccessible areas
+      flat: 1.0,      // Flat terrain (0-10°)
+      medium: 1.3,    // Medium terrain (10-25°)
+      steep: 1.7,     // Steep terrain (25-45°)
+      very_steep: 2.2 // Very steep terrain (45°+)
     },
     // Vegetation taxonomy updated: grassland, lightshrub, mediumscrub, heavyforest
     vegetationFactors: {

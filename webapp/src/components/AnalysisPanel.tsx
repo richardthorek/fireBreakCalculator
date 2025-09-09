@@ -175,14 +175,14 @@ const baseEnvironmentCompatible = (
 };
 
 /** Ordinal ordering helper for terrain difficulty */
-const terrainRank: Record<TerrainLevel, number> = { easy: 0, moderate: 1, difficult: 2, extreme: 3 };
+const terrainRank: Record<TerrainLevel, number> = { flat: 0, medium: 1, steep: 2, very_steep: 3 };
 
 /** Map slope category key → terrain level (mirrors deriveTerrainFromSlope logic) */
 const slopeCategoryToTerrain: Record<string, TerrainLevel> = {
-  flat: 'easy',
-  medium: 'moderate',
-  steep: 'difficult',
-  very_steep: 'extreme'
+  flat: 'flat',
+  medium: 'medium',
+  steep: 'steep',
+  very_steep: 'very_steep'
 };
 
 /**
@@ -232,7 +232,7 @@ function evaluateMachineryTerrainCompatibility(
       note: `~${Math.round(overPercent * 100)}% of route exceeds rated terrain; applying time penalty.`
     };
   }
-  return { level: 'incompatible', overLimitPercent: overPercent, note: overPercent > 0 ? 'Too much difficult terrain' : 'Terrain/vegetation not permitted' };
+  return { level: 'incompatible', overLimitPercent: overPercent, note: overPercent > 0 ? 'Too much challenging terrain' : 'Terrain/vegetation not permitted' };
 }
 
 /**
@@ -264,8 +264,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
   
-  // Backend analysis state
-  const [useBackendAnalysis, setUseBackendAnalysis] = useState(false);
+  // Backend analysis state (always use backend)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
   const [backendResults, setBackendResults] = useState<BackendCalculationResult[] | null>(null);
   const [backendLoading, setBackendLoading] = useState(false);
@@ -291,9 +290,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
-  // Backend analysis effect
+  // Backend analysis effect (always run)
   useEffect(() => {
-    if (!useBackendAnalysis || !distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable) {
+    if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable) {
       setBackendResults(null);
       return;
     }
@@ -325,7 +324,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [useBackendAnalysis, distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -338,10 +337,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   // Terrain and vegetation factors
   const terrainFactors = {
-    easy: 1.0,
-    moderate: 1.3,
-    difficult: 1.7,
-    extreme: 2.2
+    flat: 1.0,
+    medium: 1.3,
+    steep: 1.7,
+    very_steep: 2.2
   };
   // Vegetation taxonomy factors (lower easier)
   const vegetationFactors: Record<VegetationType, number> = {
@@ -374,7 +373,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     }
 
     const results: CalculationResult[] = [];
-    const effectiveTerrain = derivedTerrainRequirement || 'easy';
+    const effectiveTerrain = derivedTerrainRequirement || 'flat';
     const terrainFactor = terrainFactors[effectiveTerrain];
     const vegetationFactor = vegetationFactors[effectiveVegetation];
     const requiredTerrain = effectiveTerrain;
@@ -568,8 +567,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     return sortedResults;
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
-  // Use backend results if available and enabled, otherwise use frontend calculations
-  const finalCalculations = useBackendAnalysis && backendResults ? backendResults.map(r => ({
+  // Always use backend results, fallback to frontend calculations only if backend unavailable
+  const finalCalculations = backendResults ? backendResults.map(r => ({
     ...r,
     compatibilityLevel: r.compatibilityLevel as 'full' | 'partial' | 'incompatible'
   })) : calculations;
@@ -621,22 +620,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
           {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
           
-          {/* Backend Analysis Toggle */}
+          {/* Backend Analysis Status */}
           {backendAvailable !== null && (
-            <div className="backend-toggle">
-              <label htmlFor="backend-analysis-toggle">
-                <input
-                  id="backend-analysis-toggle"
-                  type="checkbox"
-                  checked={useBackendAnalysis}
-                  onChange={(e) => setUseBackendAnalysis(e.target.checked)}
-                  disabled={!backendAvailable}
-                />
-                Backend Analysis
-                {backendLoading && <span className="loading-indicator">⏳</span>}
-                {backendError && <span className="error-indicator" title={backendError}>❌</span>}
-                {!backendAvailable && <span className="disabled-indicator" title="Backend service unavailable">⚠️</span>}
-              </label>
+            <div className="backend-status">
+              <span>Backend Analysis</span>
+              {backendLoading && <span className="loading-indicator">⏳</span>}
+              {backendError && <span className="error-indicator" title={backendError}>❌</span>}
+              {!backendAvailable && <span className="disabled-indicator" title="Backend service unavailable">⚠️</span>}
             </div>
           )}
         </div>

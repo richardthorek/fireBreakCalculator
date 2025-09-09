@@ -15,13 +15,13 @@ export interface SlopeCategoryDefinition {
 // Default slope categories (can be replaced or extended)
 export const SLOPE_CATEGORIES: SlopeCategoryDefinition[] = [
   { key: 'flat',       label: 'Flat',        min: 0,  max: 10, color: '#00ff00' },
-  { key: 'medium',     label: 'Medium',      min: 10, max: 20, color: '#ffff00' },
-  { key: 'steep',      label: 'Steep',       min: 20, max: 30, color: '#ff8800' },
-  { key: 'very_steep', label: 'Very Steep',  min: 30,          color: '#ff0000' }
+  { key: 'medium',     label: 'Medium',      min: 10, max: 25, color: '#ffff00' },
+  { key: 'steep',      label: 'Steep',       min: 25, max: 45, color: '#ff8800' },
+  { key: 'very_steep', label: 'Very Steep',  min: 45,          color: '#ff0000' }
 ];
 
-// Terrain levels in ascending difficulty order
-export const TERRAIN_LEVELS = ['easy','moderate','difficult','extreme'] as const;
+// Terrain levels in ascending difficulty order - updated to match slope terminology
+export const TERRAIN_LEVELS = ['flat','medium','steep','very_steep'] as const;
 export type TerrainLevel = typeof TERRAIN_LEVELS[number];
 
 // Vegetation taxonomy
@@ -39,13 +39,13 @@ export function classifySlope(angleDeg: number, defs: SlopeCategoryDefinition[] 
 /** Derive minimum terrain requirement from maximum slope */
 export function deriveTerrainFromSlope(maxSlope: number): TerrainLevel {
   // Align boundaries with displayed slope bands:
-  // Flat: 0–10°, Medium: 10–20°, Steep: 20–30°, Very Steep: 30°+
+  // Flat: 0–10°, Medium: 10–25°, Steep: 25–45°, Very Steep: 45°+
   // classifySlope treats max exclusive; a value exactly 10 becomes medium.
-  // For overall maxSlope we treat <10 as easy, <20 as moderate, <30 as difficult, else extreme.
-  if (maxSlope < 10) return 'easy';
-  if (maxSlope < 20) return 'moderate';
-  if (maxSlope < 30) return 'difficult';
-  return 'extreme';
+  // For overall maxSlope we treat <10 as flat, <25 as medium, <45 as steep, else very_steep.
+  if (maxSlope < 10) return 'flat';
+  if (maxSlope < 25) return 'medium';
+  if (maxSlope < 45) return 'steep';
+  return 'very_steep';
 }
 
 /** Retrieve color for a slope category */

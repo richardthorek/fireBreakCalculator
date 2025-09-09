@@ -75,7 +75,7 @@ const App: React.FC = () => {
         console.warn(`${machineName} has empty/invalid ${fieldName} array, using fallback values`);
         // Provide sensible fallbacks for machines with no valid values
         if (fieldName === 'allowedTerrain') {
-          return ['easy', 'moderate'] as T[];
+          return ['flat', 'medium'] as T[];
         } else if (fieldName === 'allowedVegetation') {
           return ['grassland'] as T[];
         }
@@ -86,7 +86,7 @@ const App: React.FC = () => {
     // Handle null/undefined/other (fallback)
     console.warn(`${machineName} has invalid ${fieldName} format:`, typeof value, value);
     if (fieldName === 'allowedTerrain') {
-      return ['easy', 'moderate'] as T[];
+      return ['flat', 'medium'] as T[];
     } else if (fieldName === 'allowedVegetation') {
       return ['grassland'] as T[];
     }
@@ -116,7 +116,7 @@ const App: React.FC = () => {
 
       const allowedTerrain = safeParseAllowedValues(
         m.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         m.name
       );
@@ -133,11 +133,11 @@ const App: React.FC = () => {
       const deriveMaxSlopeFromTerrain = (terrain: string[] | undefined): number | undefined => {
         if (!terrain || !terrain.length) return undefined;
         // Map terrain levels to representative max slope values
-        // easy -> 9, moderate -> 19, difficult -> 29, extreme -> 45
-        if (terrain.includes('extreme')) return 45;
-        if (terrain.includes('difficult')) return 29;
-        if (terrain.includes('moderate')) return 19;
-        if (terrain.includes('easy')) return 9;
+        // flat -> 9, medium -> 24, steep -> 44, very_steep -> 60
+        if (terrain.includes('very_steep')) return 60;
+        if (terrain.includes('steep')) return 44;
+        if (terrain.includes('medium')) return 24;
+        if (terrain.includes('flat')) return 9;
         return undefined;
       };
 
@@ -181,7 +181,7 @@ const App: React.FC = () => {
 
       const allowedTerrain = safeParseAllowedValues(
         a.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         a.name
       );
@@ -234,7 +234,7 @@ const App: React.FC = () => {
 
       const allowedTerrain = safeParseAllowedValues(
         c.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         c.name
       );
@@ -383,7 +383,7 @@ const App: React.FC = () => {
       type: partial.type,
       name: partial.name,
       description: partial.description || '',
-      allowedTerrain: partial.allowedTerrain || ['easy'],
+      allowedTerrain: partial.allowedTerrain || ['flat'],
       allowedVegetation: partial.allowedVegetation || ['grassland'],
       active: true,
       costPerHour: partial.costPerHour,

@@ -6,7 +6,7 @@ import { TerrainLevel, VegetationType } from '../types/common';
 
 // Type validation helpers
 function isValidTerrainLevel(value: string): value is TerrainLevel {
-  return ['easy', 'moderate', 'difficult', 'extreme'].includes(value);
+  return ['flat', 'medium', 'steep', 'very_steep'].includes(value);
 }
 
 function isValidVegetationType(value: string): value is VegetationType {

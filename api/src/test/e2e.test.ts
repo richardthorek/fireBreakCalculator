@@ -16,7 +16,7 @@ async function run(){
     id: 'test-dozer',
     name: 'Test Dozer',
     description: 'E2E test dozer',
-    allowedTerrain: ['easy','moderate'],
+    allowedTerrain: ['flat','medium'],
     allowedVegetation: ['grassland'],
     clearingRate: 1000,
     costPerHour: 100
@@ -25,7 +25,7 @@ async function run(){
     id: 'test-helo',
     name: 'Test Helicopter',
     description: 'E2E test aircraft',
-    allowedTerrain: ['easy'],
+    allowedTerrain: ['flat'],
     allowedVegetation: ['grassland'],
     dropLength: 100,
     costPerHour: 2000
@@ -34,7 +34,7 @@ async function run(){
     id: 'test-crew',
     name: 'Test Crew',
     description: 'E2E test hand crew',
-    allowedTerrain: ['easy','moderate'],
+    allowedTerrain: ['flat','medium'],
     allowedVegetation: ['grassland'],
     crewSize: 4,
     clearingRatePerPerson: 60,

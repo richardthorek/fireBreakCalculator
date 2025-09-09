@@ -182,7 +182,7 @@
       "Helitack: Aircraft must have positive turnaround time"
     ],
     "analysisParameters": {
-      "effectiveTerrain": "moderate",
+      "effectiveTerrain": "medium",
       "effectiveVegetation": "grassland",
       "terrainFactor": 1.3,
       "vegetationFactor": 1
