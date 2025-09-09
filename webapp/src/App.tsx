@@ -95,10 +95,25 @@ const App: React.FC = () => {
 
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
+    console.log('🔧 Processing machinery from equipment data:', {
+      totalEquipment: equipment.length,
+      machineryItems: equipment.filter((e): e is MachineryApi => e.type === 'Machinery').length
+    });
+
     const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
-    if (!items.length) return defaultConfig.machinery;
+    if (!items.length) {
+      console.log('⚠️ No machinery items found, using default config');
+      return defaultConfig.machinery;
+    }
     
     return items.map(m => {
+      console.log(`🚜 Processing machinery: ${m.name}`, {
+        id: m.id,
+        rawAllowedTerrain: m.allowedTerrain,
+        rawAllowedVegetation: m.allowedVegetation,
+        clearingRate: m.clearingRate
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         m.allowedTerrain, 
         ['easy', 'moderate', 'difficult', 'extreme'],
@@ -113,25 +128,57 @@ const App: React.FC = () => {
         m.name
       );
       
-      return {
+      // If the equipment record doesn't include a numeric maxSlope, derive one
+      // from the allowedTerrain tags so analysis keeps working without CSV.
+      const deriveMaxSlopeFromTerrain = (terrain: string[] | undefined): number | undefined => {
+        if (!terrain || !terrain.length) return undefined;
+        // Map terrain levels to representative max slope values
+        // easy -> 9, moderate -> 19, difficult -> 29, extreme -> 45
+        if (terrain.includes('extreme')) return 45;
+        if (terrain.includes('difficult')) return 29;
+        if (terrain.includes('moderate')) return 19;
+        if (terrain.includes('easy')) return 9;
+        return undefined;
+      };
+
+      const processed = {
         id: m.id,
         name: m.name,
-        type: 'other',
+        type: 'other' as const,
         clearingRate: m.clearingRate || 0,
         costPerHour: m.costPerHour || 0,
         description: m.description || '',
         allowedTerrain,
         allowedVegetation,
-        maxSlope: m.maxSlope
+        maxSlope: m.maxSlope ?? deriveMaxSlopeFromTerrain(allowedTerrain)
       };
+
+      console.log(`   ✅ Processed machinery result:`, processed);
+      return processed;
     });
   }, [equipment]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
+    console.log('✈️ Processing aircraft from equipment data:', {
+      totalEquipment: equipment.length,
+      aircraftItems: equipment.filter((e): e is AircraftApi => e.type === 'Aircraft').length
+    });
+
     const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
-    if (!items.length) return defaultConfig.aircraft;
+    if (!items.length) {
+      console.log('⚠️ No aircraft items found, using default config');
+      return defaultConfig.aircraft;
+    }
     
     return items.map(a => {
+      console.log(`✈️ Processing aircraft: ${a.name}`, {
+        id: a.id,
+        rawAllowedTerrain: a.allowedTerrain,
+        rawAllowedVegetation: a.allowedVegetation,
+        dropLength: a.dropLength,
+        turnaroundMinutes: a.turnaroundMinutes
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         a.allowedTerrain, 
         ['easy', 'moderate', 'difficult', 'extreme'],
@@ -146,10 +193,10 @@ const App: React.FC = () => {
         a.name
       );
       
-      return {
+      const processed = {
         id: a.id,
         name: a.name,
-        type: 'other',
+        type: 'other' as const,
         dropLength: a.dropLength || 0,
         speed: a.speed || 0,
         turnaroundMinutes: a.turnaroundMinutes || 0,
@@ -158,14 +205,33 @@ const App: React.FC = () => {
         allowedTerrain,
         allowedVegetation
       };
+
+      console.log(`   ✅ Processed aircraft result:`, processed);
+      return processed;
     });
   }, [equipment]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
+    console.log('👨‍🚒 Processing hand crews from equipment data:', {
+      totalEquipment: equipment.length,
+      handCrewItems: equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew').length
+    });
+
     const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
-    if (!items.length) return defaultConfig.handCrews;
+    if (!items.length) {
+      console.log('⚠️ No hand crew items found, using default config');
+      return defaultConfig.handCrews;
+    }
     
     return items.map(c => {
+      console.log(`👨‍🚒 Processing hand crew: ${c.name}`, {
+        id: c.id,
+        rawAllowedTerrain: c.allowedTerrain,
+        rawAllowedVegetation: c.allowedVegetation,
+        crewSize: c.crewSize,
+        clearingRatePerPerson: c.clearingRatePerPerson
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         c.allowedTerrain, 
         ['easy', 'moderate', 'difficult', 'extreme'],
@@ -180,7 +246,7 @@ const App: React.FC = () => {
         c.name
       );
       
-      return {
+      const processed = {
         id: c.id,
         name: c.name,
         crewSize: c.crewSize || 0,
@@ -191,6 +257,9 @@ const App: React.FC = () => {
         allowedTerrain,
         allowedVegetation
       };
+
+      console.log(`   ✅ Processed hand crew result:`, processed);
+      return processed;
     });
   }, [equipment]);
 

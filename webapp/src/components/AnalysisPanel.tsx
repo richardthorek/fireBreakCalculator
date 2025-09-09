@@ -12,6 +12,7 @@ import { OverlapMatrix } from './OverlapMatrix';
 import { HelpContent } from './HelpContent';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
+import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -138,15 +139,39 @@ const baseEnvironmentCompatible = (
   requiredTerrain: TerrainLevel,
   vegetation: VegetationType
 ): boolean => {
+  console.log(`      🔍 Checking base environment compatibility for ${equipment.name}:`, {
+    equipmentId: equipment.id,
+    equipmentAllowedTerrain: equipment.allowedTerrain,
+    equipmentAllowedVegetation: equipment.allowedVegetation,
+    requiredTerrain,
+    vegetation
+  });
+
   // For terrain compatibility, equipment can handle anything up to its maximum allowed difficulty
   const highestAllowedRank = Math.max(...equipment.allowedTerrain.map(t => terrainRank[t]));
   const requiredRank = terrainRank[requiredTerrain];
   const terrainCompatible = requiredRank <= highestAllowedRank;
   
+  console.log(`      🏔️ Terrain compatibility check:`, {
+    highestAllowedRank,
+    requiredRank,
+    terrainCompatible,
+    terrainRankings: equipment.allowedTerrain.map(t => ({ terrain: t, rank: terrainRank[t] }))
+  });
+  
   // For vegetation, we need an exact match
   const vegetationCompatible = equipment.allowedVegetation.includes(vegetation);
   
-  return terrainCompatible && vegetationCompatible;
+  console.log(`      🌿 Vegetation compatibility check:`, {
+    allowedVegetation: equipment.allowedVegetation,
+    requiredVegetation: vegetation,
+    vegetationCompatible
+  });
+  
+  const overall = terrainCompatible && vegetationCompatible;
+  console.log(`      ✅ Overall base compatibility:`, overall);
+  
+  return overall;
 };
 
 /** Ordinal ordering helper for terrain difficulty */
@@ -238,15 +263,69 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [useAutoDetected, setUseAutoDetected] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
+  
+  // Backend analysis state
+  const [useBackendAnalysis, setUseBackendAnalysis] = useState(false);
+  const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
+  const [backendResults, setBackendResults] = useState<BackendCalculationResult[] | null>(null);
+  const [backendLoading, setBackendLoading] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  
   // Quick option selections
   const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
   const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
+
+  // Test backend availability on mount
+  useEffect(() => {
+    const checkBackend = async () => {
+      const available = await testBackendAnalysis();
+      setBackendAvailable(available);
+    };
+    checkBackend();
+  }, []);
+  
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
     if (useAutoDetected && vegetationAnalysis) return vegetationAnalysis.predominantVegetation;
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
+
+  // Backend analysis effect
+  useEffect(() => {
+    if (!useBackendAnalysis || !distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable) {
+      setBackendResults(null);
+      return;
+    }
+
+    const runBackendAnalysis = async () => {
+      setBackendLoading(true);
+      setBackendError(null);
+      console.log('🔄 Running backend analysis...');
+      
+      try {
+        const response = await calculateEquipmentAnalysis({
+          distance,
+          trackAnalysis,
+          vegetationAnalysis: {
+            ...vegetationAnalysis,
+            predominantVegetation: effectiveVegetation
+          }
+        });
+        
+        setBackendResults(response.calculations);
+        console.log('✅ Backend analysis completed', response);
+      } catch (error) {
+        console.error('❌ Backend analysis failed', error);
+        setBackendError(error instanceof Error ? error.message : 'Backend analysis failed');
+        setBackendResults(null);
+      } finally {
+        setBackendLoading(false);
+      }
+    };
+
+    runBackendAnalysis();
+  }, [useBackendAnalysis, distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -279,7 +358,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   }, [trackAnalysis]);
 
   const calculations = useMemo<CalculationResult[]>(() => {
-    if (!distance) return [] as CalculationResult[];
+    console.log('🔧 Starting equipment calculations', {
+      distance,
+      derivedTerrainRequirement,
+      effectiveVegetation,
+      trackAnalysis: trackAnalysis ? { maxSlope: trackAnalysis.maxSlope, slopeDistribution: trackAnalysis.slopeDistribution } : null,
+      machineryCount: machinery.length,
+      aircraftCount: aircraft.length,
+      handCrewsCount: handCrews.length
+    });
+
+    if (!distance) {
+      console.log('❌ No distance provided, returning empty calculations');
+      return [] as CalculationResult[];
+    }
 
     const results: CalculationResult[] = [];
     const effectiveTerrain = derivedTerrainRequirement || 'easy';
@@ -287,33 +379,65 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const vegetationFactor = vegetationFactors[effectiveVegetation];
     const requiredTerrain = effectiveTerrain;
 
+    console.log('📊 Analysis parameters:', {
+      effectiveTerrain,
+      terrainFactor,
+      vegetationFactor,
+      requiredTerrain
+    });
+
     // Machinery with partial compatibility support
-    machinery.forEach((machine: MachinerySpec) => {
+    console.log('🚜 Evaluating machinery equipment:');
+    machinery.forEach((machine: MachinerySpec, index: number) => {
+      console.log(`🚜 [${index + 1}/${machinery.length}] Evaluating machinery: ${machine.name}`, {
+        id: machine.id,
+        allowedTerrain: machine.allowedTerrain,
+        allowedVegetation: machine.allowedVegetation,
+        clearingRate: machine.clearingRate,
+        maxSlope: machine.maxSlope
+      });
+
       const terrainEval = evaluateMachineryTerrainCompatibility(machine, trackAnalysis, effectiveVegetation, requiredTerrain);
+      console.log(`   ⚙️ Terrain evaluation result:`, terrainEval);
+
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
+      console.log(`   📐 Slope compatibility:`, slopeCheck, trackAnalysis ? `(max slope: ${trackAnalysis.maxSlope}°)` : '(no track analysis)');
+
       const fullyEnvOk = terrainEval.level === 'full' && slopeCheck.compatible;
       const partiallyOk = terrainEval.level === 'partial' && slopeCheck.compatible;
       const compatible = fullyEnvOk || partiallyOk; // treat partial as compatible for selection purposes
 
+      console.log(`   ✅ Final compatibility:`, {
+        fullyEnvOk,
+        partiallyOk,
+        compatible,
+        compatibilityLevel: terrainEval.level === 'incompatible' || !slopeCheck.compatible ? 'incompatible' : terrainEval.level
+      });
+
       let time = 0;
       if (compatible) {
         time = calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor);
+        console.log(`   ⏱️ Initial time calculation: ${time} hours`);
+        
         // Apply time penalty for partial compatibility proportional to over-limit percent (scaled *2)
         if (terrainEval.level === 'partial' && terrainEval.overLimitPercent) {
           const penaltyMultiplier = 1 + terrainEval.overLimitPercent * 2; // e.g. 10% over → +20% time
           time *= penaltyMultiplier;
+          console.log(`   ⏱️ Applied partial compatibility penalty: ${penaltyMultiplier}x → ${time} hours`);
         }
+      } else {
+        console.log(`   ❌ Machine incompatible, skipping time calculation`);
       }
       const costVal = compatible && (machine as any).costPerHour ? time * (machine as any).costPerHour : 0;
 
-      results.push({
+      const result = {
         id: machine.id,
         name: machine.name,
-        type: 'machinery',
+        type: 'machinery' as const,
         time,
         cost: costVal,
         compatible,
-        compatibilityLevel: terrainEval.level === 'incompatible' || !slopeCheck.compatible ? 'incompatible' : terrainEval.level,
+        compatibilityLevel: terrainEval.level === 'incompatible' || !slopeCheck.compatible ? 'incompatible' as const : terrainEval.level,
         slopeCompatible: slopeCheck.compatible,
         maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
         unit: 'hours',
@@ -322,52 +446,94 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         note: !slopeCheck.compatible
           ? 'Slope exceeds capability'
           : terrainEval.note
-      });
+      };
+
+      console.log(`   📋 Final result:`, result);
+      results.push(result);
     });
 
     // Aircraft (strict membership – no partial logic currently required)
-    aircraft.forEach((plane: AircraftSpec) => {
+    console.log('✈️ Evaluating aircraft equipment:');
+    aircraft.forEach((plane: AircraftSpec, index: number) => {
+      console.log(`✈️ [${index + 1}/${aircraft.length}] Evaluating aircraft: ${plane.name}`, {
+        id: plane.id,
+        allowedTerrain: plane.allowedTerrain,
+        allowedVegetation: plane.allowedVegetation,
+        dropLength: plane.dropLength,
+        turnaroundMinutes: plane.turnaroundMinutes
+      });
+
       // Fix compatibility check for aircraft turnaround minutes property
       const compatible = baseEnvironmentCompatible(plane, requiredTerrain, effectiveVegetation);
+      console.log(`   ✅ Base environment compatibility:`, compatible);
+
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * ((plane.turnaroundMinutes || 0) / 60) : 0; // convert minutes to hours
       const costVal = compatible && (plane as any).costPerHour ? totalTime * (plane as any).costPerHour : 0;
 
-      results.push({
+      console.log(`   📊 Aircraft calculations:`, {
+        drops,
+        totalTime,
+        costVal
+      });
+
+      const result = {
         id: plane.id,
         name: plane.name,
-        type: 'aircraft',
+        type: 'aircraft' as const,
         time: totalTime,
         cost: costVal,
         compatible,
-        compatibilityLevel: compatible ? 'full' : 'incompatible',
+        compatibilityLevel: compatible ? 'full' as const : 'incompatible' as const,
         unit: 'hours',
         description: plane.description,
         drops
-      });
+      };
+
+      console.log(`   📋 Final result:`, result);
+      results.push(result);
     });
 
     // Hand Crews (strict membership – no partial logic currently required)
-    handCrews.forEach((crew: HandCrewSpec) => {
+    console.log('👨‍🚒 Evaluating hand crew equipment:');
+    handCrews.forEach((crew: HandCrewSpec, index: number) => {
+      console.log(`👨‍🚒 [${index + 1}/${handCrews.length}] Evaluating hand crew: ${crew.name}`, {
+        id: crew.id,
+        allowedTerrain: crew.allowedTerrain,
+        allowedVegetation: crew.allowedVegetation,
+        crewSize: crew.crewSize,
+        clearingRatePerPerson: crew.clearingRatePerPerson
+      });
+
       const compatible = baseEnvironmentCompatible(crew, requiredTerrain, effectiveVegetation);
+      console.log(`   ✅ Base environment compatibility:`, compatible);
+
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const costVal = compatible && (crew as any).costPerHour ? time * (crew as any).costPerHour : 0;
 
-      results.push({
+      console.log(`   📊 Hand crew calculations:`, {
+        time,
+        costVal
+      });
+
+      const result = {
         id: crew.id,
         name: crew.name,
-        type: 'handCrew',
+        type: 'handCrew' as const,
         time,
         cost: costVal,
         compatible,
-        compatibilityLevel: compatible ? 'full' : 'incompatible',
+        compatibilityLevel: compatible ? 'full' as const : 'incompatible' as const,
         unit: 'hours',
         description: crew.description
-      });
+      };
+
+      console.log(`   📋 Final result:`, result);
+      results.push(result);
     });
 
     // Sort: full compatible first, then partial, then incompatible; within each by time then cost
-    return results.sort((a, b) => {
+    const sortedResults = results.sort((a, b) => {
       const rank = (r?: CalculationResult) => {
         if (!r || !r.compatibilityLevel) return 3;
         if (r.compatibilityLevel === 'full') return 0;
@@ -381,25 +547,50 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       if (Math.abs(a.time - b.time) < 0.1) return a.cost - b.cost;
       return a.time - b.time;
     });
+
+    console.log('📈 Final sorted results:', {
+      totalResults: sortedResults.length,
+      compatibleResults: sortedResults.filter(r => r.compatible).length,
+      resultsByType: {
+        machinery: sortedResults.filter(r => r.type === 'machinery').length,
+        aircraft: sortedResults.filter(r => r.type === 'aircraft').length,
+        handCrew: sortedResults.filter(r => r.type === 'handCrew').length
+      },
+      topCompatibleResults: sortedResults.filter(r => r.compatible).slice(0, 3).map(r => ({
+        name: r.name,
+        type: r.type,
+        compatible: r.compatible,
+        time: r.time,
+        compatibilityLevel: r.compatibilityLevel
+      }))
+    });
+
+    return sortedResults;
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
+
+  // Use backend results if available and enabled, otherwise use frontend calculations
+  const finalCalculations = useBackendAnalysis && backendResults ? backendResults.map(r => ({
+    ...r,
+    compatibilityLevel: r.compatibilityLevel as 'full' | 'partial' | 'incompatible'
+  })) : calculations;
 
   // Get best option for each category
   const bestOptions = useMemo(() => {
-    const compatibleResults = calculations.filter((result: CalculationResult) => result.compatible);
+    const compatibleResults = finalCalculations.filter((result: any) => result.compatible);
     
     return {
-      machinery: compatibleResults.find(result => result.type === 'machinery'),
-      aircraft: compatibleResults.find(result => result.type === 'aircraft'),
-      handCrew: compatibleResults.find(result => result.type === 'handCrew')
+      machinery: compatibleResults.find(result => result.type === 'machinery' || result.type === 'Machinery'),
+      aircraft: compatibleResults.find(result => result.type === 'aircraft' || result.type === 'Aircraft'),
+      handCrew: compatibleResults.find(result => result.type === 'handCrew' || result.type === 'HandCrew')
     };
-  }, [calculations]);
+  }, [finalCalculations]);
 
   // Initialize / reconcile selected quick options when calculations change
   useMemo(() => {
-    if (calculations.length === 0) return null;
-  const machList = calculations.filter((c: CalculationResult) => c.type === 'machinery' && c.compatible);
-  const airList = calculations.filter((c: CalculationResult) => c.type === 'aircraft' && c.compatible);
-  const handList = calculations.filter((c: CalculationResult) => c.type === 'handCrew' && c.compatible);
+    if (finalCalculations.length === 0) return null;
+  const machList = finalCalculations.filter((c: any) => (c.type === 'machinery' || c.type === 'Machinery') && c.compatible);
+  const airList = finalCalculations.filter((c: any) => (c.type === 'aircraft' || c.type === 'Aircraft') && c.compatible);
+  const handList = finalCalculations.filter((c: any) => (c.type === 'handCrew' || c.type === 'HandCrew') && c.compatible);
     if ((!selectedQuickMachinery || !machList.some(m => m.id === selectedQuickMachinery)) && machList.length) {
       setSelectedQuickMachinery(machList[0].id);
     }
@@ -410,11 +601,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       setSelectedQuickHandCrew(handList[0].id);
     }
     return null;
-  }, [calculations, selectedQuickMachinery, selectedQuickAircraft, selectedQuickHandCrew]);
+  }, [finalCalculations, selectedQuickMachinery, selectedQuickAircraft, selectedQuickHandCrew]);
 
-  const quickMachinery = selectedQuickMachinery ? calculations.find(c => c.id === selectedQuickMachinery) : undefined;
-  const quickAircraft = selectedQuickAircraft ? calculations.find(c => c.id === selectedQuickAircraft) : undefined;
-  const quickHandCrew = selectedQuickHandCrew ? calculations.find(c => c.id === selectedQuickHandCrew) : undefined;
+  const quickMachinery = selectedQuickMachinery ? finalCalculations.find(c => c.id === selectedQuickMachinery) : undefined;
+  const quickAircraft = selectedQuickAircraft ? finalCalculations.find(c => c.id === selectedQuickAircraft) : undefined;
+  const quickHandCrew = selectedQuickHandCrew ? finalCalculations.find(c => c.id === selectedQuickHandCrew) : undefined;
 
   return (
     <div className="analysis-panel-permanent">
@@ -429,6 +620,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           )}
           {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
           {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
+          
+          {/* Backend Analysis Toggle */}
+          {backendAvailable !== null && (
+            <div className="backend-toggle">
+              <label htmlFor="backend-analysis-toggle">
+                <input
+                  id="backend-analysis-toggle"
+                  type="checkbox"
+                  checked={useBackendAnalysis}
+                  onChange={(e) => setUseBackendAnalysis(e.target.checked)}
+                  disabled={!backendAvailable}
+                />
+                Backend Analysis
+                {backendLoading && <span className="loading-indicator">⏳</span>}
+                {backendError && <span className="error-indicator" title={backendError}>❌</span>}
+                {!backendAvailable && <span className="disabled-indicator" title="Backend service unavailable">⚠️</span>}
+              </label>
+            </div>
+          )}
         </div>
         <button
           className="expand-button"
@@ -539,7 +749,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <div className="best-options-grid">
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">🛠️</span><span className="category-label">Machinery</span></div>
-                  {calculations.filter(c => c.type === 'machinery' && c.compatible).length > 0 ? (
+                  {finalCalculations.filter(c => (c.type === 'machinery' || c.type === 'Machinery') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <select
                         className="quick-select"
@@ -547,7 +757,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                         onChange={(e) => setSelectedQuickMachinery(e.target.value)}
                         aria-label="Select machinery option"
                       >
-                        {calculations.filter(c => c.type === 'machinery' && c.compatible).map(result => (
+                        {finalCalculations.filter(c => (c.type === 'machinery' || c.type === 'Machinery') && c.compatible).map((result: any) => (
                           <option key={result.id} value={result.id}>{result.name}</option>
                         ))}
                       </select>
@@ -557,7 +767,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">✈️</span><span className="category-label">Aircraft</span></div>
-                  {calculations.filter(c => c.type === 'aircraft' && c.compatible).length > 0 ? (
+                  {finalCalculations.filter(c => (c.type === 'aircraft' || c.type === 'Aircraft') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <div className="aircraft-selection-row">
                         <select
@@ -566,7 +776,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                           onChange={(e) => setSelectedQuickAircraft(e.target.value)}
                           aria-label="Select aircraft option"
                         >
-                          {calculations.filter(c => c.type === 'aircraft' && c.compatible).map(result => (
+                          {finalCalculations.filter(c => (c.type === 'aircraft' || c.type === 'Aircraft') && c.compatible).map((result: any) => (
                             <option key={result.id} value={result.id}>{result.name}</option>
                           ))}
                         </select>
@@ -588,7 +798,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
                 <div className="option-category">
                   <div className="category-header"><span className="category-icon">👨‍🚒</span><span className="category-label">Hand Crew</span></div>
-                  {calculations.filter(c => c.type === 'handCrew' && c.compatible).length > 0 ? (
+                  {finalCalculations.filter(c => (c.type === 'handCrew' || c.type === 'HandCrew') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <select
                         className="quick-select"
@@ -596,7 +806,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                         onChange={(e) => setSelectedQuickHandCrew(e.target.value)}
                         aria-label="Select hand crew option"
                       >
-                        {calculations.filter(c => c.type === 'handCrew' && c.compatible).map(result => (
+                        {finalCalculations.filter(c => (c.type === 'handCrew' || c.type === 'HandCrew') && c.compatible).map((result: any) => (
                           <option key={result.id} value={result.id}>{result.name}</option>
                         ))}
                       </select>
@@ -614,7 +824,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     <h5 className="category-section-header"><span className="category-section-icon">🛠️</span>Machinery</h5>
                     <div className="equipment-table">
                       <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
-                      {calculations.filter(r => r.type === 'machinery').map(result => (
+                      {finalCalculations.filter(r => (r.type === 'machinery' || r.type === 'Machinery')).map((result: any) => (
                         <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''} ${result.compatibilityLevel === 'partial' ? 'partial' : ''}`} title={result.note || ''}>
                           <div className="equipment-info">
                             <span className="equipment-icon">{getEquipmentIcon(result)}</span>

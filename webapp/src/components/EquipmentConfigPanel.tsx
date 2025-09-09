@@ -71,7 +71,10 @@ const InlineEditComponent: React.FC<{
       <input id={`name-${item.id}`} aria-label="Name" className="eq-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
 
       {form.type === 'Machinery' && (
-        <input aria-label="Clearing rate" className="eq-small" type="number" placeholder="Rate" value={(form as MachineryApi).clearingRate ?? ''} onChange={e => updateMachinery({ clearingRate: Number(e.target.value) })} />
+        <>
+          <input aria-label="Clearing rate" className="eq-small" type="number" placeholder="Rate" value={(form as MachineryApi).clearingRate ?? ''} onChange={e => updateMachinery({ clearingRate: Number(e.target.value) })} />
+          <input aria-label="Max slope" className="eq-small" type="number" placeholder="Max °" value={(form as MachineryApi).maxSlope ?? ''} onChange={e => updateMachinery({ maxSlope: Number(e.target.value) })} />
+        </>
       )}
 
       {form.type === 'Aircraft' && (
@@ -146,7 +149,10 @@ const EquipmentListComponent: React.FC<{
           <input id="draft-name" className="eq-name" placeholder={`${activeTab} name`} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
 
           {activeTab === 'Machinery' && (
-            <input id="draft-rate" type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
+            <>
+              <input id="draft-rate" type="number" className="eq-small" placeholder="Rate" value={draft.clearingRate ?? ''} onChange={e => setDraft({ ...draft, clearingRate: Number(e.target.value) })} />
+              <input id="draft-maxslope" type="number" className="eq-small" placeholder="Max °" value={draft.maxSlope ?? ''} onChange={e => setDraft({ ...draft, maxSlope: Number(e.target.value) })} />
+            </>
           )}
 
           {activeTab === 'Aircraft' && (
@@ -199,6 +205,7 @@ const EquipmentListComponent: React.FC<{
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
             <div className="eq-name text" title={item.name}>{item.name}</div>
             {item.type === 'Machinery' && <div className="eq-small text">{(item as MachineryApi).clearingRate || '-'} m/h</div>}
+            {item.type === 'Machinery' && <div className="eq-small text" title={`Max slope ${(item as MachineryApi).maxSlope ?? '-' }°`}>{(item as MachineryApi).maxSlope != null ? `${(item as MachineryApi).maxSlope}°` : '-'}</div>}
             {item.type === 'Aircraft' && (
               <div className="eq-small text" title={`Turnaround ${(item as AircraftApi).turnaroundMinutes ?? '-'} min`}>
                 {(item as AircraftApi).dropLength || '-'} m
