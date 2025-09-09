@@ -303,6 +303,72 @@ export class EquipmentAnalysisService {
   }
   
   /**
+   * Optimize machinery selection for cost efficiency while maintaining reasonable time
+   * Strategy: Use smallest/cheapest machine unless time becomes more than 2x the fastest option
+   */
+  private optimizeMachinerySelection(results: CalculationResult[]): CalculationResult[] {
+    // Group machinery by compatibility and find the best recommendations
+    const machineryResults = results.filter(r => r.type === 'Machinery' && r.compatible);
+    
+    if (machineryResults.length <= 1) {
+      return results; // No optimization needed
+    }
+    
+    // Find the fastest compatible machinery (baseline for time comparison)
+    const fastestMachinery = machineryResults.reduce((fastest, current) => 
+      current.time < fastest.time ? current : fastest
+    );
+    
+    const maxAcceptableTime = fastestMachinery.time * 2; // 2x time threshold
+    
+    // Find the cheapest machinery that doesn't exceed the time threshold
+    const acceptableMachinery = machineryResults.filter(m => m.time <= maxAcceptableTime);
+    
+    if (acceptableMachinery.length === 0) {
+      return results; // Fallback to original results if no machinery meets criteria
+    }
+    
+    // Sort acceptable machinery by cost (ascending) to find the cheapest
+    acceptableMachinery.sort((a, b) => a.cost - b.cost);
+    const recommendedMachinery = acceptableMachinery[0];
+    
+    // Mark the recommended machinery and add optimization notes
+    const optimizedResults = results.map(result => {
+      if (result.type === 'Machinery' && result.compatible) {
+        if (result.id === recommendedMachinery.id) {
+          return {
+            ...result,
+            note: result.note ? 
+              `${result.note} • Cost-optimized selection` : 
+              'Cost-optimized selection'
+          };
+        } else {
+          // Add note explaining why other machinery wasn't selected
+          const timeRatio = result.time / fastestMachinery.time;
+          const costSavings = result.cost - recommendedMachinery.cost;
+          
+          let reason = '';
+          if (result.time > maxAcceptableTime) {
+            reason = `Takes ${timeRatio.toFixed(1)}x longer than fastest option`;
+          } else if (result.cost > recommendedMachinery.cost) {
+            reason = `$${Math.round(costSavings)} more expensive than cost-optimized choice`;
+          }
+          
+          return {
+            ...result,
+            note: result.note ? 
+              `${result.note} • ${reason}` : 
+              reason
+          };
+        }
+      }
+      return result;
+    });
+    
+    return optimizedResults;
+  }
+
+  /**
    * Main analysis method
    */
   public async analyzeEquipment(
@@ -434,8 +500,11 @@ export class EquipmentAnalysisService {
       }
     }
     
+    // Apply smart machinery selection: optimize for cost unless time penalty is too high
+    const optimizedResults = this.optimizeMachinerySelection(results);
+    
     // Sort results: compatible first (by time, then cost), then incompatible
-    results.sort((a, b) => {
+    optimizedResults.sort((a, b) => {
       if (a.compatible !== b.compatible) {
         return a.compatible ? -1 : 1;
       }
@@ -453,7 +522,7 @@ export class EquipmentAnalysisService {
     });
     
     return {
-      calculations: results,
+      calculations: optimizedResults,
       metadata: {
         timestamp: new Date().toISOString(),
         equipmentCount: equipmentList.length,

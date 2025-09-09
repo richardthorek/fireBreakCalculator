@@ -1,12 +1,12 @@
 {
-  "distance": 1000,
+  "distance": 5000,
   "trackAnalysis": {
-    "maxSlope": 35,
-    "totalDistance": 1000,
+    "maxSlope": 12,
+    "totalDistance": 5000,
     "slopeDistribution": {
-      "flat": 200,
-      "medium": 300,
-      "steep": 500,
+      "flat": 3000,
+      "medium": 2000,
+      "steep": 0,
       "very_steep": 0
     }
   },
