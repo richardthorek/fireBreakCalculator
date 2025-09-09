@@ -617,7 +617,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <span>Analyzing terrain...</span>
             </div>
           )}
-          {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString()}m</span>}
+          {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString(undefined, { maximumFractionDigits: 0 })}m</span>}
           {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
           
           {/* Backend Analysis Status */}
@@ -751,7 +751,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                           <option key={result.id} value={result.id}>{result.name}</option>
                         ))}
                       </select>
-                      {quickMachinery && <span className="option-time">{quickMachinery.time.toFixed(1)} {quickMachinery.unit}</span>}
+                      {quickMachinery && <span className="option-time">{quickMachinery.time.toFixed(0)} {quickMachinery.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
@@ -782,7 +782,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                           </button>
                         )}
                       </div>
-                      {quickAircraft && <span className="option-time">{quickAircraft.time.toFixed(1)} {quickAircraft.unit}{quickAircraft.drops && <span className="drops-info"> ({quickAircraft.drops} drops)</span>}</span>}
+                      {quickAircraft && <span className="option-time">{quickAircraft.time.toFixed(0)} {quickAircraft.unit}{quickAircraft.drops && <span className="drops-info"> ({quickAircraft.drops} drops)</span>}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
@@ -800,7 +800,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                           <option key={result.id} value={result.id}>{result.name}</option>
                         ))}
                       </select>
-                      {quickHandCrew && <span className="option-time">{quickHandCrew.time.toFixed(1)} {quickHandCrew.unit}</span>}
+                      {quickHandCrew && <span className="option-time">{quickHandCrew.time.toFixed(0)} {quickHandCrew.unit}</span>}
                     </div>
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
@@ -823,7 +823,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                               <span className="equipment-type">{result.compatibilityLevel === 'partial' ? 'Partial' : result.type}</span>
                             </div>
                           </div>
-                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(1)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
                           <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
                           <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'partial' && <span className="partial-status">△ Partial</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
                         </div>

@@ -1,8 +1,14 @@
 // Clean up script to remove old equipment entries with outdated terrain terminology
 const { TableClient } = require('@azure/data-tables');
 
-// Use the same connection string as the backend
-const connectionString = 'DefaultEndpointsProtocol=https;AccountName=rfsdemostorage;AccountKey=hqvRbDPbIIX/Zl5n9r1fDSab92IdLPsHqH59IBn7msPcKa4s+2FVi2iUGfvp+7DBXKA0/prbR27m+AStlmBQ2g==;EndpointSuffix=core.windows.net';
+// Load connection string from environment variable to avoid committing secrets.
+// Set TABLES_CONNECTION_STRING in your environment or use a local .env (not committed).
+const connectionString = process.env.TABLES_CONNECTION_STRING;
+if (!connectionString) {
+  console.error('ERROR: TABLES_CONNECTION_STRING environment variable is not set.\n\nSet it to your Azure Tables connection string before running this script.\nExample (PowerShell): $env:TABLES_CONNECTION_STRING="DefaultEndpointsProtocol=..."');
+  process.exit(1);
+}
+
 const equipmentTableClient = TableClient.fromConnectionString(connectionString, 'equipment');
 
 async function cleanOldEquipment() {
