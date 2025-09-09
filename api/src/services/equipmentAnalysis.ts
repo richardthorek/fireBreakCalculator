@@ -27,8 +27,6 @@ export interface EquipmentSpec {
   clearingRate?: number;
   costPerHour?: number;
   description?: string;
-  // Machinery specific
-  maxSlope?: number;
   // Aircraft specific
   dropLength?: number;
   turnaroundMinutes?: number;
@@ -189,15 +187,15 @@ export class EquipmentAnalysisService {
   }
   
   /**
-   * Check slope compatibility for machinery
+   * Check slope compatibility for machinery - REMOVED
+   * Now we only use terrain hierarchy (flat, medium, steep, very_steep)
    */
   private isSlopeCompatible(
     equipment: EquipmentSpec,
     maxSlope: number
   ): { compatible: boolean; maxSlopeExceeded?: number } {
-    if (equipment.maxSlope == null) return { compatible: true };
-    const compatible = maxSlope <= equipment.maxSlope;
-    return { compatible, maxSlopeExceeded: compatible ? undefined : maxSlope };
+    // Always compatible - terrain hierarchy handles this now
+    return { compatible: true };
   }
   
   /**

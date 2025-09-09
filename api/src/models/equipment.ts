@@ -19,7 +19,6 @@ export interface EquipmentBase {
 
 export interface Machinery extends EquipmentBase {
   type: 'Machinery';
-  maxSlope?: number;
   cutWidthMeters?: number;
 }
 
@@ -55,7 +54,6 @@ export interface EquipmentTableEntity {
   createdAt: string;
   updatedAt: string;
   // Type specific optional fields
-  maxSlope?: number;
   cutWidthMeters?: number;
   dropLength?: number;
   turnaroundMinutes?: number;
@@ -83,7 +81,7 @@ export function toTableEntity(e: Equipment): EquipmentTableEntity {
   };
   switch (e.type) {
     case 'Machinery':
-      return { ...base, maxSlope: e.maxSlope, cutWidthMeters: e.cutWidthMeters };
+      return { ...base, cutWidthMeters: e.cutWidthMeters };
     case 'Aircraft':
       return { ...base, dropLength: e.dropLength, turnaroundMinutes: e.turnaroundMinutes, capacityLitres: e.capacityLitres, costPerDrop: e.costPerDrop };
     case 'HandCrew':
@@ -107,7 +105,7 @@ export function fromTableEntity(entity: EquipmentTableEntity): Equipment {
     updatedAt: entity.updatedAt,
   } as EquipmentBase;
   if (entity.partitionKey === 'Machinery') {
-    return { ...common, type: 'Machinery', maxSlope: entity.maxSlope, cutWidthMeters: entity.cutWidthMeters };
+    return { ...common, type: 'Machinery', cutWidthMeters: entity.cutWidthMeters };
   }
   if (entity.partitionKey === 'Aircraft') {
     return { ...common, type: 'Aircraft', dropLength: entity.dropLength || 0, turnaroundMinutes: entity.turnaroundMinutes, capacityLitres: entity.capacityLitres, costPerDrop: entity.costPerDrop };

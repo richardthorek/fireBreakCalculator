@@ -1,0 +1,19 @@
+{
+  "distance": 1000,
+  "trackAnalysis": {
+    "maxSlope": 15,
+    "totalDistance": 1000,
+    "slopeDistribution": {
+      "flat": 200,
+      "medium": 800,
+      "steep": 0,
+      "very_steep": 0
+    }
+  },
+  "vegetationAnalysis": {
+    "predominantVegetation": "grassland",
+    "coverage": {
+      "grassland": 1.0
+    }
+  }
+}

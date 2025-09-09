@@ -78,8 +78,9 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
         });
 
         // Convert to analysis format with proper type safety
-        const allowedTerrain = safeParseTerrainArray(equipment.allowedTerrain);
-        const allowedVegetation = safeParseVegetationArray(equipment.allowedVegetation);
+        // The equipment.allowedTerrain is already properly typed from fromTableEntity
+        const allowedTerrain = equipment.allowedTerrain.filter(isValidTerrainLevel);
+        const allowedVegetation = equipment.allowedVegetation.filter(isValidVegetationType);
 
         const spec: EquipmentSpec = {
           id: equipment.id,
@@ -93,10 +94,7 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
         };
 
         // Add type-specific properties
-        if (equipment.type === 'Machinery') {
-          const machinery = equipment as Machinery;
-          spec.maxSlope = machinery.maxSlope;
-        } else if (equipment.type === 'Aircraft') {
+        if (equipment.type === 'Aircraft') {
           const aircraft = equipment as Aircraft;
           spec.dropLength = aircraft.dropLength;
           spec.turnaroundMinutes = aircraft.turnaroundMinutes;

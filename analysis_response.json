@@ -1,0 +1,275 @@
+{
+  "calculations": [
+    {
+      "id": "MF1QP1YGH3SWQOGG",
+      "name": "Chook",
+      "type": "Aircraft",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types",
+        "Aircraft must have positive turnaround time"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MF1QQTYWL3OD6Q9E",
+      "name": "Air Crane",
+      "type": "Aircraft",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types",
+        "Aircraft must have positive turnaround time"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MF1QSCKYDB7WMKVS",
+      "name": "Helitack",
+      "type": "Aircraft",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types",
+        "Aircraft must have positive turnaround time"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFH8DMMO9UIY5",
+      "name": "Single Engine Air Tanker",
+      "type": "Aircraft",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Small fixed-wing aircraft with 3000L capacity",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFHD0XM476WXM",
+      "name": "Large Air Tanker",
+      "type": "Aircraft",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Large fixed-wing aircraft with 15000L capacity",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFHHWA24RJNA9",
+      "name": "Standard Crew",
+      "type": "HandCrew",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Standard 5-person fire response crew",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFHMNOXWZJ2TX",
+      "name": "RAFT Team",
+      "type": "HandCrew",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Remote Area Firefighting Team specialized for difficult terrain",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7F664KKNIVJYK",
+      "name": "D4",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Bulldozer D4",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7F8LEJOLN5ONL",
+      "name": "D6",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Bulldozer D6",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7FAAX2EFZYQNU",
+      "name": "D7",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Bulldozer D7",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7FC15CCFREOAF",
+      "name": "D8",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Bulldozer D8",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7FDR6U1M6CDWC",
+      "name": "Grader",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Grader (road)",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MER7FFGY2MRD0YI8",
+      "name": "Heavy Grader",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Heavy grader",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFGDL999LEAD8",
+      "name": "D4 Bulldozer",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Small bulldozer suitable for creating fire breaks in grassland and light shrub",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFGYTCPQCN915",
+      "name": "D6 Bulldozer",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Medium bulldozer for medium scrub and small trees",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    },
+    {
+      "id": "MFBWFH3MWSW9503I",
+      "name": "D9 Bulldozer",
+      "type": "Machinery",
+      "time": 0,
+      "cost": 0,
+      "compatible": false,
+      "compatibilityLevel": "incompatible",
+      "unit": "hours",
+      "description": "Large bulldozer capable of clearing heavy forest",
+      "validationErrors": [
+        "Equipment must specify allowed terrain types"
+      ],
+      "note": "Equipment configuration invalid"
+    }
+  ],
+  "metadata": {
+    "timestamp": "2025-09-09T02:10:45.347Z",
+    "equipmentCount": 16,
+    "validationErrors": [
+      "Chook: Equipment must specify allowed terrain types, Aircraft must have positive turnaround time",
+      "Air Crane: Equipment must specify allowed terrain types, Aircraft must have positive turnaround time",
+      "Helitack: Equipment must specify allowed terrain types, Aircraft must have positive turnaround time",
+      "Single Engine Air Tanker: Equipment must specify allowed terrain types",
+      "Large Air Tanker: Equipment must specify allowed terrain types",
+      "Standard Crew: Equipment must specify allowed terrain types",
+      "RAFT Team: Equipment must specify allowed terrain types",
+      "D4: Equipment must specify allowed terrain types",
+      "D6: Equipment must specify allowed terrain types",
+      "D7: Equipment must specify allowed terrain types",
+      "D8: Equipment must specify allowed terrain types",
+      "Grader: Equipment must specify allowed terrain types",
+      "Heavy Grader: Equipment must specify allowed terrain types",
+      "D4 Bulldozer: Equipment must specify allowed terrain types",
+      "D6 Bulldozer: Equipment must specify allowed terrain types",
+      "D9 Bulldozer: Equipment must specify allowed terrain types"
+    ],
+    "analysisParameters": {
+      "effectiveTerrain": "easy",
+      "effectiveVegetation": "grassland",
+      "terrainFactor": 1,
+      "vegetationFactor": 1
+    }
+  }
+}

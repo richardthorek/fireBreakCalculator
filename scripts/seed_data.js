@@ -190,10 +190,10 @@ async function seedData() {
     await createEquipment(crew);
   }
   
-  // Create vegetation mappings
-  for (const mapping of vegetationMappings) {
-    await createVegetationMapping(mapping);
-  }
+  // Create vegetation mappings - COMMENTED OUT
+  // for (const mapping of vegetationMappings) {
+  //   await createVegetationMapping(mapping);
+  // }
   
   console.log('Data seeding complete!');
 }
