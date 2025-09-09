@@ -131,8 +131,25 @@ export async function testBackendAnalysis(): Promise<boolean> {
  * Convert frontend calculation result to match backend format
  * This helps maintain compatibility while migrating
  */
+export interface FrontendCalculationResult {
+  id: string;
+  name: string;
+  type: string;
+  time: number;
+  cost: number;
+  compatible: boolean;
+  compatibilityLevel?: string;
+  unit?: string;
+  description?: string;
+  slopeCompatible?: boolean;
+  maxSlopeExceeded?: boolean;
+  drops?: number;
+  overLimitPercent?: number;
+  note?: string;
+}
+
 export function convertToBackendFormat(
-  frontendResult: any
+  frontendResult: FrontendCalculationResult
 ): BackendCalculationResult {
   return {
     id: frontendResult.id,
