@@ -568,9 +568,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
   // Always use backend results, fallback to frontend calculations only if backend unavailable
+  // Type guard for compatibilityLevel
+  function isCompatibilityLevel(value: any): value is 'full' | 'partial' | 'incompatible' {
+    return value === 'full' || value === 'partial' || value === 'incompatible';
+  }
   const finalCalculations = backendResults ? backendResults.map(r => ({
     ...r,
-    compatibilityLevel: r.compatibilityLevel as 'full' | 'partial' | 'incompatible'
+    compatibilityLevel: isCompatibilityLevel(r.compatibilityLevel) ? r.compatibilityLevel : 'incompatible'
   })) : calculations;
 
   // Get best option for each category
