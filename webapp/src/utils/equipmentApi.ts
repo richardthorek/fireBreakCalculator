@@ -31,7 +31,7 @@ const mockEquipment: EquipmentApi[] = [
     name: 'Bulldozer D8T',
     clearingRate: 150,
     costPerHour: 400,
-    allowedTerrain: ['easy', 'moderate', 'difficult'],
+    allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
     version: 1
@@ -42,7 +42,7 @@ const mockEquipment: EquipmentApi[] = [
     name: 'Track Loader',
     clearingRate: 80,
     costPerHour: 200,
-    allowedTerrain: ['easy', 'moderate'],
+    allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland', 'lightshrub'],
     active: true,
     version: 1
@@ -54,7 +54,7 @@ const mockEquipment: EquipmentApi[] = [
     dropLength: 500,
     turnaroundMinutes: 15,
     costPerHour: 3000,
-    allowedTerrain: ['easy', 'moderate', 'difficult', 'extreme'],
+    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true,
     version: 1
@@ -66,7 +66,7 @@ const mockEquipment: EquipmentApi[] = [
     crewSize: 6,
     clearingRatePerPerson: 15,
     costPerHour: 120,
-    allowedTerrain: ['easy', 'moderate', 'difficult'],
+    allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
     version: 1

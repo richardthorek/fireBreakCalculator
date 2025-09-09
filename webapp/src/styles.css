@@ -608,6 +608,11 @@ html, body, #root, .app-shell {
 .dist-seg[data-color="#ff8800"] { background: linear-gradient(135deg,#ff8800,#e06c00); }
 .dist-seg[data-color="#006400"] { background: linear-gradient(135deg,#006400,#004d00); }
 .dist-seg[data-color="#ff0000"] { background: linear-gradient(135deg,#ff0000,#cc0000); }
+/* Vegetation palette hex matches (added to support VEGETATION_CATEGORIES hex values) */
+.dist-seg[data-color="#FFF380"] { background: linear-gradient(135deg,#FFF380,#FFEC7A); }
+.dist-seg[data-color="#B4DFAF"] { background: linear-gradient(135deg,#B4DFAF,#9FD89A); }
+.dist-seg[data-color="#4CAF50"] { background: linear-gradient(135deg,#4CAF50,#388E3C); }
+.dist-seg[data-color="#003300"] { background: linear-gradient(135deg,#003300,#002200); }
 .dist-legend { display:flex; flex-wrap:wrap; gap:12px; margin-top:6px; font-size:12px; }
 .dist-legend-item { display:flex; align-items:center; gap:4px; }
 .dist-swatch { width:12px; height:12px; border-radius:3px; background:#94a3b8; display:inline-block; }
@@ -616,6 +621,11 @@ html, body, #root, .app-shell {
 .dist-swatch[data-color="#ff8800"], .dist-seg[data-color="#ff8800"] { background:#ff8800; }
 .dist-swatch[data-color="#006400"], .dist-seg[data-color="#006400"] { background:#006400; }
 .dist-swatch[data-color="#ff0000"], .dist-seg[data-color="#ff0000"] { background:#ff0000; }
+/* Vegetation swatch fallbacks for hex colors used in categories.ts */
+.dist-swatch[data-color="#FFF380"], .dist-seg[data-color="#FFF380"] { background: #FFF380; }
+.dist-swatch[data-color="#B4DFAF"], .dist-seg[data-color="#B4DFAF"] { background: #B4DFAF; }
+.dist-swatch[data-color="#4CAF50"], .dist-seg[data-color="#4CAF50"] { background: #4CAF50; }
+.dist-swatch[data-color="#003300"], .dist-seg[data-color="#003300"] { background: #003300; }
 .dist-legend-pct { color:#64748b; font-weight:500; }
 
 /* Distribution width classes now reuse pct-* utilities. Backward compatibility aliases (can remove later). */

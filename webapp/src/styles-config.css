@@ -493,10 +493,10 @@
   cursor: pointer;
 }
 
-.equipment-config-panel.compact .tag.on.terrain-easy { background: #10b981; color: #ffffff; }
-.equipment-config-panel.compact .tag.on.terrain-moderate { background: #f59e0b; color: #ffffff; }
-.equipment-config-panel.compact .tag.on.terrain-difficult { background: #ef4444; color: #ffffff; }
-.equipment-config-panel.compact .tag.on.terrain-extreme { background: #7c2d12; color: #ffffff; }
+.equipment-config-panel.compact .tag.on.terrain-flat { background: #10b981; color: #ffffff; }
+.equipment-config-panel.compact .tag.on.terrain-medium { background: #f59e0b; color: #ffffff; }
+.equipment-config-panel.compact .tag.on.terrain-steep { background: #ef4444; color: #ffffff; }
+.equipment-config-panel.compact .tag.on.terrain-very_steep { background: #7c2d12; color: #ffffff; }
 
 .equipment-config-panel.compact .tag.on.veg-grassland { background: #22c55e; color: #ffffff; }
 .equipment-config-panel.compact .tag.on.veg-lightshrub { background: #eab308; color: #ffffff; }

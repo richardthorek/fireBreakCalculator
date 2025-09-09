@@ -25,6 +25,14 @@ interface MapboxMapViewProps {
   aircraft?: AircraftSpec[];
   onSearchLocationSelected?: (location: { lat: number; lng: number; label: string }) => void;
   onUserLocationChange?: (location: { lat: number; lng: number } | undefined) => void;
+  /** Callback invoked once the map has attempted initial auto-locate and the initial
+   *  pan/zoom (or a reasonable fallback) has completed. Use this to delay heavy
+   *  analysis until the map view is settled on the user's location. */
+  onInitialLocationSettled?: (settled: boolean) => void;
+  /** If provided, the map will use this prefetched location immediately on init
+   *  to pan/zoom as soon as the Map instance is ready. This helps avoid waiting
+   *  for permission checks inside the map lifecycle and reduces perceived delay. */
+  initialUserLocation?: { lat: number; lng: number } | null;
   // Optional externally-controlled search selection — when provided the map should
   // pan/zoom to this location. This is used so header search control can trigger map moves.
   selectedSearchLocation?: { lat: number; lng: number; label: string } | null;
@@ -40,6 +48,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onSearchLocationSelected,
   onUserLocationChange
   ,
+  onInitialLocationSettled
+  ,
+  initialUserLocation = null,
   selectedSearchLocation
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +87,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
   const locationMarkerRef = useRef<any | null>(null);
   const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
+  // Ensure we only signal initial location settled once to avoid duplicate
+  // work triggered when fitBounds and later easeTo/moveend both fire.
+  const initialSettledSignalledRef = useRef(false);
   const [dropsVersion, setDropsVersion] = useState(0);
 
   // Initialize map relying solely on hosted style
@@ -110,6 +124,60 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
+    // If the parent prefetched the user's location, use it immediately to
+    // reduce the time-to-move. Otherwise fall back to permission-based check.
+    if (initialUserLocation && initialUserLocation.lat && initialUserLocation.lng) {
+      // apply the same centering logic used by the geolocation result
+      const { lat: latitude, lng: longitude } = initialUserLocation;
+      const userLngLat: [number, number] = [longitude, latitude];
+      // place marker and fit bounds like tryRequestLocation does
+      try {
+        if (locationMarkerRef.current) { try { locationMarkerRef.current.remove(); } catch {} }
+        const el = document.createElement('div'); el.className = 'user-location-marker'; const pulse = document.createElement('div'); pulse.className = 'user-location-pulse'; el.appendChild(pulse);
+        const MarkerCtor = mapLibRef.current?.Marker || (mapboxgl as any).Marker;
+        const marker = new MarkerCtor(el).setLngLat(userLngLat).addTo(map);
+        locationMarkerRef.current = marker;
+
+        // compute sample bbox like tryRequestLocation (approx 10km)
+        const radius = 10000; const R = 6378137; const latRad = latitude * Math.PI / 180; const angularDistance = radius / R; const samples = 64;
+        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+        for (let i = 0; i < samples; i++) {
+          const theta = (i / samples) * (Math.PI * 2);
+          const latOffset = Math.asin(Math.sin(latitude * Math.PI / 180) * Math.cos(angularDistance) + Math.cos(latitude * Math.PI / 180) * Math.sin(angularDistance) * Math.cos(theta));
+          const lonOffset = (longitude * Math.PI / 180) + Math.atan2(Math.sin(theta) * Math.sin(angularDistance) * Math.cos(latitude * Math.PI / 180), Math.cos(angularDistance) - Math.sin(latitude * Math.PI / 180) * Math.sin(latOffset));
+          const sampleLat = latOffset * 180 / Math.PI;
+          const sampleLng = lonOffset * 180 / Math.PI;
+          if (sampleLng < minLng) minLng = sampleLng; if (sampleLng > maxLng) maxLng = sampleLng; if (sampleLat < minLat) minLat = sampleLat; if (sampleLat > maxLat) maxLat = sampleLat;
+        }
+
+        if (!isFinite(minLng) || !isFinite(minLat)) {
+          map.setCenter(userLngLat); map.setZoom(12);
+          if (!initialSettledSignalledRef.current) { initialSettledSignalledRef.current = true; onInitialLocationSettled?.(true); }
+        } else {
+          map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 80, duration: 1000 });
+        }
+        map.once('moveend', () => {
+          try { map.easeTo({ pitch: 40, bearing: 0, duration: 1000 }); } catch (e) {}
+          if (!initialSettledSignalledRef.current) { initialSettledSignalledRef.current = true; onInitialLocationSettled?.(true); }
+        });
+        setUserLocation({ lat: latitude, lng: longitude });
+      } catch (err) {
+        // ignore prefetched location errors and fall back to permission logic below
+      }
+    } else {
+      (async () => {
+        try {
+          if ((navigator as any).permissions && (navigator as any).permissions.query) {
+            const p = await (navigator as any).permissions.query({ name: 'geolocation' });
+            if (p.state === 'granted') {
+              tryRequestLocation();
+            }
+          }
+        } catch (e) {
+          // ignore permission check failures
+        }
+      })();
+    }
     
     // Add standard Mapbox navigation controls (zoom, rotate, pitch)
     map.addControl(new mapboxgl.NavigationControl({
@@ -210,21 +278,38 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
         // Fallback in case computation fails
         if (!isFinite(minLng) || !isFinite(minLat)) {
+          console.debug('Map: fitBounds fallback — using setCenter/setZoom for user location');
           map.setCenter(userLngLat);
           map.setZoom(12);
+          // signal that initial locate & view change is complete (only once)
+          try {
+            if (!initialSettledSignalledRef.current) {
+              console.debug('Map: signalling initialLocationSettled (fallback)');
+              initialSettledSignalledRef.current = true;
+              onInitialLocationSettled?.(true);
+            }
+          } catch {}
         } else {
+          console.debug('Map: fitting bounds to user location sample box', { minLng, minLat, maxLng, maxLat });
           map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 80, duration: 1000 });
         }
 
         // apply a mild tilt after move completes to ensure zoom/center happen first
         map.once('moveend', () => {
+          console.debug('Map: moveend received — applying pitch and signalling initialLocationSettled');
           try { map.easeTo({ pitch: 40, bearing: 0, duration: 1000 }); } catch (e) { /* ignore */ }
+          try {
+            if (!initialSettledSignalledRef.current) {
+              initialSettledSignalledRef.current = true;
+              onInitialLocationSettled?.(true);
+            }
+          } catch {}
         });
         // clear locating state on success and update user location for search
         setIsLocating(false);
         setLocationError(null);
         setUserLocation({ lat: latitude, lng: longitude });
-      }, (err) => {
+  }, (err) => {
         logger.warn('Geolocation failed', err);
         // Distinguish permission denied vs other failures for clearer UX
         if (err && (err.code === 1 || (err.PERMISSION_DENIED !== undefined && err.code === err.PERMISSION_DENIED))) {
@@ -233,6 +318,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           setLocationError('Unable to access location');
         }
         setIsLocating(false);
+  // signal that we attempted initial locate but it failed/was denied so analysis may proceed
+  try {
+    if (!initialSettledSignalledRef.current) {
+      initialSettledSignalledRef.current = true;
+      onInitialLocationSettled?.(true);
+    }
+  } catch {}
       }, { enableHighAccuracy: true, timeout: 10000 });
     };
 

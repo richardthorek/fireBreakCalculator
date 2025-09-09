@@ -32,7 +32,7 @@ export const DistributionBar: React.FC<DistributionBarProps> = ({
   return (
     <div className="dist-wrapper">
       <div className={`${heightClass}`} role="img" aria-label={ariaLabel}>
-        {categories.map(c => {
+    {categories.map(c => {
           const raw = data[c.key] || 0;
           const pct = Math.max(0, Math.round((raw / computedTotal) * 100));
           const showInner = internalSegmentLabels && pct >= 8; // threshold
@@ -50,7 +50,7 @@ export const DistributionBar: React.FC<DistributionBarProps> = ({
       </div>
       {showLabels && (
         <div className="dist-legend">
-          {categories.map(c => {
+      {categories.map(c => {
             const raw = data[c.key] || 0;
             const pct = Math.max(0, Math.round((raw / computedTotal) * 100));
             return (

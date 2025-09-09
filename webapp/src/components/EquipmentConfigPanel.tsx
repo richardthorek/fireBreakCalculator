@@ -238,7 +238,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const [draft, setDraft] = useState<Record<string, any>>({ 
     type: 'Machinery', 
     name: '', 
-    allowedTerrain: ['easy'], 
+    allowedTerrain: ['flat'], 
     allowedVegetation: ['grassland'], 
     active: true 
   });
@@ -248,7 +248,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
   useEffect(() => { if (triggerAdd && triggerAdd > 0) startAdd(); }, [triggerAdd]);
 
-  const terrainOptions: string[] = ['easy','moderate','difficult','extreme'];
+  const terrainOptions: string[] = ['flat','medium','steep','very_steep'];
   const vegetationOptions: string[] = ['grassland','lightshrub','mediumscrub','heavyforest'];
 
   const terrainLabel = (t: string) => getTerrainLevelDisplayName(t as TerrainLevel);
@@ -256,7 +256,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   const vegLabel = (v: string) => getVegetationTypeDisplayName(v as VegetationType);
   const vegExample = (v: string) => getVegetationTypeExample(v as VegetationType);
 
-  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ type, name: '', allowedTerrain: ['easy'], allowedVegetation: ['grassland'], active: true });
+  const resetDraft = (type: EquipmentCoreType = activeTab) => setDraft({ type, name: '', allowedTerrain: ['flat'], allowedVegetation: ['grassland'], active: true });
   const startAdd = () => { resetDraft(activeTab); setAdding(true); setEditingId(null); };
 
   const saveNew = async () => {
@@ -328,7 +328,7 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
 
         {showGuide && (
           <div className="tab-guide side-guide" aria-hidden>
-            <div className="guide-line"><strong>Slope:</strong> 0–10° Easy · 10–20° Moderate · 20–30° Difficult · ≥30° Extreme</div>
+            <div className="guide-line"><strong>Slope:</strong> 0–10° Flat · 10–25° Medium · 25–45° Steep · ≥45° Very Steep</div>
             <div className="guide-line"><strong>Veg examples:</strong> Grassland · Light shrub · Medium scrub · Heavy timber</div>
             <div className="guide-line muted small">Tip: click tags to toggle terrain/vegetation for each item.</div>
           </div>

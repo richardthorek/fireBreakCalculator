@@ -33,6 +33,11 @@ const App: React.FC = () => {
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
+  const [initialLocationSettled, setInitialLocationSettled] = useState<boolean>(false);
+  // Prefetch user location as early as possible to let the map move immediately
+  // once the Map instance is ready. This avoids waiting for permission checks
+  // inside the map lifecycle which can add perceived delay.
+  const [prefetchedLocation, setPrefetchedLocation] = useState<{ lat: number; lng: number } | null>(null);
   
   // Selected location from the global header search control. Stored here so we can
   // pass it down to the map view which will actually pan/zoom to the point.
@@ -75,7 +80,7 @@ const App: React.FC = () => {
         console.warn(`${machineName} has empty/invalid ${fieldName} array, using fallback values`);
         // Provide sensible fallbacks for machines with no valid values
         if (fieldName === 'allowedTerrain') {
-          return ['easy', 'moderate'] as T[];
+          return ['flat', 'medium'] as T[];
         } else if (fieldName === 'allowedVegetation') {
           return ['grassland'] as T[];
         }
@@ -86,7 +91,7 @@ const App: React.FC = () => {
     // Handle null/undefined/other (fallback)
     console.warn(`${machineName} has invalid ${fieldName} format:`, typeof value, value);
     if (fieldName === 'allowedTerrain') {
-      return ['easy', 'moderate'] as T[];
+      return ['flat', 'medium'] as T[];
     } else if (fieldName === 'allowedVegetation') {
       return ['grassland'] as T[];
     }
@@ -95,13 +100,30 @@ const App: React.FC = () => {
 
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
+    if (initialLocationSettled) {
+      console.log('🔧 Processing machinery from equipment data:', {
+        totalEquipment: equipment.length,
+        machineryItems: equipment.filter((e): e is MachineryApi => e.type === 'Machinery').length
+      });
+    }
+
     const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
-    if (!items.length) return defaultConfig.machinery;
+    if (!items.length) {
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No machinery items found, using default config');
+      return defaultConfig.machinery;
+    }
     
     return items.map(m => {
+      console.log(`🚜 Processing machinery: ${m.name}`, {
+        id: m.id,
+        rawAllowedTerrain: m.allowedTerrain,
+        rawAllowedVegetation: m.allowedVegetation,
+        clearingRate: m.clearingRate
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         m.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         m.name
       );
@@ -113,28 +135,62 @@ const App: React.FC = () => {
         m.name
       );
       
-      return {
+      // If the equipment record doesn't include a numeric maxSlope, derive one
+      // from the allowedTerrain tags so analysis keeps working without CSV.
+      const deriveMaxSlopeFromTerrain = (terrain: string[] | undefined): number | undefined => {
+        if (!terrain || !terrain.length) return undefined;
+        // Map terrain levels to representative max slope values
+        // flat -> 9, medium -> 24, steep -> 44, very_steep -> 60
+        if (terrain.includes('very_steep')) return 60;
+        if (terrain.includes('steep')) return 44;
+        if (terrain.includes('medium')) return 24;
+        if (terrain.includes('flat')) return 9;
+        return undefined;
+      };
+
+      const processed = {
         id: m.id,
         name: m.name,
-        type: 'other',
+        type: 'other' as const,
         clearingRate: m.clearingRate || 0,
         costPerHour: m.costPerHour || 0,
         description: m.description || '',
         allowedTerrain,
         allowedVegetation,
-        maxSlope: m.maxSlope
+        maxSlope: m.maxSlope ?? deriveMaxSlopeFromTerrain(allowedTerrain)
       };
+
+      console.log(`   ✅ Processed machinery result:`, processed);
+      return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
+    if (initialLocationSettled) {
+      console.log('✈️ Processing aircraft from equipment data:', {
+        totalEquipment: equipment.length,
+        aircraftItems: equipment.filter((e): e is AircraftApi => e.type === 'Aircraft').length
+      });
+    }
+
     const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
-    if (!items.length) return defaultConfig.aircraft;
+    if (!items.length) {
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No aircraft items found, using default config');
+      return defaultConfig.aircraft;
+    }
     
     return items.map(a => {
+      console.log(`✈️ Processing aircraft: ${a.name}`, {
+        id: a.id,
+        rawAllowedTerrain: a.allowedTerrain,
+        rawAllowedVegetation: a.allowedVegetation,
+        dropLength: a.dropLength,
+        turnaroundMinutes: a.turnaroundMinutes
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         a.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         a.name
       );
@@ -146,10 +202,10 @@ const App: React.FC = () => {
         a.name
       );
       
-      return {
+      const processed = {
         id: a.id,
         name: a.name,
-        type: 'other',
+        type: 'other' as const,
         dropLength: a.dropLength || 0,
         speed: a.speed || 0,
         turnaroundMinutes: a.turnaroundMinutes || 0,
@@ -158,17 +214,38 @@ const App: React.FC = () => {
         allowedTerrain,
         allowedVegetation
       };
+
+      console.log(`   ✅ Processed aircraft result:`, processed);
+      return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
+    if (initialLocationSettled) {
+      console.log('👨‍🚒 Processing hand crews from equipment data:', {
+        totalEquipment: equipment.length,
+        handCrewItems: equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew').length
+      });
+    }
+
     const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
-    if (!items.length) return defaultConfig.handCrews;
+    if (!items.length) {
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No hand crew items found, using default config');
+      return defaultConfig.handCrews;
+    }
     
     return items.map(c => {
+      console.log(`👨‍🚒 Processing hand crew: ${c.name}`, {
+        id: c.id,
+        rawAllowedTerrain: c.allowedTerrain,
+        rawAllowedVegetation: c.allowedVegetation,
+        crewSize: c.crewSize,
+        clearingRatePerPerson: c.clearingRatePerPerson
+      });
+
       const allowedTerrain = safeParseAllowedValues(
         c.allowedTerrain, 
-        ['easy', 'moderate', 'difficult', 'extreme'],
+        ['flat', 'medium', 'steep', 'very_steep'],
         'allowedTerrain',
         c.name
       );
@@ -180,7 +257,7 @@ const App: React.FC = () => {
         c.name
       );
       
-      return {
+      const processed = {
         id: c.id,
         name: c.name,
         crewSize: c.crewSize || 0,
@@ -191,8 +268,11 @@ const App: React.FC = () => {
         allowedTerrain,
         allowedVegetation
       };
+
+      console.log(`   ✅ Processed hand crew result:`, processed);
+      return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   // Shared loader so we can refresh after CRUD ops to pull canonical server state (e.g. version, defaults)
   const loadEquipment = useCallback(async () => {
@@ -231,6 +311,18 @@ const App: React.FC = () => {
   useEffect(() => { 
     loadEquipment(); 
     loadVegetationMappings();
+    // Prefetch geo location early with short timeout to avoid blocking UI
+    try {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          setPrefetchedLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        }, (err) => {
+          // ignore failures here — map will still try when initialised
+        }, { enableHighAccuracy: false, timeout: 3000 });
+      }
+    } catch (e) {
+      // ignore
+    }
   }, [loadEquipment, loadVegetationMappings]);
   
   // Create default vegetation mappings if none exist
@@ -314,7 +406,7 @@ const App: React.FC = () => {
       type: partial.type,
       name: partial.name,
       description: partial.description || '',
-      allowedTerrain: partial.allowedTerrain || ['easy'],
+      allowedTerrain: partial.allowedTerrain || ['flat'],
       allowedVegetation: partial.allowedVegetation || ['grassland'],
       active: true,
       costPerHour: partial.costPerHour,
@@ -393,6 +485,8 @@ const App: React.FC = () => {
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
             onUserLocationChange={setUserLocation}
+            onInitialLocationSettled={setInitialLocationSettled}
+            initialUserLocation={prefetchedLocation}
             selectedSearchLocation={searchLocation}
           />
         </div>
@@ -402,6 +496,9 @@ const App: React.FC = () => {
             trackAnalysis={trackAnalysis}
             vegetationAnalysis={vegetationAnalysis}
             isAnalyzing={isAnalyzing}
+            // Only allow heavy backend analysis after the map has completed initial
+            // pan/zoom to the user's location (or attempted fallback).
+            mapSettled={initialLocationSettled}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}

@@ -22,10 +22,10 @@ export const getVegetationTypeDisplayName = (type: VegetationType): string => {
  */
 export const getTerrainLevelDisplayName = (level: TerrainLevel): string => {
   const displayNames: Record<TerrainLevel, string> = {
-    easy: 'Easy',
-    moderate: 'Moderate',
-    difficult: 'Difficult',
-    extreme: 'Extreme'
+    flat: 'Flat',
+    medium: 'Medium',
+    steep: 'Steep',
+    very_steep: 'Very Steep'
   };
   return displayNames[level] || level;
 };
@@ -48,10 +48,10 @@ export const getVegetationTypeExample = (type: VegetationType): string => {
  */
 export const getTerrainLevelExample = (level: TerrainLevel): string => {
   const examples: Record<TerrainLevel, string> = {
-    easy: '0–10° — flat or gentle slopes (paddock, grass)',
-    moderate: '10–20° — rolling hills, light obstacles',
-    difficult: '20–30° — steep slopes, rocky or dense scrub',
-    extreme: '30°+ — very steep / technical terrain'
+    flat: '0–10° — flat or gentle slopes (paddock, grass)',
+    medium: '10–25° — rolling hills, light obstacles',
+    steep: '25–45° — steep slopes, rocky or dense scrub',
+    very_steep: '45°+ — very steep / technical terrain'
   };
   return examples[level] || '';
 };
