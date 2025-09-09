@@ -9,6 +9,10 @@ import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
+// Temporary diagnostic flag to enable stack-trace logging when backend calls are made.
+// Set to true only when troubleshooting; keep false in normal dev runs.
+const DIAGNOSTIC_STACK_TRACES = false;
+
 export interface BackendAnalysisRequest {
   distance: number;
   trackAnalysis: TrackAnalysis;
@@ -64,6 +68,12 @@ export async function calculateEquipmentAnalysis(
     vegetation: request.vegetationAnalysis?.predominantVegetation
   });
 
+  if (DIAGNOSTIC_STACK_TRACES) {
+    // Capture a short stack so we can see who invoked the backend call
+    const stack = new Error('stack').stack?.split('\n').slice(1, 6).map(s => s.trim());
+    console.debug('Diagnostic: backendAnalysis.call stack (truncated)', stack);
+  }
+
   const response = await fetch(`${baseUrl}/analysis/calculate`, {
     method: 'POST',
     headers: {
@@ -118,6 +128,10 @@ export async function testBackendAnalysis(): Promise<boolean> {
       }
     };
 
+    if (DIAGNOSTIC_STACK_TRACES) {
+      const stack = new Error('stack').stack?.split('\n').slice(1, 6).map(s => s.trim());
+      console.debug('Diagnostic: testBackendAnalysis invoking calculateEquipmentAnalysis stack (truncated)', stack);
+    }
     await calculateEquipmentAnalysis(testRequest);
     console.log('✅ Backend analysis service is available');
     return true;

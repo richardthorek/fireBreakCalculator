@@ -34,6 +34,10 @@ const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
   const [initialLocationSettled, setInitialLocationSettled] = useState<boolean>(false);
+  // Prefetch user location as early as possible to let the map move immediately
+  // once the Map instance is ready. This avoids waiting for permission checks
+  // inside the map lifecycle which can add perceived delay.
+  const [prefetchedLocation, setPrefetchedLocation] = useState<{ lat: number; lng: number } | null>(null);
   
   // Selected location from the global header search control. Stored here so we can
   // pass it down to the map view which will actually pan/zoom to the point.
@@ -96,14 +100,16 @@ const App: React.FC = () => {
 
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
-    console.log('🔧 Processing machinery from equipment data:', {
-      totalEquipment: equipment.length,
-      machineryItems: equipment.filter((e): e is MachineryApi => e.type === 'Machinery').length
-    });
+    if (initialLocationSettled) {
+      console.log('🔧 Processing machinery from equipment data:', {
+        totalEquipment: equipment.length,
+        machineryItems: equipment.filter((e): e is MachineryApi => e.type === 'Machinery').length
+      });
+    }
 
     const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
     if (!items.length) {
-      console.log('⚠️ No machinery items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No machinery items found, using default config');
       return defaultConfig.machinery;
     }
     
@@ -157,17 +163,19 @@ const App: React.FC = () => {
       console.log(`   ✅ Processed machinery result:`, processed);
       return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
-    console.log('✈️ Processing aircraft from equipment data:', {
-      totalEquipment: equipment.length,
-      aircraftItems: equipment.filter((e): e is AircraftApi => e.type === 'Aircraft').length
-    });
+    if (initialLocationSettled) {
+      console.log('✈️ Processing aircraft from equipment data:', {
+        totalEquipment: equipment.length,
+        aircraftItems: equipment.filter((e): e is AircraftApi => e.type === 'Aircraft').length
+      });
+    }
 
     const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
     if (!items.length) {
-      console.log('⚠️ No aircraft items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No aircraft items found, using default config');
       return defaultConfig.aircraft;
     }
     
@@ -210,17 +218,19 @@ const App: React.FC = () => {
       console.log(`   ✅ Processed aircraft result:`, processed);
       return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
-    console.log('👨‍🚒 Processing hand crews from equipment data:', {
-      totalEquipment: equipment.length,
-      handCrewItems: equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew').length
-    });
+    if (initialLocationSettled) {
+      console.log('👨‍🚒 Processing hand crews from equipment data:', {
+        totalEquipment: equipment.length,
+        handCrewItems: equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew').length
+      });
+    }
 
     const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
     if (!items.length) {
-      console.log('⚠️ No hand crew items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No hand crew items found, using default config');
       return defaultConfig.handCrews;
     }
     
@@ -262,7 +272,7 @@ const App: React.FC = () => {
       console.log(`   ✅ Processed hand crew result:`, processed);
       return processed;
     });
-  }, [equipment]);
+  }, [equipment, initialLocationSettled]);
 
   // Shared loader so we can refresh after CRUD ops to pull canonical server state (e.g. version, defaults)
   const loadEquipment = useCallback(async () => {
@@ -301,6 +311,18 @@ const App: React.FC = () => {
   useEffect(() => { 
     loadEquipment(); 
     loadVegetationMappings();
+    // Prefetch geo location early with short timeout to avoid blocking UI
+    try {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          setPrefetchedLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        }, (err) => {
+          // ignore failures here — map will still try when initialised
+        }, { enableHighAccuracy: false, timeout: 3000 });
+      }
+    } catch (e) {
+      // ignore
+    }
   }, [loadEquipment, loadVegetationMappings]);
   
   // Create default vegetation mappings if none exist
@@ -464,6 +486,7 @@ const App: React.FC = () => {
             aircraft={aircraft}
             onUserLocationChange={setUserLocation}
             onInitialLocationSettled={setInitialLocationSettled}
+            initialUserLocation={prefetchedLocation}
             selectedSearchLocation={searchLocation}
           />
         </div>

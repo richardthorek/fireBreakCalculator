@@ -282,13 +282,22 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
 
   // Test backend availability on mount
+  // Test backend availability, but delay the test until the map has settled.
+  // Running the test call (which hits the backend analysis endpoint) before the
+  // map has finished its initial pan/zoom causes unnecessary load and noisy logs.
   useEffect(() => {
+    if (!mapSettled) {
+      // Clear any previous state while waiting for the map to settle
+      setBackendAvailable(null);
+      return;
+    }
+
     const checkBackend = async () => {
       const available = await testBackendAnalysis();
       setBackendAvailable(available);
     };
     checkBackend();
-  }, []);
+  }, [mapSettled]);
   
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
@@ -333,7 +342,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable, mapSettled]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -366,6 +375,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   }, [trackAnalysis]);
 
   const calculations = useMemo<CalculationResult[]>(() => {
+    // Do not perform calculations or emit logs until the map has settled to the
+    // user's location. This prevents analysis from starting while the map is
+    // still panning/zooming on initial load and keeps console noise low.
+    if (!mapSettled) return [];
+
     console.log('🔧 Starting equipment calculations', {
       distance,
       derivedTerrainRequirement,
