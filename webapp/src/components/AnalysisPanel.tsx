@@ -33,6 +33,10 @@ interface AnalysisPanelProps {
   selectedAircraftForPreview?: string[];
   /** Callback for when drop preview selection changes */
   onDropPreviewChange?: (aircraftIds: string[]) => void;
+  /** True when the parent map has completed initial pan/zoom to the user's location
+   *  (or attempted fallback). Gate heavy backend analysis until this is true to
+   *  avoid spamming the backend while the map is still settling. */
+  mapSettled?: boolean;
 }
 
 // Use centralized type definitions from classification.ts
@@ -257,6 +261,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   handCrews,
   onDropPreviewChange,
   selectedAircraftForPreview: externalSelected = []
+  ,
+  mapSettled = false
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
@@ -292,7 +298,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   // Backend analysis effect (always run)
   useEffect(() => {
-    if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable) {
+    // Delay heavy backend analysis until the map has settled (i.e. initial
+    // pan/zoom to user location completed). This prevents early logs/calls
+    // and gives the map time to show the user's location seamlessly.
+    if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !mapSettled) {
       setBackendResults(null);
       return;
     }

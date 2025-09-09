@@ -151,18 +151,34 @@ export interface FrontendCalculationResult {
 export function convertToBackendFormat(
   frontendResult: FrontendCalculationResult
 ): BackendCalculationResult {
+  // Normalize type to backend expected literals
+  const t = (frontendResult.type || '').toString().toLowerCase();
+  let mappedType: BackendCalculationResult['type'] = 'Machinery';
+  if (t === 'aircraft' || t === 'air plane' || t === 'plane') mappedType = 'Aircraft';
+  else if (t === 'handcrew' || t === 'hand_crew' || t === 'hand crew' || t === 'handcrew' ) mappedType = 'HandCrew';
+
+  // Normalize compatibility level
+  const cl = (frontendResult.compatibilityLevel || '').toString().toLowerCase();
+  let mappedCompatibility: BackendCalculationResult['compatibilityLevel'] = frontendResult.compatible ? 'full' : 'incompatible';
+  if (cl === 'full' || cl === 'partial' || cl === 'incompatible') mappedCompatibility = cl as BackendCalculationResult['compatibilityLevel'];
+
+  // Ensure maxSlopeExceeded is a number when provided (frontend may supply boolean)
+  const maxSlopeExceededNum = typeof frontendResult.maxSlopeExceeded === 'number'
+    ? frontendResult.maxSlopeExceeded
+    : undefined;
+
   return {
     id: frontendResult.id,
     name: frontendResult.name,
-    type: frontendResult.type,
+    type: mappedType,
     time: frontendResult.time,
     cost: frontendResult.cost,
     compatible: frontendResult.compatible,
-    compatibilityLevel: frontendResult.compatibilityLevel || (frontendResult.compatible ? 'full' : 'incompatible'),
+    compatibilityLevel: mappedCompatibility,
     unit: frontendResult.unit || 'hours',
     description: frontendResult.description,
     slopeCompatible: frontendResult.slopeCompatible,
-    maxSlopeExceeded: frontendResult.maxSlopeExceeded,
+    maxSlopeExceeded: maxSlopeExceededNum,
     drops: frontendResult.drops,
     overLimitPercent: frontendResult.overLimitPercent,
     note: frontendResult.note

@@ -10,14 +10,14 @@ export interface CategoryDef {
 
 export const SLOPE_CATEGORIES: CategoryDef[] = [
   { key: 'flat', label: 'Flat', color: '#00aa00', range: '0-10°' },
-  { key: 'medium', label: 'Medium', color: '#c8c800', range: '10-20°' },
-  { key: 'steep', label: 'Steep', color: '#ff8800', range: '20-30°' },
-  { key: 'very_steep', label: 'Very Steep', color: '#ff0000', range: '30°+' }
+  { key: 'medium', label: 'Medium', color: '#c8c800', range: '10-25°' },
+  { key: 'steep', label: 'Steep', color: '#ff8800', range: '25-45°' },
+  { key: 'very_steep', label: 'Very Steep', color: '#ff0000', range: '45°+' }
 ];
 
 export const VEGETATION_CATEGORIES: CategoryDef[] = [
-  { key: 'grassland', label: 'Grass', color: '#00aa00' },
-  { key: 'lightshrub', label: 'Light', color: '#c8c800' },
-  { key: 'mediumscrub', label: 'Medium', color: '#ff8800' },
+  { key: 'grassland', label: 'Grass', color: 'rgba(242, 255, 0, 1)' },
+  { key: 'lightshrub', label: 'Light', color: 'rgba(179, 185, 4, 1)' },
+  { key: 'mediumscrub', label: 'Medium', color: 'rgba(122, 222, 0, 1)' },
   { key: 'heavyforest', label: 'Heavy', color: '#006400' }
 ];

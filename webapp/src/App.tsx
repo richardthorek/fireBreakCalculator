@@ -33,6 +33,7 @@ const App: React.FC = () => {
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
+  const [initialLocationSettled, setInitialLocationSettled] = useState<boolean>(false);
   
   // Selected location from the global header search control. Stored here so we can
   // pass it down to the map view which will actually pan/zoom to the point.
@@ -462,6 +463,7 @@ const App: React.FC = () => {
             selectedAircraftForPreview={selectedAircraftForPreview}
             aircraft={aircraft}
             onUserLocationChange={setUserLocation}
+            onInitialLocationSettled={setInitialLocationSettled}
             selectedSearchLocation={searchLocation}
           />
         </div>
@@ -471,6 +473,9 @@ const App: React.FC = () => {
             trackAnalysis={trackAnalysis}
             vegetationAnalysis={vegetationAnalysis}
             isAnalyzing={isAnalyzing}
+            // Only allow heavy backend analysis after the map has completed initial
+            // pan/zoom to the user's location (or attempted fallback).
+            mapSettled={initialLocationSettled}
             machinery={machinery}
             aircraft={aircraft}
             handCrews={handCrews}

@@ -25,6 +25,10 @@ interface MapboxMapViewProps {
   aircraft?: AircraftSpec[];
   onSearchLocationSelected?: (location: { lat: number; lng: number; label: string }) => void;
   onUserLocationChange?: (location: { lat: number; lng: number } | undefined) => void;
+  /** Callback invoked once the map has attempted initial auto-locate and the initial
+   *  pan/zoom (or a reasonable fallback) has completed. Use this to delay heavy
+   *  analysis until the map view is settled on the user's location. */
+  onInitialLocationSettled?: (settled: boolean) => void;
   // Optional externally-controlled search selection — when provided the map should
   // pan/zoom to this location. This is used so header search control can trigger map moves.
   selectedSearchLocation?: { lat: number; lng: number; label: string } | null;
@@ -39,6 +43,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   aircraft = [],
   onSearchLocationSelected,
   onUserLocationChange
+  ,
+  onInitialLocationSettled
   ,
   selectedSearchLocation
 }) => {
@@ -110,6 +116,22 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
+    // Try to auto-locate as early as possible so the map pans/zooms to the user's
+    // location before the user has a chance to interact with the map. This mirrors
+    // the later permissions-based auto-locate logic but runs immediately after
+    // the Map instance exists.
+    (async () => {
+      try {
+        if ((navigator as any).permissions && (navigator as any).permissions.query) {
+          const p = await (navigator as any).permissions.query({ name: 'geolocation' });
+          if (p.state === 'granted') {
+            tryRequestLocation();
+          }
+        }
+      } catch (e) {
+        // ignore permission check failures
+      }
+    })();
     
     // Add standard Mapbox navigation controls (zoom, rotate, pitch)
     map.addControl(new mapboxgl.NavigationControl({
@@ -212,6 +234,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (!isFinite(minLng) || !isFinite(minLat)) {
           map.setCenter(userLngLat);
           map.setZoom(12);
+          // signal that initial locate & view change is complete
+          try { onInitialLocationSettled?.(true); } catch {}
         } else {
           map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 80, duration: 1000 });
         }
@@ -219,6 +243,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         // apply a mild tilt after move completes to ensure zoom/center happen first
         map.once('moveend', () => {
           try { map.easeTo({ pitch: 40, bearing: 0, duration: 1000 }); } catch (e) { /* ignore */ }
+          try { onInitialLocationSettled?.(true); } catch {}
         });
         // clear locating state on success and update user location for search
         setIsLocating(false);
@@ -233,6 +258,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           setLocationError('Unable to access location');
         }
         setIsLocating(false);
+  // signal that we attempted initial locate but it failed/was denied so analysis may proceed
+  try { onInitialLocationSettled?.(true); } catch {}
       }, { enableHighAccuracy: true, timeout: 10000 });
     };
 
