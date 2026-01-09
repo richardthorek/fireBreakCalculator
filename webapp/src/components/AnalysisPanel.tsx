@@ -857,6 +857,46 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                       ))}
                     </div>
                   </div>
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header"><span className="category-section-icon">✈️</span>Aircraft</h5>
+                    <div className="equipment-table">
+                      <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
+                      {finalCalculations.filter(r => (r.type === 'aircraft' || r.type === 'Aircraft')).map((result: any) => (
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''}`} title={result.note || ''}>
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.drops ? `${result.drops} drops` : result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
+                          <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header"><span className="category-section-icon">👨‍🚒</span>Hand Crew</h5>
+                    <div className="equipment-table">
+                      <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
+                      {finalCalculations.filter(r => (r.type === 'handCrew' || r.type === 'HandCrew')).map((result: any) => (
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''}`} title={result.note || ''}>
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
+                          <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
