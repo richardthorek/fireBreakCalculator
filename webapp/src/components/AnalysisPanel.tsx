@@ -301,7 +301,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
-    if (useAutoDetected && vegetationAnalysis) return vegetationAnalysis.predominantVegetation;
+    if (useAutoDetected && vegetationAnalysis) {
+      const detectedVeg = vegetationAnalysis.predominantVegetation;
+      // Defensive check: ensure detected vegetation is valid
+      if (!VEGETATION_TYPES.includes(detectedVeg)) {
+        console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to grassland`);
+        return 'grassland';
+      }
+      // Check if vegetation distribution is empty (all zeros)
+      const totalVegDistance = Object.values(vegetationAnalysis.vegetationDistribution).reduce((sum, val) => sum + val, 0);
+      if (totalVegDistance === 0) {
+        console.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback grassland');
+        return 'grassland';
+      }
+      return detectedVeg;
+    }
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
@@ -385,6 +399,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       derivedTerrainRequirement,
       effectiveVegetation,
       trackAnalysis: trackAnalysis ? { maxSlope: trackAnalysis.maxSlope, slopeDistribution: trackAnalysis.slopeDistribution } : null,
+      vegetationAnalysis: vegetationAnalysis ? { 
+        predominantVegetation: vegetationAnalysis.predominantVegetation,
+        vegetationDistribution: vegetationAnalysis.vegetationDistribution,
+        totalDistance: vegetationAnalysis.totalDistance
+      } : null,
       machineryCount: machinery.length,
       aircraftCount: aircraft.length,
       handCrewsCount: handCrews.length
