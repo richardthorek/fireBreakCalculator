@@ -304,7 +304,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (useAutoDetected && vegetationAnalysis) {
       const detectedVeg = vegetationAnalysis.predominantVegetation;
       // Defensive check: ensure detected vegetation is valid
-      if (!VEGETATION_TYPES.includes(detectedVeg)) {
+      const validVegTypes: readonly string[] = VEGETATION_TYPES;
+      if (!validVegTypes.includes(detectedVeg)) {
         console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to grassland`);
         return 'grassland';
       }
