@@ -306,14 +306,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       // Defensive check: ensure detected vegetation is valid
       const validVegTypes: readonly string[] = VEGETATION_TYPES;
       if (!validVegTypes.includes(detectedVeg)) {
-        console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to grassland`);
-        return 'grassland';
+        console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to mediumscrub`);
+        return 'mediumscrub';
       }
       // Check if vegetation distribution is empty (all zeros)
       const totalVegDistance = Object.values(vegetationAnalysis.vegetationDistribution).reduce((sum, val) => sum + val, 0);
       if (totalVegDistance === 0) {
-        console.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback grassland');
-        return 'grassland';
+        console.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback mediumscrub for safer balance');
+        return 'mediumscrub';
       }
       return detectedVeg;
     }
