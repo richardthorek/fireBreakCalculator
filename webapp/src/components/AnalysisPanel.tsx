@@ -301,7 +301,22 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
-    if (useAutoDetected && vegetationAnalysis) return vegetationAnalysis.predominantVegetation;
+    if (useAutoDetected && vegetationAnalysis) {
+      const detectedVeg = vegetationAnalysis.predominantVegetation;
+      // Defensive check: ensure detected vegetation is valid
+      const validVegTypes: readonly string[] = VEGETATION_TYPES;
+      if (!validVegTypes.includes(detectedVeg)) {
+        console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to mediumscrub`);
+        return 'mediumscrub';
+      }
+      // Check if vegetation distribution is empty (all zeros)
+      const totalVegDistance = Object.values(vegetationAnalysis.vegetationDistribution).reduce((sum, val) => sum + val, 0);
+      if (totalVegDistance === 0) {
+        console.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback mediumscrub for safer balance');
+        return 'mediumscrub';
+      }
+      return detectedVeg;
+    }
     return selectedVegetation;
   }, [useAutoDetected, vegetationAnalysis, selectedVegetation]);
 
@@ -385,6 +400,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       derivedTerrainRequirement,
       effectiveVegetation,
       trackAnalysis: trackAnalysis ? { maxSlope: trackAnalysis.maxSlope, slopeDistribution: trackAnalysis.slopeDistribution } : null,
+      vegetationAnalysis: vegetationAnalysis ? { 
+        predominantVegetation: vegetationAnalysis.predominantVegetation,
+        vegetationDistribution: vegetationAnalysis.vegetationDistribution,
+        totalDistance: vegetationAnalysis.totalDistance
+      } : null,
       machineryCount: machinery.length,
       aircraftCount: aircraft.length,
       handCrewsCount: handCrews.length
@@ -848,6 +868,46 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                             <div className="equipment-details">
                               <span className="equipment-name">{result.name}</span>
                               <span className="equipment-type">{result.compatibilityLevel === 'partial' ? 'Partial' : result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
+                          <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'partial' && <span className="partial-status">△ Partial</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header"><span className="category-section-icon">✈️</span>Aircraft</h5>
+                    <div className="equipment-table">
+                      <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
+                      {finalCalculations.filter(r => (r.type === 'aircraft' || r.type === 'Aircraft')).map((result: any) => (
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''} ${result.compatibilityLevel === 'partial' ? 'partial' : ''}`} title={result.note || ''}>
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.drops ? `${result.drops} drops` : result.type}</span>
+                            </div>
+                          </div>
+                          <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
+                          <div className="cost-info">{result.compatible && result.cost > 0 ? <span className="cost-value">${result.cost.toFixed(0)}</span> : <span className="no-cost">-</span>}</div>
+                          <div className="status-info">{result.compatibilityLevel === 'full' && result.compatible && <span className="compatible">✓ Compatible</span>}{result.compatibilityLevel === 'partial' && <span className="partial-status">△ Partial</span>}{result.compatibilityLevel === 'incompatible' && <span className="incompatible-status">✗ Incompatible</span>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="equipment-category-section">
+                    <h5 className="category-section-header"><span className="category-section-icon">👨‍🚒</span>Hand Crew</h5>
+                    <div className="equipment-table">
+                      <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
+                      {finalCalculations.filter(r => (r.type === 'handCrew' || r.type === 'HandCrew')).map((result: any) => (
+                        <div key={result.id} className={`table-row ${!result.compatible ? 'incompatible' : ''} ${result.compatibilityLevel === 'partial' ? 'partial' : ''}`} title={result.note || ''}>
+                          <div className="equipment-info">
+                            <span className="equipment-icon">{getEquipmentIcon(result)}</span>
+                            <div className="equipment-details">
+                              <span className="equipment-name">{result.name}</span>
+                              <span className="equipment-type">{result.type}</span>
                             </div>
                           </div>
                           <div className="time-info">{result.compatible ? (<><span className="time-value">{result.time.toFixed(0)}</span><span className="time-unit">{result.unit}</span></>) : (<span className="incompatible-text">N/A</span>)}</div>
