@@ -100,12 +100,10 @@ async function withFallback<T>(apiCall: () => Promise<T>, fallback: T): Promise<
   try {
     return await apiCall();
   } catch (error: any) {
-    // If we get a network error or 500 error in development, use fallback
-    if (error.message.includes('Internal Server Error') || error.message.includes('Failed to fetch')) {
-      console.warn('API not available in development, using mock data:', error.message);
-      return fallback;
-    }
-    throw error;
+    // In development, use fallback for any API error
+    // This ensures the app works even when backend is completely unavailable
+    console.warn('API call failed in development, using fallback data:', error.message);
+    return fallback;
   }
 }
 
@@ -113,7 +111,15 @@ export async function listEquipment(): Promise<EquipmentApi[]> {
   return withFallback(
     async () => {
       const res = await fetch(`${baseUrl}/equipment`);
-      return handle<EquipmentApi[]>(res);
+      const data = await handle<EquipmentApi[]>(res);
+      
+      // If backend returns empty array in development, use mock data instead
+      if (isDevelopment && (!data || data.length === 0)) {
+        console.warn('Backend returned empty equipment list, using mock data in development');
+        return mockEquipment;
+      }
+      
+      return data;
     },
     mockEquipment
   );
