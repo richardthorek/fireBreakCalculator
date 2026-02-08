@@ -79,7 +79,7 @@ export const OverlapMatrix: React.FC<OverlapMatrixProps> = ({ trackAnalysis, veg
                   aria-label={`${vegDef.label} on ${cell.col} slope: ${pctRouteRounded}% of route; ${pctRowRounded}% of ${vegDef.label}; ${pctColRounded}% of ${cell.col} slope`}
                   title={`${vegDef.label} on ${cell.col} slope: ${pctRouteRounded}% of route (${Math.round(cell.meters)} m); ${pctRowRounded}% of this vegetation; ${pctColRounded}% of this slope category`}
                 >
-                      <div className={`cell-bar pct-${pctRouteRounded}`} data-color={vegDef.color} />
+                      <div className="cell-bar" style={{ width: `${pctRouteRounded}%` }} data-color={vegDef.color} />
                       {/* Always show a small percent label to make the matrix explicit; hide visually when zero */}
                       <span className={`cell-label ${pctRouteRounded === 0 ? 'cell-label-empty' : ''}`} aria-hidden="true">{pctRouteRounded}%</span>
                 </div>
