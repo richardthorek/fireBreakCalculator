@@ -444,13 +444,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
     if (!distance) {
       console.log('❌ No distance provided, returning empty calculations');
-      return [] as CalculationResult[];
+      return [];
     }
     
     // Warn if no equipment is available
     if (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0) {
       console.warn('⚠️ No equipment available for calculations. Check equipment loading.');
-      return [] as CalculationResult[];
+      return [];
     }
 
     const results: CalculationResult[] = [];
@@ -820,26 +820,38 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         ) : (
           <>
             {/* Diagnostic message when no calculations are available */}
-            {finalCalculations.length === 0 && (
-              <div className="diagnostic-message" style={{ 
-                padding: '1rem', 
-                margin: '1rem 0', 
-                backgroundColor: '#fff3cd', 
-                border: '1px solid #ffc107', 
-                borderRadius: '4px',
-                color: '#856404'
-              }}>
-                <strong>⚠️ No Equipment Data Available</strong>
-                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
-                  {!mapSettled && 'Waiting for map to initialize...'}
-                  {mapSettled && !backendAvailable && backendAvailable !== null && 'Backend service unavailable. Check console for details.'}
-                  {mapSettled && backendAvailable && backendLoading && 'Loading equipment analysis...'}
-                  {mapSettled && backendAvailable && !backendLoading && backendError && `Error: ${backendError}`}
-                  {mapSettled && backendAvailable && !backendLoading && !backendError && machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0 && 'No equipment configured. Please add equipment in the Configuration panel.'}
-                  {mapSettled && backendAvailable && !backendLoading && !backendError && (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0) && 'Calculations in progress...'}
-                </p>
-              </div>
-            )}
+            {finalCalculations.length === 0 && (() => {
+              // Extract diagnostic conditions for better readability
+              const isMapInitializing = !mapSettled;
+              const isBackendUnavailable = mapSettled && !backendAvailable && backendAvailable !== null;
+              const isBackendLoading = mapSettled && backendAvailable && backendLoading;
+              const hasBackendError = mapSettled && backendAvailable && !backendLoading && backendError;
+              const hasNoEquipment = mapSettled && backendAvailable && !backendLoading && !backendError && 
+                                     machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0;
+              const isCalculating = mapSettled && backendAvailable && !backendLoading && !backendError && 
+                                    (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
+              
+              return (
+                <div className="diagnostic-message" style={{ 
+                  padding: '1rem', 
+                  margin: '1rem 0', 
+                  backgroundColor: '#fff3cd', 
+                  border: '1px solid #ffc107', 
+                  borderRadius: '4px',
+                  color: '#856404'
+                }}>
+                  <strong>⚠️ No Equipment Data Available</strong>
+                  <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                    {isMapInitializing && 'Waiting for map to initialize...'}
+                    {isBackendUnavailable && 'Backend service unavailable. Check console for details.'}
+                    {isBackendLoading && 'Loading equipment analysis...'}
+                    {hasBackendError && `Error: ${backendError}`}
+                    {hasNoEquipment && 'No equipment configured. Please add equipment in the Configuration panel.'}
+                    {isCalculating && 'Calculations in progress...'}
+                  </p>
+                </div>
+              );
+            })()}
             <div className="best-options-summary">
               <h4>Quick Options</h4>
               <div className="best-options-grid">
