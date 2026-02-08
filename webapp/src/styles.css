@@ -817,6 +817,13 @@ html, body, #root, .app-shell {
   min-height: 200px;
 }
 
+/* Collapsed state for mobile: only show header, minimal space */
+.analysis-section.collapsed {
+  min-height: auto;
+  max-height: fit-content;
+  flex: 0 0 auto;
+}
+
 /* Expanded state for mobile: takes more vertical space */
 .analysis-section.expanded {
   max-height: 70vh;

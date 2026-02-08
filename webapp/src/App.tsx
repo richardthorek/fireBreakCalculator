@@ -492,7 +492,7 @@ const App: React.FC = () => {
             selectedSearchLocation={searchLocation}
           />
         </div>
-        <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ''}`}>
+        <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>
           <AnalysisPanel
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
