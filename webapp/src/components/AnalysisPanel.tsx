@@ -823,13 +823,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             {finalCalculations.length === 0 && (() => {
               // Extract diagnostic conditions for better readability
               const isMapInitializing = !mapSettled;
-              const isBackendUnavailable = mapSettled && !backendAvailable && backendAvailable !== null;
+              const isBackendUnavailable = mapSettled && backendAvailable === false; // explicitly false, not null (initializing)
               const isBackendLoading = mapSettled && backendAvailable && backendLoading;
               const hasBackendError = mapSettled && backendAvailable && !backendLoading && backendError;
               const hasNoEquipment = mapSettled && backendAvailable && !backendLoading && !backendError && 
-                                     machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0;
-              const isCalculating = mapSettled && backendAvailable && !backendLoading && !backendError && 
-                                    (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
+                                     (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0);
+              const isWaitingForData = mapSettled && backendAvailable && !backendLoading && !backendError && 
+                                       (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
               
               return (
                 <div className="diagnostic-message" style={{ 
@@ -847,7 +847,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     {isBackendLoading && 'Loading equipment analysis...'}
                     {hasBackendError && `Error: ${backendError}`}
                     {hasNoEquipment && 'No equipment configured. Please add equipment in the Configuration panel.'}
-                    {isCalculating && 'Calculations in progress...'}
+                    {isWaitingForData && 'Equipment loaded, waiting for analysis results...'}
                   </p>
                 </div>
               );

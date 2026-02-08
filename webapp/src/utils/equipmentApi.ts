@@ -33,7 +33,7 @@ const mockEquipment: EquipmentApi[] = [
     description: 'Heavy-duty bulldozer for clearing medium vegetation',
     clearingRate: 150,
     costPerHour: 400,
-    maxSlope: 44, // steep terrain limit
+    maxSlope: 44, // can operate on steep terrain (up to 44 degrees)
     allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
@@ -48,7 +48,7 @@ const mockEquipment: EquipmentApi[] = [
     description: 'Medium-duty loader for lighter terrain',
     clearingRate: 80,
     costPerHour: 200,
-    maxSlope: 24, // medium terrain limit
+    maxSlope: 24, // limited to flat and medium terrain (max 24 degrees)
     allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland', 'lightshrub'],
     active: true,
