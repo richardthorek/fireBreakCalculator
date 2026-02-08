@@ -23,7 +23,7 @@ jobs:
           submodules: true
           lfs: false
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22.x'
 
@@ -41,7 +41,8 @@ jobs:
       - name: Build And Deploy
         # Avoid referencing `secrets` in expressions (linter/sandbox rejects it).
         # Deploy on pushes or on PRs originating from the same repository.
-        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.repository == github.event.pull_request.head.repo.full_name) }}
+        # Skip deployment for Dependabot PRs as they lack required deployment tokens.
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.repository == github.event.pull_request.head.repo.full_name && github.actor != 'dependabot[bot]') }}
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         env:
