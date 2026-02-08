@@ -359,11 +359,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           }
         });
         
-        setBackendResults(response.calculations);
-        console.log('✅ Backend analysis completed', {
-          calculationsCount: response.calculations.length,
-          compatibleCount: response.calculations.filter(c => c.compatible).length
-        });
+        // If backend returns empty calculations, log a warning and fall back to frontend
+        if (!response.calculations || response.calculations.length === 0) {
+          console.warn('⚠️ Backend returned no calculations, falling back to frontend calculations');
+          setBackendResults(null);
+          setBackendError('Backend returned no equipment data');
+        } else {
+          setBackendResults(response.calculations);
+          console.log('✅ Backend analysis completed', {
+            calculationsCount: response.calculations.length,
+            compatibleCount: response.calculations.filter(c => c.compatible).length
+          });
+        }
       } catch (error) {
         console.error('❌ Backend analysis failed', error);
         setBackendError(error instanceof Error ? error.message : 'Backend analysis failed');
@@ -427,11 +434,22 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       } : null,
       machineryCount: machinery.length,
       aircraftCount: aircraft.length,
-      handCrewsCount: handCrews.length
+      handCrewsCount: handCrews.length,
+      equipmentDetails: {
+        machinery: machinery.map(m => ({ id: m.id, name: m.name, clearingRate: m.clearingRate })),
+        aircraft: aircraft.map(a => ({ id: a.id, name: a.name, dropLength: a.dropLength })),
+        handCrews: handCrews.map(h => ({ id: h.id, name: h.name, crewSize: h.crewSize }))
+      }
     });
 
     if (!distance) {
       console.log('❌ No distance provided, returning empty calculations');
+      return [] as CalculationResult[];
+    }
+    
+    // Warn if no equipment is available
+    if (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0) {
+      console.warn('⚠️ No equipment available for calculations. Check equipment loading.');
       return [] as CalculationResult[];
     }
 

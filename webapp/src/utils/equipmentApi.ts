@@ -24,53 +24,70 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 // Mock data for development when backend is not available
+const mockTimestamp = new Date().toISOString();
 const mockEquipment: EquipmentApi[] = [
   {
     id: '1',
     type: 'Machinery',
     name: 'Bulldozer D8T',
+    description: 'Heavy-duty bulldozer for clearing medium vegetation',
     clearingRate: 150,
     costPerHour: 400,
+    maxSlope: 44, // steep terrain limit
     allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '2',
     type: 'Machinery', 
     name: 'Track Loader',
+    description: 'Medium-duty loader for lighter terrain',
     clearingRate: 80,
     costPerHour: 200,
+    maxSlope: 24, // medium terrain limit
     allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland', 'lightshrub'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '3',
     type: 'Aircraft',
     name: 'Helicopter Bell 214',
+    description: 'Medium-lift helicopter for aerial support',
     dropLength: 500,
     turnaroundMinutes: 15,
     costPerHour: 3000,
+    speed: 200,
     allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '4',
     type: 'HandCrew',
-  name: 'Strike Team',
+    name: 'Strike Team',
+    description: 'Standard 6-person fire crew',
     crewSize: 6,
     clearingRatePerPerson: 15,
     costPerHour: 120,
+    equipmentList: ['Hand tools', 'Chainsaws', 'Water packs'],
     allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
-    version: 1
-  } as any
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  }
 ];
 
 // Development mode fallback helper
