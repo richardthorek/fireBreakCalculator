@@ -119,6 +119,52 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 8, 2026 - Mobile/Responsive Analysis Panel Enhancement
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Enhanced analysis panel responsive behavior
+
+**Objective:** Improve analysis panel usability on mobile devices and provide a more comprehensive dashboard experience on larger screens by making the panel expandable and removing restrictive height constraints.
+
+#### Problem Statement
+- **Mobile Issue**: Fixed 300px height made the analysis panel cramped, requiring excessive vertical scrolling
+- **Desktop Issue**: Fixed 400px width didn't provide a full "dashboard" feel for data-heavy analysis results
+- **UX Limitation**: Expand/collapse button only showed/hid content, didn't actually resize the panel
+
+#### Solution Implemented
+
+**Mobile Responsive Design (<1024px)**:
+- Changed from fixed `height: 300px` to flexible `height: auto`
+- Added intelligent max-height constraints:
+  - Default: `max-height: 50vh` (allows content to grow while remaining scrollable)
+  - Expanded mode: `max-height: 70vh` (provides more vertical space when needed)
+- Enables natural content flow and reduces need for internal scrolling
+
+**Desktop Dashboard Mode (≥1024px)**:
+- Maintained default width of 400px for normal use
+- Expanded mode increases width to 600px for better data visibility
+- Creates more comprehensive "dashboard" feel with equipment tables, charts, and analysis results
+
+**Interactive Expand/Collapse**:
+- Expand button now controls actual panel size, not just content visibility
+- Added `onExpandedChange` callback from AnalysisPanel to App.tsx
+- App tracks expanded state and applies CSS class to `.analysis-section`
+- Visual feedback: button styling changes when panel is expanded
+- Improved accessibility: added `aria-expanded` attribute and focus styles
+- Button meets WCAG touch target minimum (44×44px)
+
+#### Files Modified
+- `webapp/src/styles.css` (lines 812-847): Updated layout constraints and added expanded state styles
+- `webapp/src/components/AnalysisPanel.tsx`: Added onExpandedChange prop and callback logic
+- `webapp/src/App.tsx`: Added expanded state tracking and CSS class application
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ Maintains all existing functionality (equipment selection, vegetation analysis, scrolling)
+- ✅ Responsive breakpoints work correctly (mobile/tablet/desktop)
+- ✅ Accessibility improvements (aria-expanded, focus outline, touch targets)
+
+**Impact:** Significantly improves mobile UX by eliminating cramped panels and excessive scrolling. Desktop users get a more comprehensive dashboard view when expanded. Addresses user feedback about difficulty reviewing analysis results on smaller screens.
+
 ### February 2026 - Comprehensive Dependency Audit and Upgrade
 
 **Issue Reference:** Conduct full dependency audit and upgrade to latest versions

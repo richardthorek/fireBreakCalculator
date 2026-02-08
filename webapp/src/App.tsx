@@ -34,6 +34,8 @@ const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
   const [initialLocationSettled, setInitialLocationSettled] = useState<boolean>(false);
+  // Track whether the analysis panel is in expanded mode (affects layout)
+  const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState<boolean>(true);
   // Prefetch user location as early as possible to let the map move immediately
   // once the Map instance is ready. This avoids waiting for permission checks
   // inside the map lifecycle which can add perceived delay.
@@ -490,8 +492,8 @@ const App: React.FC = () => {
             selectedSearchLocation={searchLocation}
           />
         </div>
-        <div className="analysis-section">
-          <AnalysisPanel 
+        <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ''}`}>
+          <AnalysisPanel
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
             vegetationAnalysis={vegetationAnalysis}
@@ -504,6 +506,7 @@ const App: React.FC = () => {
             handCrews={handCrews}
             selectedAircraftForPreview={selectedAircraftForPreview}
             onDropPreviewChange={setSelectedAircraftForPreview}
+            onExpandedChange={setIsAnalysisPanelExpanded}
           />
         </div>
         <IntegratedConfigPanel 
