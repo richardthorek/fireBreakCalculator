@@ -326,6 +326,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // pan/zoom to user location completed). This prevents early logs/calls
     // and gives the map time to show the user's location seamlessly.
     if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !mapSettled) {
+      // Log why backend analysis is not running for debugging
+      if (distance && trackAnalysis && vegetationAnalysis) {
+        console.log('⏸️ Backend analysis blocked:', {
+          distance: !!distance,
+          trackAnalysis: !!trackAnalysis,
+          vegetationAnalysis: !!vegetationAnalysis,
+          backendAvailable,
+          mapSettled
+        });
+      }
       setBackendResults(null);
       return;
     }
@@ -333,7 +343,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const runBackendAnalysis = async () => {
       setBackendLoading(true);
       setBackendError(null);
-      console.log('🔄 Running backend analysis...');
+      console.log('🔄 Running backend analysis...', {
+        distance,
+        maxSlope: trackAnalysis.maxSlope,
+        vegetation: effectiveVegetation
+      });
       
       try {
         const response = await calculateEquipmentAnalysis({
@@ -346,7 +360,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         });
         
         setBackendResults(response.calculations);
-        console.log('✅ Backend analysis completed', response);
+        console.log('✅ Backend analysis completed', {
+          calculationsCount: response.calculations.length,
+          compatibleCount: response.calculations.filter(c => c.compatible).length
+        });
       } catch (error) {
         console.error('❌ Backend analysis failed', error);
         setBackendError(error instanceof Error ? error.message : 'Backend analysis failed');
@@ -393,9 +410,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // Do not perform calculations or emit logs until the map has settled to the
     // user's location. This prevents analysis from starting while the map is
     // still panning/zooming on initial load and keeps console noise low.
-    if (!mapSettled) return [];
+    if (!mapSettled) {
+      console.log('⏸️ Frontend calculations blocked: map not settled yet');
+      return [];
+    }
 
-    console.log('🔧 Starting equipment calculations', {
+    console.log('🔧 Starting frontend equipment calculations', {
       distance,
       derivedTerrainRequirement,
       effectiveVegetation,
@@ -781,6 +801,27 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <HelpContent />
         ) : (
           <>
+            {/* Diagnostic message when no calculations are available */}
+            {finalCalculations.length === 0 && (
+              <div className="diagnostic-message" style={{ 
+                padding: '1rem', 
+                margin: '1rem 0', 
+                backgroundColor: '#fff3cd', 
+                border: '1px solid #ffc107', 
+                borderRadius: '4px',
+                color: '#856404'
+              }}>
+                <strong>⚠️ No Equipment Data Available</strong>
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                  {!mapSettled && 'Waiting for map to initialize...'}
+                  {mapSettled && !backendAvailable && backendAvailable !== null && 'Backend service unavailable. Check console for details.'}
+                  {mapSettled && backendAvailable && backendLoading && 'Loading equipment analysis...'}
+                  {mapSettled && backendAvailable && !backendLoading && backendError && `Error: ${backendError}`}
+                  {mapSettled && backendAvailable && !backendLoading && !backendError && machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0 && 'No equipment configured. Please add equipment in the Configuration panel.'}
+                  {mapSettled && backendAvailable && !backendLoading && !backendError && (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0) && 'Calculations in progress...'}
+                </p>
+              </div>
+            )}
             <div className="best-options-summary">
               <h4>Quick Options</h4>
               <div className="best-options-grid">
