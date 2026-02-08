@@ -1,0 +1,15 @@
+{
+  "platform": {
+    "apiRuntime": "node:22"
+  },
+  "routes": [],
+  "navigationFallback": {
+    "rewrite": "/index.html"
+  },
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/index.html",
+      "statusCode": 200
+    }
+  }
+}
