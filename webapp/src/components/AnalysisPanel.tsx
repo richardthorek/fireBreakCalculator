@@ -33,6 +33,8 @@ interface AnalysisPanelProps {
   selectedAircraftForPreview?: string[];
   /** Callback for when drop preview selection changes */
   onDropPreviewChange?: (aircraftIds: string[]) => void;
+  /** Callback for when expanded state changes */
+  onExpandedChange?: (isExpanded: boolean) => void;
   /** True when the parent map has completed initial pan/zoom to the user's location
    *  (or attempted fallback). Gate heavy backend analysis until this is true to
    *  avoid spamming the backend while the map is still settling. */
@@ -260,6 +262,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   aircraft,
   handCrews,
   onDropPreviewChange,
+  onExpandedChange,
   selectedAircraftForPreview: externalSelected = []
   ,
   mapSettled = false
@@ -269,13 +272,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [useAutoDetected, setUseAutoDetected] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
-  
+
   // Backend analysis state (always use backend)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
   const [backendResults, setBackendResults] = useState<BackendCalculationResult[] | null>(null);
   const [backendLoading, setBackendLoading] = useState(false);
   const [backendError, setBackendError] = useState<string | null>(null);
-  
+
   // Quick option selections
   const [selectedQuickMachinery, setSelectedQuickMachinery] = useState<string | null>(null);
   const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
@@ -717,9 +720,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </div>
         <button
           className="expand-button"
-          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+          aria-label={isExpanded ? 'Collapse panel' : 'Expand panel'}
           aria-controls="analysis-content"
-          onClick={() => setIsExpanded(!isExpanded)}
+          aria-expanded={isExpanded}
+          onClick={() => {
+            const newExpanded = !isExpanded;
+            setIsExpanded(newExpanded);
+            onExpandedChange?.(newExpanded);
+          }}
         >
           {isExpanded ? '▼' : '▲'}
         </button>

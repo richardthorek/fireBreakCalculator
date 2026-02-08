@@ -811,8 +811,15 @@ html, body, #root, .app-shell {
 
 .analysis-section {
   flex: 0 0 auto;
-  height: 300px;
+  /* Allow panel to grow with content on mobile, max 50vh for reasonable scrolling */
+  height: auto;
+  max-height: 50vh;
   min-height: 200px;
+}
+
+/* Expanded state for mobile: takes more vertical space */
+.analysis-section.expanded {
+  max-height: 70vh;
 }
 
 /* Desktop: analysis panel on right side */
@@ -820,16 +827,22 @@ html, body, #root, .app-shell {
   .app-main {
     flex-direction: row;
   }
-  
+
   .map-section {
     flex: 1 1 auto;
     min-width: 0;
   }
-  
+
   .analysis-section {
     flex: 0 0 400px;
     height: auto;
-  min-height: 0; /* replaced auto for compatibility */
+    max-height: none;
+    min-height: 0; /* replaced auto for compatibility */
+  }
+
+  /* Expanded dashboard mode on desktop: wider panel for better visibility */
+  .analysis-section.expanded {
+    flex: 0 0 600px;
   }
 }
 
@@ -1111,11 +1124,27 @@ button:focus {
   border-radius: 4px;
   transition: all 0.2s;
   font-weight: 600;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .expand-button:hover {
   background: rgba(255,107,53,0.2);
   transform: translateY(-1px);
+}
+
+.expand-button:focus {
+  outline: 2px solid #ff6b35;
+  outline-offset: 2px;
+}
+
+/* Visual indicator when panel is expanded */
+.analysis-section.expanded .expand-button {
+  background: rgba(255,107,53,0.15);
+  border-color: #ff8c61;
 }
 
 .analysis-content {
