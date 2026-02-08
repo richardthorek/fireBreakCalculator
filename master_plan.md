@@ -119,6 +119,48 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 8, 2026 - Strip Excessive Console Logging from Production Code
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Remove excessive console.log debugging from production code
+
+**Objective:** Eliminate excessive console logging that runs in production, improving performance and preventing console spam that hides real errors.
+
+#### Problem Statement
+- `AnalysisPanel.tsx` and `App.tsx` contained 60+ console.log/warn/error calls that executed on every render and equipment evaluation
+- A single line draw triggered 50+ log statements per equipment item
+- Performance degradation from string formatting and object serialization on every render
+- Console spam hid real errors and warnings
+- Internal data structures leaked to any user who opened DevTools
+
+#### Solution Implemented
+- Leveraged existing `logger.ts` utility that provides environment-aware logging
+- Replaced all console.log calls with `logger.debug()` (only logs in development)
+- Replaced console.warn with `logger.warn()` (always logs)
+- Replaced console.error with `logger.error()` (always logs)
+- Deleted 6 verbose per-item "Final result:" logs inside forEach/map loops
+- Kept summary logs at start of evaluation sections for debugging
+
+#### Files Modified
+- `webapp/src/components/AnalysisPanel.tsx`: Replaced 36 console calls, added logger import
+- `webapp/src/App.tsx`: Replaced 23 console calls, added logger import
+- `webapp/src/utils/logger.ts`: Already existed with proper environment detection
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ Production build (npm run build) completed successfully
+- ✅ All console calls replaced with appropriate logger methods
+- ✅ Verbose per-item logs removed from loops
+- ✅ Logger properly checks `import.meta.env.MODE` for environment detection
+- ✅ In development: All debug logs appear
+- ✅ In production: Only warn/error logs appear
+
+**Impact:** 
+- Eliminates production console spam (50+ logs per interaction → 0 debug logs)
+- Improves runtime performance by avoiding unnecessary string formatting in production
+- Real errors and warnings now visible in production console
+- Internal data structures no longer exposed to end users
+- Developer experience preserved - full debug logging still available in dev mode
+
 ### February 8, 2026 - Fix Equipment Warning During Map Initialization
 
 **PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Hide equipment warning during normal map initialization
