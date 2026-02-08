@@ -15,6 +15,7 @@ import {
   deleteVegetationMapping 
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
+import { logger } from './utils/logger';
 
 // Import site logo/favicon as a module so the bundler rewrites the path
 // and the image is available regardless of deployment prefix or asset fingerprinting.
@@ -70,7 +71,7 @@ const App: React.FC = () => {
   ): T[] => {
     // Handle string case (CSV parsing failure in API)
     if (typeof value === 'string') {
-      console.warn(`API returned CSV string for ${fieldName} on ${machineName}, parsing locally:`, value);
+      logger.warn(`API returned CSV string for ${fieldName} on ${machineName}, parsing locally:`, value);
       const parsed = value.split(',').map(v => v.trim()).filter(Boolean) as T[];
       return parsed.filter(v => validValues.includes(v));
     }
@@ -79,7 +80,7 @@ const App: React.FC = () => {
     if (Array.isArray(value)) {
       const validated = value.filter(v => validValues.includes(v as T));
       if (validated.length === 0) {
-        console.warn(`${machineName} has empty/invalid ${fieldName} array, using fallback values`);
+        logger.warn(`${machineName} has empty/invalid ${fieldName} array, using fallback values`);
         // Provide sensible fallbacks for machines with no valid values
         if (fieldName === 'allowedTerrain') {
           return ['flat', 'medium'] as T[];
@@ -91,7 +92,7 @@ const App: React.FC = () => {
     }
     
     // Handle null/undefined/other (fallback)
-    console.warn(`${machineName} has invalid ${fieldName} format:`, typeof value, value);
+    logger.warn(`${machineName} has invalid ${fieldName} format:`, typeof value, value);
     if (fieldName === 'allowedTerrain') {
       return ['flat', 'medium'] as T[];
     } else if (fieldName === 'allowedVegetation') {
@@ -103,7 +104,7 @@ const App: React.FC = () => {
   // Derived domain-specific structures consumed by analysis (fallback to defaults until remote loads)
   const machinery: MachinerySpec[] = useMemo(() => {
     if (initialLocationSettled) {
-      console.log('🔧 Processing machinery from equipment data:', {
+      logger.debug('🔧 Processing machinery from equipment data:', {
         totalEquipment: equipment.length,
         machineryItems: equipment.filter((e): e is MachineryApi => e.type === 'Machinery').length
       });
@@ -111,12 +112,12 @@ const App: React.FC = () => {
 
     const items = equipment.filter((e): e is MachineryApi => e.type === 'Machinery');
     if (!items.length) {
-      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No machinery items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) logger.debug('⚠️ No machinery items found, using default config');
       return defaultConfig.machinery;
     }
     
     return items.map(m => {
-      console.log(`🚜 Processing machinery: ${m.name}`, {
+      logger.debug(`🚜 Processing machinery: ${m.name}`, {
         id: m.id,
         rawAllowedTerrain: m.allowedTerrain,
         rawAllowedVegetation: m.allowedVegetation,
@@ -162,14 +163,13 @@ const App: React.FC = () => {
         maxSlope: m.maxSlope ?? deriveMaxSlopeFromTerrain(allowedTerrain)
       };
 
-      console.log(`   ✅ Processed machinery result:`, processed);
       return processed;
     });
   }, [equipment, initialLocationSettled]);
 
   const aircraft: AircraftSpec[] = useMemo(() => {
     if (initialLocationSettled) {
-      console.log('✈️ Processing aircraft from equipment data:', {
+      logger.debug('✈️ Processing aircraft from equipment data:', {
         totalEquipment: equipment.length,
         aircraftItems: equipment.filter((e): e is AircraftApi => e.type === 'Aircraft').length
       });
@@ -177,12 +177,12 @@ const App: React.FC = () => {
 
     const items = equipment.filter((e): e is AircraftApi => e.type === 'Aircraft');
     if (!items.length) {
-      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No aircraft items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) logger.debug('⚠️ No aircraft items found, using default config');
       return defaultConfig.aircraft;
     }
     
     return items.map(a => {
-      console.log(`✈️ Processing aircraft: ${a.name}`, {
+      logger.debug(`✈️ Processing aircraft: ${a.name}`, {
         id: a.id,
         rawAllowedTerrain: a.allowedTerrain,
         rawAllowedVegetation: a.allowedVegetation,
@@ -217,14 +217,13 @@ const App: React.FC = () => {
         allowedVegetation
       };
 
-      console.log(`   ✅ Processed aircraft result:`, processed);
       return processed;
     });
   }, [equipment, initialLocationSettled]);
 
   const handCrews: HandCrewSpec[] = useMemo(() => {
     if (initialLocationSettled) {
-      console.log('👨‍🚒 Processing hand crews from equipment data:', {
+      logger.debug('👨‍🚒 Processing hand crews from equipment data:', {
         totalEquipment: equipment.length,
         handCrewItems: equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew').length
       });
@@ -232,12 +231,12 @@ const App: React.FC = () => {
 
     const items = equipment.filter((e): e is HandCrewApi => e.type === 'HandCrew');
     if (!items.length) {
-      if (initialLocationSettled || equipment.length > 0) console.log('⚠️ No hand crew items found, using default config');
+      if (initialLocationSettled || equipment.length > 0) logger.debug('⚠️ No hand crew items found, using default config');
       return defaultConfig.handCrews;
     }
     
     return items.map(c => {
-      console.log(`👨‍🚒 Processing hand crew: ${c.name}`, {
+      logger.debug(`👨‍🚒 Processing hand crew: ${c.name}`, {
         id: c.id,
         rawAllowedTerrain: c.allowedTerrain,
         rawAllowedVegetation: c.allowedVegetation,
@@ -271,7 +270,6 @@ const App: React.FC = () => {
         allowedVegetation
       };
 
-      console.log(`   ✅ Processed hand crew result:`, processed);
       return processed;
     });
   }, [equipment, initialLocationSettled]);
@@ -297,7 +295,7 @@ const App: React.FC = () => {
     setVegetationMappingError(null);
     try {
   // Clear the NSW vegetation cache to force using new mappings
-  try { _clearNSWCache(); } catch (err) { console.warn('Failed to clear NSW cache', err); }
+  try { _clearNSWCache(); } catch (err) { logger.warn('Failed to clear NSW cache', err); }
       
       const data = await listVegetationMappings();
       setVegetationMappings(data);
@@ -335,7 +333,7 @@ const App: React.FC = () => {
       !vegetationMappingError
     ) {
       const createDefaultMappings = async () => {
-        console.log('Checking for existing vegetation mappings');
+        logger.debug('Checking for existing vegetation mappings');
         
         // First, try to load any existing mappings
         try {
@@ -343,12 +341,12 @@ const App: React.FC = () => {
           
           // If mappings were found after all, update state and don't create defaults
           if (existingMappings && existingMappings.length > 0) {
-            console.log(`Found ${existingMappings.length} existing vegetation mappings, skipping default creation`);
+            logger.debug(`Found ${existingMappings.length} existing vegetation mappings, skipping default creation`);
             setVegetationMappings(existingMappings);
             return;
           }
           
-          console.log('No existing mappings found, creating defaults');
+          logger.debug('No existing mappings found, creating defaults');
           
           // Common NSW vegetation formations mapped to our 4 categories
           const defaultMappings = [
@@ -380,13 +378,13 @@ const App: React.FC = () => {
           for (const mapping of defaultMappings) {
             try {
               await createVegetationMapping(mapping as CreateVegetationMappingInput);
-              console.log(`Created mapping for: ${mapping.formationName}`);
+              logger.debug(`Created mapping for: ${mapping.formationName}`);
             } catch (err: any) {
               // Skip over already existing mappings
               if (err.message?.includes('already exists')) {
-                console.log(`Mapping for ${mapping.formationName} already exists, skipping`);
+                logger.debug(`Mapping for ${mapping.formationName} already exists, skipping`);
               } else {
-                console.error(`Error creating mapping for ${mapping.formationName}:`, err);
+                logger.error(`Error creating mapping for ${mapping.formationName}:`, err);
               }
             }
           }
@@ -394,7 +392,7 @@ const App: React.FC = () => {
           // Reload to get all mappings including any that were created
           await loadVegetationMappings();
         } catch (error) {
-          console.error('Failed to create default vegetation mappings:', error);
+          logger.error('Failed to create default vegetation mappings:', error);
         }
       };
       
