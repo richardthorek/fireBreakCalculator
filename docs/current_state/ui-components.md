@@ -95,7 +95,7 @@ This document catalogs all React components in the Fire Break Calculator applica
 ### External Libraries
 | Library | Version | Used By | Purpose |
 |---------|---------|---------|---------|
-| react | 18.3.1 | All components | Core framework |
+| react | 19.2.4 | All components | Core framework |
 | mapbox-gl | 3.18.1 | MapboxMapView | Map rendering |
 | @mapbox/mapbox-gl-draw | 1.5.1 | MapboxMapView | Drawing tools |
 | leaflet | - | (legacy) | Being phased out |
