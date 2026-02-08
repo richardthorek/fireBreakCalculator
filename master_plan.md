@@ -12,7 +12,7 @@ This document tracks major initiatives, technical decisions, and project milesto
 
 #### Node.js Version Upgrade
 
-**Node.js**: 20.x → 22.x
+Node.js: 20.x → 22.x
 - Updated GitHub Actions workflow to use Node.js 22.x
 - Updated API `.nvmrc` to specify Node 22
 - Updated API `package.json` engines field to `>=22.x`
