@@ -860,6 +860,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     {hasBackendError && `Error: ${backendError}`}
                     {hasNoEquipment && 'No equipment configured. Please add equipment in the Configuration panel.'}
                     {isWaitingForData && 'Equipment loaded, waiting for analysis results...'}
+                    {!isBackendUnavailable && !isBackendLoading && !hasBackendError && !hasNoEquipment && !isWaitingForData && 
+                      'No calculations available. Please check your configuration.'}
                   </p>
                 </div>
               );
