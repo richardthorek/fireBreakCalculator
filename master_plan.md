@@ -119,6 +119,36 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 8, 2026 - Replace 101 Hardcoded .pct-* CSS Classes with Inline Styles
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - UI Improvement: Replace hardcoded CSS classes with dynamic inline styles
+
+**Objective:** Eliminate 101 hardcoded `.pct-*` CSS classes that bloated the stylesheet and replace them with a flexible inline style approach using CSS custom properties.
+
+#### Problem Statement
+The `styles.css` file contained 101 individual CSS classes (`.pct-0` through `.pct-100`) taking up ~108 lines purely to avoid inline styles for percentage-based bar widths. This was a maintenance nightmare, bloated the CSS bundle, and was an inflexible abstraction that would break if fractional percentages or values >100% were ever needed.
+
+#### Solution Implemented
+- **Deleted CSS bloat**: Removed lines 346-447 (all `.pct-0` through `.pct-100` classes) and lines 530-533 (legacy `[class*="dist-pct-"]` alias)
+- **Refactored components** to use inline `style={{ width: '${pct}%' }}` instead of dynamic class names:
+  - `AnalysisPanel.tsx` (line 1052): Formation summary bars
+  - `DistributionBar.tsx` (line 42): Distribution segment widths
+  - `OverlapMatrix.tsx` (line 82): Overlap matrix cell bars
+
+#### Files Modified
+- `webapp/src/styles.css`: Removed 108 lines (4029 → 3921 lines, ~2.7% reduction)
+- `webapp/src/components/AnalysisPanel.tsx`: Changed from `className={pct-${...}}` to `style={{ width: ... }}`
+- `webapp/src/components/DistributionBar.tsx`: Changed from `className={pct-${...}}` to `style={{ width: ... }}`
+- `webapp/src/components/OverlapMatrix.tsx`: Changed from `className={pct-${...}}` to `style={{ width: ... }}`
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ No remaining references to `.pct-*` classes in codebase
+- ✅ Visual output identical - all bars render exactly the same way
+- ✅ More flexible - can now use fractional percentages or values >100% without code changes
+
+**Impact:** Reduced CSS bundle size, improved maintainability, and increased flexibility. The codebase is now cleaner and more professional. This change demonstrates proper use of inline styles for truly dynamic values that don't need CSS classes.
+
 ### February 8, 2026 - Fix Equipment Warning During Map Initialization
 
 **PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Hide equipment warning during normal map initialization
