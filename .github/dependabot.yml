@@ -1,0 +1,103 @@
+version: 2
+updates:
+  # Webapp dependencies
+  - package-ecosystem: "npm"
+    directory: "/webapp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "webapp"
+    commit-message:
+      prefix: "chore(webapp)"
+      include: "scope"
+    reviewers:
+      - "richardthorek"
+    # Group minor and patch updates together to reduce PR noise
+    groups:
+      development-dependencies:
+        patterns:
+          - "@types/*"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@types/*"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # API dependencies
+  - package-ecosystem: "npm"
+    directory: "/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "api"
+    commit-message:
+      prefix: "chore(api)"
+      include: "scope"
+    reviewers:
+      - "richardthorek"
+    groups:
+      azure-dependencies:
+        patterns:
+          - "@azure/*"
+        update-types:
+          - "minor"
+          - "patch"
+      development-dependencies:
+        patterns:
+          - "@types/*"
+          - "typescript"
+          - "rimraf"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Scripts dependencies
+  - package-ecosystem: "npm"
+    directory: "/scripts"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "scripts"
+    commit-message:
+      prefix: "chore(scripts)"
+      include: "scope"
+    reviewers:
+      - "richardthorek"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    reviewers:
+      - "richardthorek"

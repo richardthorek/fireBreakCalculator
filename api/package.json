@@ -9,19 +9,19 @@
     "prestart": "npm run clean && npm run build",
     "start": "func start",
     "test": "npm run test:e2e",
-    "test:e2e": "node ./dist/test/e2e.test.js"
+    "test:e2e": "node ./dist/src/test/e2e.test.js"
   },
   "dependencies": {
-    "@azure/functions": "^4.0.0",
-    "@azure/data-tables": "^13.2.2"
+    "@azure/functions": "^4.11.2",
+    "@azure/data-tables": "^13.3.2"
   },
   "devDependencies": {
-    "@types/node": "^20.x",
-    "typescript": "^4.9.5",
-    "rimraf": "^5.0.0"
+    "@types/node": "^22.x",
+    "typescript": "^5.9.3",
+    "rimraf": "^6.1.2"
   },
   "engines": {
-    "node": ">=18.x"
+    "node": ">=22.x"
   },
   "main": "dist/src/index.js"
 }

@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@azure/data-tables": "^13.3.1",
+    "@azure/data-tables": "^13.3.2",
     "csv-parse": "^6.1.0",
     "node-fetch": "^2.7.0"
   }
