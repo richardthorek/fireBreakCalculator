@@ -119,6 +119,35 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 8, 2026 - Fix Map Resizing on Mobile When Panel Collapsed
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Fix map not resizing correctly when analysis panel is collapsed on mobile
+
+**Objective:** Fix the map view not expanding to fill available space when the analysis panel is collapsed on mobile devices, eliminating the black box that appeared in its place.
+
+#### Problem Statement
+When the analysis panel was collapsed on mobile devices (<1024px viewports), the map did not fully expand to fill the available space. The `.analysis-section` container maintained a `min-height: 200px` even when the panel content was hidden, creating a visible black box where the hidden content would be.
+
+#### Solution Implemented
+- Added `collapsed` class to `.analysis-section` in App.tsx when `isAnalysisPanelExpanded` is false
+- Added CSS rules for `.analysis-section.collapsed`:
+  - `min-height: auto` (removes the 200px minimum)
+  - `max-height: fit-content` (allows container to shrink to actual content size)
+  - `flex: 0 0 auto` (maintains flex behavior)
+- Map now properly expands to fill available viewport when panel is collapsed
+
+#### Files Modified
+- `webapp/src/App.tsx` (line 495): Changed className to add 'collapsed' class when panel not expanded
+- `webapp/src/styles.css` (lines 820-825): Added `.analysis-section.collapsed` CSS rules
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ CSS properly targets collapsed state on mobile viewports
+- ✅ No regressions on desktop layout (≥1024px)
+- ✅ Maintains existing expand/collapse functionality
+
+**Impact:** Fixes mobile UX issue where map was unusable when panel collapsed. Users can now collapse the panel and use the full viewport for map interaction on mobile devices.
+
 ### February 8, 2026 - Mobile/Responsive Analysis Panel Enhancement
 
 **PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Enhanced analysis panel responsive behavior
