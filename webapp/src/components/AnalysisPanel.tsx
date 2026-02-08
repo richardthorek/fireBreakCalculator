@@ -839,6 +839,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               const isWaitingForData = mapSettled && backendAvailable && !backendLoading && !backendError && 
                                        (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
               
+              // Don't show warning during normal map initialization - this is expected behavior
+              if (isMapInitializing) {
+                return null;
+              }
+              
               return (
                 <div className="diagnostic-message" style={{ 
                   padding: '1rem', 
@@ -850,12 +855,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 }}>
                   <strong>⚠️ No Equipment Data Available</strong>
                   <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
-                    {isMapInitializing && 'Waiting for map to initialize...'}
                     {isBackendUnavailable && 'Backend service unavailable. Check console for details.'}
                     {isBackendLoading && 'Loading equipment analysis...'}
                     {hasBackendError && `Error: ${backendError}`}
                     {hasNoEquipment && 'No equipment configured. Please add equipment in the Configuration panel.'}
                     {isWaitingForData && 'Equipment loaded, waiting for analysis results...'}
+                    {!isBackendUnavailable && !isBackendLoading && !hasBackendError && !hasNoEquipment && !isWaitingForData && 
+                      'No calculations available. Please check your configuration.'}
                   </p>
                 </div>
               );

@@ -193,6 +193,37 @@ This ensures:
 - ✅ No regressions on mobile/tablet layouts
 
 **Impact:** Significantly improves desktop UX by maximizing data density and professional appearance. Users can now see more equipment analysis results without scrolling, as the panel efficiently uses all available screen real estate. The information-dense layout better serves the tool's purpose as a professional planning application for emergency response teams.
+### February 8, 2026 - Fix Equipment Warning During Map Initialization
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Hide equipment warning during normal map initialization
+
+**Objective:** Eliminate the confusing "⚠️ No Equipment Data Available" warning that appeared during normal map initialization, even when equipment data was present.
+
+#### Problem Statement
+Users were seeing "⚠️ No Equipment Data Available" with "Waiting for map to initialize..." message that persisted during app startup. This warning appeared even though equipment data was being loaded correctly, causing confusion. The console logs showed machinery data being processed successfully, but the warning persisted until the map completed its initialization sequence.
+
+#### Root Cause
+- `finalCalculations` array depends on `backendResults` which requires `mapSettled === true` before backend analysis runs
+- Frontend `calculations` also returns empty array when `!mapSettled` to prevent premature analysis
+- The warning displayed whenever `finalCalculations.length === 0`, including during the normal initialization period
+- This created a false alarm - the warning showed during expected behavior, not an actual problem
+
+#### Solution Implemented
+- Added early return `null` when `isMapInitializing` is true to skip warning display during initialization
+- Removed "Waiting for map to initialize..." message from diagnostic conditions
+- Added fallback message for unexpected diagnostic states (code review feedback)
+- Warning now only appears after map has settled, indicating genuine configuration or backend issues
+
+#### Files Modified
+- `webapp/src/components/AnalysisPanel.tsx` (lines 843-845, 861-862): Added early return logic and fallback message
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ Code review completed and addressed (fallback message added)
+- ✅ CodeQL security scan passed (0 alerts)
+- ✅ No changes to calculation logic or data flow - purely UI/UX improvement
+
+**Impact:** Eliminates user confusion during app startup. Warning now only appears for genuine issues (backend unavailable, no equipment configured, errors) rather than during normal initialization. Improves perceived app reliability and user confidence.
 
 ### February 8, 2026 - Fix Map Resizing on Mobile When Panel Collapsed
 
