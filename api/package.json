@@ -16,7 +16,7 @@
     "@azure/data-tables": "^13.3.2"
   },
   "devDependencies": {
-    "@types/node": "^22.x",
+    "@types/node": "^25.x",
     "typescript": "^5.9.3",
     "rimraf": "^6.1.2"
   },
