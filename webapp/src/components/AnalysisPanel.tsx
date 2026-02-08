@@ -326,6 +326,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // pan/zoom to user location completed). This prevents early logs/calls
     // and gives the map time to show the user's location seamlessly.
     if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !mapSettled) {
+      // Log why backend analysis is not running for debugging
+      if (distance && trackAnalysis && vegetationAnalysis) {
+        console.log('⏸️ Backend analysis blocked:', {
+          distance: !!distance,
+          trackAnalysis: !!trackAnalysis,
+          vegetationAnalysis: !!vegetationAnalysis,
+          backendAvailable,
+          mapSettled
+        });
+      }
       setBackendResults(null);
       return;
     }
@@ -333,7 +343,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const runBackendAnalysis = async () => {
       setBackendLoading(true);
       setBackendError(null);
-      console.log('🔄 Running backend analysis...');
+      console.log('🔄 Running backend analysis...', {
+        distance,
+        maxSlope: trackAnalysis.maxSlope,
+        vegetation: effectiveVegetation
+      });
       
       try {
         const response = await calculateEquipmentAnalysis({
@@ -345,8 +359,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           }
         });
         
-        setBackendResults(response.calculations);
-        console.log('✅ Backend analysis completed', response);
+        // If backend returns empty calculations, log a warning and fall back to frontend
+        if (!response.calculations || response.calculations.length === 0) {
+          console.warn('⚠️ Backend returned no calculations, falling back to frontend calculations');
+          setBackendResults(null);
+          setBackendError('Backend returned no equipment data');
+        } else {
+          setBackendResults(response.calculations);
+          console.log('✅ Backend analysis completed', {
+            calculationsCount: response.calculations.length,
+            compatibleCount: response.calculations.filter(c => c.compatible).length
+          });
+        }
       } catch (error) {
         console.error('❌ Backend analysis failed', error);
         setBackendError(error instanceof Error ? error.message : 'Backend analysis failed');
@@ -393,9 +417,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // Do not perform calculations or emit logs until the map has settled to the
     // user's location. This prevents analysis from starting while the map is
     // still panning/zooming on initial load and keeps console noise low.
-    if (!mapSettled) return [];
+    if (!mapSettled) {
+      console.log('⏸️ Frontend calculations blocked: map not settled yet');
+      return [];
+    }
 
-    console.log('🔧 Starting equipment calculations', {
+    console.log('🔧 Starting frontend equipment calculations', {
       distance,
       derivedTerrainRequirement,
       effectiveVegetation,
@@ -407,12 +434,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       } : null,
       machineryCount: machinery.length,
       aircraftCount: aircraft.length,
-      handCrewsCount: handCrews.length
+      handCrewsCount: handCrews.length,
+      equipmentDetails: {
+        machinery: machinery.map(m => ({ id: m.id, name: m.name, clearingRate: m.clearingRate })),
+        aircraft: aircraft.map(a => ({ id: a.id, name: a.name, dropLength: a.dropLength })),
+        handCrews: handCrews.map(h => ({ id: h.id, name: h.name, crewSize: h.crewSize }))
+      }
     });
 
     if (!distance) {
       console.log('❌ No distance provided, returning empty calculations');
-      return [] as CalculationResult[];
+      return [];
+    }
+    
+    // Warn if no equipment is available
+    if (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0) {
+      console.warn('⚠️ No equipment available for calculations. Check equipment loading.');
+      return [];
     }
 
     const results: CalculationResult[] = [];
@@ -781,6 +819,39 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <HelpContent />
         ) : (
           <>
+            {/* Diagnostic message when no calculations are available */}
+            {finalCalculations.length === 0 && (() => {
+              // Extract diagnostic conditions for better readability
+              const isMapInitializing = !mapSettled;
+              const isBackendUnavailable = mapSettled && backendAvailable === false; // explicitly false, not null (initializing)
+              const isBackendLoading = mapSettled && backendAvailable && backendLoading;
+              const hasBackendError = mapSettled && backendAvailable && !backendLoading && backendError;
+              const hasNoEquipment = mapSettled && backendAvailable && !backendLoading && !backendError && 
+                                     (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0);
+              const isWaitingForData = mapSettled && backendAvailable && !backendLoading && !backendError && 
+                                       (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
+              
+              return (
+                <div className="diagnostic-message" style={{ 
+                  padding: '1rem', 
+                  margin: '1rem 0', 
+                  backgroundColor: '#fff3cd', 
+                  border: '1px solid #ffc107', 
+                  borderRadius: '4px',
+                  color: '#856404'
+                }}>
+                  <strong>⚠️ No Equipment Data Available</strong>
+                  <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                    {isMapInitializing && 'Waiting for map to initialize...'}
+                    {isBackendUnavailable && 'Backend service unavailable. Check console for details.'}
+                    {isBackendLoading && 'Loading equipment analysis...'}
+                    {hasBackendError && `Error: ${backendError}`}
+                    {hasNoEquipment && 'No equipment configured. Please add equipment in the Configuration panel.'}
+                    {isWaitingForData && 'Equipment loaded, waiting for analysis results...'}
+                  </p>
+                </div>
+              );
+            })()}
             <div className="best-options-summary">
               <h4>Quick Options</h4>
               <div className="best-options-grid">

@@ -24,53 +24,70 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 // Mock data for development when backend is not available
+const mockTimestamp = new Date().toISOString();
 const mockEquipment: EquipmentApi[] = [
   {
     id: '1',
     type: 'Machinery',
     name: 'Bulldozer D8T',
+    description: 'Heavy-duty bulldozer for clearing medium vegetation',
     clearingRate: 150,
     costPerHour: 400,
+    maxSlope: 44, // can operate on steep terrain (up to 44 degrees)
     allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '2',
     type: 'Machinery', 
     name: 'Track Loader',
+    description: 'Medium-duty loader for lighter terrain',
     clearingRate: 80,
     costPerHour: 200,
+    maxSlope: 24, // limited to flat and medium terrain (max 24 degrees)
     allowedTerrain: ['flat', 'medium'],
     allowedVegetation: ['grassland', 'lightshrub'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '3',
     type: 'Aircraft',
     name: 'Helicopter Bell 214',
+    description: 'Medium-lift helicopter for aerial support',
     dropLength: 500,
     turnaroundMinutes: 15,
     costPerHour: 3000,
+    speed: 200,
     allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     active: true,
-    version: 1
-  } as any,
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  },
   {
     id: '4',
     type: 'HandCrew',
-  name: 'Strike Team',
+    name: 'Strike Team',
+    description: 'Standard 6-person fire crew',
     crewSize: 6,
     clearingRatePerPerson: 15,
     costPerHour: 120,
+    equipmentList: ['Hand tools', 'Chainsaws', 'Water packs'],
     allowedTerrain: ['flat', 'medium', 'steep'],
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     active: true,
-    version: 1
-  } as any
+    version: 1,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp
+  }
 ];
 
 // Development mode fallback helper
@@ -83,12 +100,10 @@ async function withFallback<T>(apiCall: () => Promise<T>, fallback: T): Promise<
   try {
     return await apiCall();
   } catch (error: any) {
-    // If we get a network error or 500 error in development, use fallback
-    if (error.message.includes('Internal Server Error') || error.message.includes('Failed to fetch')) {
-      console.warn('API not available in development, using mock data:', error.message);
-      return fallback;
-    }
-    throw error;
+    // In development, use fallback for any API error
+    // This ensures the app works even when backend is completely unavailable
+    console.warn('API call failed in development, using fallback data:', error.message);
+    return fallback;
   }
 }
 
@@ -96,7 +111,15 @@ export async function listEquipment(): Promise<EquipmentApi[]> {
   return withFallback(
     async () => {
       const res = await fetch(`${baseUrl}/equipment`);
-      return handle<EquipmentApi[]>(res);
+      const data = await handle<EquipmentApi[]>(res);
+      
+      // If backend returns empty array in development, use mock data instead
+      if (isDevelopment && (!data || data.length === 0)) {
+        console.warn('Backend returned empty equipment list, using mock data in development');
+        return mockEquipment;
+      }
+      
+      return data;
     },
     mockEquipment
   );
