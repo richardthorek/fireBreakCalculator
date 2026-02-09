@@ -1047,7 +1047,7 @@ const FormationSummary: React.FC<{ vegetationAnalysis: VegetationAnalysis }> = (
               <div className="formation-swatch" aria-hidden />
               <div className="formation-label">{label}</div>
               <div className="formation-bar">
-                <div className={`formation-bar-fill pct-${Math.max(0, Math.min(100, Math.round(pct)))}`} aria-hidden />
+                <div className="formation-bar-fill" style={{ width: `${Math.max(0, Math.min(100, Math.round(pct)))}%` }} aria-hidden />
               </div>
               <div className="formation-pct">{pct}%</div>
             </div>
