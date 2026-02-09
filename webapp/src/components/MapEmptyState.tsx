@@ -28,7 +28,7 @@ export const MapEmptyState: React.FC<MapEmptyStateProps> = ({
       <div className="map-empty-state-content">
         <div className="map-empty-state-header">
           <span className="map-empty-state-icon" aria-hidden="true">✏️</span>
-          <h4 className="map-empty-state-title">Get Started</h4>
+          <span className="map-empty-state-title">Get Started</span>
         </div>
         <p className="map-empty-state-message">
           Use the <strong>drawing tool</strong> above to start planning your fire break line.
