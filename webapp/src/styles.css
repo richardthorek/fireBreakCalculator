@@ -423,6 +423,7 @@ html, body, #root, .app-shell {
   flex-direction: column;
   align-items: center;
   padding: 8px 0;
+  flex: 0 0 auto; /* Don't grow or shrink, stay at bottom */
 }
 
 .buttons-row {
@@ -3293,6 +3294,7 @@ button:focus {
 .bottom-buttons-container {
   /* slightly tighter spacing for compactness */
   padding: 6px 8px;
+  flex: 0 0 auto; /* Don't grow or shrink, stay at bottom */
 }
 
 .bottom-buttons-container .buttons-row {

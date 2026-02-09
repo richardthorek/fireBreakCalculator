@@ -149,6 +149,80 @@ The `styles.css` file contained 101 individual CSS classes (`.pct-0` through `.p
 
 **Impact:** Reduced CSS bundle size, improved maintainability, and increased flexibility. The codebase is now cleaner and more professional. This change demonstrates proper use of inline styles for truly dynamic values that don't need CSS classes.
 
+### February 8, 2026 - Fix Content Analysis Panel Blank Gap on Desktop
+
+**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Fix blank gap at bottom of Content Analysis panel
+
+**Objective:** Eliminate the blank gap at the bottom of the Content Analysis panel on desktop, ensuring efficient use of all available screen real estate for data display.
+
+#### Problem Statement
+On desktop viewports (≥1024px), the Content Analysis panel (right-side pane) displayed a blank gap at the bottom. The panel content scrolled above this gap, wasting valuable screen space that should be used for displaying equipment analysis data. This made the data presentation feel sparse and less professional, with important information floating above unused whitespace.
+
+#### Root Cause Analysis
+The `.analysis-panel-permanent` container used a flex column layout (`display: flex; flex-direction: column; height: 100%`) with three main children:
+1. `.analysis-header` - Fixed at top (`flex: 0 0 auto`) ✅
+2. `.analysis-content` - Should fill available space (`flex: 1 1 auto`) ✅
+3. `.bottom-buttons-container` - Should stay at bottom but **was missing explicit flex behavior** ❌
+
+Without `flex: 0 0 auto` on the bottom container, the flex layout didn't properly distribute vertical space, creating the visual gap between scrollable content and the bottom buttons.
+
+#### Solution Implemented
+Added `flex: 0 0 auto` to `.bottom-buttons-container` in both CSS locations (lines 530 and 3405) to ensure it maintains fixed size at the bottom without growing.
+
+**Flex Layout Hierarchy:**
+```css
+.analysis-panel-permanent {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.analysis-header {
+  flex: 0 0 auto;  /* Fixed size at top */
+}
+
+.analysis-content {
+  flex: 1 1 auto;  /* Grows to fill available space */
+  overflow-y: auto; /* Scrolls when content exceeds available height */
+}
+
+.bottom-buttons-container {
+  flex: 0 0 auto;  /* Fixed size at bottom (NEW) */
+}
+```
+
+This ensures:
+- Header stays at top with natural height
+- Content area expands to fill all available vertical space
+- Bottom buttons stay at bottom without creating gaps
+- Scrolling works properly within the content area
+
+#### Files Modified
+- `webapp/src/styles.css` (line 530): Added `flex: 0 0 auto` to primary `.bottom-buttons-container` definition
+- `webapp/src/styles.css` (line 3405): Added `flex: 0 0 auto` to media query override for `.bottom-buttons-container`
+
+#### Responsive Behavior Verified
+**Mobile (<1024px):**
+- Panel at bottom of screen with `max-height: 50vh` (expanded: `70vh`)
+- Content scrolls within constraints
+- Bottom buttons remain accessible
+- No gaps created ✅
+
+**Desktop (≥1024px):**
+- Panel on right side with `height: auto`, `max-height: none`
+- Panel fills full available height from top to bottom
+- Content uses all vertical space efficiently
+- Bottom buttons stay at bottom edge ✅
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ Flex layout properly distributes vertical space
+- ✅ No blank gap at bottom on desktop
+- ✅ Content area scrolls correctly when needed
+- ✅ Responsive behavior maintained across all viewports
+- ✅ No regressions on mobile/tablet layouts
+
+**Impact:** Significantly improves desktop UX by maximizing data density and professional appearance. Users can now see more equipment analysis results without scrolling, as the panel efficiently uses all available screen real estate. The information-dense layout better serves the tool's purpose as a professional planning application for emergency response teams.
 ### February 8, 2026 - Fix Equipment Warning During Map Initialization
 
 **PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Hide equipment warning during normal map initialization
