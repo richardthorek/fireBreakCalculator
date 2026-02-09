@@ -13,6 +13,7 @@ import { HelpContent } from './HelpContent';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
+import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -145,7 +146,7 @@ const baseEnvironmentCompatible = (
   requiredTerrain: TerrainLevel,
   vegetation: VegetationType
 ): boolean => {
-  console.log(`      🔍 Checking base environment compatibility for ${equipment.name}:`, {
+  logger.debug(`      🔍 Checking base environment compatibility for ${equipment.name}:`, {
     equipmentId: equipment.id,
     equipmentAllowedTerrain: equipment.allowedTerrain,
     equipmentAllowedVegetation: equipment.allowedVegetation,
@@ -158,7 +159,7 @@ const baseEnvironmentCompatible = (
   const requiredRank = terrainRank[requiredTerrain];
   const terrainCompatible = requiredRank <= highestAllowedRank;
   
-  console.log(`      🏔️ Terrain compatibility check:`, {
+  logger.debug(`      🏔️ Terrain compatibility check:`, {
     highestAllowedRank,
     requiredRank,
     terrainCompatible,
@@ -168,14 +169,14 @@ const baseEnvironmentCompatible = (
   // For vegetation, we need an exact match
   const vegetationCompatible = equipment.allowedVegetation.includes(vegetation);
   
-  console.log(`      🌿 Vegetation compatibility check:`, {
+  logger.debug(`      🌿 Vegetation compatibility check:`, {
     allowedVegetation: equipment.allowedVegetation,
     requiredVegetation: vegetation,
     vegetationCompatible
   });
   
   const overall = terrainCompatible && vegetationCompatible;
-  console.log(`      ✅ Overall base compatibility:`, overall);
+  logger.debug(`      ✅ Overall base compatibility:`, overall);
   
   return overall;
 };
@@ -309,13 +310,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       // Defensive check: ensure detected vegetation is valid
       const validVegTypes: readonly string[] = VEGETATION_TYPES;
       if (!validVegTypes.includes(detectedVeg)) {
-        console.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to mediumscrub`);
+        logger.warn(`⚠️ Invalid predominant vegetation detected: "${detectedVeg}", falling back to mediumscrub`);
         return 'mediumscrub';
       }
       // Check if vegetation distribution is empty (all zeros)
       const totalVegDistance = Object.values(vegetationAnalysis.vegetationDistribution).reduce((sum, val) => sum + val, 0);
       if (totalVegDistance === 0) {
-        console.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback mediumscrub for safer balance');
+        logger.warn('⚠️ Vegetation distribution is empty (all zeros), using fallback mediumscrub for safer balance');
         return 'mediumscrub';
       }
       return detectedVeg;
@@ -331,7 +332,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !mapSettled) {
       // Log why backend analysis is not running for debugging
       if (distance && trackAnalysis && vegetationAnalysis) {
-        console.log('⏸️ Backend analysis blocked:', {
+        logger.debug('⏸️ Backend analysis blocked:', {
           distance: !!distance,
           trackAnalysis: !!trackAnalysis,
           vegetationAnalysis: !!vegetationAnalysis,
@@ -346,7 +347,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const runBackendAnalysis = async () => {
       setBackendLoading(true);
       setBackendError(null);
-      console.log('🔄 Running backend analysis...', {
+      logger.debug('🔄 Running backend analysis...', {
         distance,
         maxSlope: trackAnalysis.maxSlope,
         vegetation: effectiveVegetation
@@ -364,18 +365,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         
         // If backend returns empty calculations, log a warning and fall back to frontend
         if (!response.calculations || response.calculations.length === 0) {
-          console.warn('⚠️ Backend returned no calculations, falling back to frontend calculations');
+          logger.warn('⚠️ Backend returned no calculations, falling back to frontend calculations');
           setBackendResults(null);
           setBackendError('Backend returned no equipment data');
         } else {
           setBackendResults(response.calculations);
-          console.log('✅ Backend analysis completed', {
+          logger.debug('✅ Backend analysis completed', {
             calculationsCount: response.calculations.length,
             compatibleCount: response.calculations.filter(c => c.compatible).length
           });
         }
       } catch (error) {
-        console.error('❌ Backend analysis failed', error);
+        logger.error('❌ Backend analysis failed', error);
         setBackendError(error instanceof Error ? error.message : 'Backend analysis failed');
         setBackendResults(null);
       } finally {
@@ -421,11 +422,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // user's location. This prevents analysis from starting while the map is
     // still panning/zooming on initial load and keeps console noise low.
     if (!mapSettled) {
-      console.log('⏸️ Frontend calculations blocked: map not settled yet');
+      logger.debug('⏸️ Frontend calculations blocked: map not settled yet');
       return [];
     }
 
-    console.log('🔧 Starting frontend equipment calculations', {
+    logger.debug('🔧 Starting frontend equipment calculations', {
       distance,
       derivedTerrainRequirement,
       effectiveVegetation,
@@ -446,13 +447,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     if (!distance) {
-      console.log('❌ No distance provided, returning empty calculations');
+      logger.debug('❌ No distance provided, returning empty calculations');
       return [];
     }
     
     // Warn if no equipment is available
     if (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0) {
-      console.warn('⚠️ No equipment available for calculations. Check equipment loading.');
+      logger.warn('⚠️ No equipment available for calculations. Check equipment loading.');
       return [];
     }
 
@@ -462,7 +463,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     const vegetationFactor = vegetationFactors[effectiveVegetation];
     const requiredTerrain = effectiveTerrain;
 
-    console.log('📊 Analysis parameters:', {
+    logger.debug('📊 Analysis parameters:', {
       effectiveTerrain,
       terrainFactor,
       vegetationFactor,
@@ -470,9 +471,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     // Machinery with partial compatibility support
-    console.log('🚜 Evaluating machinery equipment:');
+    logger.debug('🚜 Evaluating machinery equipment:');
     machinery.forEach((machine: MachinerySpec, index: number) => {
-      console.log(`🚜 [${index + 1}/${machinery.length}] Evaluating machinery: ${machine.name}`, {
+      logger.debug(`🚜 [${index + 1}/${machinery.length}] Evaluating machinery: ${machine.name}`, {
         id: machine.id,
         allowedTerrain: machine.allowedTerrain,
         allowedVegetation: machine.allowedVegetation,
@@ -481,16 +482,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       });
 
       const terrainEval = evaluateMachineryTerrainCompatibility(machine, trackAnalysis, effectiveVegetation, requiredTerrain);
-      console.log(`   ⚙️ Terrain evaluation result:`, terrainEval);
+      logger.debug(`   ⚙️ Terrain evaluation result:`, terrainEval);
 
       const slopeCheck = trackAnalysis ? isSlopeCompatible(machine, trackAnalysis.maxSlope) : { compatible: true };
-      console.log(`   📐 Slope compatibility:`, slopeCheck, trackAnalysis ? `(max slope: ${trackAnalysis.maxSlope}°)` : '(no track analysis)');
+      logger.debug(`   📐 Slope compatibility:`, slopeCheck, trackAnalysis ? `(max slope: ${trackAnalysis.maxSlope}°)` : '(no track analysis)');
 
       const fullyEnvOk = terrainEval.level === 'full' && slopeCheck.compatible;
       const partiallyOk = terrainEval.level === 'partial' && slopeCheck.compatible;
       const compatible = fullyEnvOk || partiallyOk; // treat partial as compatible for selection purposes
 
-      console.log(`   ✅ Final compatibility:`, {
+      logger.debug(`   ✅ Final compatibility:`, {
         fullyEnvOk,
         partiallyOk,
         compatible,
@@ -500,16 +501,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       let time = 0;
       if (compatible) {
         time = calculateMachineryTime(distance, machine, terrainFactor, vegetationFactor);
-        console.log(`   ⏱️ Initial time calculation: ${time} hours`);
+        logger.debug(`   ⏱️ Initial time calculation: ${time} hours`);
         
         // Apply time penalty for partial compatibility proportional to over-limit percent (scaled *2)
         if (terrainEval.level === 'partial' && terrainEval.overLimitPercent) {
           const penaltyMultiplier = 1 + terrainEval.overLimitPercent * 2; // e.g. 10% over → +20% time
           time *= penaltyMultiplier;
-          console.log(`   ⏱️ Applied partial compatibility penalty: ${penaltyMultiplier}x → ${time} hours`);
+          logger.debug(`   ⏱️ Applied partial compatibility penalty: ${penaltyMultiplier}x → ${time} hours`);
         }
       } else {
-        console.log(`   ❌ Machine incompatible, skipping time calculation`);
+        logger.debug(`   ❌ Machine incompatible, skipping time calculation`);
       }
       const costVal = compatible && (machine as any).costPerHour ? time * (machine as any).costPerHour : 0;
 
@@ -531,14 +532,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           : terrainEval.note
       };
 
-      console.log(`   📋 Final result:`, result);
       results.push(result);
     });
 
     // Aircraft (strict membership – no partial logic currently required)
-    console.log('✈️ Evaluating aircraft equipment:');
+    logger.debug('✈️ Evaluating aircraft equipment:');
     aircraft.forEach((plane: AircraftSpec, index: number) => {
-      console.log(`✈️ [${index + 1}/${aircraft.length}] Evaluating aircraft: ${plane.name}`, {
+      logger.debug(`✈️ [${index + 1}/${aircraft.length}] Evaluating aircraft: ${plane.name}`, {
         id: plane.id,
         allowedTerrain: plane.allowedTerrain,
         allowedVegetation: plane.allowedVegetation,
@@ -548,13 +548,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
       // Fix compatibility check for aircraft turnaround minutes property
       const compatible = baseEnvironmentCompatible(plane, requiredTerrain, effectiveVegetation);
-      console.log(`   ✅ Base environment compatibility:`, compatible);
+      logger.debug(`   ✅ Base environment compatibility:`, compatible);
 
       const drops = compatible ? calculateAircraftDrops(distance, plane) : 0;
       const totalTime = compatible ? drops * ((plane.turnaroundMinutes || 0) / 60) : 0; // convert minutes to hours
       const costVal = compatible && (plane as any).costPerHour ? totalTime * (plane as any).costPerHour : 0;
 
-      console.log(`   📊 Aircraft calculations:`, {
+      logger.debug(`   📊 Aircraft calculations:`, {
         drops,
         totalTime,
         costVal
@@ -573,14 +573,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         drops
       };
 
-      console.log(`   📋 Final result:`, result);
       results.push(result);
     });
 
     // Hand Crews (strict membership – no partial logic currently required)
-    console.log('👨‍🚒 Evaluating hand crew equipment:');
+    logger.debug('👨‍🚒 Evaluating hand crew equipment:');
     handCrews.forEach((crew: HandCrewSpec, index: number) => {
-      console.log(`👨‍🚒 [${index + 1}/${handCrews.length}] Evaluating hand crew: ${crew.name}`, {
+      logger.debug(`👨‍🚒 [${index + 1}/${handCrews.length}] Evaluating hand crew: ${crew.name}`, {
         id: crew.id,
         allowedTerrain: crew.allowedTerrain,
         allowedVegetation: crew.allowedVegetation,
@@ -589,12 +588,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       });
 
       const compatible = baseEnvironmentCompatible(crew, requiredTerrain, effectiveVegetation);
-      console.log(`   ✅ Base environment compatibility:`, compatible);
+      logger.debug(`   ✅ Base environment compatibility:`, compatible);
 
       const time = compatible ? calculateHandCrewTime(distance, crew, terrainFactor, vegetationFactor) : 0;
       const costVal = compatible && (crew as any).costPerHour ? time * (crew as any).costPerHour : 0;
 
-      console.log(`   📊 Hand crew calculations:`, {
+      logger.debug(`   📊 Hand crew calculations:`, {
         time,
         costVal
       });
@@ -611,7 +610,6 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         description: crew.description
       };
 
-      console.log(`   📋 Final result:`, result);
       results.push(result);
     });
 
@@ -631,7 +629,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       return a.time - b.time;
     });
 
-    console.log('📈 Final sorted results:', {
+    logger.debug('📈 Final sorted results:', {
       totalResults: sortedResults.length,
       compatibleResults: sortedResults.filter(r => r.compatible).length,
       resultsByType: {
