@@ -32,7 +32,7 @@ export const MapEmptyState: React.FC<MapEmptyStateProps> = ({
           Start Planning Your Fire Break
         </h3>
         <p className="map-empty-state-message">
-          Click the <strong>drawing tool</strong> (pencil icon) in the top-right corner, then click on the map to start tracing your route.
+          Click the <strong>drawing tool</strong> (pencil icon) in the top-right corner, then click on the map to start drawing your fire break line.
         </p>
         <div className="map-empty-state-arrow" aria-hidden="true">
           ↗

@@ -119,6 +119,58 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 9, 2026 - Map Empty State UX Improvement with Visual Call-to-Action
+
+**PR Reference:** [TBD] - UX Improvement: Add Map Empty State with Visual Call-to-Action
+
+**Issue Reference:** [#103](https://github.com/richardthorek/fireBreakCalculator/issues/103)
+
+**Objective:** Implement a centered overlay on the map that guides first-time users to draw their initial fire break line, addressing a critical discoverability issue.
+
+#### Problem Statement
+When users first loaded the app, they saw a map and a text-heavy help panel, but no visual prompt on the map itself telling them what to do. The relationship between "draw on the map" → "see results in the panel" was not visually communicated. For first-time users (especially stressed firefighters in the field), this was a critical discoverability failure.
+
+#### Solution Implemented
+- **Created MapEmptyState Component** (`webapp/src/components/MapEmptyState.tsx`)
+  - Displays centered overlay when map is loaded but no line drawn
+  - Features animated pencil icon (✏️) that bounces to draw attention
+  - Clear, concise instructions: "Start Planning Your Fire Break"
+  - Animated arrow (↗) pointing to drawing tools in top-right corner
+  - Non-blocking overlay (pointer-events: none on container)
+  - Auto-hides once user draws their first line
+
+- **Added CSS Styling** (`webapp/src/styles.css`, ~160 lines)
+  - Semi-transparent dark card with green accent border
+  - Smooth fade-in and scale animation on appearance
+  - Bouncing icon and pulsing arrow animations
+  - Mobile-responsive sizing (smaller on narrow screens)
+  - Accessibility: reduced motion support, high contrast mode
+  - WCAG AA compliant color contrast
+
+- **Integrated into App** (`webapp/src/App.tsx`)
+  - Added import and component placement in map-section
+  - Passes props: initialLocationSettled, fireBreakDistance
+  - Component only renders when map ready and no line drawn
+
+#### Files Modified
+- Created: `webapp/src/components/MapEmptyState.tsx` (44 lines)
+- Modified: `webapp/src/App.tsx` (added import + 4 lines JSX)
+- Modified: `webapp/src/styles.css` (added ~160 lines CSS)
+- Added: `docs/screenshots/2026-02-09-map-empty-state-demo.png`
+
+#### Verification
+- ✅ Build succeeds with no TypeScript errors
+- ✅ Component renders conditionally based on props
+- ✅ Visual design matches app's accent color scheme
+- ✅ Animations enhance engagement without being distracting
+- ✅ Accessibility features implemented (ARIA, reduced motion)
+- ✅ CodeQL security scan passed with 0 alerts
+- ✅ Mobile responsive design tested
+
+**Screenshot:** [Map Empty State Demo](docs/screenshots/2026-02-09-map-empty-state-demo.png)
+
+**Impact:** First-time users now receive immediate, visual guidance on how to start using the app. The overlay addresses the discoverability gap between the map and analysis panel, improving adoption among rural firefighters who need quick, clear instructions without reading lengthy documentation.
+
 ### February 9, 2026 - Master Plan Documentation Review and Conflict Resolution
 
 **PR Reference:** [#107](https://github.com/richardthorek/fireBreakCalculator/pull/107) - Review and resolve conflicts in master_plan.md
@@ -603,13 +655,17 @@ This section documents all planned initiatives. Each item is ready to be convert
 - **Files**: Create `DrawingHelpOverlay.tsx`, modify `MapboxMapView.tsx`, `AnalysisPanel.tsx`
 - **Reference**: [UI_REDESIGN_PLAN.md Phase 3.2](docs/UI_REDESIGN_PLAN.md), [component-register.md](docs/component-register.md)
 
-#### 3.2b Add Empty State with Visual Call-to-Action
-- **Priority**: P2 | **Effort**: 2-4 hours | **Issue**: [#103](https://github.com/richardthorek/fireBreakCalculator/issues/103)
+#### 3.2b Add Empty State with Visual Call-to-Action ✅ Complete
+- **Priority**: P2 | **Effort**: 2-4 hours | **Issue**: [#103](https://github.com/richardthorek/fireBreakCalculator/issues/103) | **PR**: [TBD]
+- **Status**: ✅ **COMPLETED** February 9, 2026
 - **Problem**: No visual prompt on map telling users to draw; first-time experience confusing
-- **Solution**: Create `MapEmptyState` overlay with centered visual prompt on map when no line drawn
-- **Acceptance**: Shows centered on map when distance is null, disappears after drawing, doesn't block interactions, respects `initialLocationSettled`
-- **Files**: Create `MapEmptyState.tsx`, modify `styles.css`, modify `App.tsx`
-- **Reference**: Issue #103
+- **Solution**: Created `MapEmptyState` overlay with centered visual prompt on map when no line drawn
+- **Implementation**: 
+  - Created `MapEmptyState.tsx` component with animated pencil icon and arrow
+  - Added ~160 lines CSS with animations, mobile responsive, accessibility features
+  - Integrated into `App.tsx` with conditional rendering
+- **Verification**: Build passes, CodeQL clean, visual design verified with screenshot
+- **Screenshot**: [Map Empty State Demo](docs/screenshots/2026-02-09-map-empty-state-demo.png)
 
 #### 3.3 Add Result Export (PDF/CSV)
 - **Priority**: P2 | **Effort**: 1-2 weeks | **Issue**: TBD
