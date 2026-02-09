@@ -1,6 +1,6 @@
 # Fire Break Calculator - Master Plan
 
-**Last Updated**: February 8, 2026
+**Last Updated**: February 9, 2026
 **Document Owner**: Project Maintainers
 **Related Documentation**: [.github/copilot-instructions.md](.github/copilot-instructions.md)
 
@@ -119,9 +119,33 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### February 9, 2026 - Master Plan Documentation Review and Conflict Resolution
+
+**PR Reference:** [#107](https://github.com/richardthorek/fireBreakCalculator/pull/107) - Review and resolve conflicts in master_plan.md
+
+**Issue Reference:** [#106](https://github.com/richardthorek/fireBreakCalculator/issues/106)
+
+**Objective:** Conduct comprehensive review of master_plan.md to identify and resolve conflicts, ensure accuracy after recent changes, and align with current project state.
+
+#### Changes Implemented
+- **Linked PR numbers**: Updated all "TBD" PR references to actual PR numbers for recent merged work (#95, #96, #98, #100, #104, #105)
+- **Removed duplicate content**: Eliminated orphaned dependency audit text fragment (lines 667-693) that was conflicting with main content
+- **Updated "Last Updated" date**: Changed from February 8 to February 9, 2026
+- **Added open issue to roadmap**: Incorporated issue #103 (Empty State UX) into Phase 3 roadmap
+- **Verified documentation alignment**: Confirmed master_plan.md aligns with docs/current_state/ reference documentation
+
+#### Verification
+- ✅ All recent PRs (#95, #96, #98, #100, #104, #105) properly documented with correct PR links
+- ✅ No conflicting or duplicate sections remaining
+- ✅ Roadmap reflects current open issues and priorities
+- ✅ Recent Updates section complete and chronological
+- ✅ Documentation philosophy maintained (master_plan.md as single source of truth)
+
+**Impact:** Master plan now accurately reflects all recent work, provides clear historical record, and maintains alignment with project documentation conventions. All recent UI improvements and bug fixes are properly tracked.
+
 ### February 8, 2026 - Replace 101 Hardcoded .pct-* CSS Classes with Inline Styles
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - UI Improvement: Replace hardcoded CSS classes with dynamic inline styles
+**PR Reference:** [#105](https://github.com/richardthorek/fireBreakCalculator/pull/105) - UI Improvement: Replace hardcoded CSS classes with dynamic inline styles
 
 **Objective:** Eliminate 101 hardcoded `.pct-*` CSS classes that bloated the stylesheet and replace them with a flexible inline style approach using CSS custom properties.
 
@@ -150,7 +174,7 @@ The `styles.css` file contained 101 individual CSS classes (`.pct-0` through `.p
 **Impact:** Reduced CSS bundle size, improved maintainability, and increased flexibility. The codebase is now cleaner and more professional. This change demonstrates proper use of inline styles for truly dynamic values that don't need CSS classes.
 ### February 8, 2026 - Strip Excessive Console Logging from Production Code
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Remove excessive console.log debugging from production code
+**PR Reference:** [#104](https://github.com/richardthorek/fireBreakCalculator/pull/104) - Remove excessive console.log debugging from production code
 
 **Objective:** Eliminate excessive console logging that runs in production, improving performance and preventing console spam that hides real errors.
 
@@ -192,7 +216,7 @@ The `styles.css` file contained 101 individual CSS classes (`.pct-0` through `.p
 
 ### February 8, 2026 - Fix Content Analysis Panel Blank Gap on Desktop
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Fix blank gap at bottom of Content Analysis panel
+**PR Reference:** [#100](https://github.com/richardthorek/fireBreakCalculator/pull/100) - Fix blank gap at bottom of Content Analysis panel
 
 **Objective:** Eliminate the blank gap at the bottom of the Content Analysis panel on desktop, ensuring efficient use of all available screen real estate for data display.
 
@@ -266,7 +290,7 @@ This ensures:
 **Impact:** Significantly improves desktop UX by maximizing data density and professional appearance. Users can now see more equipment analysis results without scrolling, as the panel efficiently uses all available screen real estate. The information-dense layout better serves the tool's purpose as a professional planning application for emergency response teams.
 ### February 8, 2026 - Fix Equipment Warning During Map Initialization
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Hide equipment warning during normal map initialization
+**PR Reference:** [#98](https://github.com/richardthorek/fireBreakCalculator/pull/98) - Hide equipment warning during normal map initialization
 
 **Objective:** Eliminate the confusing "⚠️ No Equipment Data Available" warning that appeared during normal map initialization, even when equipment data was present.
 
@@ -298,7 +322,7 @@ Users were seeing "⚠️ No Equipment Data Available" with "Waiting for map to 
 
 ### February 8, 2026 - Fix Map Resizing on Mobile When Panel Collapsed
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Fix map not resizing correctly when analysis panel is collapsed on mobile
+**PR Reference:** [#96](https://github.com/richardthorek/fireBreakCalculator/pull/96) - Fix map not resizing correctly when analysis panel is collapsed on mobile
 
 **Objective:** Fix the map view not expanding to fill available space when the analysis panel is collapsed on mobile devices, eliminating the black box that appeared in its place.
 
@@ -327,7 +351,7 @@ When the analysis panel was collapsed on mobile devices (<1024px viewports), the
 
 ### February 8, 2026 - Mobile/Responsive Analysis Panel Enhancement
 
-**PR Reference:** [#TBD](https://github.com/richardthorek/fireBreakCalculator/pull/TBD) - Enhanced analysis panel responsive behavior
+**PR Reference:** [#95](https://github.com/richardthorek/fireBreakCalculator/pull/95) - Enhanced analysis panel responsive behavior
 
 **Objective:** Improve analysis panel usability on mobile devices and provide a more comprehensive dashboard experience on larger screens by making the panel expandable and removing restrictive height constraints.
 
@@ -579,6 +603,14 @@ This section documents all planned initiatives. Each item is ready to be convert
 - **Files**: Create `DrawingHelpOverlay.tsx`, modify `MapboxMapView.tsx`, `AnalysisPanel.tsx`
 - **Reference**: [UI_REDESIGN_PLAN.md Phase 3.2](docs/UI_REDESIGN_PLAN.md), [component-register.md](docs/component-register.md)
 
+#### 3.2b Add Empty State with Visual Call-to-Action
+- **Priority**: P2 | **Effort**: 2-4 hours | **Issue**: [#103](https://github.com/richardthorek/fireBreakCalculator/issues/103)
+- **Problem**: No visual prompt on map telling users to draw; first-time experience confusing
+- **Solution**: Create `MapEmptyState` overlay with centered visual prompt on map when no line drawn
+- **Acceptance**: Shows centered on map when distance is null, disappears after drawing, doesn't block interactions, respects `initialLocationSettled`
+- **Files**: Create `MapEmptyState.tsx`, modify `styles.css`, modify `App.tsx`
+- **Reference**: Issue #103
+
 #### 3.3 Add Result Export (PDF/CSV)
 - **Priority**: P2 | **Effort**: 1-2 weeks | **Issue**: TBD
 - **Problem**: Cannot export analysis for documentation
@@ -662,35 +694,6 @@ This section documents all planned initiatives. Each item is ready to be convert
 2. Adjust priorities based on feedback
 3. Update effort estimates
 4. Add newly discovered items
-
----
-- ✅ No security vulnerabilities across all packages
-- ✅ Compatible with Node.js 20.x (Azure SWA requirement)
-
-#### React 19 Consideration
-React 19 was available (19.2.4) but **not upgraded** due to:
-- React 19 is relatively new and includes breaking changes
-- Current React 18.3.1 is stable and fully functional
-- Risk/benefit analysis favors stability for production deployment
-- Can be revisited in a future dedicated upgrade once React 19 ecosystem matures
-
-#### Node.js Compatibility
-- **Production Environment:** Node.js 22.x (Azure Static Web Apps CI/CD)
-- **API Engine Requirement:** `>=22.x` (explicitly configured via staticwebapp.config.json)
-- **Azure Functions Runtime:** node:22
-- All dependencies confirmed compatible with Node 22.x
-- Node.js 22 provides enhanced performance, security updates, and latest V8 JavaScript engine features
-
-#### Dependabot Status
-- No specific Dependabot configuration file found in `.github/dependabot.yml`
-- Recommendation: Consider adding Dependabot configuration for automated dependency updates
-- Suggested configuration would monitor webapp, api, and scripts directories separately
-
-#### Future Considerations
-1. **React 19 Migration:** Re-evaluate in Q2 2026 once ecosystem stabilizes
-2. **Dependabot Setup:** Add `.github/dependabot.yml` for automated security updates
-3. **ESM Migration for Scripts:** Consider converting scripts to ES modules to enable node-fetch 3.x+
-4. **Regular Audits:** Schedule quarterly dependency reviews to stay current
 
 ---
 
