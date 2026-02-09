@@ -3,6 +3,7 @@ import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
 import { SearchControl } from './components/SearchControl';
+import { MapEmptyState } from './components/MapEmptyState';
 import { defaultConfig } from './config/defaultConfig';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAnalysis } from './types/config';
 import { EquipmentApi, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from './types/equipmentApi';
@@ -488,6 +489,10 @@ const App: React.FC = () => {
             onInitialLocationSettled={setInitialLocationSettled}
             initialUserLocation={prefetchedLocation}
             selectedSearchLocation={searchLocation}
+          />
+          <MapEmptyState 
+            initialLocationSettled={initialLocationSettled}
+            distance={fireBreakDistance}
           />
         </div>
         <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>

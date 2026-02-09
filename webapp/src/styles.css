@@ -3921,3 +3921,126 @@ button:focus {
     transform: rotate(360deg);
   }
 }
+
+/* ====================================================================
+   Map Empty State - Sidebar Notification
+   ==================================================================== */
+
+/* Map empty state - compact sidebar notification near drawing tools */
+.map-empty-state {
+  position: absolute;
+  top: 80px; /* Below map controls */
+  right: 16px;
+  z-index: 500; /* Above map tiles, below map controls (typically 1000+) */
+  pointer-events: none; /* Don't block map interactions */
+  max-width: 280px;
+  animation: slideInRight 0.4s ease-out;
+}
+
+@keyframes slideInRight {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.map-empty-state-content {
+  background: rgba(15, 17, 21, 0.95); /* Dark translucent card */
+  border: 2px solid var(--color-accent-primary, #10b981);
+  border-radius: 8px;
+  padding: var(--space-4, 16px);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(16, 185, 129, 0.15);
+  pointer-events: auto; /* Card itself can receive interactions if needed */
+  backdrop-filter: blur(8px);
+}
+
+.map-empty-state-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-bottom: var(--space-2, 8px);
+}
+
+.map-empty-state-icon {
+  font-size: 24px;
+  line-height: 1;
+  animation: gentlePulse 2s ease-in-out infinite;
+}
+
+@keyframes gentlePulse {
+  0%, 100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.map-empty-state-title {
+  margin: 0;
+  font-size: var(--font-size-base, 14px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary, #f5f7fa);
+  line-height: 1.3;
+}
+
+.map-empty-state-message {
+  margin: 0;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-text-secondary, #94a3b8);
+  line-height: 1.5;
+}
+
+.map-empty-state-message strong {
+  color: var(--color-accent-primary, #10b981);
+  font-weight: var(--font-weight-semibold, 500);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .map-empty-state {
+    top: 70px;
+    right: 12px;
+    max-width: 240px;
+  }
+
+  .map-empty-state-content {
+    padding: var(--space-3, 12px);
+  }
+
+  .map-empty-state-icon {
+    font-size: 20px;
+  }
+
+  .map-empty-state-title {
+    font-size: var(--font-size-sm, 13px);
+  }
+
+  .map-empty-state-message {
+    font-size: var(--font-size-xs, 12px);
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .map-empty-state-content {
+    background: rgba(0, 0, 0, 0.98);
+    border-width: 3px;
+  }
+}
+
+/* Reduced motion support for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .map-empty-state,
+  .map-empty-state-icon {
+    animation: none;
+  }
+}
