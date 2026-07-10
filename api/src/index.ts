@@ -2,6 +2,7 @@ import { app } from '@azure/functions';
 
 // Import all functions to ensure they're registered with the app
 import './functions/analysisCalculate';
+import './functions/elevationProfile';
 import './functions/equipmentCreate';
 import './functions/equipmentDelete';
 import './functions/equipmentList';

@@ -31,6 +31,9 @@ param swaSku string = 'Free'
 @description('Environment tag (e.g. prod, staging).')
 param environmentName string = 'prod'
 
+@description('ArcGIS ImageServer URL for the bare-earth DEM used by the elevation-profile API. Leave empty to fall back to client-side Mapbox Terrain-RGB. Verify the endpoint before production.')
+param demImageServerUrl string = ''
+
 var storageAccountName = toLower(replace('${baseName}${uniqueString(resourceGroup().id)}', '-', ''))
 var swaName = '${baseName}-${environmentName}'
 
@@ -103,6 +106,9 @@ resource swaSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
     TABLES_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
     EQUIPMENT_TABLE_NAME: 'equipment'
     VEGETATION_TABLE_NAME: 'vegetation'
+    // Elevation profile source. Empty → API returns 'unavailable' and the client
+    // falls back to Mapbox Terrain-RGB, so the app still works before this is set.
+    DEM_IMAGESERVER_URL: demImageServerUrl
   }
 }
 

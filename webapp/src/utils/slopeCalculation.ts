@@ -6,6 +6,7 @@
 import { SlopeSegment, SlopeCategory, TrackAnalysis } from '../types/config';
 import { classifySlope, slopeCategoryColor } from '../config/classification';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
+import { fetchElevationProfile } from './elevationApi';
 
 // Coordinate type compatibility for both Leaflet and Mapbox GL JS
 type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
@@ -175,6 +176,42 @@ const getElevation = async (lat: number, lng: number): Promise<number> => {
   return getElevationMapbox(lat, lng);
 };
 
+// Per-analysis cache of authoritative DEM elevations keyed to ~1 m precision.
+// Populated by a single batch call to the backend elevation-profile endpoint;
+// when a point is present here we use the DEM value instead of Terrain-RGB.
+const elevationKey = (lat: number, lng: number): string => `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
+/**
+ * Resolve elevation for a point, preferring an authoritative DEM value from the
+ * supplied batch cache and falling back to Mapbox Terrain-RGB (then mock).
+ */
+const resolveElevation = async (
+  lat: number,
+  lng: number,
+  demCache: Map<string, number> | null
+): Promise<number> => {
+  if (demCache) {
+    const v = demCache.get(elevationKey(lat, lng));
+    if (v !== undefined && !Number.isNaN(v)) return v;
+  }
+  return getElevationMapbox(lat, lng, { zoom: DEFAULT_TERRAIN_ZOOM });
+};
+
+/** Deterministically generate the elevation sample points for a mini-segment. */
+const computeProfilePoints = (
+  start: { lat: number; lng: number },
+  end: { lat: number; lng: number },
+  distance: number
+): { lat: number; lng: number }[] => {
+  const numSamples = Math.max(1, Math.ceil(distance / DEFAULT_SAMPLE_METERS));
+  const pts: { lat: number; lng: number }[] = [];
+  for (let s = 0; s <= numSamples; s++) {
+    const t = s / numSamples;
+    pts.push({ lat: start.lat + (end.lat - start.lat) * t, lng: start.lng + (end.lng - start.lng) * t });
+  }
+  return pts;
+};
+
 // Configuration: sampling distance along track and terrain zoom used for high-detail sampling
 const DEFAULT_SAMPLE_METERS = 10; // sample every 10m along the track for detailed profiles
 const DEFAULT_TERRAIN_ZOOM = 15; // higher zoom gives ~4-8m/pixel depending on latitude
@@ -254,38 +291,45 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   // Generate points every 100m (these will include original user points)
   const interpolatedPoints = generateInterpolatedPoints(points, 100);
 
+  // Precompute each mini-segment and its detailed elevation sample points so we
+  // can request all elevations in ONE backend call instead of hundreds of tile
+  // fetches. Sampling is deterministic (computeProfilePoints), so keys line up.
+  const segmentPlan: { start: { lat: number; lng: number }; end: { lat: number; lng: number }; distance: number; profilePoints: { lat: number; lng: number }[] }[] = [];
+  for (let i = 0; i < interpolatedPoints.length - 1; i++) {
+    const start = normalizeCoord(interpolatedPoints[i]);
+    const end = normalizeCoord(interpolatedPoints[i + 1]);
+    const distance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
+    if (distance <= 0.001) continue;
+    segmentPlan.push({ start, end, distance, profilePoints: computeProfilePoints(start, end, distance) });
+  }
+
+  // One batch request to the authoritative DEM (if configured/available).
+  let demCache: Map<string, number> | null = null;
+  const allPoints = segmentPlan.flatMap(s => s.profilePoints);
+  if (allPoints.length > 0) {
+    const profile = await fetchElevationProfile(allPoints);
+    if (profile) {
+      demCache = new Map<string, number>();
+      allPoints.forEach((p, idx) => {
+        const e = profile.elevations[idx];
+        if (typeof e === 'number' && !Number.isNaN(e)) demCache!.set(elevationKey(p.lat, p.lng), e);
+      });
+    }
+  }
+
   // Build raw mini-segments between consecutive interpolated points, then merge contiguous with same category
   const rawSegments: SlopeSegment[] = [];
   let totalDistance = 0;
   let slopeDistanceSum = 0; // for weighted average
   let maxSlope = 0;
 
-  for (let i = 0; i < interpolatedPoints.length - 1; i++) {
-    const start = normalizeCoord(interpolatedPoints[i]);
-    const end = normalizeCoord(interpolatedPoints[i + 1]);
+  for (const plan of segmentPlan) {
+    const { start, end, distance, profilePoints } = plan;
 
-    const distance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
-    // Skip zero-length segments
-    if (distance <= 0.001) continue;
-
-    // Detailed profile sampling: sample along the segment at DEFAULT_SAMPLE_METERS
-    // and use Mapbox Terrain-RGB at a higher zoom to capture narrow gullies/peaks.
-    const sampleMeters = DEFAULT_SAMPLE_METERS;
-    const numSamples = Math.max(1, Math.ceil(distance / sampleMeters));
-    const profilePoints: LatLngLike[] = [];
-    for (let s = 0; s <= numSamples; s++) {
-      const t = s / numSamples;
-      const lat = start.lat + (end.lat - start.lat) * t;
-      const lng = start.lng + (end.lng - start.lng) * t;
-      profilePoints.push({ lat, lng });
-    }
-
-    // Fetch elevations for profile points (use higher terrain zoom for detail)
-    const elevPromises = profilePoints.map(p => {
-      const norm = normalizeCoord(p);
-      return getElevationMapbox(norm.lat, norm.lng, { zoom: DEFAULT_TERRAIN_ZOOM });
-    });
-    const elevs = await Promise.all(elevPromises);
+    // Resolve elevations: authoritative DEM batch value if present, else Terrain-RGB.
+    const elevs = await Promise.all(
+      profilePoints.map(p => resolveElevation(p.lat, p.lng, demCache))
+    );
 
     // Compute sub-step slopes and aggregate
     let maxSubSlope = 0;

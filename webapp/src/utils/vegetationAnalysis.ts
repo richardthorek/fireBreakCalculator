@@ -10,6 +10,7 @@ import { VegetationType } from '../config/classification';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchNSWVegetation } from './nswVegetationService';
+import { fetchNVISVegetation } from './nvisVegetationService';
 import { logger } from './logger';
 import { mapFormationToVegetationType } from './vegetationMappingHelper';
 
@@ -332,13 +333,21 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
         confidence = Math.min(1, nswVeg.confidence + 0.1);
         landcoverClass = nswVeg.source || '(nsw)';
       } else {
-        // 2. Fallback to Mapbox Landcover query (existing logic)
-        const landcover = await fetchLandcoverData(midLat, midLng, token || '');
-        landcoverClass = landcover.cls;
-        estimated = landcover.estimated;
-        const mapped = mapLandcoverToVegetation(landcover.cls);
-        vegetation = mapped.vegetation;
-        confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
+        // 2. National authoritative fallback: NVIS Major Vegetation Groups.
+        const nvis = await fetchNVISVegetation(midLat, midLng);
+        if (nvis) {
+          vegetation = nvis.vegetationType;
+          confidence = nvis.confidence;
+          landcoverClass = `NVIS: ${nvis.mvgName}`;
+        } else {
+          // 3. Last-resort coarse landcover (may be mock — flagged as estimated).
+          const landcover = await fetchLandcoverData(midLat, midLng, token || '');
+          landcoverClass = landcover.cls;
+          estimated = landcover.estimated;
+          const mapped = mapLandcoverToVegetation(landcover.cls);
+          vegetation = mapped.vegetation;
+          confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
+        }
       }
 
       rawSegments.push({

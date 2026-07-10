@@ -17,6 +17,7 @@ import {
   slopeFactor,
   resolveMaxSlopeDegrees,
 } from '../services/productionModel';
+import { parseGetSamplesResponse, buildGetSamplesUrl } from '../services/elevationService';
 
 let passed = 0;
 function test(name: string, fn: () => void | Promise<void>) {
@@ -196,6 +197,35 @@ async function main() {
     assert.strictEqual(res.metadata.analysisParameters.segmentCount, 2);
     assert.strictEqual(res.metadata.analysisParameters.profileFromClient, true);
     assert.ok(res.metadata.analysisParameters.maxSlope >= 20);
+  });
+
+  console.log('Elevation profile parsing:');
+
+  await test('getSamples response maps to ordered elevations by locationId', () => {
+    const json = {
+      samples: [
+        { locationId: 2, value: 300 },
+        { locationId: 0, value: 100 },
+        { locationId: 1, value: '200.5' },
+      ],
+    };
+    const out = parseGetSamplesResponse(json, 3);
+    assert.deepStrictEqual(out, [100, 200.5, 300]);
+  });
+
+  await test('missing samples become NaN (caller falls back)', () => {
+    const out = parseGetSamplesResponse({ samples: [{ locationId: 0, value: 50 }] }, 3);
+    assert.strictEqual(out[0], 50);
+    assert.ok(Number.isNaN(out[1]) && Number.isNaN(out[2]));
+  });
+
+  await test('getSamples URL is a multipoint getSamples query in lng,lat order', () => {
+    const url = buildGetSamplesUrl('https://example.com/DEM/ImageServer', [
+      { lat: -33.8, lng: 151.2 },
+    ]);
+    assert.ok(url.includes('/getSamples?'));
+    assert.ok(url.includes('esriGeometryMultipoint'));
+    assert.ok(decodeURIComponent(url).includes('[151.2,-33.8]'));
   });
 
   console.log(`\n${passed} checks passed`);

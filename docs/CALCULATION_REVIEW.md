@@ -15,7 +15,15 @@ The **P0 calculation-accuracy items below have been implemented** (see PR for th
 - **A1 — De-duplication:** the accurate model now lives **only** in the backend; the frontend delegates to it (the frontend fallback remains solely as a degraded offline path).
 - **A5 — Tests:** `api/src/test/analysis.test.ts` covers the model and per-segment behaviour (11 checks).
 
-Still open (P1/P2): server-side DEM profile via ELVIS (F4/A2), national fuel-type layer + per-segment override UI + explicit mock-data badging (F8/A4/U5), richer cost model with mobilisation (F6), and surfacing confidence/segment breakdown in the UI (U1/U2). The model already **returns** per-analysis confidence, mean/max slope and segment count in `metadata` so the UI can surface them.
+**Now also implemented (July 2026, second wave):**
+
+- **A2/F4 — Server-side elevation profile:** `api/src/services/elevationService.ts` + `POST /api/elevation/profile` sample a bare-earth DEM (ArcGIS `getSamples`, configurable `DEM_IMAGESERVER_URL`) in **one request per line**; `slopeCalculation.ts` batches through it and falls back to Terrain-RGB. Removes the per-point tile-decode chattiness when a DEM is configured.
+- **F8 — National vegetation:** `webapp/src/utils/nvisVegetationService.ts` adds the Australia-wide **NVIS Major Vegetation Groups** layer as an authoritative fallback (NSW SVTM → NVIS → coarse landcover → mock), so most of the continent gets a real fuel class instead of a fabricated one.
+- **A4/U5 — Provenance:** slope/vegetation analyses flag `usedMockElevation` / `usedFallbackData`; the panel shows an "estimated data in use" banner.
+- **Break width:** machinery multi-pass + hand-crew effort scaling with a target break-width selector.
+- **Infrastructure as code:** `infra/main.bicep` + a single build→test→provision→deploy workflow (`.github/workflows/deploy.yml`) with dynamic SWA token retrieval.
+
+Still open (P2): richer cost model with mobilisation/float (F6), per-segment vegetation override UI (U5 partial), and swapping the DEM default endpoint once the exact GA ImageServer URL is verified in the target tenant.
 
 ---
 

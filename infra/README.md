@@ -12,7 +12,20 @@ resources never breaks CI — re-running the workflow rebuilds the whole environ
 | --- | --- |
 | Storage Account (`Standard_LRS`) + tables `equipment`, `vegetation` | Equipment specs and vegetation formation mappings |
 | Static Web App (Free/Standard) | React frontend + managed Azure Functions API |
-| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME` |
+| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME`, `DEM_IMAGESERVER_URL` |
+
+### Elevation data source (`DEM_IMAGESERVER_URL`)
+
+The `/api/elevation/profile` endpoint samples a bare-earth DEM server-side (one
+request per line) for accurate slope. Set the `demImageServerUrl` Bicep
+parameter (→ `DEM_IMAGESERVER_URL` app setting) to an ArcGIS **ImageServer**
+that supports `getSamples` — e.g. the Geoscience Australia national 1‑second /
+5 m DEM. **Verify the exact endpoint** against
+<https://services.ga.gov.au/> before production. Leave it empty to fall back to
+client-side Mapbox Terrain-RGB (the app still works, just less accurate).
+
+Pass it at deploy time by adding to the workflow's `az deployment group create`:
+`--parameters demImageServerUrl="https://…/ImageServer"`.
 
 ## One-time Azure setup (OIDC — no long-lived credentials)
 
