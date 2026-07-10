@@ -142,6 +142,11 @@ The estimate collapsed the whole line to a single worst-case slope bucket and a 
 
 **Impact:** Estimates now reflect the actual mix of slope and fuel along the line rather than a single worst case, machinery is no longer recommended for unsafe slopes, and the rate model is grounded in published data and tunable without code changes. See `docs/CALCULATION_REVIEW.md` for the full findings and remaining P1/P2 roadmap.
 
+#### Follow-up uplift (same PR)
+- **Infrastructure as code:** `infra/main.bicep` provisions Storage (tables) + Static Web App and wires the API's Table Storage app settings. `.github/workflows/deploy.yml` replaces the old resource-bound workflow with one coherent pipeline — build → test → provision (Bicep, OIDC login) → fetch the SWA deployment token dynamically → deploy app + API. No deployment-token secret is stored, so deleting/recreating Azure resources never breaks CI. One-time setup documented in `infra/README.md`.
+- **Break-width / multi-pass model:** published rates are single-pass; the model now scales machinery time by the number of blade passes needed to reach a target break width (`cutWidthMeters`) and hand-crew effort linearly. New "Target break width" selector in the analysis panel.
+- **Data provenance & confidence:** slope and vegetation analyses now flag when mock/fallback data was substituted (`usedMockElevation`, `usedFallbackData`); the panel shows a prominent "estimated data in use" warning so fabricated data never passes silently as analysis.
+
 ### February 9, 2026 - Map Empty State UX Improvement with Visual Call-to-Action
 
 **PR Reference:** [TBD] - UX Improvement: Add Map Empty State with Visual Call-to-Action

@@ -129,12 +129,19 @@ export const mapLandcoverToVegetation = (landcoverClass: string): { vegetation: 
 };
 
 /**
- * Fetch landcover data from Mapbox Tilequery API
+ * Fetch landcover data from Mapbox Tilequery API.
+ * Returns the landcover class AND whether the value is estimated (mock
+ * fallback) rather than real data, so downstream analysis can flag it —
+ * fabricated data must never pass silently as analysis in a planning tool.
  */
-const fetchLandcoverData = async (lat: number, lng: number, token: string): Promise<string> => {
+const fetchLandcoverData = async (
+  lat: number,
+  lng: number,
+  token: string
+): Promise<{ cls: string; estimated: boolean }> => {
   // If no token or placeholder token, provide mock variation instead of throwing error
   if (!token || token === 'YOUR_MAPBOX_TOKEN_HERE') {
-    return getMockLandcoverClass(lat, lng);
+    return { cls: getMockLandcoverClass(lat, lng), estimated: true };
   }
 
   try {
@@ -149,7 +156,7 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
     const resp = await fetch(url);
     if (!resp.ok) {
       logger.warn(`Mapbox tilequery HTTP ${resp.status}: ${resp.statusText} - falling back to mock data`);
-      return getMockLandcoverClass(lat, lng);
+      return { cls: getMockLandcoverClass(lat, lng), estimated: true };
     }
 
     const json = await resp.json();
@@ -159,17 +166,17 @@ const fetchLandcoverData = async (lat: number, lng: number, token: string): Prom
       const candidate = props.class || props.Class || props.landcover || props.type || props.label || props.cover || null;
       if (candidate) {
         logger.debug(`Mapbox returned landcover class: "${candidate}" for lat=${lat.toFixed(4)}, lng=${lng.toFixed(4)}`);
-        return String(candidate);
+        return { cls: String(candidate), estimated: false };
       }
     }
 
     // If we get here, Mapbox returned no usable landcover class - use mock data
     logger.warn('Mapbox tilequery returned no landcover class for point - using mock data');
-    return getMockLandcoverClass(lat, lng);
+    return { cls: getMockLandcoverClass(lat, lng), estimated: true };
   } catch (err) {
     // Fall back to mock data instead of propagating errors
     logger.warn('Mapbox tilequery failed, using mock data:', err);
-    return getMockLandcoverClass(lat, lng);
+    return { cls: getMockLandcoverClass(lat, lng), estimated: true };
   }
 };
 
@@ -318,6 +325,7 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       // 1. Try high‑fidelity NSW government vegetation layer first (if in region)
       const nswVeg = await fetchNSWVegetation(midLat, midLng);
       let vegetation: VegetationType; let confidence: number; let landcoverClass: string;
+      let estimated = false;
       if (nswVeg) {
         vegetation = nswVeg.vegetationType as VegetationType;
         // Blend original heuristic confidence with a base high trust for authoritative dataset
@@ -325,14 +333,16 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
         landcoverClass = nswVeg.source || '(nsw)';
       } else {
         // 2. Fallback to Mapbox Landcover query (existing logic)
-        const mapboxClass = await fetchLandcoverData(midLat, midLng, token || '');
-        landcoverClass = mapboxClass;
-        const mapped = mapLandcoverToVegetation(mapboxClass);
+        const landcover = await fetchLandcoverData(midLat, midLng, token || '');
+        landcoverClass = landcover.cls;
+        estimated = landcover.estimated;
+        const mapped = mapLandcoverToVegetation(landcover.cls);
         vegetation = mapped.vegetation;
-        confidence = mapped.confidence;
+        confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
       }
-      
+
       rawSegments.push({
+        estimated,
         start: [start.lat, getLng(start)],
         end: [end.lat, getLng(end)],
         coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
@@ -355,8 +365,9 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       logger.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
       const fallbackClass = getMockLandcoverClass(midLat, midLng);
       const { vegetation, confidence } = mapLandcoverToVegetation(fallbackClass);
-      
+
       rawSegments.push({
+        estimated: true,
         start: [start.lat, getLng(start)],
         end: [end.lat, getLng(end)],
         coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
@@ -385,11 +396,12 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
         last.coords.push(...toAppend);
       }
       last.end = seg.end;
-      
+
       // Weighted average of confidence
       const combinedDistance = last.distance + seg.distance;
       last.confidence = (last.confidence * last.distance + seg.confidence * seg.distance) / combinedDistance;
       last.distance = combinedDistance;
+      if (seg.estimated) last.estimated = true;
     }
   }
 
@@ -416,13 +428,15 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   }
 
   const overallConfidence = rawSegments.length > 0 ? totalConfidence / rawSegments.length : 0;
+  const usedFallbackData = rawSegments.some(s => s.estimated);
 
   return {
     totalDistance,
     segments: mergedSegments,
     predominantVegetation,
     vegetationDistribution,
-    overallConfidence
+    overallConfidence,
+    usedFallbackData
   };
 };
 

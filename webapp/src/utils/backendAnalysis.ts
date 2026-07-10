@@ -20,6 +20,8 @@ export interface BackendAnalysisRequest {
   vegetationAnalysis: VegetationAnalysis;
   /** Joined per-segment slope×vegetation profile; enables per-segment integration. */
   segments?: RouteSegment[];
+  /** Target fire break width (m). Machinery makes multiple passes; hand-crew effort scales. */
+  breakWidthMeters?: number;
   parameters?: {
     terrainFactors?: Record<string, number>;
     vegetationFactors?: Record<string, number>;

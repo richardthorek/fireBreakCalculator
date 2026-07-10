@@ -85,8 +85,14 @@ export const getSlopeColor = (category: SlopeCategory): string => slopeCategoryC
 
 /**
  * Mock elevation service for development/testing fallback.
+ * Every use is counted so analyses can flag that estimated (not real) terrain
+ * data contributed to the result — fabricated data must never pass silently
+ * as analysis in a planning tool.
  */
+let mockElevationUseCount = 0;
+
 const getMockElevation = async (lat: number, lng: number): Promise<number> => {
+  mockElevationUseCount++;
   const baseElevation = 100;
   const latVariation = Math.sin(lat * 0.07) * 120; // exaggerate to test slope categories
   const lngVariation = Math.cos(lng * 0.05) * 80;
@@ -240,6 +246,10 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
       slopeDistribution: { flat: 0, medium: 0, steep: 0, very_steep: 0 }
     };
   }
+
+  // Track whether any elevation sample fell back to the mock service during
+  // THIS analysis, so the result can be flagged as estimated.
+  const mockCountAtStart = mockElevationUseCount;
   
   // Generate points every 100m (these will include original user points)
   const interpolatedPoints = generateInterpolatedPoints(points, 100);
@@ -344,6 +354,7 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
     segments: mergedSegments,
     maxSlope,
     averageSlope: totalDistance > 0 ? slopeDistanceSum / totalDistance : 0,
-    slopeDistribution
+    slopeDistribution,
+    usedMockElevation: mockElevationUseCount > mockCountAtStart
   };
 };

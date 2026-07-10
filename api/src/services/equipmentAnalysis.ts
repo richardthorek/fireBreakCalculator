@@ -26,6 +26,8 @@ import {
   ResourceKind,
   effectiveRate,
   fuelFactor,
+  handCrewWidthMultiplier,
+  machineryWidthMultiplier,
   resolveMaxSlopeDegrees,
   slopeToTerrain,
 } from './productionModel';
@@ -65,6 +67,8 @@ export interface EquipmentSpec {
   costPerHour?: number;
   description?: string;
   maxSlope?: number;
+  /** Machinery blade cut width per pass (m). */
+  cutWidthMeters?: number;
   // Aircraft specific
   dropLength?: number;
   turnaroundMinutes?: number;
@@ -88,6 +92,8 @@ export interface CalculationResult {
   slopeCompatible?: boolean;
   maxSlopeExceeded?: number;
   drops?: number;
+  /** Machinery passes required to reach the requested break width. */
+  passes?: number;
   overLimitPercent?: number;
   /** Vegetation-detection confidence carried through for UI signalling (0..1). */
   confidence?: number;
@@ -106,6 +112,8 @@ export interface AnalysisRequest {
   vegetationAnalysis: VegetationAnalysis;
   /** Joined per-segment route profile. Preferred; falls back to distributions. */
   segments?: RouteSegment[];
+  /** Target fire break width (m). Machinery does multiple passes; hand-crew effort scales. */
+  breakWidthMeters?: number;
   parameters?: AnalysisParameters;
 }
 
@@ -230,12 +238,24 @@ export class EquipmentAnalysisService {
    */
   private evaluateLineResource(
     equipment: EquipmentSpec,
-    segments: RouteSegment[]
+    segments: RouteSegment[],
+    breakWidthMeters?: number
   ): CalculationResult {
     const kind = equipment.type;
     const refRate = this.referenceRate(equipment);
     const allowedVeg = new Set(equipment.allowedVegetation);
     const slopeLimit = resolveMaxSlopeDegrees(kind, equipment.maxSlope, equipment.allowedTerrain);
+
+    // Break-width handling: published rates are single-pass; widen accordingly.
+    let widthMultiplier = 1;
+    let passes: number | undefined;
+    if (kind === 'Machinery') {
+      const w = machineryWidthMultiplier(breakWidthMeters, equipment.cutWidthMeters);
+      widthMultiplier = w.multiplier;
+      passes = w.passes;
+    } else if (kind === 'HandCrew') {
+      widthMultiplier = handCrewWidthMultiplier(breakWidthMeters);
+    }
 
     let totalLength = 0;
     let overLength = 0;
@@ -274,17 +294,25 @@ export class EquipmentAnalysisService {
       time *= 1 + overFraction * PARTIAL_TIME_PENALTY_K;
     }
 
+    time *= widthMultiplier;
+
     const compatible = level !== 'incompatible';
     const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
     const slopeCompatible = steepestOver === 0 || steepestOver <= slopeLimit;
     const confidence = totalLength > 0 ? confidenceWeighted / totalLength : undefined;
 
-    let note: string | undefined;
+    const notes: string[] = [];
     if (level === 'incompatible') {
-      note = `${Math.round(overFraction * 100)}% of route exceeds this resource's slope/fuel limits`;
+      notes.push(`${Math.round(overFraction * 100)}% of route exceeds this resource's slope/fuel limits`);
     } else if (level === 'partial') {
-      note = `~${Math.round(overFraction * 100)}% of route over limits; time penalty applied`;
+      notes.push(`~${Math.round(overFraction * 100)}% of route over limits; time penalty applied`);
     }
+    if (compatible && passes && passes > 1) {
+      notes.push(`${passes} passes for ${Math.round(breakWidthMeters || 0)}m break`);
+    } else if (compatible && kind === 'HandCrew' && widthMultiplier > 1) {
+      notes.push(`effort scaled ×${widthMultiplier.toFixed(1)} for ${Math.round(breakWidthMeters || 0)}m break`);
+    }
+    const note = notes.length ? notes.join(' • ') : undefined;
 
     return {
       id: equipment.id,
@@ -298,6 +326,7 @@ export class EquipmentAnalysisService {
       description: equipment.description,
       slopeCompatible,
       maxSlopeExceeded: steepestOver > slopeLimit ? steepestOver : undefined,
+      passes,
       overLimitPercent: overFraction > 0 ? overFraction : undefined,
       confidence,
       note,
@@ -448,7 +477,7 @@ export class EquipmentAnalysisService {
       }
 
       if (equipment.type === 'Machinery' || equipment.type === 'HandCrew') {
-        results.push(this.evaluateLineResource(equipment, segments));
+        results.push(this.evaluateLineResource(equipment, segments, request.breakWidthMeters));
       } else if (equipment.type === 'Aircraft') {
         results.push(this.evaluateAircraft(equipment, segments));
       }

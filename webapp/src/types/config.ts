@@ -140,6 +140,9 @@ export interface TrackAnalysis {
     steep: number;
     very_steep: number;
   };
+  /** True when any elevation sample fell back to the mock service — the
+   *  analysis then contains ESTIMATED terrain and must be flagged to the user. */
+  usedMockElevation?: boolean;
 }
 
 /** Vegetation segment data from Mapbox Terrain v2 analysis */
@@ -164,6 +167,8 @@ export interface VegetationSegment {
   displayLabel?: string;
   /** Distance of this segment (meters) */
   distance: number;
+  /** True when the class came from a mock/fallback rather than real data. */
+  estimated?: boolean;
 }
 
 /** Vegetation analysis data from Mapbox Terrain v2 */
@@ -178,4 +183,7 @@ export interface VegetationAnalysis {
   vegetationDistribution: Record<VegetationType, number>;
   /** Overall confidence of the analysis */
   overallConfidence: number;
+  /** True when any segment's class came from mock/fallback data — results are
+   *  then indicative only and must be flagged to the user. */
+  usedFallbackData?: boolean;
 }

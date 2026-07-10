@@ -272,6 +272,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   // Vegetation state: allow manual override of auto-detected vegetation
   const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
   const [useAutoDetected, setUseAutoDetected] = useState(true);
+  // Target fire break width (m). Drives machinery pass count and hand-crew effort.
+  const [breakWidthMeters, setBreakWidthMeters] = useState<number>(4);
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
 
@@ -373,7 +375,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             ...vegetationAnalysis,
             predominantVegetation: effectiveVegetation
           },
-          segments
+          segments,
+          breakWidthMeters
         });
         
         // If backend returns empty calculations, log a warning and fall back to frontend
@@ -398,7 +401,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, backendAvailable, mapSettled]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, breakWidthMeters, backendAvailable, mapSettled]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -744,8 +747,43 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </button>
       </div>
       <div className="analysis-content" id="analysis-content">
+        {distance && (trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData) && (
+          <div className="data-quality-warning" role="alert">
+            <span className="data-quality-icon" aria-hidden="true">⚠️</span>
+            <div>
+              <strong>Estimated data in use.</strong>{' '}
+              {[
+                trackAnalysis?.usedMockElevation ? 'terrain/slope' : null,
+                vegetationAnalysis?.usedFallbackData ? 'vegetation' : null,
+              ]
+                .filter(Boolean)
+                .join(' and ')}{' '}
+              could not be sourced from authoritative data for part of this line. Treat times and
+              compatibility as indicative only and verify on the ground.
+            </div>
+          </div>
+        )}
         {distance && (
           <div className="conditions-section">
+            <div className="conditions-group break-width-group">
+              <label htmlFor="break-width-select">Target break width</label>
+              <select
+                id="break-width-select"
+                aria-label="Target fire break width"
+                value={breakWidthMeters}
+                onChange={(e) => setBreakWidthMeters(Number(e.target.value))}
+              >
+                <option value={3}>3 m — single dozer pass / hand line</option>
+                <option value={4}>4 m — standard containment line</option>
+                <option value={6}>6 m — reinforced line</option>
+                <option value={8}>8 m — wide break (2+ passes)</option>
+                <option value={12}>12 m — major break / road-width</option>
+                <option value={20}>20 m — strategic fuel break</option>
+              </select>
+              <div className="break-width-hint">
+                Wider breaks require multiple machinery passes and proportionally more hand-crew effort.
+              </div>
+            </div>
             {vegetationAnalysis ? (
               <div className="conditions-group">
                 <label htmlFor="vegetation-toggle">Vegetation Type</label>

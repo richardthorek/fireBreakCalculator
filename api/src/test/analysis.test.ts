@@ -171,6 +171,20 @@ async function main() {
     assert.ok(grass.calculations[0].cost > 0, 'per-drop cost applied');
   });
 
+  console.log('Break width / multi-pass:');
+
+  await test('a wider break needs more machinery passes and more time', async () => {
+    const req = (w: number) => ({
+      ...baseRequest([{ length: 1000, slopeDegrees: 5, vegetation: 'grassland' as const }]),
+      breakWidthMeters: w,
+    });
+    const single = await svc.analyzeEquipment(req(3), [dozer({ cutWidthMeters: 3.4 })]);
+    const wide = await svc.analyzeEquipment(req(12), [dozer({ cutWidthMeters: 3.4 })]);
+    assert.strictEqual(single.calculations[0].passes, 1);
+    assert.ok((wide.calculations[0].passes || 0) >= 4);
+    assert.ok(wide.calculations[0].time > single.calculations[0].time);
+  });
+
   await test('metadata reports segment count and confidence', async () => {
     const res = await svc.analyzeEquipment(
       baseRequest([

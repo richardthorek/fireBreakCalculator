@@ -108,6 +108,40 @@ export const AIRCRAFT_COVERAGE_FACTOR: Record<VegetationType, number> = {
 };
 
 /**
+ * Break-width model constants.
+ * Published production rates are for a SINGLE-PASS line (one blade width for
+ * machinery; a standard hand line for crews). Wider breaks need multiple
+ * machinery passes; hand-crew effort grows roughly linearly with width.
+ */
+/** Typical dozer blade cut width (m) when the equipment doesn't specify one. */
+export const DEFAULT_CUT_WIDTH_M = 3.4;
+/** Widening passes are faster than the pioneering pass (no first-cut resistance). */
+export const SUBSEQUENT_PASS_FACTOR = 0.85;
+/** Hand-line reference width (m) that crew clearing rates correspond to. */
+export const HANDLINE_REFERENCE_WIDTH_M = 3;
+
+/**
+ * Time multiplier to build a break of `breakWidthMeters` with a machine whose
+ * blade cuts `cutWidthMeters` per pass. Also returns the pass count.
+ */
+export function machineryWidthMultiplier(
+  breakWidthMeters: number | undefined,
+  cutWidthMeters: number | undefined
+): { multiplier: number; passes: number } {
+  const cut = cutWidthMeters && cutWidthMeters > 0 ? cutWidthMeters : DEFAULT_CUT_WIDTH_M;
+  const width = breakWidthMeters && breakWidthMeters > 0 ? breakWidthMeters : cut;
+  const passes = Math.max(1, Math.ceil(width / cut));
+  const multiplier = 1 + (passes - 1) * SUBSEQUENT_PASS_FACTOR;
+  return { multiplier, passes };
+}
+
+/** Time multiplier for a hand crew to clear a break wider than a standard hand line. */
+export function handCrewWidthMultiplier(breakWidthMeters: number | undefined): number {
+  if (!breakWidthMeters || breakWidthMeters <= HANDLINE_REFERENCE_WIDTH_M) return 1;
+  return breakWidthMeters / HANDLINE_REFERENCE_WIDTH_M;
+}
+
+/**
  * Default maximum workable slope (degrees) when an equipment item does not
  * specify its own `maxSlope`. Machinery default (~25° ≈ 47% grade) is a
  * conservative planning limit consistent with NWCG dozer guidance (avoid

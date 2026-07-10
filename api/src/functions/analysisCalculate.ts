@@ -94,7 +94,10 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
         };
 
         // Add type-specific properties
-        if (equipment.type === 'Aircraft') {
+        if (equipment.type === 'Machinery') {
+          const machinery = equipment as Machinery;
+          spec.cutWidthMeters = machinery.cutWidthMeters;
+        } else if (equipment.type === 'Aircraft') {
           const aircraft = equipment as Aircraft;
           spec.dropLength = aircraft.dropLength;
           spec.turnaroundMinutes = aircraft.turnaroundMinutes;

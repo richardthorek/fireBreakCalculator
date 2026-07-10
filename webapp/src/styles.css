@@ -4044,3 +4044,45 @@ button:focus {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Data-quality warning + break-width control (calculation uplift)     */
+/* ------------------------------------------------------------------ */
+.data-quality-warning {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #b7791f;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(183, 121, 31, 0.12);
+  color: #7b5312;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.data-quality-warning strong { color: #7b5312; }
+.data-quality-icon { font-size: 1rem; line-height: 1.2; }
+
+.break-width-group { margin-bottom: 0.75rem; }
+.break-width-group select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+.break-width-hint {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+@media (prefers-color-scheme: dark) {
+  .data-quality-warning {
+    background: rgba(183, 121, 31, 0.18);
+    color: #f5d59b;
+    border-color: #d69e2e;
+  }
+  .data-quality-warning strong { color: #f8e3bd; }
+}
