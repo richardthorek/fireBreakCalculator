@@ -14,6 +14,7 @@ import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 import { buildRouteProfile } from '../utils/routeProfile';
+import { buildShareUrl, toGPX, downloadFile, printBriefing } from '../utils/planSharing';
 import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
@@ -37,6 +38,12 @@ interface AnalysisPanelProps {
   onDropPreviewChange?: (aircraftIds: string[]) => void;
   /** Callback for when expanded state changes */
   onExpandedChange?: (isExpanded: boolean) => void;
+  /** Drawn line vertices for export/sharing (GPX, share link). */
+  lineCoords?: { lat: number; lng: number }[] | null;
+  /** Initial break width restored from a shared plan. */
+  initialBreakWidthMeters?: number;
+  /** Initial manual vegetation override restored from a shared plan. */
+  initialVegetationOverride?: VegetationType;
   /** True when the parent map has completed initial pan/zoom to the user's location
    *  (or attempted fallback). Gate heavy backend analysis until this is true to
    *  avoid spamming the backend while the map is still settling. */
@@ -267,13 +274,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onExpandedChange,
   selectedAircraftForPreview: externalSelected = []
   ,
-  mapSettled = false
+  mapSettled = false,
+  lineCoords = null,
+  initialBreakWidthMeters,
+  initialVegetationOverride
 }: AnalysisPanelProps) => {
-  // Vegetation state: allow manual override of auto-detected vegetation
-  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
-  const [useAutoDetected, setUseAutoDetected] = useState(true);
+  // Vegetation state: allow manual override of auto-detected vegetation.
+  // A shared plan may seed an explicit override.
+  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>(initialVegetationOverride ?? 'grassland');
+  const [useAutoDetected, setUseAutoDetected] = useState(!initialVegetationOverride);
   // Target fire break width (m). Drives machinery pass count and hand-crew effort.
-  const [breakWidthMeters, setBreakWidthMeters] = useState<number>(4);
+  const [breakWidthMeters, setBreakWidthMeters] = useState<number>(initialBreakWidthMeters ?? 4);
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
 
@@ -675,6 +686,50 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     compatibilityLevel: isCompatibilityLevel(r.compatibilityLevel) ? r.compatibilityLevel : 'incompatible'
   })) : calculations;
 
+  // --- Share & export -------------------------------------------------------
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const canExport = !!(lineCoords && lineCoords.length >= 2);
+
+  const handleCopyShareLink = async () => {
+    if (!canExport) return;
+    const url = buildShareUrl({
+      coords: lineCoords!,
+      breakWidthMeters,
+      vegetation: useAutoDetected ? undefined : selectedVegetation
+    });
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareStatus('Link copied');
+    } catch {
+      // Clipboard may be blocked; fall back to a prompt so the user can copy manually.
+      window.prompt('Copy this shareable plan link:', url);
+      setShareStatus(null);
+    }
+    if (shareStatus !== 'Link copied') setTimeout(() => setShareStatus(null), 2500);
+  };
+
+  const handleExportGpx = () => {
+    if (!canExport) return;
+    const gpx = toGPX(lineCoords!, 'Fire break plan');
+    downloadFile(`fire-break-${new Date().toISOString().slice(0, 10)}.gpx`, gpx, 'application/gpx+xml');
+  };
+
+  const handlePrintBriefing = () => {
+    if (!distance) return;
+    printBriefing({
+      distanceMeters: distance,
+      breakWidthMeters,
+      vegetation: effectiveVegetation,
+      meanSlope: trackAnalysis?.averageSlope,
+      maxSlope: trackAnalysis?.maxSlope,
+      estimatedData: !!(trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData),
+      resources: (finalCalculations as any[])
+        .filter(r => r.compatible)
+        .slice(0, 12)
+        .map(r => ({ name: r.name, type: r.type, time: r.time, cost: r.cost, compatibilityLevel: r.compatibilityLevel, note: r.note }))
+    });
+  };
+
   // Get best option for each category
   const bestOptions = useMemo(() => {
     const compatibleResults = finalCalculations.filter((result: any) => result.compatible);
@@ -831,6 +886,36 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <div className="vegetation-loading">{isAnalyzing ? 'Analyzing vegetation…' : 'Vegetation analysis pending…'}</div>
               </div>
             )}
+          </div>
+        )}
+        {distance && (
+          <div className="plan-export-toolbar">
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handleCopyShareLink}
+              disabled={!canExport}
+              title="Copy a link that reopens this exact plan"
+            >
+              🔗 {shareStatus || 'Share link'}
+            </button>
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handleExportGpx}
+              disabled={!canExport}
+              title="Download the line as GPX for a vehicle/handheld GPS"
+            >
+              📍 GPX
+            </button>
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handlePrintBriefing}
+              title="Open a printable briefing sheet"
+            >
+              🖨️ Briefing
+            </button>
           </div>
         )}
         {trackAnalysis && (

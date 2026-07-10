@@ -16,6 +16,7 @@ import {
   deleteVegetationMapping 
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
+import { readPlanFromUrl } from './utils/planSharing';
 import { logger } from './utils/logger';
 
 // Import site logo/favicon as a module so the bundler rewrites the path
@@ -30,6 +31,9 @@ import logo96 from '../favicon-96x96.png';
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
+  // Drawn line vertices (for export/sharing) + any plan restored from the URL.
+  const [lineCoords, setLineCoords] = useState<{ lat: number; lng: number }[] | null>(null);
+  const [sharedPlan] = useState(() => readPlanFromUrl());
   const [vegetationAnalysis, setVegetationAnalysis] = useState<VegetationAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>([]);
@@ -489,6 +493,8 @@ const App: React.FC = () => {
             onInitialLocationSettled={setInitialLocationSettled}
             initialUserLocation={prefetchedLocation}
             selectedSearchLocation={searchLocation}
+            onLineChange={setLineCoords}
+            initialLine={sharedPlan?.coords || null}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -510,6 +516,9 @@ const App: React.FC = () => {
             selectedAircraftForPreview={selectedAircraftForPreview}
             onDropPreviewChange={setSelectedAircraftForPreview}
             onExpandedChange={setIsAnalysisPanelExpanded}
+            lineCoords={lineCoords}
+            initialBreakWidthMeters={sharedPlan?.breakWidthMeters}
+            initialVegetationOverride={sharedPlan?.vegetation}
           />
         </div>
         <IntegratedConfigPanel 
