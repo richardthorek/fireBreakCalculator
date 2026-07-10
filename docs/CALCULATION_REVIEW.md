@@ -4,6 +4,21 @@
 
 ---
 
+## Implementation status (July 2026)
+
+The **P0 calculation-accuracy items below have been implemented** (see PR for this branch):
+
+- **F1 — Per-segment integration:** new `webapp/src/utils/routeProfile.ts` joins the slope and vegetation sampling passes onto a common chainage and sends a `RouteSegment[]` profile to the backend, which now sums production **segment by segment** instead of collapsing the route to one slope bucket + one predominant fuel. (`api/src/services/equipmentAnalysis.ts`)
+- **F2 — Real slope gating:** machinery slope limits are enforced again via `resolveMaxSlopeDegrees()`, derived from each item's `allowedTerrain` (and explicit `maxSlope` when present). Over-limit ground is measured as a *fraction* of the line → full / partial (with penalty) / incompatible.
+- **F3 / F7 — Grounded, tunable model:** new `api/src/services/productionModel.ts` replaces the two hand-picked factors with resource-specific, documented **speed multipliers** for fuel and slope (machinery vs hand crew vs aircraft), grounded in the structure of the NWCG / Report 56 tables and the project's own `add_machines.js` factors. All constants are named and calibratable.
+- **F5 — Aircraft model:** load/coverage model — heavier fuel raises coverage → fewer effective metres per drop; cost prefers `costPerDrop`.
+- **A1 — De-duplication:** the accurate model now lives **only** in the backend; the frontend delegates to it (the frontend fallback remains solely as a degraded offline path).
+- **A5 — Tests:** `api/src/test/analysis.test.ts` covers the model and per-segment behaviour (11 checks).
+
+Still open (P1/P2): server-side DEM profile via ELVIS (F4/A2), national fuel-type layer + per-segment override UI + explicit mock-data badging (F8/A4/U5), richer cost model with mobilisation (F6), and surfacing confidence/segment breakdown in the UI (U1/U2). The model already **returns** per-analysis confidence, mean/max slope and segment count in `metadata` so the UI can surface them.
+
+---
+
 ## 1. TL;DR
 
 The app is a well-organised, cheap-to-run geospatial tool with a sensible stack, but the **core estimation model is an invented heuristic, not grounded in the established fireline-production literature**, and it **discards most of the spatial data it goes to the trouble of collecting**. The three highest-impact problems:

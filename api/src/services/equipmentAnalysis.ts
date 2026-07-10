@@ -1,11 +1,34 @@
 /**
  * Equipment Analysis Service
- * 
- * Core business logic for calculating fire break equipment recommendations.
- * Moved from frontend to backend for better reliability, debugging, and performance.
+ *
+ * Core business logic for estimating how different resources (machinery,
+ * aircraft, hand crews) build a fire break along a planned line.
+ *
+ * KEY BEHAVIOUR (rewritten for accuracy):
+ * - The estimate is INTEGRATED PER SEGMENT along the route. Each segment carries
+ *   its own slope and fuel/vegetation, and time is summed segment by segment
+ *   using the grounded production model (see productionModel.ts). This replaces
+ *   the previous approach that collapsed the whole line to a single worst-case
+ *   slope bucket and a single "predominant" vegetation class.
+ * - Machinery slope SAFETY LIMITS are enforced: a segment steeper than the
+ *   machine's workable slope (explicit `maxSlope`, or a conservative default) is
+ *   counted as over-limit. Too much over-limit ground makes the machine
+ *   incompatible; a small fraction is allowed as "partial" with a time penalty.
+ * - Aircraft are modelled by load/coverage: heavier fuel needs higher coverage,
+ *   so effective line per drop shrinks; cost uses per-drop cost when available.
+ * - When the caller supplies a joined `segments[]` profile the model uses it
+ *   directly; otherwise it degrades gracefully to the marginal slope/vegetation
+ *   distributions (still integrated over slope, better than single-bucket).
  */
 
 import { TerrainLevel, VegetationType } from '../types/common';
+import {
+  ResourceKind,
+  effectiveRate,
+  fuelFactor,
+  resolveMaxSlopeDegrees,
+  slopeToTerrain,
+} from './productionModel';
 
 export interface TrackAnalysis {
   maxSlope: number;
@@ -15,21 +38,38 @@ export interface TrackAnalysis {
 
 export interface VegetationAnalysis {
   predominantVegetation: VegetationType;
-  coverage: Record<VegetationType, number>;
+  coverage?: Record<VegetationType, number>;
+  vegetationDistribution?: Record<VegetationType, number>;
+  overallConfidence?: number;
+}
+
+/** A resolved slice of the planned line with (approximately) uniform conditions. */
+export interface RouteSegment {
+  /** Length of this segment in metres. */
+  length: number;
+  /** Representative slope for the segment, in degrees. */
+  slopeDegrees: number;
+  /** Fuel / vegetation class for the segment. */
+  vegetation: VegetationType;
+  /** Detection confidence for the vegetation class (0..1), optional. */
+  vegetationConfidence?: number;
 }
 
 export interface EquipmentSpec {
   id: string;
   name: string;
-  type: 'Machinery' | 'Aircraft' | 'HandCrew';
+  type: ResourceKind;
   allowedTerrain: TerrainLevel[];
   allowedVegetation: VegetationType[];
   clearingRate?: number;
   costPerHour?: number;
   description?: string;
+  maxSlope?: number;
   // Aircraft specific
   dropLength?: number;
   turnaroundMinutes?: number;
+  capacityLitres?: number;
+  costPerDrop?: number;
   // Hand crew specific
   crewSize?: number;
   clearingRatePerPerson?: number;
@@ -38,7 +78,7 @@ export interface EquipmentSpec {
 export interface CalculationResult {
   id: string;
   name: string;
-  type: 'Machinery' | 'Aircraft' | 'HandCrew';
+  type: ResourceKind;
   time: number;
   cost: number;
   compatible: boolean;
@@ -49,6 +89,8 @@ export interface CalculationResult {
   maxSlopeExceeded?: number;
   drops?: number;
   overLimitPercent?: number;
+  /** Vegetation-detection confidence carried through for UI signalling (0..1). */
+  confidence?: number;
   note?: string;
   validationErrors?: string[];
 }
@@ -62,6 +104,8 @@ export interface AnalysisRequest {
   distance: number;
   trackAnalysis: TrackAnalysis;
   vegetationAnalysis: VegetationAnalysis;
+  /** Joined per-segment route profile. Preferred; falls back to distributions. */
+  segments?: RouteSegment[];
   parameters?: AnalysisParameters;
 }
 
@@ -74,66 +118,46 @@ export interface AnalysisResponse {
     analysisParameters: {
       effectiveTerrain: TerrainLevel;
       effectiveVegetation: VegetationType;
-      terrainFactor: number;
-      vegetationFactor: number;
+      /** Length-weighted mean slope across the route (degrees). */
+      meanSlope: number;
+      /** Steepest segment slope on the route (degrees). */
+      maxSlope: number;
+      /** Number of segments the estimate integrated over. */
+      segmentCount: number;
+      /** Whether a joined segment profile was supplied (true) or synthesised. */
+      profileFromClient: boolean;
+      /** Overall vegetation-detection confidence (0..1). */
+      overallConfidence: number;
     };
   };
 }
 
-// Default factors (can be overridden by request parameters)
-const DEFAULT_TERRAIN_FACTORS: Record<TerrainLevel, number> = {
-  flat: 1.0,
-  medium: 1.3,
-  steep: 1.7,
-  very_steep: 2.2
+// Representative slope (degrees) for each coarse category, used only when a
+// joined segment profile is unavailable and we synthesise from distributions.
+const CATEGORY_REPRESENTATIVE_SLOPE: Record<string, number> = {
+  flat: 5,
+  medium: 17,
+  steep: 34,
+  very_steep: 50,
 };
 
-const DEFAULT_VEGETATION_FACTORS: Record<VegetationType, number> = {
-  grassland: 1.0,
-  lightshrub: 1.1,
-  mediumscrub: 1.5,
-  heavyforest: 2.0
-};
-
-const TERRAIN_RANK: Record<TerrainLevel, number> = {
-  flat: 0,
-  medium: 1,
-  steep: 2,
-  very_steep: 3
-};
-
-const SLOPE_CATEGORY_TO_TERRAIN: Record<string, TerrainLevel> = {
-  flat: 'flat',
-  medium: 'medium', 
-  steep: 'steep',
-  very_steep: 'very_steep'
-};
+// Tunable gating constants (documented; previously scattered magic numbers).
+/** Fraction of route allowed to exceed a resource's limits before it is ruled out. */
+const PARTIAL_THRESHOLD = 0.15;
+/** Time-penalty slope of the partial band: penalty = 1 + overFraction × K. */
+const PARTIAL_TIME_PENALTY_K = 2;
 
 export class EquipmentAnalysisService {
-  
-  /**
-   * Validate equipment specification
-   */
   private validateEquipment(equipment: EquipmentSpec): string[] {
     const errors: string[] = [];
-    
-    if (!equipment.id || equipment.id.trim() === '') {
-      errors.push('Equipment ID is required');
-    }
-    
-    if (!equipment.name || equipment.name.trim() === '') {
-      errors.push('Equipment name is required');
-    }
-    
+    if (!equipment.id || equipment.id.trim() === '') errors.push('Equipment ID is required');
+    if (!equipment.name || equipment.name.trim() === '') errors.push('Equipment name is required');
     if (!equipment.allowedTerrain || equipment.allowedTerrain.length === 0) {
       errors.push('Equipment must specify allowed terrain types');
     }
-    
     if (!equipment.allowedVegetation || equipment.allowedVegetation.length === 0) {
       errors.push('Equipment must specify allowed vegetation types');
     }
-    
-    // Type-specific validations
     if (equipment.type === 'Machinery') {
       if (!equipment.clearingRate || equipment.clearingRate <= 0) {
         errors.push('Machinery must have positive clearing rate');
@@ -153,249 +177,260 @@ export class EquipmentAnalysisService {
         errors.push('Hand crew must have positive clearing rate per person');
       }
     }
-    
     return errors;
-  }
-  
-  /**
-   * Derive terrain level from maximum slope
-   */
-  private deriveTerrainFromSlope(maxSlope: number): TerrainLevel {
-    if (maxSlope < 10) return 'flat';
-    if (maxSlope < 25) return 'medium';
-    if (maxSlope < 45) return 'steep';
-    return 'very_steep';
-  }
-  
-  /**
-   * Check basic environment compatibility (terrain and vegetation)
-   */
-  private isEnvironmentCompatible(
-    equipment: EquipmentSpec,
-    requiredTerrain: TerrainLevel,
-    vegetation: VegetationType
-  ): boolean {
-    // Terrain hierarchy check - equipment can handle anything up to its max capability
-    const highestAllowedRank = Math.max(...equipment.allowedTerrain.map(t => TERRAIN_RANK[t]));
-    const requiredRank = TERRAIN_RANK[requiredTerrain];
-    const terrainCompatible = requiredRank <= highestAllowedRank;
-    
-    // Vegetation exact match
-    const vegetationCompatible = equipment.allowedVegetation.includes(vegetation);
-    
-    return terrainCompatible && vegetationCompatible;
-  }
-  
-  /**
-   * Check slope compatibility for machinery - REMOVED
-   * Now we only use terrain hierarchy (flat, medium, steep, very_steep)
-   */
-  private isSlopeCompatible(
-    equipment: EquipmentSpec,
-    maxSlope: number
-  ): { compatible: boolean; maxSlopeExceeded?: number } {
-    // Always compatible - terrain hierarchy handles this now
-    return { compatible: true };
-  }
-  
-  /**
-   * Evaluate machinery terrain compatibility with partial support
-   */
-  private evaluateMachineryCompatibility(
-    equipment: EquipmentSpec,
-    trackAnalysis: TrackAnalysis,
-    vegetation: VegetationType,
-    requiredTerrain: TerrainLevel
-  ): { level: 'full' | 'partial' | 'incompatible'; overLimitPercent?: number; note?: string } {
-    
-    // Basic environment check first
-    if (!this.isEnvironmentCompatible(equipment, requiredTerrain, vegetation)) {
-      return { level: 'incompatible', note: 'Terrain/vegetation not permitted' };
-    }
-    
-    // If no detailed track data, fall back to simple check
-    if (!trackAnalysis || !trackAnalysis.slopeDistribution) {
-      return { level: 'full' };
-    }
-    
-    // Calculate percentage of route that exceeds equipment capability
-    const highestAllowed = Math.max(...equipment.allowedTerrain.map(t => TERRAIN_RANK[t]));
-    const distByCat = trackAnalysis.slopeDistribution;
-    
-    const overDistance = Object.entries(distByCat).reduce((acc, [cat, dist]) => {
-      const terrain = SLOPE_CATEGORY_TO_TERRAIN[cat];
-      if (!terrain) return acc;
-      const rank = TERRAIN_RANK[terrain];
-      return rank > highestAllowed ? acc + (dist as number) : acc;
-    }, 0);
-    
-    const total = trackAnalysis.totalDistance || 0;
-    const overPercent = total > 0 ? overDistance / total : 0;
-    
-    if (overPercent === 0) return { level: 'full' };
-    
-    // Allow partial if within threshold (15%)
-    const PARTIAL_THRESHOLD = 0.15;
-    if (overPercent <= PARTIAL_THRESHOLD) {
-      return {
-        level: 'partial',
-        overLimitPercent: overPercent,
-        note: `~${Math.round(overPercent * 100)}% of route exceeds rated terrain; applying time penalty.`
-      };
-    }
-    
-    return {
-      level: 'incompatible',
-      overLimitPercent: overPercent,
-      note: 'Too much challenging terrain'
-    };
-  }
-  
-  /**
-   * Calculate machinery time
-   */
-  private calculateMachineryTime(
-    distance: number,
-    equipment: EquipmentSpec,
-    terrainFactor: number,
-    vegetationFactor: number
-  ): number {
-    const clearingRate = equipment.clearingRate || 0;
-    if (clearingRate <= 0) return 0;
-    
-    const adjustedRate = clearingRate / (terrainFactor * vegetationFactor);
-    return distance / adjustedRate; // hours
-  }
-  
-  /**
-   * Calculate aircraft drops and time
-   */
-  private calculateAircraftTime(
-    distance: number,
-    equipment: EquipmentSpec
-  ): { time: number; drops: number } {
-    const dropLength = equipment.dropLength || 100; // Default 100m
-    const turnaroundMinutes = equipment.turnaroundMinutes || 15; // Default 15 minutes
-    
-    const drops = Math.ceil(distance / dropLength);
-    const totalTime = drops * (turnaroundMinutes / 60); // Convert to hours
-    
-    return { time: totalTime, drops };
-  }
-  
-  /**
-   * Calculate hand crew time
-   */
-  private calculateHandCrewTime(
-    distance: number,
-    equipment: EquipmentSpec,
-    terrainFactor: number,
-    vegetationFactor: number
-  ): number {
-    const crewSize = equipment.crewSize || 0;
-    const ratePerPerson = equipment.clearingRatePerPerson || 0;
-    
-    if (crewSize <= 0 || ratePerPerson <= 0) return 0;
-    
-    const totalRate = crewSize * ratePerPerson;
-    const adjustedRate = totalRate / (terrainFactor * vegetationFactor);
-    return distance / adjustedRate; // hours
-  }
-  
-  /**
-   * Optimize machinery selection for cost efficiency while maintaining reasonable time
-   * Strategy: Use smallest/cheapest machine unless time becomes more than 2x the fastest option
-   */
-  private optimizeMachinerySelection(results: CalculationResult[]): CalculationResult[] {
-    // Group machinery by compatibility and find the best recommendations
-    const machineryResults = results.filter(r => r.type === 'Machinery' && r.compatible);
-    
-    if (machineryResults.length <= 1) {
-      return results; // No optimization needed
-    }
-    
-    // Find the fastest compatible machinery (baseline for time comparison)
-    const fastestMachinery = machineryResults.reduce((fastest, current) => 
-      current.time < fastest.time ? current : fastest
-    );
-    
-    const maxAcceptableTime = fastestMachinery.time * 2; // 2x time threshold
-    
-    // Find the cheapest machinery that doesn't exceed the time threshold
-    const acceptableMachinery = machineryResults.filter(m => m.time <= maxAcceptableTime);
-    
-    if (acceptableMachinery.length === 0) {
-      return results; // Fallback to original results if no machinery meets criteria
-    }
-    
-    // Sort acceptable machinery by cost (ascending) to find the cheapest
-    acceptableMachinery.sort((a, b) => a.cost - b.cost);
-    const recommendedMachinery = acceptableMachinery[0];
-    
-    // Mark the recommended machinery and add optimization notes
-    const optimizedResults = results.map(result => {
-      if (result.type === 'Machinery' && result.compatible) {
-        if (result.id === recommendedMachinery.id) {
-          return {
-            ...result,
-            note: result.note ? 
-              `${result.note} • Cost-optimized selection` : 
-              'Cost-optimized selection'
-          };
-        } else {
-          // Add note explaining why other machinery wasn't selected
-          const timeRatio = result.time / fastestMachinery.time;
-          const costSavings = result.cost - recommendedMachinery.cost;
-          
-          let reason = '';
-          if (result.time > maxAcceptableTime) {
-            reason = `Takes ${timeRatio.toFixed(1)}x longer than fastest option`;
-          } else if (result.cost > recommendedMachinery.cost) {
-            reason = `$${Math.round(costSavings)} more expensive than cost-optimized choice`;
-          }
-          
-          return {
-            ...result,
-            note: result.note ? 
-              `${result.note} • ${reason}` : 
-              reason
-          };
-        }
-      }
-      return result;
-    });
-    
-    return optimizedResults;
   }
 
   /**
-   * Main analysis method
+   * Build the per-segment route profile the estimate integrates over. Uses the
+   * client-supplied joined profile when present; otherwise synthesises segments
+   * from the slope distribution (integrating slope properly) with the route's
+   * predominant vegetation applied to each.
    */
+  private buildProfile(request: AnalysisRequest): { segments: RouteSegment[]; fromClient: boolean } {
+    if (request.segments && request.segments.length > 0) {
+      const cleaned = request.segments.filter((s) => s && s.length > 0);
+      if (cleaned.length > 0) return { segments: cleaned, fromClient: true };
+    }
+
+    const predominant = request.vegetationAnalysis.predominantVegetation || 'grassland';
+    const dist = request.trackAnalysis.slopeDistribution || {};
+    const segments: RouteSegment[] = [];
+    for (const [category, length] of Object.entries(dist)) {
+      if (!length || length <= 0) continue;
+      segments.push({
+        length: length as number,
+        slopeDegrees: CATEGORY_REPRESENTATIVE_SLOPE[category] ?? 5,
+        vegetation: predominant,
+        vegetationConfidence: request.vegetationAnalysis.overallConfidence,
+      });
+    }
+    // Nothing usable in the distribution — fall back to one flat segment.
+    if (segments.length === 0) {
+      segments.push({
+        length: request.distance || request.trackAnalysis.totalDistance || 0,
+        slopeDegrees: request.trackAnalysis.maxSlope || 0,
+        vegetation: predominant,
+        vegetationConfidence: request.vegetationAnalysis.overallConfidence,
+      });
+    }
+    return { segments, fromClient: false };
+  }
+
+  /** Reference (flat-grassland) production rate in m/hr for a line-building resource. */
+  private referenceRate(equipment: EquipmentSpec): number {
+    if (equipment.type === 'Machinery') return equipment.clearingRate || 0;
+    if (equipment.type === 'HandCrew') {
+      return (equipment.crewSize || 0) * (equipment.clearingRatePerPerson || 0);
+    }
+    return 0;
+  }
+
+  /**
+   * Integrate a line-building resource (Machinery or HandCrew) over the profile.
+   */
+  private evaluateLineResource(
+    equipment: EquipmentSpec,
+    segments: RouteSegment[]
+  ): CalculationResult {
+    const kind = equipment.type;
+    const refRate = this.referenceRate(equipment);
+    const allowedVeg = new Set(equipment.allowedVegetation);
+    const slopeLimit = resolveMaxSlopeDegrees(kind, equipment.maxSlope, equipment.allowedTerrain);
+
+    let totalLength = 0;
+    let overLength = 0;
+    let time = 0;
+    let steepestOver = 0;
+    let confidenceWeighted = 0;
+
+    for (const seg of segments) {
+      totalLength += seg.length;
+      confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
+
+      const slopeOver = seg.slopeDegrees > slopeLimit;
+      const vegOver = !allowedVeg.has(seg.vegetation);
+      if (slopeOver || vegOver) {
+        overLength += seg.length;
+        if (seg.slopeDegrees > steepestOver) steepestOver = seg.slopeDegrees;
+      }
+
+      const rate = effectiveRate(refRate, kind, seg.vegetation, seg.slopeDegrees);
+      // A workable segment always has rate > 0. For an over-limit segment we
+      // still accrue notional time so partial estimates remain meaningful.
+      if (rate > 0) {
+        time += seg.length / rate;
+      } else if (refRate > 0) {
+        time += seg.length / (refRate * 0.1);
+      }
+    }
+
+    const overFraction = totalLength > 0 ? overLength / totalLength : 0;
+    let level: 'full' | 'partial' | 'incompatible';
+    if (overFraction === 0) level = 'full';
+    else if (overFraction <= PARTIAL_THRESHOLD) level = 'partial';
+    else level = 'incompatible';
+
+    if (level === 'partial') {
+      time *= 1 + overFraction * PARTIAL_TIME_PENALTY_K;
+    }
+
+    const compatible = level !== 'incompatible';
+    const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
+    const slopeCompatible = steepestOver === 0 || steepestOver <= slopeLimit;
+    const confidence = totalLength > 0 ? confidenceWeighted / totalLength : undefined;
+
+    let note: string | undefined;
+    if (level === 'incompatible') {
+      note = `${Math.round(overFraction * 100)}% of route exceeds this resource's slope/fuel limits`;
+    } else if (level === 'partial') {
+      note = `~${Math.round(overFraction * 100)}% of route over limits; time penalty applied`;
+    }
+
+    return {
+      id: equipment.id,
+      name: equipment.name,
+      type: kind,
+      time: compatible ? time : 0,
+      cost,
+      compatible,
+      compatibilityLevel: level,
+      unit: 'hours',
+      description: equipment.description,
+      slopeCompatible,
+      maxSlopeExceeded: steepestOver > slopeLimit ? steepestOver : undefined,
+      overLimitPercent: overFraction > 0 ? overFraction : undefined,
+      confidence,
+      note,
+    };
+  }
+
+  /**
+   * Evaluate an aircraft using a load/coverage model. Heavier fuel needs higher
+   * coverage, shrinking effective line per drop. Cost prefers per-drop cost.
+   */
+  private evaluateAircraft(equipment: EquipmentSpec, segments: RouteSegment[]): CalculationResult {
+    const allowedVeg = new Set(equipment.allowedVegetation);
+    const dropLength = equipment.dropLength || 100;
+    const turnaroundMinutes = equipment.turnaroundMinutes || 15;
+
+    let totalLength = 0;
+    let overLength = 0;
+    let fractionalDrops = 0;
+    let confidenceWeighted = 0;
+
+    for (const seg of segments) {
+      totalLength += seg.length;
+      confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
+      if (!allowedVeg.has(seg.vegetation)) overLength += seg.length;
+
+      const effectiveDrop = dropLength * fuelFactor('Aircraft', seg.vegetation);
+      if (effectiveDrop > 0) fractionalDrops += seg.length / effectiveDrop;
+    }
+
+    const overFraction = totalLength > 0 ? overLength / totalLength : 0;
+    let level: 'full' | 'partial' | 'incompatible';
+    if (overFraction === 0) level = 'full';
+    else if (overFraction <= PARTIAL_THRESHOLD) level = 'partial';
+    else level = 'incompatible';
+
+    const compatible = level !== 'incompatible';
+    const drops = Math.max(1, Math.ceil(fractionalDrops));
+    const time = compatible ? drops * (turnaroundMinutes / 60) : 0;
+
+    let cost = 0;
+    if (compatible) {
+      if (equipment.costPerDrop && equipment.costPerDrop > 0) cost = drops * equipment.costPerDrop;
+      else if (equipment.costPerHour) cost = time * equipment.costPerHour;
+    }
+
+    const confidence = totalLength > 0 ? confidenceWeighted / totalLength : undefined;
+    let note: string | undefined;
+    if (level === 'incompatible') {
+      note = `${Math.round(overFraction * 100)}% of route in fuel this aircraft cannot effectively treat`;
+    } else if (level === 'partial') {
+      note = `~${Math.round(overFraction * 100)}% of route in marginal fuel`;
+    }
+
+    return {
+      id: equipment.id,
+      name: equipment.name,
+      type: 'Aircraft',
+      time,
+      cost,
+      compatible,
+      compatibilityLevel: level,
+      unit: 'hours',
+      description: equipment.description,
+      drops: compatible ? drops : 0,
+      overLimitPercent: overFraction > 0 ? overFraction : undefined,
+      confidence,
+      note,
+    };
+  }
+
+  /**
+   * Cost-optimised machinery hint: flag the cheapest compatible machine whose
+   * time is within 2× the fastest, and annotate the rest with why.
+   */
+  private optimizeMachinerySelection(results: CalculationResult[]): CalculationResult[] {
+    const machineryResults = results.filter((r) => r.type === 'Machinery' && r.compatible);
+    if (machineryResults.length <= 1) return results;
+
+    const fastest = machineryResults.reduce((f, c) => (c.time < f.time ? c : f));
+    const maxAcceptableTime = fastest.time * 2;
+    const acceptable = machineryResults.filter((m) => m.time <= maxAcceptableTime);
+    if (acceptable.length === 0) return results;
+
+    acceptable.sort((a, b) => a.cost - b.cost);
+    const recommended = acceptable[0];
+
+    return results.map((result) => {
+      if (result.type !== 'Machinery' || !result.compatible) return result;
+      if (result.id === recommended.id) {
+        return {
+          ...result,
+          note: result.note ? `${result.note} • Cost-optimised selection` : 'Cost-optimised selection',
+        };
+      }
+      const timeRatio = result.time / fastest.time;
+      const costSavings = result.cost - recommended.cost;
+      let reason = '';
+      if (result.time > maxAcceptableTime) reason = `Takes ${timeRatio.toFixed(1)}× longer than fastest option`;
+      else if (result.cost > recommended.cost) reason = `$${Math.round(costSavings)} more than cost-optimised choice`;
+      return { ...result, note: result.note ? `${result.note} • ${reason}` : reason };
+    });
+  }
+
   public async analyzeEquipment(
     request: AnalysisRequest,
     equipmentList: EquipmentSpec[]
   ): Promise<AnalysisResponse> {
-    
     const validationErrors: string[] = [];
     const results: CalculationResult[] = [];
-    
-    // Determine analysis parameters
-    const terrainFactors = { ...DEFAULT_TERRAIN_FACTORS, ...(request.parameters?.terrainFactors || {}) };
-    const vegetationFactors = { ...DEFAULT_VEGETATION_FACTORS, ...(request.parameters?.vegetationFactors || {}) };
-    
-    const effectiveTerrain = this.deriveTerrainFromSlope(request.trackAnalysis.maxSlope);
-    const effectiveVegetation = request.vegetationAnalysis.predominantVegetation;
-    const terrainFactor = terrainFactors[effectiveTerrain];
-    const vegetationFactor = vegetationFactors[effectiveVegetation];
-    
-    // Process each piece of equipment
+
+    const { segments, fromClient } = this.buildProfile(request);
+
+    // Route-level descriptive stats for metadata.
+    let totalLength = 0;
+    let slopeWeighted = 0;
+    let maxSlope = 0;
+    let confidenceWeighted = 0;
+    for (const seg of segments) {
+      totalLength += seg.length;
+      slopeWeighted += seg.slopeDegrees * seg.length;
+      confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
+      if (seg.slopeDegrees > maxSlope) maxSlope = seg.slopeDegrees;
+    }
+    const meanSlope = totalLength > 0 ? slopeWeighted / totalLength : 0;
+    const overallConfidence =
+      request.vegetationAnalysis.overallConfidence ??
+      (totalLength > 0 ? confidenceWeighted / totalLength : 0);
+    const effectiveVegetation = request.vegetationAnalysis.predominantVegetation || 'grassland';
+
     for (const equipment of equipmentList) {
       const equipmentErrors = this.validateEquipment(equipment);
-      
       if (equipmentErrors.length > 0) {
         validationErrors.push(`${equipment.name}: ${equipmentErrors.join(', ')}`);
-        
-        // Add incompatible result for invalid equipment
         results.push({
           id: equipment.id,
           name: equipment.name,
@@ -407,120 +442,31 @@ export class EquipmentAnalysisService {
           unit: 'hours',
           description: equipment.description,
           validationErrors: equipmentErrors,
-          note: 'Equipment configuration invalid'
+          note: 'Equipment configuration invalid',
         });
         continue;
       }
-      
-      // Calculate based on equipment type
-      if (equipment.type === 'Machinery') {
-        const terrainEval = this.evaluateMachineryCompatibility(
-          equipment,
-          request.trackAnalysis,
-          effectiveVegetation,
-          effectiveTerrain
-        );
-        
-        const slopeCheck = this.isSlopeCompatible(equipment, request.trackAnalysis.maxSlope);
-        
-        const compatible = (terrainEval.level === 'full' || terrainEval.level === 'partial') && slopeCheck.compatible;
-        
-        let time = 0;
-        if (compatible) {
-          time = this.calculateMachineryTime(request.distance, equipment, terrainFactor, vegetationFactor);
-          
-          // Apply penalty for partial compatibility
-          if (terrainEval.level === 'partial' && terrainEval.overLimitPercent) {
-            const penaltyMultiplier = 1 + terrainEval.overLimitPercent * 2;
-            time *= penaltyMultiplier;
-          }
-        }
-        
-        const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
-        
-        results.push({
-          id: equipment.id,
-          name: equipment.name,
-          type: equipment.type,
-          time,
-          cost,
-          compatible,
-          compatibilityLevel: !slopeCheck.compatible || terrainEval.level === 'incompatible' ? 'incompatible' : terrainEval.level,
-          unit: 'hours',
-          description: equipment.description,
-          slopeCompatible: slopeCheck.compatible,
-          maxSlopeExceeded: slopeCheck.maxSlopeExceeded,
-          overLimitPercent: terrainEval.overLimitPercent,
-          note: !slopeCheck.compatible ? 'Slope exceeds capability' : terrainEval.note
-        });
-        
+
+      if (equipment.type === 'Machinery' || equipment.type === 'HandCrew') {
+        results.push(this.evaluateLineResource(equipment, segments));
       } else if (equipment.type === 'Aircraft') {
-        const compatible = this.isEnvironmentCompatible(equipment, effectiveTerrain, effectiveVegetation);
-        
-        let time = 0;
-        let drops = 0;
-        if (compatible) {
-          const calc = this.calculateAircraftTime(request.distance, equipment);
-          time = calc.time;
-          drops = calc.drops;
-        }
-        
-        const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
-        
-        results.push({
-          id: equipment.id,
-          name: equipment.name,
-          type: equipment.type,
-          time,
-          cost,
-          compatible,
-          compatibilityLevel: compatible ? 'full' : 'incompatible',
-          unit: 'hours',
-          description: equipment.description,
-          drops
-        });
-        
-      } else if (equipment.type === 'HandCrew') {
-        const compatible = this.isEnvironmentCompatible(equipment, effectiveTerrain, effectiveVegetation);
-        
-        const time = compatible ? this.calculateHandCrewTime(request.distance, equipment, terrainFactor, vegetationFactor) : 0;
-        const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
-        
-        results.push({
-          id: equipment.id,
-          name: equipment.name,
-          type: equipment.type,
-          time,
-          cost,
-          compatible,
-          compatibilityLevel: compatible ? 'full' : 'incompatible',
-          unit: 'hours',
-          description: equipment.description
-        });
+        results.push(this.evaluateAircraft(equipment, segments));
       }
     }
-    
-    // Apply smart machinery selection: optimize for cost unless time penalty is too high
+
     const optimizedResults = this.optimizeMachinerySelection(results);
-    
-    // Sort results: compatible first (by time, then cost), then incompatible
+
     optimizedResults.sort((a, b) => {
-      if (a.compatible !== b.compatible) {
-        return a.compatible ? -1 : 1;
-      }
-      
-      if (a.compatible) {
-        // Both compatible - sort by time, then cost
-        if (Math.abs(a.time - b.time) < 0.1) {
-          return a.cost - b.cost;
-        }
-        return a.time - b.time;
-      }
-      
-      // Both incompatible - keep original order
-      return 0;
+      const rank = (r: CalculationResult) =>
+        r.compatibilityLevel === 'full' ? 0 : r.compatibilityLevel === 'partial' ? 1 : 2;
+      const ar = rank(a);
+      const br = rank(b);
+      if (ar !== br) return ar - br;
+      if (ar === 2) return 0;
+      if (Math.abs(a.time - b.time) < 0.1) return a.cost - b.cost;
+      return a.time - b.time;
     });
-    
+
     return {
       calculations: optimizedResults,
       metadata: {
@@ -528,12 +474,15 @@ export class EquipmentAnalysisService {
         equipmentCount: equipmentList.length,
         validationErrors,
         analysisParameters: {
-          effectiveTerrain,
+          effectiveTerrain: slopeToTerrain(meanSlope),
           effectiveVegetation,
-          terrainFactor,
-          vegetationFactor
-        }
-      }
+          meanSlope,
+          maxSlope,
+          segmentCount: segments.length,
+          profileFromClient: fromClient,
+          overallConfidence,
+        },
+      },
     };
   }
 }

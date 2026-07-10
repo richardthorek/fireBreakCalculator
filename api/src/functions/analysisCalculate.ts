@@ -98,6 +98,8 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
           const aircraft = equipment as Aircraft;
           spec.dropLength = aircraft.dropLength;
           spec.turnaroundMinutes = aircraft.turnaroundMinutes;
+          spec.capacityLitres = aircraft.capacityLitres;
+          spec.costPerDrop = aircraft.costPerDrop;
         } else if (equipment.type === 'HandCrew') {
           const handCrew = equipment as HandCrew;
           spec.crewSize = handCrew.crewSize;

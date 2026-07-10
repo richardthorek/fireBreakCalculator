@@ -13,6 +13,7 @@ import { HelpContent } from './HelpContent';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
+import { buildRouteProfile } from '../utils/routeProfile';
 import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
@@ -354,13 +355,25 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       });
       
       try {
+        // Build the joined per-segment slope×vegetation profile so the backend
+        // integrates production segment by segment rather than collapsing the
+        // route to a single worst-case slope + predominant vegetation. When the
+        // user has manually overridden vegetation, apply it uniformly.
+        const segments = buildRouteProfile(
+          distance,
+          trackAnalysis,
+          vegetationAnalysis,
+          useAutoDetected ? undefined : effectiveVegetation
+        );
+
         const response = await calculateEquipmentAnalysis({
           distance,
           trackAnalysis,
           vegetationAnalysis: {
             ...vegetationAnalysis,
             predominantVegetation: effectiveVegetation
-          }
+          },
+          segments
         });
         
         // If backend returns empty calculations, log a warning and fall back to frontend
@@ -385,7 +398,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable, mapSettled]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, backendAvailable, mapSettled]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {

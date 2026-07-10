@@ -6,6 +6,7 @@
  */
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
+import { RouteSegment } from './routeProfile';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -17,6 +18,8 @@ export interface BackendAnalysisRequest {
   distance: number;
   trackAnalysis: TrackAnalysis;
   vegetationAnalysis: VegetationAnalysis;
+  /** Joined per-segment slope×vegetation profile; enables per-segment integration. */
+  segments?: RouteSegment[];
   parameters?: {
     terrainFactors?: Record<string, number>;
     vegetationFactors?: Record<string, number>;
@@ -37,6 +40,8 @@ export interface BackendCalculationResult {
   maxSlopeExceeded?: number;
   drops?: number;
   overLimitPercent?: number;
+  /** Vegetation-detection confidence carried through for UI signalling (0..1). */
+  confidence?: number;
   note?: string;
   validationErrors?: string[];
 }
@@ -50,8 +55,16 @@ export interface BackendAnalysisResponse {
     analysisParameters: {
       effectiveTerrain: string;
       effectiveVegetation: string;
-      terrainFactor: number;
-      vegetationFactor: number;
+      /** Length-weighted mean slope across the route (degrees). */
+      meanSlope?: number;
+      /** Steepest segment slope on the route (degrees). */
+      maxSlope?: number;
+      /** Number of segments the estimate integrated over. */
+      segmentCount?: number;
+      /** True when a joined segment profile was supplied by the client. */
+      profileFromClient?: boolean;
+      /** Overall vegetation-detection confidence (0..1). */
+      overallConfidence?: number;
     };
   };
 }
