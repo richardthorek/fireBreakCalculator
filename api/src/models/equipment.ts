@@ -12,6 +12,12 @@ export interface EquipmentBase {
   clearingRate?: number; // machinery OR derived
   costPerHour?: number;
   active: boolean;
+  /**
+   * True for items in the built-in, well-sourced standard catalogue that the
+   * backend seeds automatically. User-created equipment leaves this undefined.
+   * Purely informational — standards can still be edited or deleted.
+   */
+  standard?: boolean;
   version: number;
   createdAt: string; // ISO
   updatedAt: string; // ISO
@@ -20,6 +26,8 @@ export interface EquipmentBase {
 export interface Machinery extends EquipmentBase {
   type: 'Machinery';
   cutWidthMeters?: number;
+  /** Maximum workable slope in degrees (safety limit used by the production model). */
+  maxSlope?: number;
 }
 
 export interface Aircraft extends EquipmentBase {
@@ -50,11 +58,13 @@ export interface EquipmentTableEntity {
   clearingRate?: number;
   costPerHour?: number;
   active: boolean;
+  standard?: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;
   // Type specific optional fields
   cutWidthMeters?: number;
+  maxSlope?: number;
   dropLength?: number;
   turnaroundMinutes?: number;
   capacityLitres?: number;
@@ -75,13 +85,14 @@ export function toTableEntity(e: Equipment): EquipmentTableEntity {
     clearingRate: e.clearingRate,
     costPerHour: e.costPerHour,
     active: e.active,
+    standard: e.standard,
     version: e.version,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
   switch (e.type) {
     case 'Machinery':
-      return { ...base, cutWidthMeters: e.cutWidthMeters };
+      return { ...base, cutWidthMeters: e.cutWidthMeters, maxSlope: e.maxSlope };
     case 'Aircraft':
       return { ...base, dropLength: e.dropLength, turnaroundMinutes: e.turnaroundMinutes, capacityLitres: e.capacityLitres, costPerDrop: e.costPerDrop };
     case 'HandCrew':
@@ -100,12 +111,13 @@ export function fromTableEntity(entity: EquipmentTableEntity): Equipment {
     clearingRate: entity.clearingRate,
     costPerHour: entity.costPerHour,
     active: entity.active,
+    standard: entity.standard,
     version: entity.version,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
   } as EquipmentBase;
   if (entity.partitionKey === 'Machinery') {
-    return { ...common, type: 'Machinery', cutWidthMeters: entity.cutWidthMeters };
+    return { ...common, type: 'Machinery', cutWidthMeters: entity.cutWidthMeters, maxSlope: entity.maxSlope };
   }
   if (entity.partitionKey === 'Aircraft') {
     return { ...common, type: 'Aircraft', dropLength: entity.dropLength || 0, turnaroundMinutes: entity.turnaroundMinutes, capacityLitres: entity.capacityLitres, costPerDrop: entity.costPerDrop };

@@ -2,6 +2,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 import { getEquipmentTableClient } from '../data/tableClient';
 import { fromTableEntity, Equipment, Machinery, Aircraft, HandCrew } from '../models/equipment';
 import { EquipmentAnalysisService, AnalysisRequest, EquipmentSpec } from '../services/equipmentAnalysis';
+import { ensureStandardEquipmentSeeded } from '../data/seedStandardEquipment';
 import { TerrainLevel, VegetationType } from '../types/common';
 
 // Type validation helpers
@@ -64,8 +65,10 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
       vegetation: requestData.vegetationAnalysis.predominantVegetation
     });
 
-    // Load equipment from storage
+    // Load equipment from storage. Seed the standard catalogue on first use so
+    // analysis returns results even before any equipment has been configured.
     const client = getEquipmentTableClient();
+    await ensureStandardEquipmentSeeded(client, ctx);
     const entities = client.listEntities<any>();
     const equipmentList: EquipmentSpec[] = [];
 
@@ -97,6 +100,7 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
         if (equipment.type === 'Machinery') {
           const machinery = equipment as Machinery;
           spec.cutWidthMeters = machinery.cutWidthMeters;
+          spec.maxSlope = machinery.maxSlope;
         } else if (equipment.type === 'Aircraft') {
           const aircraft = equipment as Aircraft;
           spec.dropLength = aircraft.dropLength;

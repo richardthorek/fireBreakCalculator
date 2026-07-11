@@ -12,8 +12,9 @@ This is a **living document** that should be kept synchronized with the API code
 
 | Endpoint | Method | Purpose | Request Body | Response | Auth Required |
 |----------|--------|---------|--------------|----------|---------------|
-| `/api/equipment` | GET | List all equipment | None | `Equipment[]` | No |
+| `/api/equipment` | GET | List all equipment (seeds the built-in standard catalogue on first use if the table is empty) | None | `Equipment[]` | No |
 | `/api/equipment` | POST | Create new equipment | `EquipmentCreateRequest` | `Equipment` | No |
+| `/api/equipment/seed` | POST | Seed the built-in standard equipment catalogue. `?force=true` overwrites existing standard rows; otherwise seeds only when empty. | None | `{ seeded, force, count, equipment[] }` | No |
 | `/api/equipment/{id}` | GET | Get equipment by ID | None | `Equipment` | No |
 | `/api/equipment/{id}` | PUT | Update equipment | `EquipmentUpdateRequest` | `Equipment` | No |
 | `/api/equipment/{id}` | DELETE | Delete equipment | None | `204 No Content` | No |
@@ -65,6 +66,15 @@ interface VegetationMapping {
 | NSW SVTM PCT MapServer | GET | Query vegetation data for coordinates | `geometry, geometryType, spatialRel` | GeoJSON with PCT data |
 
 **Service URL**: `https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer`
+
+### NVIS Vegetation Service (national fallback)
+| Endpoint | Method | Purpose | Parameters | Response |
+|----------|--------|---------|------------|----------|
+| NVIS Extant MVG MapServer | GET | Australia-wide Major Vegetation Group at a point (`identify`, `query` fallback) | `geometry, geometryType, sr, layers` | Attributes incl. MVG code/name |
+
+**Service URL** (override via `VITE_NVIS_MVG_URL`): `https://gis.environment.gov.au/gispubmap/rest/services/ogc_services/NVIS_ext_mvg/MapServer`
+
+See [NVIS_INTEGRATION.md](NVIS_INTEGRATION.md) for the web-service-vs-raster decision and MVG→fuel-class mapping.
 
 ### Elevation Service (Mock)
 | Endpoint | Method | Purpose | Parameters | Response |
