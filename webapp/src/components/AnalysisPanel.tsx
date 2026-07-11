@@ -13,6 +13,8 @@ import { HelpContent } from './HelpContent';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
+import { buildRouteProfile } from '../utils/routeProfile';
+import { buildShareUrl, toGPX, downloadFile, printBriefing } from '../utils/planSharing';
 import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
@@ -36,6 +38,12 @@ interface AnalysisPanelProps {
   onDropPreviewChange?: (aircraftIds: string[]) => void;
   /** Callback for when expanded state changes */
   onExpandedChange?: (isExpanded: boolean) => void;
+  /** Drawn line vertices for export/sharing (GPX, share link). */
+  lineCoords?: { lat: number; lng: number }[] | null;
+  /** Initial break width restored from a shared plan. */
+  initialBreakWidthMeters?: number;
+  /** Initial manual vegetation override restored from a shared plan. */
+  initialVegetationOverride?: VegetationType;
   /** True when the parent map has completed initial pan/zoom to the user's location
    *  (or attempted fallback). Gate heavy backend analysis until this is true to
    *  avoid spamming the backend while the map is still settling. */
@@ -266,11 +274,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onExpandedChange,
   selectedAircraftForPreview: externalSelected = []
   ,
-  mapSettled = false
+  mapSettled = false,
+  lineCoords = null,
+  initialBreakWidthMeters,
+  initialVegetationOverride
 }: AnalysisPanelProps) => {
-  // Vegetation state: allow manual override of auto-detected vegetation
-  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>('grassland');
-  const [useAutoDetected, setUseAutoDetected] = useState(true);
+  // Vegetation state: allow manual override of auto-detected vegetation.
+  // A shared plan may seed an explicit override.
+  const [selectedVegetation, setSelectedVegetation] = useState<VegetationType>(initialVegetationOverride ?? 'grassland');
+  const [useAutoDetected, setUseAutoDetected] = useState(!initialVegetationOverride);
+  // Target fire break width (m). Drives machinery pass count and hand-crew effort.
+  const [breakWidthMeters, setBreakWidthMeters] = useState<number>(initialBreakWidthMeters ?? 4);
   const [isExpanded, setIsExpanded] = useState(true); // default expanded
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
 
@@ -354,13 +368,26 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       });
       
       try {
+        // Build the joined per-segment slope×vegetation profile so the backend
+        // integrates production segment by segment rather than collapsing the
+        // route to a single worst-case slope + predominant vegetation. When the
+        // user has manually overridden vegetation, apply it uniformly.
+        const segments = buildRouteProfile(
+          distance,
+          trackAnalysis,
+          vegetationAnalysis,
+          useAutoDetected ? undefined : effectiveVegetation
+        );
+
         const response = await calculateEquipmentAnalysis({
           distance,
           trackAnalysis,
           vegetationAnalysis: {
             ...vegetationAnalysis,
             predominantVegetation: effectiveVegetation
-          }
+          },
+          segments,
+          breakWidthMeters
         });
         
         // If backend returns empty calculations, log a warning and fall back to frontend
@@ -385,7 +412,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, backendAvailable, mapSettled]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, breakWidthMeters, backendAvailable, mapSettled]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -659,6 +686,50 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     compatibilityLevel: isCompatibilityLevel(r.compatibilityLevel) ? r.compatibilityLevel : 'incompatible'
   })) : calculations;
 
+  // --- Share & export -------------------------------------------------------
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const canExport = !!(lineCoords && lineCoords.length >= 2);
+
+  const handleCopyShareLink = async () => {
+    if (!canExport) return;
+    const url = buildShareUrl({
+      coords: lineCoords!,
+      breakWidthMeters,
+      vegetation: useAutoDetected ? undefined : selectedVegetation
+    });
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareStatus('Link copied');
+    } catch {
+      // Clipboard may be blocked; fall back to a prompt so the user can copy manually.
+      window.prompt('Copy this shareable plan link:', url);
+      setShareStatus(null);
+    }
+    if (shareStatus !== 'Link copied') setTimeout(() => setShareStatus(null), 2500);
+  };
+
+  const handleExportGpx = () => {
+    if (!canExport) return;
+    const gpx = toGPX(lineCoords!, 'Fire break plan');
+    downloadFile(`fire-break-${new Date().toISOString().slice(0, 10)}.gpx`, gpx, 'application/gpx+xml');
+  };
+
+  const handlePrintBriefing = () => {
+    if (!distance) return;
+    printBriefing({
+      distanceMeters: distance,
+      breakWidthMeters,
+      vegetation: effectiveVegetation,
+      meanSlope: trackAnalysis?.averageSlope,
+      maxSlope: trackAnalysis?.maxSlope,
+      estimatedData: !!(trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData),
+      resources: (finalCalculations as any[])
+        .filter(r => r.compatible)
+        .slice(0, 12)
+        .map(r => ({ name: r.name, type: r.type, time: r.time, cost: r.cost, compatibilityLevel: r.compatibilityLevel, note: r.note }))
+    });
+  };
+
   // Get best option for each category
   const bestOptions = useMemo(() => {
     const compatibleResults = finalCalculations.filter((result: any) => result.compatible);
@@ -731,8 +802,43 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         </button>
       </div>
       <div className="analysis-content" id="analysis-content">
+        {distance && (trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData) && (
+          <div className="data-quality-warning" role="alert">
+            <span className="data-quality-icon" aria-hidden="true">⚠️</span>
+            <div>
+              <strong>Estimated data in use.</strong>{' '}
+              {[
+                trackAnalysis?.usedMockElevation ? 'terrain/slope' : null,
+                vegetationAnalysis?.usedFallbackData ? 'vegetation' : null,
+              ]
+                .filter(Boolean)
+                .join(' and ')}{' '}
+              could not be sourced from authoritative data for part of this line. Treat times and
+              compatibility as indicative only and verify on the ground.
+            </div>
+          </div>
+        )}
         {distance && (
           <div className="conditions-section">
+            <div className="conditions-group break-width-group">
+              <label htmlFor="break-width-select">Target break width</label>
+              <select
+                id="break-width-select"
+                aria-label="Target fire break width"
+                value={breakWidthMeters}
+                onChange={(e) => setBreakWidthMeters(Number(e.target.value))}
+              >
+                <option value={3}>3 m — single dozer pass / hand line</option>
+                <option value={4}>4 m — standard containment line</option>
+                <option value={6}>6 m — reinforced line</option>
+                <option value={8}>8 m — wide break (2+ passes)</option>
+                <option value={12}>12 m — major break / road-width</option>
+                <option value={20}>20 m — strategic fuel break</option>
+              </select>
+              <div className="break-width-hint">
+                Wider breaks require multiple machinery passes and proportionally more hand-crew effort.
+              </div>
+            </div>
             {vegetationAnalysis ? (
               <div className="conditions-group">
                 <label htmlFor="vegetation-toggle">Vegetation Type</label>
@@ -780,6 +886,36 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <div className="vegetation-loading">{isAnalyzing ? 'Analyzing vegetation…' : 'Vegetation analysis pending…'}</div>
               </div>
             )}
+          </div>
+        )}
+        {distance && (
+          <div className="plan-export-toolbar">
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handleCopyShareLink}
+              disabled={!canExport}
+              title="Copy a link that reopens this exact plan"
+            >
+              🔗 {shareStatus || 'Share link'}
+            </button>
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handleExportGpx}
+              disabled={!canExport}
+              title="Download the line as GPX for a vehicle/handheld GPS"
+            >
+              📍 GPX
+            </button>
+            <button
+              type="button"
+              className="plan-export-btn"
+              onClick={handlePrintBriefing}
+              title="Open a printable briefing sheet"
+            >
+              🖨️ Briefing
+            </button>
           </div>
         )}
         {trackAnalysis && (

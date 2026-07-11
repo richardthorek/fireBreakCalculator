@@ -1,0 +1,157 @@
+# ---------------------------------------------------------------------------
+# Fire Break Calculator — build, test, provision & deploy (one workflow)
+#
+# Pipeline:
+#   1. build_and_test  — compile API + webapp, run the calculation unit tests
+#   2. provision_and_deploy — log in to Azure via OIDC, apply infra/main.bicep,
+#      fetch the Static Web App deployment token dynamically, deploy app + API.
+#   3. close_pull_request — tears down the SWA preview environment on PR close.
+#
+# Required GitHub configuration (Settings → Secrets and variables → Actions):
+#   Secrets:
+#     AZURE_CLIENT_ID          — app registration (federated credential for this repo)
+#     AZURE_TENANT_ID          — Entra tenant
+#     AZURE_SUBSCRIPTION_ID    — target subscription
+#     VITE_MAPBOX_ACCESS_TOKEN — Mapbox token baked into the frontend build
+#   Variables (optional, defaults shown):
+#     AZURE_RESOURCE_GROUP     — default: rg-firebreakcalc
+#     AZURE_LOCATION           — default: australiaeast
+#
+# No SWA deployment-token secret is needed: the token is read at deploy time
+# with `az staticwebapp secrets list`, so deleting/recreating the resource
+# never breaks CI. See infra/README.md for one-time Azure setup.
+# ---------------------------------------------------------------------------
+
+name: Build, Provision & Deploy
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write # OIDC federated login to Azure
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-firebreakcalc' }}
+  LOCATION: ${{ vars.AZURE_LOCATION || 'australiaeast' }}
+
+jobs:
+  build_and_test:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    name: Build & Test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+
+      - name: API — install, build, unit tests
+        working-directory: ./api
+        run: |
+          npm ci
+          npm run test:unit
+
+      - name: Webapp — install, build
+        working-directory: ./webapp
+        env:
+          VITE_MAPBOX_ACCESS_TOKEN: ${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
+        run: |
+          npm ci
+          npm run build
+
+  provision_and_deploy:
+    # Deploy on pushes to main and on PRs from the same repository (forks and
+    # Dependabot lack the OIDC federation / secrets).
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        github.repository == github.event.pull_request.head.repo.full_name &&
+        github.actor != 'dependabot[bot]'))
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    name: Provision & Deploy
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision infrastructure (Bicep)
+        id: provision
+        run: |
+          az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+          DEPLOY_OUT=$(az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters storageLocation="$LOCATION" \
+            --query "properties.outputs" --output json)
+          echo "swa_name=$(echo "$DEPLOY_OUT" | jq -r '.staticWebAppName.value')" >> "$GITHUB_OUTPUT"
+          echo "hostname=$(echo "$DEPLOY_OUT" | jq -r '.staticWebAppHostname.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch SWA deployment token
+        id: swa_token
+        run: |
+          TOKEN=$(az staticwebapp secrets list \
+            --name "${{ steps.provision.outputs.swa_name }}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "properties.apiKey" --output tsv)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy app + API to Static Web App
+        uses: Azure/static-web-apps-deploy@v1
+        env:
+          VITE_MAPBOX_ACCESS_TOKEN: ${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa_token.outputs.token }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: 'upload'
+          app_location: 'webapp'
+          api_location: 'api'
+          output_location: 'dist'
+
+      - name: Deployment summary
+        run: |
+          echo "### Deployed 🔥" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Site: https://${{ steps.provision.outputs.hostname }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Resource group: $RESOURCE_GROUP" >> "$GITHUB_STEP_SUMMARY"
+
+  close_pull_request:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.repository == github.event.pull_request.head.repo.full_name
+    runs-on: ubuntu-latest
+    name: Close PR preview environment
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch SWA deployment token
+        id: swa_token
+        run: |
+          SWA_NAME=$(az staticwebapp list --resource-group "$RESOURCE_GROUP" --query "[0].name" --output tsv)
+          TOKEN=$(az staticwebapp secrets list \
+            --name "$SWA_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "properties.apiKey" --output tsv)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Close preview environment
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa_token.outputs.token }}
+          action: 'close'

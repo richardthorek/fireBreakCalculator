@@ -36,6 +36,10 @@ interface MapboxMapViewProps {
   // Optional externally-controlled search selection — when provided the map should
   // pan/zoom to this location. This is used so header search control can trigger map moves.
   selectedSearchLocation?: { lat: number; lng: number; label: string } | null;
+  /** Emits the drawn line's ordered vertices (or null when cleared) for export/sharing. */
+  onLineChange?: (coords: { lat: number; lng: number }[] | null) => void;
+  /** A plan line to restore on load (e.g. from a shared link). Drawn + analysed once. */
+  initialLine?: { lat: number; lng: number }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -51,7 +55,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onInitialLocationSettled
   ,
   initialUserLocation = null,
-  selectedSearchLocation
+  selectedSearchLocation,
+  onLineChange,
+  initialLine = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -433,6 +439,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const distance = calculateDistance(latlngs);
       setFireBreakDistance(distance);
       onDistanceChange(distance);
+      onLineChange?.(latlngs);
       await analyzeAndRender(latlngs);
       setDropsVersion(v => v + 1);
     };
@@ -445,6 +452,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       if (map.getSource('slope-segments')) map.removeSource('slope-segments');
       onTrackAnalysisChange?.(null);
       onVegetationAnalysisChange?.(null);
+      onLineChange?.(null);
       setDropsVersion(v => v + 1);
     });
 
@@ -523,6 +531,43 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       setIsAnalyzing(false); onAnalyzingChange?.(false);
     }
   };
+
+  // Restore a shared plan line once the map + draw tools are ready.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!initialLine || initialLine.length < 2 || restoredRef.current) return;
+    let cancelled = false;
+    const tryRestore = () => {
+      if (cancelled || restoredRef.current) return;
+      const map = mapRef.current;
+      const draw = drawRef.current;
+      if (!map || !draw) { window.setTimeout(tryRestore, 200); return; }
+      restoredRef.current = true;
+      try {
+        draw.add({
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: initialLine.map(p => [p.lng, p.lat]) }
+        });
+        const lngs = initialLine.map(p => p.lng);
+        const lats = initialLine.map(p => p.lat);
+        map.fitBounds(
+          [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+          { padding: 80, duration: 0 }
+        );
+        const distance = calculateDistance(initialLine);
+        setFireBreakDistance(distance);
+        onDistanceChange(distance);
+        onLineChange?.(initialLine);
+        analyzeAndRender(initialLine);
+      } catch (e) {
+        logger.warn('Failed to restore shared plan', e);
+      }
+    };
+    tryRestore();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLine]);
 
   const renderSlopeSegments = (analysis: TrackAnalysis) => {
     const map = mapRef.current; if (!map) return;

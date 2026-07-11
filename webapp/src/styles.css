@@ -4044,3 +4044,73 @@ button:focus {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Data-quality warning + break-width control (calculation uplift)     */
+/* ------------------------------------------------------------------ */
+.data-quality-warning {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #b7791f;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(183, 121, 31, 0.12);
+  color: #7b5312;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.data-quality-warning strong { color: #7b5312; }
+.data-quality-icon { font-size: 1rem; line-height: 1.2; }
+
+.break-width-group { margin-bottom: 0.75rem; }
+.break-width-group select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+.break-width-hint {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+@media (prefers-color-scheme: dark) {
+  .data-quality-warning {
+    background: rgba(183, 121, 31, 0.18);
+    color: #f5d59b;
+    border-color: #d69e2e;
+  }
+  .data-quality-warning strong { color: #f8e3bd; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Plan share/export toolbar (share link, GPX, briefing)               */
+/* ------------------------------------------------------------------ */
+.plan-export-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem;
+}
+.plan-export-btn {
+  flex: 1 1 auto;
+  min-height: 44px;
+  min-width: 90px;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid rgba(216, 67, 21, 0.5);
+  border-radius: 6px;
+  background: rgba(216, 67, 21, 0.08);
+  color: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.plan-export-btn:hover:not(:disabled) {
+  background: rgba(216, 67, 21, 0.16);
+  border-color: rgba(216, 67, 21, 0.8);
+}
+.plan-export-btn:disabled { opacity: 0.45; cursor: not-allowed; }

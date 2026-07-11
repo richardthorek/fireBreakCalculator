@@ -119,6 +119,37 @@ Empower rural firefighters and emergency response teams with a modern, accessibl
 
 ## Recent Updates
 
+### July 10, 2026 - Calculation Engine Overhaul: Per-Segment, Grounded Production Model
+
+**PR Reference:** [#148](https://github.com/richardthorek/fireBreakCalculator/pull/148)
+
+**Objective:** Replace the whole-route heuristic estimate with an accurate, per-segment production model grounded in the published fireline-production literature (NWCG 2021 tables; Victorian DELWP Report 56), and reinstate real machinery slope-safety limits.
+
+#### Problem
+The estimate collapsed the whole line to a single worst-case slope bucket and a single "predominant" vegetation class, then multiplied a base rate by two hand-picked factors. Slope safety limits were dead code (`isSlopeCompatible()` always returned true). Calculation logic was duplicated across frontend and backend and had diverged.
+
+#### Solution Implemented
+- **`api/src/services/productionModel.ts` (new):** resource-specific, documented speed multipliers for fuel and slope (machinery / hand crew / aircraft), plus slope-limit resolution. All constants named and calibratable.
+- **`api/src/services/equipmentAnalysis.ts` (rewrite):** integrates production **segment by segment**; enforces slope limits by measuring the over-limit fraction of the line (full / partial-with-penalty / incompatible); load-coverage aircraft model with per-drop costing; extended metadata (mean/max slope, segment count, confidence).
+- **`webapp/src/utils/routeProfile.ts` (new):** joins the slope (~10 m) and vegetation (~200 m) sampling passes onto a common chainage and sends a `RouteSegment[]` profile to the backend. Honours manual vegetation override.
+- **Backend is now the sole accurate engine;** the frontend delegates to it (fallback retained only as a degraded offline path).
+- **`api/src/test/analysis.test.ts` (new):** 11 unit checks over the model and per-segment behaviour; wired to `npm test`.
+
+#### Verification
+- ✅ API builds (tsc) and all 11 unit checks pass
+- ✅ Webapp builds (tsc -b && vite build)
+- ✅ Backward compatible: requests without a segment profile degrade to slope-distribution integration
+
+**Impact:** Estimates now reflect the actual mix of slope and fuel along the line rather than a single worst case, machinery is no longer recommended for unsafe slopes, and the rate model is grounded in published data and tunable without code changes. See `docs/CALCULATION_REVIEW.md` for the full findings and remaining P1/P2 roadmap.
+
+#### Follow-up uplift (same PR)
+- **Infrastructure as code:** `infra/main.bicep` provisions Storage (tables) + Static Web App and wires the API's Table Storage app settings. `.github/workflows/deploy.yml` replaces the old resource-bound workflow with one coherent pipeline — build → test → provision (Bicep, OIDC login) → fetch the SWA deployment token dynamically → deploy app + API. No deployment-token secret is stored, so deleting/recreating Azure resources never breaks CI. One-time setup documented in `infra/README.md`.
+- **Break-width / multi-pass model:** published rates are single-pass; the model now scales machinery time by the number of blade passes needed to reach a target break width (`cutWidthMeters`) and hand-crew effort linearly. New "Target break width" selector in the analysis panel.
+- **Data provenance & confidence:** slope and vegetation analyses now flag when mock/fallback data was substituted (`usedMockElevation`, `usedFallbackData`); the panel shows a prominent "estimated data in use" warning so fabricated data never passes silently as analysis.
+- **National data sources:** added Australia-wide NVIS Major Vegetation Groups (`nvisVegetationService.ts`) as an authoritative vegetation fallback beyond NSW, and a server-side elevation-profile service/endpoint (`elevationService.ts`, `POST /api/elevation/profile`) that samples a configurable bare-earth DEM in one request per line, with graceful fallback to Mapbox Terrain-RGB. `DEM_IMAGESERVER_URL` is wired through Bicep.
+- **Share & export (`planSharing.ts`):** encode a drawn plan (line + break width + vegetation override) into a shareable URL that reopens the exact plan (no backend); export the line as GPX for vehicle/handheld GPS; open a printable briefing sheet. `MapboxMapView` gained `onLineChange`/`initialLine` to emit and restore lines; `App` reads a plan from the URL on load.
+- **Offline PWA (`public/sw.js`):** a runtime-caching service worker (registered in production) keeps the app shell, already-viewed Mapbox tiles, and the equipment list available with no signal — the core "in the field, no reception" requirement. Manifest upgraded for installability.
+
 ### February 9, 2026 - Map Empty State UX Improvement with Visual Call-to-Action
 
 **PR Reference:** [TBD] - UX Improvement: Add Map Empty State with Visual Call-to-Action

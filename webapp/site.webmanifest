@@ -1,12 +1,21 @@
 {
   "name": "Fire Break Calculator",
   "short_name": "FireBreak",
-  "description": "Calculate optimal fire breaks and clearing widths for fire planning.",
+  "description": "Plan fire breaks and estimate equipment, time and cost — works in the field.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0F1724",
   "theme_color": "#D84315",
+  "categories": ["utilities", "productivity"],
   "icons": [
+    {
+      "src": "/android-icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "/favicon.svg",
       "sizes": "any",
