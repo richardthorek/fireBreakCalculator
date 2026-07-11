@@ -21,11 +21,13 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          // Vendor chunk for large external libraries
-          vendor: ['react', 'react-dom'],
-          // Mapbox chunk for mapping libraries
-          mapbox: ['mapbox-gl', '@mapbox/mapbox-gl-draw']
+        manualChunks: (id) => {
+          if (id.includes('node_modules/react')) {
+            return 'vendor';
+          }
+          if (id.includes('node_modules/mapbox-gl') || id.includes('node_modules/@mapbox/mapbox-gl-draw')) {
+            return 'mapbox';
+          }
         }
       }
     },
