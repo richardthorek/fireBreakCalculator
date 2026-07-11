@@ -9,8 +9,7 @@ type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
 import { VegetationType } from '../config/classification';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
-import { fetchNSWVegetation } from './nswVegetationService';
-import { fetchNVISVegetation } from './nvisVegetationService';
+import { fetchStateVegetation } from './stateVegetationRouter';
 import { logger } from './logger';
 import { mapFormationToVegetationType } from './vegetationMappingHelper';
 
@@ -323,31 +322,26 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
     const midLng = (getLng(start) + getLng(end)) / 2;
     
     try {
-      // 1. Try high‑fidelity NSW government vegetation layer first (if in region)
-      const nswVeg = await fetchNSWVegetation(midLat, midLng);
-      let vegetation: VegetationType; let confidence: number; let landcoverClass: string;
+      // Query state-based vegetation service (NSW, VIC, QLD, etc.) with NVIS fallback
+      const stateVeg = await fetchStateVegetation(midLat, midLng);
+      let vegetation: VegetationType;
+      let confidence: number;
+      let landcoverClass: string;
       let estimated = false;
-      if (nswVeg) {
-        vegetation = nswVeg.vegetationType as VegetationType;
-        // Blend original heuristic confidence with a base high trust for authoritative dataset
-        confidence = Math.min(1, nswVeg.confidence + 0.1);
-        landcoverClass = nswVeg.source || '(nsw)';
+
+      if (stateVeg) {
+        // State service or NVIS returned data
+        vegetation = stateVeg.vegetationType;
+        confidence = stateVeg.confidence;
+        landcoverClass = stateVeg.displayLabel;
       } else {
-        // 2. National authoritative fallback: NVIS Major Vegetation Groups.
-        const nvis = await fetchNVISVegetation(midLat, midLng);
-        if (nvis) {
-          vegetation = nvis.vegetationType;
-          confidence = nvis.confidence;
-          landcoverClass = `NVIS: ${nvis.mvgName}`;
-        } else {
-          // 3. Last-resort coarse landcover (may be mock — flagged as estimated).
-          const landcover = await fetchLandcoverData(midLat, midLng, token || '');
-          landcoverClass = landcover.cls;
-          estimated = landcover.estimated;
-          const mapped = mapLandcoverToVegetation(landcover.cls);
-          vegetation = mapped.vegetation;
-          confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
-        }
+        // Fall back to coarse landcover (may be mock — flagged as estimated)
+        const landcover = await fetchLandcoverData(midLat, midLng, token || '');
+        landcoverClass = landcover.cls;
+        estimated = landcover.estimated;
+        const mapped = mapLandcoverToVegetation(landcover.cls);
+        vegetation = mapped.vegetation;
+        confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
       }
 
       rawSegments.push({
@@ -358,12 +352,8 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
         vegetationType: vegetation,
         confidence,
         landcoverClass,
-        // If NSW authoritative data was used, include its raw fields for display/rollup
-        nswVegClass: nswVeg?.vegClass ?? null,
-        nswVegForm: nswVeg?.vegForm ?? null,
-        nswPCTName: nswVeg?.pctName ?? null,
-        // Preferred display label: prefer formation (vegForm) -> PCTName -> vegClass -> mapbox class
-        displayLabel: (nswVeg?.vegForm || nswVeg?.pctName || nswVeg?.vegClass || landcoverClass || '').toString(),
+        // Display label from state service or landcover class
+        displayLabel: stateVeg?.displayLabel || landcoverClass || 'Unknown vegetation',
         distance
       });
       
@@ -516,23 +506,23 @@ export const generateVegetationOverlay = async (
       
       if (withinBuffer) {
         try {
-          // Use only NSW vegetation data - authoritative source for this region
-          const nswVeg = await fetchNSWVegetation(lat, lng);
-          
-          if (nswVeg) {
-            // Only include points where we have NSW vegetation data
+          // Use state-based vegetation data (state service with NVIS fallback)
+          const stateVeg = await fetchStateVegetation(lat, lng);
+
+          if (stateVeg) {
+            // Only include points where we have state vegetation data
             overlayPoints.push({
               lat,
               lng,
-              vegetationType: nswVeg.vegetationType as VegetationType,
-              confidence: nswVeg.confidence,
-              landcoverClass: nswVeg.source || 'NSW vegetation data'
+              vegetationType: stateVeg.vegetationType,
+              confidence: stateVeg.confidence,
+              landcoverClass: stateVeg.displayLabel
             });
           }
-          // If no NSW data available, skip this point (don't show overlay)
-          
+          // If no state data available, skip this point (don't show overlay)
+
         } catch (error) {
-          logger.warn(`Failed to fetch NSW vegetation data for point ${lat}, ${lng}:`, error);
+          logger.warn(`Failed to fetch vegetation data for point ${lat}, ${lng}:`, error);
         }
       }
     }

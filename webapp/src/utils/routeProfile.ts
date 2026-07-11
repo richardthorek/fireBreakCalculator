@@ -10,6 +10,7 @@
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { VegetationType } from '../config/classification';
+import { VegetationOverridesConfig, getEffectiveVegetation } from '../types/vegetationOverrides';
 
 /** One resolved slice of the planned line with uniform-ish conditions. */
 export interface RouteSegment {
@@ -64,12 +65,14 @@ function valueAt<T>(intervals: Interval<T>[], x: number, fallback: T): T {
  * @param vegetationAnalysis Vegetation analysis (segments carry type + confidence).
  * @param overrideVegetation If the user has manually set a vegetation class, apply
  *        it uniformly (the auto-detected per-segment fuel is then ignored).
+ * @param vegetationOverrides Advanced overrides supporting route-level and segment-level customization.
  */
 export function buildRouteProfile(
   distance: number,
   trackAnalysis: TrackAnalysis | null,
   vegetationAnalysis: VegetationAnalysis | null,
-  overrideVegetation?: VegetationType
+  overrideVegetation?: VegetationType,
+  vegetationOverrides?: VegetationOverridesConfig
 ): RouteSegment[] {
   if (!distance || distance <= 0) return [];
 
@@ -122,10 +125,22 @@ export function buildRouteProfile(
     const slopeDegrees = valueAt(scaledSlope, mid, trackAnalysis?.maxSlope ?? 0);
     let vegetation: VegetationType = predominant;
     let vegetationConfidence: number | undefined = vegetationAnalysis?.overallConfidence;
+
     if (!overrideVegetation) {
       const v = valueAt(scaledVeg, mid, { type: predominant, confidence: vegetationAnalysis?.overallConfidence ?? 0 });
       vegetation = v.type;
       vegetationConfidence = v.confidence;
+
+      // Apply user overrides if configured
+      if (vegetationOverrides) {
+        vegetation = getEffectiveVegetation(mid, vegetation, vegetationOverrides);
+        // Increase confidence when user has explicitly overridden the value
+        if (vegetationOverrides.isEnabled &&
+            (vegetationOverrides.routeOverride ||
+             vegetationOverrides.segmentOverrides?.some(seg => mid >= seg.startDistance && mid <= seg.endDistance))) {
+          vegetationConfidence = 1.0; // User-provided overrides have maximum confidence
+        }
+      }
     } else {
       vegetationConfidence = 1;
     }

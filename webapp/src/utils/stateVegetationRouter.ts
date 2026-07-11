@@ -1,0 +1,180 @@
+/**
+ * State vegetation service router and orchestrator.
+ *
+ * Routes queries to the appropriate state-specific service based on coordinates.
+ * Implements fallback chain: state service → NVIS → Mapbox → mock.
+ *
+ * This is the single entry point for vegetation data queries and should be used
+ * by vegetation analysis instead of calling individual state services directly.
+ */
+
+import { logger } from './logger';
+import { AustralianState, determineState, isInAustralia } from './stateDetection';
+import { StateVegetationResult, StateVegetationService } from './stateVegetationInterfaces';
+import { VegetationType } from '../config/classification';
+
+// Import existing services (NSW is implemented, others are placeholders for now)
+import { fetchNSWVegetation as fetchNSWRaw } from './nswVegetationService';
+import { fetchNVISVegetation as fetchNVISRaw } from './nvisVegetationService';
+
+// Service registry: will be populated with state services as they're implemented
+const stateServices: Partial<Record<AustralianState, StateVegetationService>> = {
+  // NSW: implemented below
+  // VIC: to be added in Phase 3a
+  // QLD: to be added in Phase 3b
+  // WA: to be added in Phase 3c
+  // SA: to be added in Phase 3d
+  // TAS: to be added in Phase 4
+  // ACT: to be added in Phase 4
+  // NT: to be added in Phase 4
+};
+
+// Simple in-memory cache to reduce duplicate queries (keyed by rounded lat/lng)
+const queryCache: Record<string, StateVegetationResult | null> = {};
+
+const CACHE_KEY_PRECISION = 3; // 3 decimals = ~111m precision
+
+function getCacheKey(lat: number, lng: number): string {
+  return `${lat.toFixed(CACHE_KEY_PRECISION)},${lng.toFixed(CACHE_KEY_PRECISION)}`;
+}
+
+/**
+ * Adapt NSW service result to StateVegetationResult format.
+ * NSW service returns a different interface; this converts it.
+ */
+function adaptNSWResult(rawResult: Awaited<ReturnType<typeof fetchNSWRaw>>): StateVegetationResult | null {
+  if (!rawResult) return null;
+  return {
+    vegetationType: rawResult.vegetationType,
+    confidence: rawResult.confidence,
+    displayLabel: rawResult.pctName || rawResult.vegForm || rawResult.vegClass || rawResult.source || 'NSW vegetation',
+    source: `NSW SVTM PCT (${rawResult.source})`,
+    state: 'NSW',
+    rawAttributes: { vegClass: rawResult.vegClass, vegForm: rawResult.vegForm, pctName: rawResult.pctName },
+  };
+}
+
+/**
+ * Adapt NVIS service result to StateVegetationResult format.
+ */
+function adaptNVISResult(rawResult: Awaited<ReturnType<typeof fetchNVISRaw>>): StateVegetationResult | null {
+  if (!rawResult) return null;
+  return {
+    vegetationType: rawResult.vegetationType,
+    confidence: rawResult.confidence,
+    displayLabel: rawResult.mvgName || 'NVIS vegetation',
+    source: `NVIS MVG ${rawResult.mvgCode || '?'} (${rawResult.mvgName})`,
+    state: 'AU', // National dataset, not state-specific
+    rawAttributes: { mvgCode: rawResult.mvgCode, mvgName: rawResult.mvgName },
+  };
+}
+
+/**
+ * Register a state-specific vegetation service.
+ * Called during initialization to populate the service registry.
+ * @internal Used by state service implementations to register themselves
+ */
+export function registerStateService(state: AustralianState, service: StateVegetationService) {
+  stateServices[state] = service;
+  logger.debug(`Registered vegetation service for ${state}: ${service.name}`);
+}
+
+/**
+ * Fetch vegetation data using the state-based fallback chain.
+ *
+ * Fallback order:
+ * 1. State-specific service (NSW, VIC, QLD, etc.)
+ * 2. NVIS national dataset
+ * 3. External callers handle further fallbacks (Mapbox, mock)
+ *
+ * @param lat Latitude (WGS84)
+ * @param lng Longitude (WGS84)
+ * @returns Vegetation result, or null if all queries failed or point is outside Australia
+ */
+export async function fetchStateVegetation(lat: number, lng: number): Promise<StateVegetationResult | null> {
+  // Check cache first
+  const cacheKey = getCacheKey(lat, lng);
+  if (cacheKey in queryCache) {
+    return queryCache[cacheKey];
+  }
+
+  // Outside Australia — short-circuit to avoid unnecessary queries
+  if (!isInAustralia(lat, lng)) {
+    queryCache[cacheKey] = null;
+    return null;
+  }
+
+  const state = determineState(lat, lng);
+  let result: StateVegetationResult | null = null;
+
+  try {
+    // Try state-specific service first (if implemented)
+    const stateService = stateServices[state];
+    if (stateService) {
+      try {
+        result = await stateService.fetch(lat, lng);
+        if (result) {
+          queryCache[cacheKey] = result;
+          return result;
+        }
+      } catch (error) {
+        logger.warn(`State service error (${state}):`, error);
+        // Fall through to NVIS
+      }
+    }
+
+    // Fallback to NVIS if state service unavailable or returned no data
+    // Special handling: if state service returned results but with low confidence,
+    // you might skip NVIS entirely. For now, we always try NVIS as backup.
+    const nvisRaw = await fetchNVISRaw(lat, lng);
+    if (nvisRaw) {
+      result = adaptNVISResult(nvisRaw);
+    }
+  } catch (error) {
+    logger.warn(`Vegetation query failed for (${lat}, ${lng}):`, error);
+  }
+
+  // Cache the result (may be null) to avoid repeated failed queries
+  queryCache[cacheKey] = result || null;
+  return result;
+}
+
+/**
+ * Register the NSW service (already implemented).
+ * Called during module initialization.
+ * @internal
+ */
+export async function initializeNSWService() {
+  const nswService: StateVegetationService = {
+    name: 'NSW SVTM PCT',
+    fetch: async (lat, lng) => {
+      const raw = await fetchNSWRaw(lat, lng);
+      return adaptNSWResult(raw);
+    },
+  };
+  registerStateService('NSW', nswService);
+}
+
+/**
+ * Clear the query cache.
+ * Useful for testing or forcing a refresh.
+ * @internal
+ */
+export function _clearStateVegetationCache() {
+  Object.keys(queryCache).forEach((k) => delete queryCache[k]);
+}
+
+/**
+ * Get current service registry status (for monitoring/debugging).
+ * @internal
+ */
+export function getServiceStatus(): Record<AustralianState, boolean> {
+  const status: Record<string, boolean> = {};
+  for (const state of ['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT'] as AustralianState[]) {
+    status[state] = state in stateServices;
+  }
+  return status as Record<AustralianState, boolean>;
+}
+
+// Initialize NSW service on module load
+initializeNSWService().catch((e) => logger.warn('Failed to initialize NSW service:', e));
