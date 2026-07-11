@@ -13,6 +13,7 @@
  */
 
 import { LatLng } from './chainage';
+import { parseXml, findAll, findFirst, childFirst } from './xmlScan';
 import { logger } from './logger';
 
 export interface ImportedLine {
@@ -110,26 +111,33 @@ function parseCoordinateString(raw: string): LatLng[] {
 }
 
 function parseKml(text: string, sourceName: string): ImportedFeatures {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('File is not valid KML.');
+  // Parsed with the local xmlScan scanner (NOT DOMParser): untrusted file
+  // content is never handed to an HTML-capable parser.
+  const root = parseXml(text);
+  const placemarks = findAll(root, 'placemark');
+  if (!findFirst(root, 'kml') && placemarks.length === 0) throw new Error('File is not valid KML.');
   const out: ImportedFeatures = { sourceName, lines: [], polygons: [] };
 
-  doc.querySelectorAll('Placemark').forEach((pm, i) => {
-    const label = pm.querySelector(':scope > name')?.textContent?.trim() || `Placemark ${i + 1}`;
-    pm.querySelectorAll('LineString > coordinates').forEach(node => {
-      const coords = parseCoordinateString(node.textContent ?? '');
+  placemarks.forEach((pm, i) => {
+    const label = childFirst(pm, 'name')?.text.trim() || `Placemark ${i + 1}`;
+    for (const ls of findAll(pm, 'linestring')) {
+      const coordsEl = findFirst(ls, 'coordinates');
+      if (!coordsEl) continue;
+      const coords = parseCoordinateString(coordsEl.text);
       if (coords.length >= 2) out.lines.push({ name: label, coords });
-    });
-    pm.querySelectorAll('Polygon').forEach(poly => {
-      const outer = poly.querySelector('outerBoundaryIs coordinates');
-      if (!outer) return;
-      const ring = parseCoordinateString(outer.textContent ?? '').map(p => [p.lng, p.lat]);
+    }
+    for (const poly of findAll(pm, 'polygon')) {
+      const outerBoundary = findFirst(poly, 'outerboundaryis');
+      const outer = outerBoundary && findFirst(outerBoundary, 'coordinates');
+      if (!outer) continue;
+      const ring = parseCoordinateString(outer.text).map(p => [p.lng, p.lat]);
       const inner: number[][][] = [];
-      poly.querySelectorAll('innerBoundaryIs coordinates').forEach(n => {
-        inner.push(parseCoordinateString(n.textContent ?? '').map(p => [p.lng, p.lat]));
-      });
+      for (const ib of findAll(poly, 'innerboundaryis')) {
+        const coordsEl = findFirst(ib, 'coordinates');
+        if (coordsEl) inner.push(parseCoordinateString(coordsEl.text).map(p => [p.lng, p.lat]));
+      }
       if (ring.length >= 4) out.polygons.push({ name: label, rings: [ring, ...inner] });
-    });
+    }
   });
 
   if (out.lines.length === 0 && out.polygons.length === 0) {
@@ -141,23 +149,24 @@ function parseKml(text: string, sourceName: string): ImportedFeatures {
 // --- GPX ------------------------------------------------------------------------------
 
 function parseGpx(text: string, sourceName: string): ImportedFeatures {
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('File is not valid GPX.');
+  // Parsed with the local xmlScan scanner (NOT DOMParser) — see parseKml.
+  const root = parseXml(text);
+  if (!findFirst(root, 'gpx')) throw new Error('File is not valid GPX.');
   const out: ImportedFeatures = { sourceName, lines: [], polygons: [] };
 
-  const readPoints = (nodes: NodeListOf<Element>): LatLng[] =>
-    Array.from(nodes)
-      .map(n => ({ lat: Number(n.getAttribute('lat')), lng: Number(n.getAttribute('lon')) }))
+  const readPoints = (parent: ReturnType<typeof parseXml>, pointName: string): LatLng[] =>
+    findAll(parent, pointName)
+      .map(n => ({ lat: Number(n.attrs['lat']), lng: Number(n.attrs['lon']) }))
       .filter(p => isFinite(p.lat) && isFinite(p.lng));
 
-  doc.querySelectorAll('trk').forEach((trk, i) => {
-    const label = trk.querySelector('name')?.textContent?.trim() || `Track ${i + 1}`;
-    const coords = readPoints(trk.querySelectorAll('trkpt'));
+  findAll(root, 'trk').forEach((trk, i) => {
+    const label = findFirst(trk, 'name')?.text.trim() || `Track ${i + 1}`;
+    const coords = readPoints(trk, 'trkpt');
     if (coords.length >= 2) out.lines.push({ name: label, coords });
   });
-  doc.querySelectorAll('rte').forEach((rte, i) => {
-    const label = rte.querySelector('name')?.textContent?.trim() || `Route ${i + 1}`;
-    const coords = readPoints(rte.querySelectorAll('rtept'));
+  findAll(root, 'rte').forEach((rte, i) => {
+    const label = findFirst(rte, 'name')?.text.trim() || `Route ${i + 1}`;
+    const coords = readPoints(rte, 'rtept');
     if (coords.length >= 2) out.lines.push({ name: label, coords });
   });
 
