@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Settings2 } from 'lucide-react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
@@ -479,7 +480,7 @@ const App: React.FC = () => {
             title="Open Configuration Panel"
             aria-label="Open configuration panel for equipment and vegetation mappings"
           >
-            <span className="config-icon" aria-hidden>⚙️</span>
+            <Settings2 size={20} strokeWidth={2} aria-hidden className="config-icon" />
             <span className="config-label">Configuration</span>
           </button>
         </div>

@@ -42,7 +42,7 @@ html, body, #root, .app-shell {
   padding: 0;
   height: 100vh; /* Ensure full viewport */
   width: 100%;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: #0f1115;
   color: #f5f7fa;
 }
@@ -141,7 +141,7 @@ html, body, #root, .app-shell {
   .config-panel-toggle .config-label { display: none !important; }
   /* Remove any generated content that could duplicate the icon */
   .config-panel-toggle::before, .config-panel-toggle::after { content: none !important; }
-  .config-panel-toggle .config-icon { display: inline-block; }
+  .config-panel-toggle .config-icon { display: flex; align-items: center; }
   /* make search smaller if still overlapping */
   .header-center .header-search-control { max-width: calc(100% - 56px); }
 }
@@ -181,21 +181,24 @@ html, body, #root, .app-shell {
 }
 
 .config-panel-toggle {
-  background-color: #334155;
-  color: #f8fafc;
-  border: none;
-  border-radius: 4px;
+  background-color: #1E2637;
+  color: #F3F6FB;
+  border: 1px solid #233149;
+  border-radius: 12px;
   padding: 0.5rem 0.75rem;
   cursor: pointer;
   font-size: 0.875rem;
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, border-color 0.2s;
+  font-family: 'Archivo', sans-serif;
+  font-weight: 600;
 }
 
 .config-panel-toggle:hover {
-  background-color: #475569;
+  background-color: #233149;
+  border-color: #334155;
 }
 
 .integrated-config-panel {
@@ -1238,6 +1241,8 @@ button:focus {
 .category-icon {
   font-size: 1rem;
   line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .category-label {
@@ -1523,6 +1528,9 @@ button:focus {
 .category-section-icon {
   font-size: 1.1rem;
   line-height: 1;
+  display: flex;
+  align-items: center;
+  margin-right: 0.5rem;
 }
 
 .equipment-table {
@@ -1578,6 +1586,9 @@ button:focus {
   line-height: 1;
   min-width: 1.5rem;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .equipment-details {
@@ -1641,12 +1652,17 @@ button:focus {
 }
 
 .compatible {
-  color: #10b981;
+  color: #1E9E62;
+  font-weight: 500;
+}
+
+.partial-status {
+  color: #F6A609;
   font-weight: 500;
 }
 
 .incompatible-status {
-  color: #ef4444;
+  color: #D8232A;
   font-weight: 500;
 }
 
