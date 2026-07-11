@@ -738,15 +738,21 @@ html, body, #root, .app-shell {
 
   .analysis-section {
     flex: 0 0 400px;
-    height: 100%;
+    height: auto;
     max-height: none;
     min-height: 0;
   }
 
-  /* Expanded dashboard mode on desktop: wider panel for better visibility */
+  /* Expanded dashboard mode on desktop: wider panel, full height */
   .analysis-section.expanded {
     flex: 0 0 600px;
     height: 100%;
+  }
+
+  /* Collapsed state on desktop: allow panel to shrink */
+  .analysis-section.collapsed {
+    flex: 0 0 400px;
+    height: auto;
   }
 }
 
