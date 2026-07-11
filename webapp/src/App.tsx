@@ -626,6 +626,8 @@ const App: React.FC = () => {
             optimizedPreview={optimizerStatus === 'done' && optimizerResult ? optimizerResult.coords : null}
             applyLineRequest={applyLineRequest}
             contextOverlays={contextOverlays}
+            optimizerScanning={optimizerStatus === 'running'}
+            optimizerHeatmap={optimizerStatus === 'done' && optimizerResult ? optimizerResult.heatmap : null}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}

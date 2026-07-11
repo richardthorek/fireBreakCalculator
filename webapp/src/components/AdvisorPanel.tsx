@@ -47,6 +47,15 @@ const severityLabel: Record<PlanInsight['severity'], string> = {
   info: 'Note',
 };
 
+/** Coarse pass label from overall progress (0..1) — exact per-leg pass tracking
+ *  isn't threaded through the progress callback, but thirds read well enough
+ *  to tell the user what stage the search is in. */
+const passLabel = (progress: number): string => {
+  if (progress < 0.34) return 'Pass 1 of 3 — wide corridor scan';
+  if (progress < 0.67) return 'Pass 2 of 3 — refining around the best path';
+  return 'Pass 3 of 3 — polishing the route';
+};
+
 const StatDelta: React.FC<{ label: string; before: string; after: string; better: boolean | null }> = ({ label, before, after, better }) => (
   <div className={`optimizer-stat${better === true ? ' better' : better === false ? ' worse' : ''}`}>
     <span className="optimizer-stat-label">{label}</span>
@@ -90,7 +99,8 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
           <div>
             <h5>Route optimization</h5>
             <p className="optimizer-caption">
-              Searches the corridor around your line for a path that avoids steep ground and heavy timber between your waypoints.
+              Tiles the corridor around your line in hexagons — the same grid style Uber's H3 uses for routing — and
+              searches three passes (wide scan, refine, polish) for a path that avoids steep ground and heavy timber.
             </p>
           </div>
         </div>
@@ -104,7 +114,7 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
         {optimizerStatus === 'running' && (
           <div className="optimizer-progress" role="status">
             <LoaderCircle className="optimizer-spinner" size={16} aria-hidden />
-            <span>Sampling corridor terrain &amp; fuel… {Math.round(optimizerProgress * 100)}%</span>
+            <span>{passLabel(optimizerProgress)} — {Math.round(optimizerProgress * 100)}%</span>
           </div>
         )}
 
@@ -122,6 +132,16 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
                 ? `Found a path ~${Math.round(result.improvement * 100)}% easier to build`
                 : 'Your line is already close to optimal in this corridor'}
             </div>
+            {result.heatmap.length > 0 && (
+              <div className="heatmap-legend">
+                <span className="heatmap-legend-title">Corridor scan</span>
+                <span className="heatmap-legend-gradient" aria-hidden />
+                <span className="heatmap-legend-labels">
+                  <span>Easy going</span>
+                  <span>Steep / heavy fuel</span>
+                </span>
+              </div>
+            )}
             <div className="optimizer-stats">
               <StatDelta
                 label="Length"

@@ -4809,3 +4809,31 @@ button:focus {
 .import-cancel-btn { border: 1px solid transparent; background: transparent; color: #94a3b8; }
 .import-cancel-btn:hover { color: #e2e8f0; }
 .import-dialog-hint { color: #64748b; font-size: 0.68rem; }
+
+/* --- Corridor scan heatmap legend --- */
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.1rem;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.heatmap-legend-title { font-weight: 600; color: #cbd5e1; white-space: nowrap; }
+
+.heatmap-legend-gradient {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #1E9E62, #F6A609, #D8232A);
+}
+
+.heatmap-legend-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

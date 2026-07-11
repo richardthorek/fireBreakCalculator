@@ -42,7 +42,7 @@ This is a **living document** that should be kept synchronized with the codebase
 | AdvisorPanel | `webapp/src/components/AdvisorPanel.tsx` | `{ assessment, optimizerStatus/result, onOptimize/Apply/Dismiss, onLocate }` | Plan Assistant: ranked insight cards + route optimizer compare/apply | planInsights, routeOptimizer |
 | ExportImportControls | `webapp/src/components/ExportImportControls.tsx` | `{ exportInput, onImportAsPlan, onAddOverlay, overlayCount, onClearOverlays }` | GIS export menu (GeoJSON/KML/KMZ/SHP/GPX) + file import dialog | gisExport, gisImport, fflate, @mapbox/shp-write |
 
-Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/segmentJoin.ts` (shared slope×fuel join), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/routeOptimizer.ts` (corridor least-cost pathfinding over DEM + NVIS/NSW samples + OSM trails), `webapp/src/utils/infrastructureService.ts` (Overpass corridor query), `webapp/src/utils/gisExport.ts` / `gisImport.ts` (GIS interop).
+Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/segmentJoin.ts` (shared slope×fuel join), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/hexGrid.ts` (pointy-top axial hex math), `webapp/src/utils/routeOptimizer.ts` (hexagonal 3-pass least-cost pathfinding over DEM + NVIS/NSW samples + OSM trails), `webapp/src/utils/infrastructureService.ts` (Overpass corridor query), `webapp/src/utils/gisExport.ts` / `gisImport.ts` (GIS interop), `webapp/src/utils/xmlScan.ts` (bounded XML scanner for KML/GPX import — not DOMParser).
 
 ## Planned Components (from Roadmap)
 
