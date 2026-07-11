@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Build & Test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Provision & Deploy
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
