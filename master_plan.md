@@ -34,8 +34,8 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | # | Step | Scope (one line) | Detail | Status |
 |---|------|-------------------|--------|--------|
 | 0 | **Route intelligence & analysis UI** | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ PR #163 |
-| 1 | **Universal GIS export pack** | GeoJSON/KML/KMZ/SHP export with provenance flags → covers FireMapper/QGIS/Earth; file import (perimeters, lines) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 | 📋 |
-| 2 | **Infrastructure-aware optimizer** | Existing trails/roads as discounted edges, waterway/cleared-land anchors, water-point & cadastre advisory layers | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §Designed | 📋 |
+| 1 | **Universal GIS export pack** | GeoJSON/KML/KMZ/SHP export with provenance flags → covers FireMapper/QGIS/Earth; file import (perimeters, lines) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 | ✅ PR #163 |
+| 2 | **Infrastructure-aware optimizer** | Existing trails/roads as discounted edges (✅), unanchored-end insights (✅); water-point & cadastre advisory layers (📋 — licensing check pending) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR #163 |
 | 3 | **AFDRS & live context** | Official fire danger rating + behaviour index for plan location/date; hotspots & incidents layers; break-adequacy heuristics keyed to AFDRS, doctrine-cited | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 | 📋 |
 | 4 | **AI assistant** | Azure AI Foundry (OpenAI-spec API) via IaC; RAG doctrine KB; grounded briefings, doctrine callouts, cited chat; hard anti-hallucination controls | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) | 📋 |
 | 5 | **Agency hand-off** | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike (fallback: KMZ) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 | 📋 |
@@ -51,6 +51,7 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-11 — Steps 1–2 shipped** (PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163)): GIS export pack (GeoJSON/KML/KMZ/Shapefile, provenance flags in every format) + file import (GeoJSON/KML/KMZ/GPX) as plan line or map overlay; optimizer now prices OSM-mapped trails as discounted edges (Overpass, graceful degradation, "verify trafficability" labelling) and the assistant flags unanchored ends in continuous fuel. Water/cadastre advisory layers deferred pending licensing check.
 - **2026-07-11 — Route Intelligence & UI overhaul** (PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163)): corridor pathfinding over real DEM + NVIS/NSW samples with apply/dismiss preview; rule-based Plan Assistant with chainage-located hazards; elevation profile + segment breakdown; tabbed analysis workspace. Verified: builds clean, API tests pass, 22-check optimizer smoke test. As-built: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md).
 - **2026-07-11 — Master plan replaced** with the mitigation-copilot direction above (steps 1–6); detail moved to [AI_ASSISTANT.md](docs/AI_ASSISTANT.md), [GIS_INTEROP.md](docs/GIS_INTEROP.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md). Prior plan content preserved in git history.
 - **2026-07-11 — Vegetation strategy: NVIS-first confirmed**; per-state expansion frozen. See [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md).

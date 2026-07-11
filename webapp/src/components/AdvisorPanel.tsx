@@ -147,7 +147,25 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
                 after={formatChainage(result.optimized.heavyForestDistance)}
                 better={result.optimized.heavyForestDistance < result.original.heavyForestDistance ? true : result.optimized.heavyForestDistance > result.original.heavyForestDistance ? false : null}
               />
+              {(result.optimized.existingTrailDistance > 0 || result.original.existingTrailDistance > 0) && (
+                <StatDelta
+                  label="Existing trail used"
+                  before={formatChainage(result.original.existingTrailDistance)}
+                  after={formatChainage(result.optimized.existingTrailDistance)}
+                  better={result.optimized.existingTrailDistance > result.original.existingTrailDistance ? true : result.optimized.existingTrailDistance < result.original.existingTrailDistance ? false : null}
+                />
+              )}
             </div>
+            {result.optimized.existingTrailDistance > 0 && (
+              <p className="optimizer-hint">
+                Reused trails are OSM-mapped — verify trafficability on the ground before relying on them.
+              </p>
+            )}
+            {!result.infrastructureAvailable && (
+              <p className="optimizer-hint">
+                Trail data was unavailable — this search used terrain and fuel only, so mapped trails may exist that it couldn't see.
+              </p>
+            )}
             {result.usedEstimatedData && (
               <div className="optimizer-estimated-note" role="alert">
                 ⚠️ Parts of the corridor used estimated data — verify the suggested path on the ground.

@@ -40,8 +40,9 @@ This is a **living document** that should be kept synchronized with the codebase
 | ElevationProfile | `webapp/src/components/ElevationProfile.tsx` | `{ trackAnalysis, vegetationAnalysis, onHoverChainage }` | Interactive SVG elevation/slope/fuel profile with map-synced hover | chainage util, categories |
 | SegmentBreakdown | `webapp/src/components/SegmentBreakdown.tsx` | `{ trackAnalysis, vegetationAnalysis, onLocate, activeRange }` | Joined per-segment chainage table with map locate | chainage util |
 | AdvisorPanel | `webapp/src/components/AdvisorPanel.tsx` | `{ assessment, optimizerStatus/result, onOptimize/Apply/Dismiss, onLocate }` | Plan Assistant: ranked insight cards + route optimizer compare/apply | planInsights, routeOptimizer |
+| ExportImportControls | `webapp/src/components/ExportImportControls.tsx` | `{ exportInput, onImportAsPlan, onAddOverlay, overlayCount, onClearOverlays }` | GIS export menu (GeoJSON/KML/KMZ/SHP/GPX) + file import dialog | gisExport, gisImport, fflate, @mapbox/shp-write |
 
-Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/routeOptimizer.ts` (corridor least-cost pathfinding over DEM + NVIS/NSW samples).
+Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/segmentJoin.ts` (shared slope×fuel join), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/routeOptimizer.ts` (corridor least-cost pathfinding over DEM + NVIS/NSW samples + OSM trails), `webapp/src/utils/infrastructureService.ts` (Overpass corridor query), `webapp/src/utils/gisExport.ts` / `gisImport.ts` (GIS interop).
 
 ## Planned Components (from Roadmap)
 

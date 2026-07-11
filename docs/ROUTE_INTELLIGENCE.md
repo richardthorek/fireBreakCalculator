@@ -29,16 +29,15 @@ Deterministic rules over the existing analyses (never new data): steep/very-stee
 
 ---
 
-## Designed: infrastructure-aware cost surface (next)
+## Infrastructure-aware cost surface
 
-**Goal:** the best fire break often half-exists. The optimizer should know about it.
+**Trails + anchors are ✅ built** (July 2026, PR #163):
 
-1. **Existing trails/roads as discounted edges.** Source: OSM (Overpass API or Mapbox vector tiles `road` layer) — `highway=track|service|unclassified|path`, plus `man_made=firebreak` where mapped. Lattice nodes within ~30 m of such a feature get a cost discount (×0.35 on the vegetation factor — the fuel is already broken) and the assistant reports "uses 1.8 km of existing trail".
-2. **Anchor features.** Waterways (`waterway=river|stream` with width), water bodies, and cleared land (NVIS MVG 25) near line endpoints → assistant insight when an end does NOT terminate at an anchor ("western end terminates in continuous fuel — extend 220 m to Back Creek").
-3. **Advisory overlays (no cost effect):** water fill points (OSM `waterway=*`+`water_point`, NSW spatial services), cadastre boundaries (NSW DCS Spatial Services — check licensing/attribution before shipping).
-4. **Honesty:** OSM completeness varies; discounted segments are labelled "mapped trail — verify trafficability".
+1. **Existing trails/roads as discounted edges** (`infrastructureService.ts`): one Overpass query per corridor bbox (`highway ~ track|path|service|unclassified|road|tertiary|secondary|residential`, `out geom`, 12 s server / 15 s client timeout, bbox-cached). Lattice nodes within **30 m** of a mapped way count as on-trail; edges with both ends on-trail get **×0.35 on the fuel factor** (the ground is already broken; slope still applies). `RouteComparisonStats.existingTrailDistance` reports metres reused; the AdvisorPanel shows an "Existing trail used" before/after row.
+2. **Honesty:** Overpass failure returns `available:false` (never cached) → the result carries `infrastructureAvailable:false` and the UI says trail data was unavailable rather than implying no trails exist. Reused trails are labelled "OSM-mapped — verify trafficability".
+3. **Anchor insights** (`planInsights.ts`): when either end of a >400 m line terminates in medium scrub or heavy forest, a chainage-located warning explains the outflanking risk and suggests tying into a road, waterway or cleared ground.
 
-**Integration points:** cost function already isolates slope/fuel factors (add an `infrastructureFactor`); assistant already supports chainage-anchored insights; map already supports advisory overlays.
+**Still designed (📋):** water fill points and cadastre boundaries as advisory overlays (NSW DCS Spatial Services — **licensing/attribution check required before shipping**), and waterway/cleared-land anchor *detection* (current anchor rule is fuel-based only; OSM waterways would let the assistant name the feature to tie into).
 
 ---
 

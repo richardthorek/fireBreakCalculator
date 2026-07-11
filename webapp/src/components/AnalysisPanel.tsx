@@ -18,10 +18,13 @@ import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 import { buildRouteProfile } from '../utils/routeProfile';
-import { buildShareUrl, toGPX, downloadFile, printBriefing } from '../utils/planSharing';
+import { buildShareUrl, printBriefing } from '../utils/planSharing';
 import { buildPlanAssessment } from '../utils/planInsights';
 import { OptimizedRouteResult } from '../utils/routeOptimizer';
-import { formatChainage } from '../utils/chainage';
+import { formatChainage, LatLng } from '../utils/chainage';
+import { ExportImportControls } from './ExportImportControls';
+import { ExportPlanInput } from '../utils/gisExport';
+import { ImportedFeatures } from '../utils/gisImport';
 import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
@@ -69,6 +72,11 @@ interface AnalysisPanelProps {
   onOptimize?: () => void;
   onApplyOptimized?: () => void;
   onDismissOptimized?: () => void;
+  /** GIS import wiring (state lives in App so the map can render overlays). */
+  onImportAsPlan?: (coords: LatLng[]) => void;
+  onAddOverlay?: (features: ImportedFeatures) => void;
+  overlayCount?: number;
+  onClearOverlays?: () => void;
 }
 
 /** Analysis panel tabs. */
@@ -304,7 +312,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   optimizerError = null,
   onOptimize,
   onApplyOptimized,
-  onDismissOptimized
+  onDismissOptimized,
+  onImportAsPlan,
+  onAddOverlay,
+  overlayCount = 0,
+  onClearOverlays
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation.
   // A shared plan may seed an explicit override.
@@ -759,11 +771,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (shareStatus !== 'Link copied') setTimeout(() => setShareStatus(null), 2500);
   };
 
-  const handleExportGpx = () => {
-    if (!canExport) return;
-    const gpx = toGPX(lineCoords!, 'Fire break plan');
-    downloadFile(`fire-break-${new Date().toISOString().slice(0, 10)}.gpx`, gpx, 'application/gpx+xml');
-  };
+  // Payload for the GIS export pack — same joined segments the panel displays.
+  const exportInput = useMemo<ExportPlanInput | null>(() => {
+    if (!canExport || !distance) return null;
+    return {
+      coords: lineCoords!,
+      distance,
+      trackAnalysis,
+      vegetationAnalysis,
+      breakWidthMeters,
+      difficultyScore: assessment?.difficultyScore,
+      difficultyLabel: assessment?.difficultyLabel,
+      name: 'Fire break plan',
+    };
+  }, [canExport, distance, lineCoords, trackAnalysis, vegetationAnalysis, breakWidthMeters, assessment]);
 
   const handlePrintBriefing = () => {
     if (!distance) return;
@@ -1044,15 +1065,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             >
               🔗 {shareStatus || 'Share link'}
             </button>
-            <button
-              type="button"
-              className="plan-export-btn"
-              onClick={handleExportGpx}
-              disabled={!canExport}
-              title="Download the line as GPX for a vehicle/handheld GPS"
-            >
-              📍 GPX
-            </button>
+            <ExportImportControls
+              exportInput={exportInput}
+              onImportAsPlan={coords => onImportAsPlan?.(coords)}
+              onAddOverlay={features => onAddOverlay?.(features)}
+              overlayCount={overlayCount}
+              onClearOverlays={() => onClearOverlays?.()}
+            />
             <button
               type="button"
               className="plan-export-btn"
@@ -1137,7 +1156,18 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           />
         )}
         {!distance ? (
-          <HelpContent />
+          <>
+            <div className="plan-export-toolbar empty-state-toolbar">
+              <ExportImportControls
+                exportInput={null}
+                onImportAsPlan={coords => onImportAsPlan?.(coords)}
+                onAddOverlay={features => onAddOverlay?.(features)}
+                overlayCount={overlayCount}
+                onClearOverlays={() => onClearOverlays?.()}
+              />
+            </div>
+            <HelpContent />
+          </>
         ) : (
           <>
             {/* Diagnostic message when no calculations are available */}

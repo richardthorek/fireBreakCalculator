@@ -21,6 +21,7 @@ import { readPlanFromUrl } from './utils/planSharing';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
 import { optimizeRoute, OptimizedRouteResult } from './utils/routeOptimizer';
 import { OptimizerStatus } from './components/AdvisorPanel';
+import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { logger } from './utils/logger';
 
 // Import site logo/favicon as a module so the bundler rewrites the path
@@ -158,6 +159,28 @@ const App: React.FC = () => {
     setOptimizerResult(null);
     setOptimizerError(null);
     setOptimizerProgress(0);
+  }, []);
+
+  // --- GIS import: overlays + import-as-plan ---------------------------------
+  const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);
+  const overlayIdRef = useRef(0);
+
+  const handleAddOverlay = useCallback((features: ImportedFeatures) => {
+    overlayIdRef.current += 1;
+    setContextOverlays(prev => [
+      ...prev,
+      { id: String(overlayIdRef.current), name: features.sourceName, geojson: importedToGeoJSON(features) },
+    ]);
+  }, []);
+
+  const handleClearOverlays = useCallback(() => setContextOverlays([]), []);
+
+  // An imported line becomes the plan via the same replace-line pipeline the
+  // optimizer uses, so the full analysis re-runs on the imported geometry.
+  const handleImportAsPlan = useCallback((coords: { lat: number; lng: number }[]) => {
+    if (!coords || coords.length < 2) return;
+    applyVersionRef.current += 1;
+    setApplyLineRequest({ coords, version: applyVersionRef.current });
   }, []);
   
   // Raw remote equipment (backend canonical) + loading state
@@ -602,6 +625,7 @@ const App: React.FC = () => {
             hoverPoint={hoverPoint}
             optimizedPreview={optimizerStatus === 'done' && optimizerResult ? optimizerResult.coords : null}
             applyLineRequest={applyLineRequest}
+            contextOverlays={contextOverlays}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -636,6 +660,10 @@ const App: React.FC = () => {
             onOptimize={handleOptimize}
             onApplyOptimized={handleApplyOptimized}
             onDismissOptimized={handleDismissOptimized}
+            onImportAsPlan={handleImportAsPlan}
+            onAddOverlay={handleAddOverlay}
+            overlayCount={contextOverlays.length}
+            onClearOverlays={handleClearOverlays}
           />
         </div>
         <IntegratedConfigPanel 

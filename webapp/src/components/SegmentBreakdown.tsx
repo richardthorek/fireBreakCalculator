@@ -10,10 +10,10 @@
 import React, { useMemo } from 'react';
 import { Crosshair } from 'lucide-react';
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { classifySlope, VegetationType } from '../config/classification';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName } from '../utils/formatters';
 import { formatChainage } from '../utils/chainage';
+import { buildJoinedSegments } from '../utils/segmentJoin';
 
 interface SegmentBreakdownProps {
   trackAnalysis: TrackAnalysis;
@@ -24,96 +24,9 @@ interface SegmentBreakdownProps {
   activeRange?: { startM: number; endM: number } | null;
 }
 
-interface JoinedSegment {
-  startM: number;
-  endM: number;
-  slope: number;
-  slopeCategory: string;
-  vegetation: VegetationType | null;
-  vegLabel?: string;
-  confidence?: number;
-  estimated: boolean;
-}
-
 const slopeColor = (category: string) => SLOPE_CATEGORIES.find(c => c.key === category)?.color ?? '#888';
 const vegSwatchColor = (type: string | null) =>
   (type && VEGETATION_CATEGORIES.find(c => c.key === type)?.color) || '#555';
-
-function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysis | null): JoinedSegment[] {
-  const total = track.totalDistance;
-  if (total <= 0) return [];
-
-  // Slope intervals on chainage.
-  const slopeIvs: { start: number; end: number; slope: number; category: string }[] = [];
-  let cursor = 0;
-  for (const s of track.segments) {
-    slopeIvs.push({ start: cursor, end: cursor + s.distance, slope: s.slope, category: s.category });
-    cursor += s.distance;
-  }
-
-  // Vegetation intervals scaled onto the same axis.
-  const vegIvs: { start: number; end: number; type: VegetationType; label?: string; confidence: number; estimated: boolean }[] = [];
-  if (veg && veg.totalDistance > 0) {
-    const scale = total / veg.totalDistance;
-    let vc = 0;
-    for (const s of veg.segments) {
-      const len = s.distance * scale;
-      vegIvs.push({
-        start: vc,
-        end: vc + len,
-        type: s.vegetationType,
-        label: s.displayLabel,
-        confidence: s.confidence,
-        estimated: !!s.estimated,
-      });
-      vc += len;
-    }
-  }
-
-  // Union of boundaries → joined slices.
-  const bounds = new Set<number>([0, total]);
-  for (const iv of slopeIvs) { bounds.add(iv.start); bounds.add(iv.end); }
-  for (const iv of vegIvs) { bounds.add(iv.start); bounds.add(iv.end); }
-  const pts = Array.from(bounds).filter(p => p >= 0 && p <= total).sort((a, b) => a - b);
-
-  const raw: JoinedSegment[] = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    if (b - a < 1) continue;
-    const mid = (a + b) / 2;
-    const sIv = slopeIvs.find(iv => mid >= iv.start && mid <= iv.end) ?? slopeIvs[slopeIvs.length - 1];
-    const vIv = vegIvs.find(iv => mid >= iv.start && mid <= iv.end);
-    raw.push({
-      startM: a,
-      endM: b,
-      slope: sIv?.slope ?? 0,
-      slopeCategory: sIv?.category ?? classifySlope(sIv?.slope ?? 0),
-      vegetation: vIv?.type ?? null,
-      vegLabel: vIv?.label,
-      confidence: vIv?.confidence,
-      estimated: !!vIv?.estimated,
-    });
-  }
-
-  // Merge identical neighbours to keep the table readable.
-  const merged: JoinedSegment[] = [];
-  for (const seg of raw) {
-    const last = merged[merged.length - 1];
-    if (last && last.slopeCategory === seg.slopeCategory && last.vegetation === seg.vegetation && last.estimated === seg.estimated) {
-      const lenA = last.endM - last.startM;
-      const lenB = seg.endM - seg.startM;
-      last.slope = (last.slope * lenA + seg.slope * lenB) / (lenA + lenB);
-      if (last.confidence !== undefined && seg.confidence !== undefined) {
-        last.confidence = (last.confidence * lenA + seg.confidence * lenB) / (lenA + lenB);
-      }
-      last.endM = seg.endM;
-    } else {
-      merged.push({ ...seg });
-    }
-  }
-  return merged;
-}
 
 export const SegmentBreakdown: React.FC<SegmentBreakdownProps> = ({
   trackAnalysis,

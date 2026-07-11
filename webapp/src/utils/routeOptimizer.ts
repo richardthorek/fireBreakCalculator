@@ -18,6 +18,7 @@
 import { VegetationType } from '../config/classification';
 import { calculateDistance, calculateSlope, sampleElevationsBatch } from './slopeCalculation';
 import { fetchStateVegetation } from './stateVegetationRouter';
+import { fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureTrail } from './infrastructureService';
 import { logger } from './logger';
 
 export interface LatLng {
@@ -43,6 +44,11 @@ const slopeCost = (slopeDeg: number): number => {
   return f;
 };
 
+/** Fuel-cost discount when an edge follows a mapped trail — the ground is already broken. */
+const TRAIL_FUEL_DISCOUNT = 0.35;
+/** A node counts as "on trail" within this distance of a mapped way (metres). */
+const TRAIL_SNAP_M = 30;
+
 export interface RouteComparisonStats {
   /** Total length in metres. */
   distance: number;
@@ -54,6 +60,8 @@ export interface RouteComparisonStats {
   heavyForestDistance: number;
   /** Metres of path with slope ≥ 25°. */
   steepDistance: number;
+  /** Metres of path following mapped existing trails/roads. */
+  existingTrailDistance: number;
   /** Unitless effort score (distance × slope × fuel multipliers). Lower is better. */
   effortScore: number;
 }
@@ -69,6 +77,9 @@ export interface OptimizedRouteResult {
   improvement: number;
   /** True when any elevation or vegetation sample was estimated/fallback data. */
   usedEstimatedData: boolean;
+  /** False when the OSM infrastructure lookup failed for any leg — the
+   *  optimizer then ran on terrain and fuel only (absence of data ≠ no trails). */
+  infrastructureAvailable: boolean;
   /** Number of grid nodes evaluated (diagnostic). */
   nodesEvaluated: number;
 }
@@ -88,6 +99,8 @@ interface GridNode {
   elevation: number;
   vegetation: VegetationType;
   vegEstimated: boolean;
+  /** Within TRAIL_SNAP_M of a mapped trail/road. */
+  onTrail: boolean;
 }
 
 /** Vegetation cache keyed at ~100 m — matches the NVIS raster resolution. */
@@ -149,13 +162,15 @@ function bearing(a: LatLng, b: LatLng): number {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-/** Edge cost between two sampled nodes: metres × slope factor × mean fuel factor. */
-function edgeCost(a: GridNode, b: GridNode): { cost: number; dist: number; slope: number } {
+/** Edge cost between two sampled nodes: metres × slope factor × mean fuel factor,
+ *  with the fuel factor discounted when the edge follows a mapped trail. */
+function edgeCost(a: GridNode, b: GridNode): { cost: number; dist: number; slope: number; onTrail: boolean } {
   const dist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
-  if (dist <= 0) return { cost: 0, dist: 0, slope: 0 };
+  if (dist <= 0) return { cost: 0, dist: 0, slope: 0, onTrail: false };
   const slope = calculateSlope(a.elevation, b.elevation, dist);
-  const veg = (VEGETATION_COST[a.vegetation] + VEGETATION_COST[b.vegetation]) / 2;
-  return { cost: dist * slopeCost(slope) * veg, dist, slope };
+  const onTrail = a.onTrail && b.onTrail;
+  const veg = ((VEGETATION_COST[a.vegetation] + VEGETATION_COST[b.vegetation]) / 2) * (onTrail ? TRAIL_FUEL_DISCOUNT : 1);
+  return { cost: dist * slopeCost(slope) * veg, dist, slope, onTrail };
 }
 
 /** Accumulate comparison stats over a path of sampled nodes. */
@@ -165,14 +180,16 @@ function pathStats(nodes: GridNode[]): RouteComparisonStats {
   let slopeSum = 0;
   let heavy = 0;
   let steep = 0;
+  let trail = 0;
   let effort = 0;
   for (let i = 1; i < nodes.length; i++) {
-    const { cost, dist, slope } = edgeCost(nodes[i - 1], nodes[i]);
+    const { cost, dist, slope, onTrail } = edgeCost(nodes[i - 1], nodes[i]);
     distance += dist;
     effort += cost;
     slopeSum += slope * dist;
     if (slope > maxSlope) maxSlope = slope;
     if (slope >= 25) steep += dist;
+    if (onTrail) trail += dist;
     if (nodes[i].vegetation === 'heavyforest' || nodes[i - 1].vegetation === 'heavyforest') heavy += dist / (nodes[i].vegetation === nodes[i - 1].vegetation ? 1 : 2);
   }
   return {
@@ -181,6 +198,7 @@ function pathStats(nodes: GridNode[]): RouteComparisonStats {
     meanSlope: distance > 0 ? slopeSum / distance : 0,
     heavyForestDistance: heavy,
     steepDistance: steep,
+    existingTrailDistance: trail,
     effortScore: effort,
   };
 }
@@ -200,6 +218,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
   const optimizedNodes: GridNode[][] = [];
   const originalNodes: GridNode[][] = [];
   let usedEstimatedData = false;
+  let infrastructureAvailable = true;
   let nodesEvaluated = 0;
 
   for (let leg = 0; leg < waypoints.length - 1; leg++) {
@@ -246,14 +265,27 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     }
     grid.push([B]);
 
-    // Sample the whole grid: one elevation batch + cached vegetation lookups.
+    // Sample the whole grid: one elevation batch + cached vegetation lookups
+    // + one Overpass query for reusable trails in the corridor bbox.
     const flat: LatLng[] = grid.flat();
-    const [elevRes, vegRes] = await Promise.all([
+    const margin = 0.002; // ~200 m
+    const lats = flat.map(p => p.lat);
+    const lngs = flat.map(p => p.lng);
+    const [elevRes, vegRes, infraRes] = await Promise.all([
       sampleElevationsBatch(flat),
       sampleVegetation(flat, signal),
+      fetchCorridorInfrastructure(
+        Math.min(...lats) - margin,
+        Math.min(...lngs) - margin,
+        Math.max(...lats) + margin,
+        Math.max(...lngs) + margin,
+        signal
+      ),
     ]);
     if (signal?.aborted) return null;
     usedEstimatedData = usedEstimatedData || elevRes.estimated || vegRes.some(v => v.estimated);
+    infrastructureAvailable = infrastructureAvailable && infraRes.available;
+    const trails: InfrastructureTrail[] = infraRes.trails;
 
     const nodeGrid: GridNode[][] = [];
     let idx = 0;
@@ -265,6 +297,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
           elevation: elevRes.elevations[idx],
           vegetation: vegRes[idx].type,
           vegEstimated: vegRes[idx].estimated,
+          onTrail: trails.length > 0 && distanceToNearestTrail(p, trails) <= TRAIL_SNAP_M,
         };
         idx++;
         return n;
@@ -331,6 +364,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     original,
     improvement,
     usedEstimatedData,
+    infrastructureAvailable,
     nodesEvaluated,
   };
 }
@@ -348,6 +382,8 @@ async function buildStraightNodes(
     elevation: elevRes.elevations[i],
     vegetation: vegRes[i].type,
     vegEstimated: vegRes[i].estimated,
+    // Short legs skip the corridor search; trail lookup is skipped with them.
+    onTrail: false,
   }));
   return { nodes, estimated: elevRes.estimated || vegRes.some(v => v.estimated) };
 }

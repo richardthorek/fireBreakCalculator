@@ -1,24 +1,24 @@
-# GIS Interoperability & Live Context — Design
+# GIS Interoperability & Live Context
 
-**Status:** 📋 Designed, not built (GPX export + share-link + print briefing exist today).
+**Status:** §1 export pack and §4 file import are ✅ **built** (July 2026, PR #163: `webapp/src/utils/gisExport.ts`, `gisImport.ts`, `components/ExportImportControls.tsx`). Avenza GeoPDF, ArcGIS Online push and live feeds remain 📋 designed.
 **Owner doc for:** export formats, agency GIS integration (ArcGIS Online, FireMapper, Avenza), live data feeds in (AFDRS, hotspots, perimeters).
 
 **Principle:** meet crews where they already work. A plan that can't leave the app dies in the app.
 
 ---
 
-## 1. Universal export pack (client-side, offline-capable)
+## 1. Universal export pack (client-side, offline-capable) — ✅ built
 
-| Format | Consumers | Approach |
+| Format | Consumers | As built |
 |--------|-----------|----------|
-| GeoJSON | FireMapper, QGIS, most agency GIS | Native — serialize line + per-segment properties (chainage, grade, fuel, flags) + plan metadata |
-| KML/KMZ | Google Earth, Avenza, FireMapper | Styled per slope/fuel category; briefing summary + per-segment detail in placemark descriptions; KMZ bundles a legend |
-| Shapefile | Legacy agency workflows | `shp-write` (or equivalent small lib) in a lazy-loaded chunk; line + segments as features |
-| GPX | Vehicle/handheld GPS | ✅ exists (`planSharing.ts`) — keep |
+| GeoJSON | FireMapper, QGIS, most agency GIS | Route feature + per-segment features (chainage, grade, slope category, fuel, confidence, `estimated_data`) + plan metadata (`gisExport.ts#toGeoJSON`) |
+| KML/KMZ | Google Earth, Avenza, FireMapper | Slope-category line styles; briefing summary + per-segment detail in placemark descriptions; visible ⚠️ block when estimated data present; KMZ zipped via `fflate` |
+| Shapefile (.zip) | Legacy agency workflows | `@mapbox/shp-write`, lazy-loaded; booleans coerced to 0/1 for DBF |
+| GPX | Vehicle/handheld GPS | Pre-existing (`planSharing.ts`), surfaced in the same Export menu |
 
-All exports carry data-provenance fields (`usedMockElevation`, `usedFallbackData`, per-segment `estimated`) — honesty flags must survive the round-trip.
+All exports carry data-provenance fields (`estimated_elevation_data`, `estimated_vegetation_data`, per-segment `estimated_data`) — honesty flags survive the round-trip. Exported segments come from the same `segmentJoin.ts` join the panel table renders, so files match the screen exactly.
 
-**FireMapper compatibility** = GeoJSON/KML import (no API needed). Verify styling renders sensibly in FireMapper Pro; document the recommended import flow for brigades.
+**FireMapper compatibility** = GeoJSON/KML import (no API needed). Still to do: verify styling in FireMapper Pro on a real device and document the brigade import flow.
 
 ## 2. Avenza-ready georeferenced PDF
 Geospatial PDF (ISO 32000 georegistration) of the plan map + briefing panel so any phone with the free Avenza app can navigate the line offline with GPS.
@@ -33,9 +33,11 @@ Publish a plan as a **hosted feature layer** so it appears live in agency dashbo
 
 ## 4. Imports & live context feeds
 
+**File import is ✅ built** (`gisImport.ts` + `ExportImportControls.tsx`): GeoJSON/KML/KMZ/GPX → user chooses "use as plan line" (replaces the drawn line, full re-analysis) or "add as map overlay" (translucent red reference layer, auto-zoom). 50k-vertex cap; unreadable files fail visibly. Live feeds below remain designed:
+
 | Feed | Use | Source |
 |------|-----|--------|
-| Fire perimeters / existing lines | Draw context; import a line as a plan | KML/GeoJSON file import (drag-drop) — covers FireMapper exports |
+| Fire perimeters / existing lines | ✅ Draw context; import a line as a plan | KML/KMZ/GeoJSON/GPX file import — covers FireMapper exports |
 | **AFDRS fire danger** | Show the OFFICIAL rating + fire behaviour index for the plan's district/date | AFDRS/BOM published feeds. **We display the official product — we do not rebuild spread prediction** (Spark/Phoenix exist). Break-width adequacy heuristics may reference the AFDRS fuel-type behaviour indices, doctrine-cited |
 | Hotspots | Situational awareness layer | DEA Hotspots API (Geoscience Australia) |
 | Incidents | Situational awareness layer | NSW RFS "Fires Near Me" GeoJSON feed (public, attribution required) |

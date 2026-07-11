@@ -166,6 +166,33 @@ export function buildPlanAssessment(params: {
     }
   }
 
+  // ---- Anchor points -----------------------------------------------------------
+  // A break that ends in continuous fuel can be outflanked. Flag ends that
+  // terminate in medium scrub or heavy forest so the planner anchors them to a
+  // road, waterway or cleared ground.
+  if (vegetationAnalysis && vegetationAnalysis.segments.length > 0 && distance > 400) {
+    const continuousFuel = (t: string) => t === 'heavyforest' || t === 'mediumscrub';
+    const firstSeg = vegetationAnalysis.segments[0];
+    const lastSeg = vegetationAnalysis.segments[vegetationAnalysis.segments.length - 1];
+    const endChecks: { id: string; label: string; type: string; startM: number; endM: number }[] = [];
+    if (continuousFuel(firstSeg.vegetationType)) {
+      endChecks.push({ id: 'anchor-start', label: 'start', type: firstSeg.vegetationType, startM: 0, endM: Math.min(150, distance) });
+    }
+    if (continuousFuel(lastSeg.vegetationType)) {
+      endChecks.push({ id: 'anchor-end', label: 'end', type: lastSeg.vegetationType, startM: Math.max(0, distance - 150), endM: distance });
+    }
+    for (const end of endChecks) {
+      insights.push({
+        id: end.id,
+        severity: 'warning',
+        title: `Line ${end.label} terminates in continuous fuel`,
+        detail: `The ${end.label} of this break sits in ${end.type === 'heavyforest' ? 'heavy forest' : 'medium scrub'} with no visible anchor. An unanchored end can be outflanked — tie it into a road, waterway, or cleared ground.`,
+        chainage: { startM: end.startM, endM: end.endM },
+        action: 'locate',
+      });
+    }
+  }
+
   // ---- Route-optimization nudge ---------------------------------------------
   if (trackAnalysis && vegetationAnalysis && distance > 300) {
     const steepShare = (trackAnalysis.slopeDistribution.steep + trackAnalysis.slopeDistribution.very_steep) / Math.max(1, trackAnalysis.totalDistance);

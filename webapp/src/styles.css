@@ -4701,3 +4701,111 @@ button:focus {
 @media (prefers-reduced-motion: reduce) {
   .optimizer-spinner { animation: none; }
 }
+
+/* --- GIS export menu / import dialog --- */
+.export-menu-wrap { position: relative; flex: 1 1 auto; display: flex; }
+.export-menu-wrap .plan-export-btn { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; }
+
+.export-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 230px;
+  background: rgba(15,17,21,0.98);
+  border: 1px solid #2a3442;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+  padding: 0.3rem;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+}
+
+.export-menu-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  min-height: 38px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.export-menu-item:hover { background: rgba(255,255,255,0.07); }
+.export-menu-label { font-weight: 600; }
+.export-menu-hint { color: #64748b; font-size: 0.68rem; }
+.export-menu-note {
+  padding: 0.35rem 0.6rem 0.25rem;
+  color: #64748b;
+  font-size: 0.66rem;
+  border-top: 1px solid rgba(42,52,66,0.7);
+  margin-top: 0.2rem;
+}
+
+.overlay-clear-btn { border-color: rgba(216,35,42,0.5); }
+.overlay-clear-btn:hover { border-color: rgba(216,35,42,0.9); background: rgba(216,35,42,0.12); }
+
+.import-error {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(216,35,42,0.5);
+  border-radius: 6px;
+  background: rgba(216,35,42,0.1);
+  color: #fca5a5;
+  font-size: 0.75rem;
+}
+
+.import-error button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.import-dialog {
+  flex: 1 1 100%;
+  border: 1px solid rgba(246,166,9,0.4);
+  border-radius: 8px;
+  background: rgba(246,166,9,0.06);
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.import-dialog-title { display: flex; justify-content: space-between; gap: 0.5rem; color: #f5f7fa; font-size: 0.8rem; flex-wrap: wrap; }
+.import-dialog-counts { color: #94a3b8; font-size: 0.74rem; }
+.import-dialog select { width: 100%; min-height: 38px; border-radius: 6px; }
+.import-dialog-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.import-plan-btn, .import-overlay-btn, .import-cancel-btn {
+  padding: 0.4rem 0.7rem;
+  min-height: 38px;
+  border-radius: 7px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.import-plan-btn { border: none; background: #F6A609; color: #241A00; }
+.import-plan-btn:hover { background: #ffb82e; }
+.import-overlay-btn { border: 1px solid #2a3442; background: rgba(15,17,21,0.6); color: #e2e8f0; }
+.import-overlay-btn:hover { border-color: #475569; }
+.import-cancel-btn { border: 1px solid transparent; background: transparent; color: #94a3b8; }
+.import-cancel-btn:hover { color: #e2e8f0; }
+.import-dialog-hint { color: #64748b; font-size: 0.68rem; }

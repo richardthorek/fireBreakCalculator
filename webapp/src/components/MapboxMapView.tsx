@@ -13,6 +13,27 @@ import { SearchControl } from './SearchControl';
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
 
+/** Bounding box [[minLng,minLat],[maxLng,maxLat]] of all coordinates in a GeoJSON object. */
+const geojsonBounds = (geojson: any): [[number, number], [number, number]] | null => {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const visit = (coords: any) => {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === 'number') {
+      const [lng, lat] = coords;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    } else {
+      coords.forEach(visit);
+    }
+  };
+  const features = geojson?.type === 'FeatureCollection' ? geojson.features : [geojson];
+  for (const f of features ?? []) visit(f?.geometry?.coordinates);
+  if (!isFinite(minLng)) return null;
+  return [[minLng, minLat], [maxLng, maxLat]];
+};
+
 const DEFAULT_CENTER: [number, number] = [147.0, -32.0];
 const DEFAULT_ZOOM = 6;
 
@@ -48,6 +69,8 @@ interface MapboxMapViewProps {
   optimizedPreview?: { lat: number; lng: number }[] | null;
   /** When set (version bumps), replace the drawn line with these coords and re-analyse. */
   applyLineRequest?: { coords: { lat: number; lng: number }[]; version: number } | null;
+  /** Imported reference overlays (fire perimeters, other lines) — non-editable context. */
+  contextOverlays?: { id: string; name: string; geojson: any }[];
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -69,7 +92,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   highlightCoords = null,
   hoverPoint = null,
   optimizedPreview = null,
-  applyLineRequest = null
+  applyLineRequest = null,
+  contextOverlays = []
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -599,6 +623,60 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 4, 'line-dasharray': [1.6, 1.4], 'line-opacity': 0.95 } }
     });
   }, [optimizedPreview]);
+
+  // Imported reference overlays: polygons (fire perimeters) as translucent red
+  // fill + outline, lines as dashed slate. Sources are keyed by overlay id.
+  const renderedOverlayIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      try {
+        const wanted = new Set(contextOverlays.map(o => `ctx-${o.id}`));
+        // Remove overlays no longer wanted.
+        for (const key of Array.from(renderedOverlayIdsRef.current)) {
+          if (!wanted.has(key)) {
+            for (const suffix of ['-fill', '-line']) {
+              if (map.getLayer(`${key}${suffix}`)) map.removeLayer(`${key}${suffix}`);
+            }
+            if (map.getSource(key)) map.removeSource(key);
+            renderedOverlayIdsRef.current.delete(key);
+          }
+        }
+        // Add new overlays.
+        for (const overlay of contextOverlays) {
+          const key = `ctx-${overlay.id}`;
+          if (renderedOverlayIdsRef.current.has(key)) continue;
+          map.addSource(key, { type: 'geojson', data: overlay.geojson } as any);
+          map.addLayer({
+            id: `${key}-fill`,
+            type: 'fill',
+            source: key,
+            filter: ['==', ['geometry-type'], 'Polygon'],
+            paint: { 'fill-color': '#D8232A', 'fill-opacity': 0.18 }
+          });
+          map.addLayer({
+            id: `${key}-line`,
+            type: 'line',
+            source: key,
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#D8232A', 'line-width': 2.5, 'line-dasharray': [2, 1.5], 'line-opacity': 0.85 }
+          });
+          renderedOverlayIdsRef.current.add(key);
+          // Bring the newly imported overlay into view.
+          const bounds = geojsonBounds(overlay.geojson);
+          if (bounds) map.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 14 });
+        }
+      } catch (e) {
+        logger.warn('Failed to update context overlays', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  }, [contextOverlays]);
 
   // Replace the drawn line when an optimized route is applied. Runs the same
   // pipeline as a manual draw so all analyses re-run against the new geometry.
