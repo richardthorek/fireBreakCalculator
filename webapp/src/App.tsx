@@ -40,8 +40,12 @@ const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | undefined>(undefined);
   const [initialLocationSettled, setInitialLocationSettled] = useState<boolean>(false);
-  // Track whether the analysis panel is in expanded mode (affects layout)
-  const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState<boolean>(true);
+  // Track whether the analysis panel is in expanded mode (affects layout).
+  // Default to collapsed on mobile/tablet widths so the map keeps the majority
+  // of the screen; desktop keeps the panel expanded by default.
+  const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState<boolean>(
+    () => typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+  );
   // Prefetch user location as early as possible to let the map move immediately
   // once the Map instance is ready. This avoids waiting for permission checks
   // inside the map lifecycle which can add perceived delay.

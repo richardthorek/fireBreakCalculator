@@ -746,6 +746,137 @@ html, body, #root, .app-shell {
   }
 }
 
+/* Mobile/tablet: keep the map dominant. Collapsed panel is capped tightly so
+   header + panel together stay within ~20% of the screen, leaving ~80% for
+   the map. The detailed content is hidden in favour of a dense summary strip
+   (see .mobile-compact-summary) that still surfaces the numbers a crew needs. */
+@media (max-width: 1023px) {
+  .analysis-header {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .analysis-section.collapsed {
+    max-height: 22vh;
+    min-height: 0;
+  }
+
+  .analysis-section.collapsed .header-info {
+    display: none;
+  }
+
+  /* Trim the collapsed header's touch target a little so the summary strip
+     below still fits comfortably inside the ~20% budget. */
+  .analysis-section.collapsed .analysis-header {
+    padding: 0.4rem 0.75rem;
+  }
+
+  .analysis-section.collapsed .expand-button {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0.3rem 0.5rem;
+  }
+
+  .analysis-section.collapsed .analysis-content {
+    display: none;
+  }
+
+  .analysis-section.collapsed .mobile-compact-summary {
+    display: flex;
+  }
+
+  /* Support/feature-suggestion buttons aren't data — keep them out of the
+     dense collapsed strip; they're still reachable once expanded. */
+  .analysis-section.collapsed .bottom-buttons-container {
+    display: none;
+  }
+}
+
+/* Dense mobile-only summary strip: end-to-end slope breakdown, the optimal
+   machine + duration, aviation drop count, and hand-tool duration. Hidden by
+   default (desktop, or while the panel is expanded — full detail covers it). */
+.mobile-compact-summary {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0.75rem 8px;
+  border-bottom: 1px solid #2a3442;
+  flex: 0 0 auto;
+}
+
+.mcs-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.mcs-distance {
+  color: #ff6b35;
+  font-weight: 700;
+}
+
+.mcs-slope-text {
+  color: #94a3b8;
+}
+
+.mcs-slope-bar {
+  width: 100%;
+}
+
+.mcs-chips-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.mcs-chips-row::-webkit-scrollbar {
+  display: none;
+}
+
+.mcs-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  background: rgba(30,36,51,0.85);
+  border: 1px solid #2a3442;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  line-height: 1.3;
+  color: #f5f7fa;
+  white-space: nowrap;
+}
+
+.mcs-chip-icon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.mcs-chip-text {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #cbd5e1;
+}
+
+.mcs-chip-value {
+  font-weight: 700;
+  color: #4fc3f7;
+}
+
+.mcs-chip-sub {
+  color: #94a3b8;
+  font-size: 0.62rem;
+}
+
+.mcs-chip-empty {
+  opacity: 0.55;
+}
+
 .map-wrapper, .map-container {
   height: 100%;
   width: 100%;
