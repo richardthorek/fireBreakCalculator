@@ -285,7 +285,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [useAutoDetected, setUseAutoDetected] = useState(!initialVegetationOverride);
   // Target fire break width (m). Drives machinery pass count and hand-crew effort.
   const [breakWidthMeters, setBreakWidthMeters] = useState<number>(initialBreakWidthMeters ?? 4);
-  const [isExpanded, setIsExpanded] = useState(true); // default expanded
+  // Default expanded on desktop; collapsed on mobile/tablet so the map keeps
+  // the majority of the screen. The collapsed state still surfaces a dense
+  // mobile summary strip (see MobileCompactSummary below).
+  const [isExpanded, setIsExpanded] = useState(
+    () => typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+  );
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
 
   // Backend analysis state (always use backend)
@@ -801,6 +806,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           {isExpanded ? '▼' : '▲'}
         </button>
       </div>
+      <MobileCompactSummary
+        distance={distance}
+        trackAnalysis={trackAnalysis}
+        quickMachinery={quickMachinery}
+        quickAircraft={quickAircraft}
+        quickHandCrew={quickHandCrew}
+      />
       <div className="analysis-content" id="analysis-content">
         {distance && (trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData) && (
           <div className="data-quality-warning" role="alert">
@@ -1144,6 +1156,75 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       </div>
       {/* Buy Me a Coffee button - injected script will render the button into the DOM */}
       <BuyMeACoffee />
+    </div>
+  );
+};
+
+/**
+ * Dense, single-glance strip shown on mobile while the analysis panel is
+ * collapsed, so the map can keep ~80% of the screen without hiding the
+ * headline numbers a crew needs: end-to-end slope breakdown, the fastest
+ * compatible machine + duration, aviation drop count, and hand-tool duration.
+ * Hidden entirely on desktop and while the panel is expanded (see CSS).
+ */
+const MobileCompactSummary: React.FC<{
+  distance: number | null;
+  trackAnalysis: TrackAnalysis | null;
+  quickMachinery?: any;
+  quickAircraft?: any;
+  quickHandCrew?: any;
+}> = ({ distance, trackAnalysis, quickMachinery, quickAircraft, quickHandCrew }) => {
+  if (!distance) return null;
+
+  return (
+    <div className="mobile-compact-summary" aria-label="Quick fire break summary">
+      <div className="mcs-meta-row">
+        <span className="mcs-distance">{distance.toLocaleString(undefined, { maximumFractionDigits: 0 })}m</span>
+        {trackAnalysis && (
+          <span className="mcs-slope-text">Max {Math.round(trackAnalysis.maxSlope)}° · Avg {Math.round(trackAnalysis.averageSlope)}°</span>
+        )}
+      </div>
+      {trackAnalysis && (
+        <div className="mcs-slope-bar">
+          <DistributionBar
+            categories={SLOPE_CATEGORIES}
+            data={trackAnalysis.slopeDistribution as any}
+            total={trackAnalysis.totalDistance}
+            ariaLabel="End to end slope breakdown"
+            compact
+            showLabels={false}
+            internalSegmentLabels={false}
+          />
+        </div>
+      )}
+      <div className="mcs-chips-row">
+        {quickMachinery ? (
+          <span className="mcs-chip" title={`${quickMachinery.name}: ${quickMachinery.time.toFixed(1)}h`}>
+            <span className="mcs-chip-icon" aria-hidden>🚜</span>
+            <span className="mcs-chip-text">{quickMachinery.name}</span>
+            <span className="mcs-chip-value">{quickMachinery.time.toFixed(1)}h</span>
+          </span>
+        ) : (
+          <span className="mcs-chip mcs-chip-empty"><span className="mcs-chip-icon" aria-hidden>🚜</span> No option</span>
+        )}
+        {quickAircraft ? (
+          <span className="mcs-chip" title={`${quickAircraft.name}: ${quickAircraft.drops ?? 0} drops, ${quickAircraft.time.toFixed(1)}h`}>
+            <span className="mcs-chip-icon" aria-hidden>✈️</span>
+            <span className="mcs-chip-value">{quickAircraft.drops ?? 0} drops</span>
+            <span className="mcs-chip-sub">{quickAircraft.time.toFixed(1)}h</span>
+          </span>
+        ) : (
+          <span className="mcs-chip mcs-chip-empty"><span className="mcs-chip-icon" aria-hidden>✈️</span> No option</span>
+        )}
+        {quickHandCrew ? (
+          <span className="mcs-chip" title={`${quickHandCrew.name}: ${quickHandCrew.time.toFixed(1)}h`}>
+            <span className="mcs-chip-icon" aria-hidden>👷</span>
+            <span className="mcs-chip-value">{quickHandCrew.time.toFixed(1)}h</span>
+          </span>
+        ) : (
+          <span className="mcs-chip mcs-chip-empty"><span className="mcs-chip-icon" aria-hidden>👷</span> No option</span>
+        )}
+      </div>
     </div>
   );
 };
