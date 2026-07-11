@@ -9,7 +9,14 @@
  *   - printed as a briefing sheet.
  */
 
-import { VegetationType } from '../config/classification';
+import { VegetationType, VEGETATION_TYPES } from '../config/classification';
+
+/** Escape a string for safe insertion as HTML text/attribute content. */
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string)
+  );
+}
 
 export interface LatLng {
   lat: number;
@@ -54,13 +61,25 @@ export function decodePlan(encoded: string): SharedPlan | null {
     const coords: LatLng[] = obj.c
       .filter((p: unknown) => Array.isArray(p) && p.length === 2)
       .map((p: [number, number]) => ({ lat: p[0], lng: p[1] }))
-      .filter((p: LatLng) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      .filter(
+        (p: LatLng) =>
+          Number.isFinite(p.lat) &&
+          Number.isFinite(p.lng) &&
+          p.lat >= -90 && p.lat <= 90 &&
+          p.lng >= -180 && p.lng <= 180
+      );
     if (coords.length < 2) return null;
-    return {
-      coords,
-      breakWidthMeters: typeof obj.w === 'number' ? obj.w : undefined,
-      vegetation: typeof obj.g === 'string' ? (obj.g as VegetationType) : undefined,
-    };
+    // Validate untrusted fields from the URL against known-safe values so
+    // nothing arbitrary can flow downstream (e.g. into a briefing document).
+    const vegetation =
+      typeof obj.g === 'string' && (VEGETATION_TYPES as readonly string[]).includes(obj.g)
+        ? (obj.g as VegetationType)
+        : undefined;
+    const breakWidthMeters =
+      typeof obj.w === 'number' && Number.isFinite(obj.w) && obj.w > 0 && obj.w <= 1000
+        ? obj.w
+        : undefined;
+    return { coords, breakWidthMeters, vegetation };
   } catch {
     return null;
   }
@@ -137,11 +156,11 @@ export function printBriefing(data: BriefingData): void {
   const rows = data.resources
     .map(
       (r) => `<tr>
-        <td>${r.name}</td><td>${r.type}</td>
-        <td>${r.compatibilityLevel}</td>
-        <td style="text-align:right">${fmtTime(r.time)}</td>
-        <td style="text-align:right">$${Math.round(r.cost).toLocaleString()}</td>
-        <td>${r.note ? r.note.replace(/</g, '&lt;') : ''}</td>
+        <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.type)}</td>
+        <td>${escapeHtml(r.compatibilityLevel)}</td>
+        <td style="text-align:right">${escapeHtml(fmtTime(r.time))}</td>
+        <td style="text-align:right">$${escapeHtml(Math.round(r.cost).toLocaleString())}</td>
+        <td>${escapeHtml(r.note ?? '')}</td>
       </tr>`
     )
     .join('');
@@ -160,14 +179,14 @@ export function printBriefing(data: BriefingData): void {
       @media print{button{display:none}}
     </style></head><body>
     <h1>🔥 Fire Break Plan — Briefing</h1>
-    <p class="sub">Generated ${new Date().toLocaleString()}</p>
+    <p class="sub">Generated ${escapeHtml(new Date().toLocaleString())}</p>
     ${warning}
     <div class="meta">
-      <div><strong>Length:</strong> ${km} km</div>
-      <div><strong>Target width:</strong> ${data.breakWidthMeters} m</div>
-      <div><strong>Predominant fuel:</strong> ${data.vegetation}</div>
-      ${data.meanSlope != null ? `<div><strong>Mean slope:</strong> ${Math.round(data.meanSlope)}°</div>` : ''}
-      ${data.maxSlope != null ? `<div><strong>Max slope:</strong> ${Math.round(data.maxSlope)}°</div>` : ''}
+      <div><strong>Length:</strong> ${escapeHtml(km)} km</div>
+      <div><strong>Target width:</strong> ${escapeHtml(Number(data.breakWidthMeters) || 0)} m</div>
+      <div><strong>Predominant fuel:</strong> ${escapeHtml(data.vegetation)}</div>
+      ${data.meanSlope != null ? `<div><strong>Mean slope:</strong> ${Math.round(Number(data.meanSlope))}°</div>` : ''}
+      ${data.maxSlope != null ? `<div><strong>Max slope:</strong> ${Math.round(Number(data.maxSlope))}°</div>` : ''}
     </div>
     <table><thead><tr>
       <th>Resource</th><th>Type</th><th>Fit</th><th>Time</th><th>Cost</th><th>Notes</th>
