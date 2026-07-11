@@ -141,7 +141,7 @@ html, body, #root, .app-shell {
   .config-panel-toggle .config-label { display: none !important; }
   /* Remove any generated content that could duplicate the icon */
   .config-panel-toggle::before, .config-panel-toggle::after { content: none !important; }
-  .config-panel-toggle .config-icon { display: inline-block; }
+  .config-panel-toggle .config-icon { display: flex; align-items: center; }
   /* make search smaller if still overlapping */
   .header-center .header-search-control { max-width: calc(100% - 56px); }
 }
@@ -1107,6 +1107,8 @@ button:focus {
 .category-icon {
   font-size: 1rem;
   line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .category-label {
@@ -1392,6 +1394,9 @@ button:focus {
 .category-section-icon {
   font-size: 1.1rem;
   line-height: 1;
+  display: flex;
+  align-items: center;
+  margin-right: 0.5rem;
 }
 
 .equipment-table {
@@ -1447,6 +1452,9 @@ button:focus {
   line-height: 1;
   min-width: 1.5rem;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .equipment-details {

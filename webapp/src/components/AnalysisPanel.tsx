@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { Truck, Wrench, Plane, Users } from 'lucide-react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
@@ -84,26 +85,19 @@ interface CalculationResult {
 /**
  * Get appropriate icon for equipment type
  */
-const getEquipmentIcon = (result: CalculationResult): string => {
+const getEquipmentIcon = (result: CalculationResult): React.ReactNode => {
+  const iconProps = { size: 20, strokeWidth: 2, 'aria-hidden': true };
   if (result.type === 'machinery') {
-    // Check if it's a dozer or grader from the name
-    if (result.name.toLowerCase().includes('dozer')) {
-      return '🚜';
-    } else if (result.name.toLowerCase().includes('grader')) {
-      return '🛠️';
+    if (result.name.toLowerCase().includes('grader')) {
+      return <Wrench {...iconProps} />;
     }
-    return '🚜'; // Default to bulldozer for machinery
+    return <Truck {...iconProps} />;
   } else if (result.type === 'aircraft') {
-    // Check if it's a helicopter or fixed wing
-    if (result.name.toLowerCase().includes('helicopter')) {
-      return '🚁';
-    } else {
-      return '✈️';
-    }
+    return <Plane {...iconProps} />;
   } else if (result.type === 'handCrew') {
-    return '👨‍🚒';
+    return <Users {...iconProps} />;
   }
-  return '';
+  return null;
 };
 
 /**
@@ -1004,7 +998,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <h4>Quick Options</h4>
               <div className="best-options-grid">
                 <div className="option-category">
-                  <div className="category-header"><span className="category-icon">🛠️</span><span className="category-label">Machinery</span></div>
+                  <div className="category-header"><Wrench size={20} strokeWidth={2} aria-hidden className="category-icon" /><span className="category-label">Machinery</span></div>
                   {finalCalculations.filter(c => (c.type === 'machinery' || c.type === 'Machinery') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <select
@@ -1022,7 +1016,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
                 <div className="option-category">
-                  <div className="category-header"><span className="category-icon">✈️</span><span className="category-label">Aircraft</span></div>
+                  <div className="category-header"><Plane size={20} strokeWidth={2} aria-hidden className="category-icon" /><span className="category-label">Aircraft</span></div>
                   {finalCalculations.filter(c => (c.type === 'aircraft' || c.type === 'Aircraft') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <div className="aircraft-selection-row">
@@ -1053,7 +1047,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                   ) : <span className="no-option">No compatible options</span>}
                 </div>
                 <div className="option-category">
-                  <div className="category-header"><span className="category-icon">👨‍🚒</span><span className="category-label">Hand Crew</span></div>
+                  <div className="category-header"><Users size={20} strokeWidth={2} aria-hidden className="category-icon" /><span className="category-label">Hand Crew</span></div>
                   {finalCalculations.filter(c => (c.type === 'handCrew' || c.type === 'HandCrew') && c.compatible).length > 0 ? (
                     <div className="option-details">
                       <select
@@ -1077,7 +1071,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 <h4>All Equipment Options</h4>
                 <div className="equipment-categories">
                   <div className="equipment-category-section">
-                    <h5 className="category-section-header"><span className="category-section-icon">🛠️</span>Machinery</h5>
+                    <h5 className="category-section-header"><Wrench size={20} strokeWidth={2} aria-hidden className="category-section-icon" />Machinery</h5>
                     <div className="equipment-table">
                       <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
                       {finalCalculations.filter(r => (r.type === 'machinery' || r.type === 'Machinery')).map((result: any) => (
@@ -1097,7 +1091,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     </div>
                   </div>
                   <div className="equipment-category-section">
-                    <h5 className="category-section-header"><span className="category-section-icon">✈️</span>Aircraft</h5>
+                    <h5 className="category-section-header"><Plane size={20} strokeWidth={2} aria-hidden className="category-section-icon" />Aircraft</h5>
                     <div className="equipment-table">
                       <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
                       {finalCalculations.filter(r => (r.type === 'aircraft' || r.type === 'Aircraft')).map((result: any) => (
@@ -1117,7 +1111,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     </div>
                   </div>
                   <div className="equipment-category-section">
-                    <h5 className="category-section-header"><span className="category-section-icon">👨‍🚒</span>Hand Crew</h5>
+                    <h5 className="category-section-header"><Users size={20} strokeWidth={2} aria-hidden className="category-section-icon" />Hand Crew</h5>
                     <div className="equipment-table">
                       <div className="table-header"><span>Equipment</span><span>Time</span><span>Cost</span><span>Status</span></div>
                       {finalCalculations.filter(r => (r.type === 'handCrew' || r.type === 'HandCrew')).map((result: any) => (

@@ -5,12 +5,13 @@
  */
 
 import React from 'react';
+import { Flame } from 'lucide-react';
 
 export const HelpContent: React.FC = () => {
   return (
     <div className="help-content">
       <div className="help-header">
-        <h4>🔥 Welcome to Fire Break Calculator</h4>
+        <h4><Flame size={24} strokeWidth={2} aria-hidden style={{ display: 'inline-block', marginRight: '0.5rem' }} /> Welcome to Fire Break Calculator</h4>
         <p className="help-subtitle">Plan fire breaks and trails with precision</p>
       </div>
 
