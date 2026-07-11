@@ -14,6 +14,8 @@ export interface EquipmentBase {
   allowedVegetation: VegetationType[];
   costPerHour?: number;
   active: boolean;
+  /** True for built-in standard catalogue items seeded by the backend. */
+  standard?: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;

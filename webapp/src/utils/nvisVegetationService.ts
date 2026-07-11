@@ -1,15 +1,28 @@
 /**
  * National vegetation via NVIS (National Vegetation Information System).
  *
+ * WHY THE WEB SERVICE (and not a self-hosted raster)
  * The NSW SVTM PCT layer is high-fidelity but NSW-only. Outside NSW the app
  * previously fell back to coarse global landcover and ultimately to a
- * pseudo-random mock — i.e. fabricated vegetation. This module adds the
- * Australia-wide DCCEEW NVIS Major Vegetation Groups service as an
- * AUTHORITATIVE national fallback so most of the continent gets a real fuel
- * class instead of a guess.
+ * pseudo-random mock — i.e. fabricated vegetation. NVIS gives an
+ * Australia-wide, authoritative fuel class.
  *
- * Service (DCCEEW): NVIS Extant Major Vegetation Groups (MapServer, layer 0).
- * Overridable via VITE_NVIS_MVG_URL for resilience if the endpoint moves.
+ * The full NVIS product is a continental raster (Major Vegetation Groups /
+ * Subgroups, ~100 m grid) — multi-gigabyte GeoTIFFs. Self-hosting it to answer
+ * per-point queries would require either a raster/COG sampling server or a
+ * preprocessing pipeline into vector/PMTiles: heavy infrastructure and ongoing
+ * maintenance for a lightweight planning tool. DCCEEW already publishes a
+ * maintained ArcGIS REST service that answers point lookups directly, so we use
+ * that. The endpoint is env-overridable so it can be repointed (including at a
+ * self-hosted mirror) without a code change if the decision is revisited.
+ * See docs/NVIS_INTEGRATION.md for the full rationale and the hosting path.
+ *
+ * ROBUSTNESS
+ * NVIS MapServer layer 0 is a raster, so we query with `identify` (the correct
+ * operation for raster map services) and fall back to `query` for deployments
+ * that expose a feature layer. The Major Vegetation Group is resolved from a
+ * numeric MVG code when present (authoritative table below) and from the group
+ * name otherwise, since field names vary across NVIS releases.
  */
 
 import { logger } from './logger';
@@ -27,8 +40,10 @@ const AUS_BBOX = { minLat: -44.0, maxLat: -9.0, minLng: 112.0, maxLng: 154.5 };
 export interface NVISResult {
   vegetationType: VegetationType;
   confidence: number;
-  /** The Major Vegetation Group name returned by NVIS (for display/debug). */
+  /** The Major Vegetation Group name (resolved from code or attributes). */
   mvgName: string;
+  /** The Major Vegetation Group number (1–32, 99) when known. */
+  mvgCode?: number;
   source: 'nvis';
 }
 
@@ -38,9 +53,65 @@ const inAustralia = (lat: number, lng: number): boolean =>
   lat >= AUS_BBOX.minLat && lat <= AUS_BBOX.maxLat && lng >= AUS_BBOX.minLng && lng <= AUS_BBOX.maxLng;
 
 /**
+ * Authoritative NVIS Major Vegetation Groups (MVG 1–32, plus 99 = unknown),
+ * mapped to the app's 4-class fireline fuel taxonomy. Names are the standard
+ * DCCEEW NVIS MVG labels. Confidence reflects how cleanly each group maps to a
+ * fireline-relevant fuel structure (closed forest and grassland map cleanly;
+ * mixed woodlands and "other/unclassified" groups less so).
+ *
+ * Fuel-class rationale: the 4 classes proxy clearing difficulty, so structure
+ * (and the dominant fuel a line-building resource must cut through) drives the
+ * mapping — tall/closed forests → heavyforest; woodlands/shrublands/heath/mallee
+ * → mediumscrub; open woodlands and low sparse shrublands → lightshrub;
+ * grasslands/herblands/sedgelands and effectively fuel-free classes → grassland.
+ */
+export const MVG_CLASSES: Record<number, { name: string; vegetation: VegetationType; confidence: number }> = {
+  1: { name: 'Rainforests and Vine Thickets', vegetation: 'heavyforest', confidence: 0.9 },
+  2: { name: 'Eucalypt Tall Open Forests', vegetation: 'heavyforest', confidence: 0.95 },
+  3: { name: 'Eucalypt Open Forests', vegetation: 'heavyforest', confidence: 0.9 },
+  4: { name: 'Eucalypt Low Open Forests', vegetation: 'heavyforest', confidence: 0.8 },
+  5: { name: 'Eucalypt Woodlands', vegetation: 'mediumscrub', confidence: 0.8 },
+  6: { name: 'Acacia Forests and Woodlands', vegetation: 'mediumscrub', confidence: 0.7 },
+  7: { name: 'Callitris Forests and Woodlands', vegetation: 'heavyforest', confidence: 0.8 },
+  8: { name: 'Casuarina Forests and Woodlands', vegetation: 'mediumscrub', confidence: 0.7 },
+  9: { name: 'Melaleuca Forests and Woodlands', vegetation: 'heavyforest', confidence: 0.75 },
+  10: { name: 'Other Forests and Woodlands', vegetation: 'heavyforest', confidence: 0.7 },
+  11: { name: 'Eucalypt Open Woodlands', vegetation: 'lightshrub', confidence: 0.65 },
+  12: { name: 'Tropical Eucalypt Woodlands/Grasslands', vegetation: 'grassland', confidence: 0.7 },
+  13: { name: 'Acacia Open Woodlands', vegetation: 'lightshrub', confidence: 0.65 },
+  14: { name: 'Mallee Woodlands and Shrublands', vegetation: 'mediumscrub', confidence: 0.85 },
+  15: { name: 'Low Closed Forests and Tall Closed Shrublands', vegetation: 'mediumscrub', confidence: 0.7 },
+  16: { name: 'Acacia Shrublands', vegetation: 'mediumscrub', confidence: 0.8 },
+  17: { name: 'Other Shrublands', vegetation: 'mediumscrub', confidence: 0.8 },
+  18: { name: 'Heathlands', vegetation: 'mediumscrub', confidence: 0.85 },
+  19: { name: 'Tussock Grasslands', vegetation: 'grassland', confidence: 0.95 },
+  20: { name: 'Hummock Grasslands', vegetation: 'grassland', confidence: 0.9 },
+  21: { name: 'Other Grasslands, Herblands, Sedgelands and Rushlands', vegetation: 'grassland', confidence: 0.9 },
+  22: { name: 'Chenopod Shrublands, Samphire Shrublands and Forblands', vegetation: 'lightshrub', confidence: 0.8 },
+  23: { name: 'Mangroves', vegetation: 'lightshrub', confidence: 0.5 },
+  24: { name: 'Inland Aquatic - freshwater, salt lakes, lagoons', vegetation: 'grassland', confidence: 0.4 },
+  25: { name: 'Cleared, non-native vegetation, buildings', vegetation: 'grassland', confidence: 0.5 },
+  26: { name: 'Unclassified native vegetation', vegetation: 'mediumscrub', confidence: 0.4 },
+  27: { name: 'Naturally bare - sand, rock, claypan, mudflat', vegetation: 'grassland', confidence: 0.4 },
+  28: { name: 'Sea and estuaries', vegetation: 'grassland', confidence: 0.3 },
+  29: { name: 'Regrowth, modified native vegetation', vegetation: 'mediumscrub', confidence: 0.6 },
+  30: { name: 'Unclassified forest', vegetation: 'heavyforest', confidence: 0.6 },
+  31: { name: 'Other Open Woodlands', vegetation: 'lightshrub', confidence: 0.6 },
+  32: { name: 'Mallee Open Woodlands and Sparse Mallee Shrublands', vegetation: 'mediumscrub', confidence: 0.7 },
+  99: { name: 'Unknown / no data', vegetation: 'lightshrub', confidence: 0.3 },
+};
+
+/** Map an NVIS Major Vegetation Group number to the app's fuel taxonomy. */
+export function mapMVGCode(code: number): { vegetation: VegetationType; confidence: number; name: string } | null {
+  const entry = MVG_CLASSES[code];
+  if (!entry) return null;
+  return { vegetation: entry.vegetation, confidence: entry.confidence, name: entry.name };
+}
+
+/**
  * Map an NVIS Major Vegetation Group name to the app's 4-class fuel taxonomy.
- * Ordered rules; first match wins. Confidence reflects how cleanly the group
- * maps to a fireline-relevant fuel structure.
+ * Used when only a group name (not a numeric code) is available. Ordered rules;
+ * first match wins.
  */
 export function mapMVGToVegetation(name: string): { vegetation: VegetationType; confidence: number } {
   const n = (name || '').toLowerCase();
@@ -48,15 +119,15 @@ export function mapMVGToVegetation(name: string): { vegetation: VegetationType; 
 
   const rules: Array<{ re: RegExp; vegetation: VegetationType; confidence: number }> = [
     // Closed/tall forests and dense paperbark/cypress → heavy
-    { re: /rainforest|vine thicket|closed forest|tall open forest|open forest|melaleuca|callitris/, vegetation: 'heavyforest', confidence: 0.9 },
+    { re: /rainforest|vine thicket|closed forest|tall open forest|open forest|low open forest|melaleuca|callitris/, vegetation: 'heavyforest', confidence: 0.9 },
     // Grasslands / herblands / sedgelands → grassland
-    { re: /tussock grass|hummock grass|grassland|herbland|sedgeland|rushland|wetland/, vegetation: 'grassland', confidence: 0.85 },
+    { re: /tussock grass|hummock grass|grassland|herbland|sedgeland|rushland|aquatic/, vegetation: 'grassland', confidence: 0.85 },
     // Mallee, heath, acacia/casuarina/eucalypt woodlands, shrublands → medium scrub
-    { re: /mallee|heath|acacia (forest|woodland|shrub)|casuarina|eucalypt (woodland|open woodland)|other shrubland|low closed forest/, vegetation: 'mediumscrub', confidence: 0.8 },
-    // Sparse chenopod/samphire/saltbush, mangroves → light
-    { re: /chenopod|samphire|saltbush|mangrove|sparse/, vegetation: 'lightshrub', confidence: 0.7 },
+    { re: /mallee|heath|acacia (forest|woodland|shrub)|casuarina|eucalypt woodland|other shrubland|low closed forest|other forests and woodlands/, vegetation: 'mediumscrub', confidence: 0.8 },
+    // Sparse chenopod/samphire/saltbush, mangroves, open woodlands → light
+    { re: /chenopod|samphire|saltbush|mangrove|open woodland|sparse/, vegetation: 'lightshrub', confidence: 0.7 },
     // Cleared / non-native / bare / water → treat as grassland-equivalent low fuel
-    { re: /cleared|non-native|regrowth|naturally bare|salt lake|lake|sea|water|unknown|no data/, vegetation: 'grassland', confidence: 0.5 },
+    { re: /cleared|non-native|regrowth|naturally bare|salt lake|lake|sea|estuar|water|unknown|no data/, vegetation: 'grassland', confidence: 0.5 },
   ];
   for (const r of rules) {
     if (r.re.test(n)) return { vegetation: r.vegetation, confidence: r.confidence };
@@ -69,13 +140,33 @@ export function mapMVGToVegetation(name: string): { vegetation: VegetationType; 
 }
 
 /**
+ * Pull a numeric MVG code (1–99) out of an ArcGIS attribute bag. NVIS releases
+ * expose the group number under varying field names (MVG_NUMBER, Value, Pixel
+ * Value, NVISDSC1, gridcode, …) — try the code-like fields, accept the first
+ * value that resolves to a known MVG number.
+ */
+export function extractMVGCode(attributes: Record<string, unknown>): number | null {
+  if (!attributes) return null;
+  const keys = Object.keys(attributes);
+  const codeKeys = keys.filter((k) =>
+    /mvg.*(number|num|code|value)|^value$|pixel\s*value|nvisdsc1|gridcode|^mvg$|raster\.?value/i.test(k)
+  );
+  // Prefer explicit MVG-code fields, then any remaining numeric candidate.
+  for (const k of [...codeKeys, ...keys]) {
+    const raw = attributes[k];
+    const num = typeof raw === 'number' ? raw : typeof raw === 'string' ? parseInt(raw, 10) : NaN;
+    if (Number.isInteger(num) && MVG_CLASSES[num]) return num;
+  }
+  return null;
+}
+
+/**
  * Pick the Major Vegetation Group name out of an ArcGIS attribute bag without
  * assuming the exact field name (NVIS releases vary: MVG_NAME, MVGROUP, etc.).
  */
 export function extractMVGName(attributes: Record<string, unknown>): string | null {
   if (!attributes) return null;
   const keys = Object.keys(attributes);
-  // Prefer a field whose name references the MVG/vegetation group.
   const preferred = keys.find((k) => /mvg.*name|mvg_?group|major.*veg|nvisdsc1|mvg$/i.test(k));
   const candidateKey =
     preferred ||
@@ -86,6 +177,46 @@ export function extractMVGName(attributes: Record<string, unknown>): string | nu
   return typeof val === 'string' ? val : val != null ? String(val) : null;
 }
 
+/** Resolve an attribute bag to an NVIS fuel-class result (code preferred). */
+function resolveFromAttributes(attributes: Record<string, unknown>): NVISResult | null {
+  const code = extractMVGCode(attributes);
+  if (code != null) {
+    const mapped = mapMVGCode(code)!;
+    return { vegetationType: mapped.vegetation, confidence: mapped.confidence, mvgName: mapped.name, mvgCode: code, source: 'nvis' };
+  }
+  const name = extractMVGName(attributes);
+  if (name) {
+    const mapped = mapMVGToVegetation(name);
+    return { vegetationType: mapped.vegetation, confidence: mapped.confidence, mvgName: name, source: 'nvis' };
+  }
+  return null;
+}
+
+/** Build the ArcGIS `identify` URL — the correct op for a raster map service. */
+function buildIdentifyUrl(lat: number, lng: number): string {
+  // A small map extent around the point keeps identify well-conditioned.
+  const d = 0.01;
+  const mapExtent = `${lng - d},${lat - d},${lng + d},${lat + d}`;
+  return (
+    `${NVIS_MVG_URL}/identify` +
+    `?f=json&geometry=${encodeURIComponent(lng + ',' + lat)}` +
+    `&geometryType=esriGeometryPoint&sr=4326` +
+    `&layers=${encodeURIComponent('all:' + NVIS_LAYER_ID)}&tolerance=1` +
+    `&mapExtent=${encodeURIComponent(mapExtent)}&imageDisplay=400,400,96` +
+    `&returnGeometry=false`
+  );
+}
+
+/** Build the ArcGIS `query` URL — fallback for feature-layer deployments. */
+function buildQueryUrl(lat: number, lng: number): string {
+  return (
+    `${NVIS_MVG_URL}/${NVIS_LAYER_ID}/query` +
+    `?f=json&geometry=${encodeURIComponent(lng + ',' + lat)}` +
+    `&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects` +
+    `&outFields=*&returnGeometry=false`
+  );
+}
+
 /** Query NVIS for the Major Vegetation Group at a point. Null outside AUS / on failure. */
 export async function fetchNVISVegetation(lat: number, lng: number): Promise<NVISResult | null> {
   if (!inAustralia(lat, lng)) return null;
@@ -93,44 +224,36 @@ export async function fetchNVISVegetation(lat: number, lng: number): Promise<NVI
   const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
   if (key in cache) return cache[key];
 
-  const url =
-    `${NVIS_MVG_URL}/${NVIS_LAYER_ID}/query` +
-    `?f=json&geometry=${encodeURIComponent(lng + ',' + lat)}` +
-    `&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects` +
-    `&outFields=*&returnGeometry=false`;
+  // 1) identify (raster map service), 2) query (feature layer) as fallback.
+  const attempts: Array<() => string> = [
+    () => buildIdentifyUrl(lat, lng),
+    () => buildQueryUrl(lat, lng),
+  ];
 
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      logger.warn('NVIS query HTTP', resp.status, resp.statusText);
-      cache[key] = null;
-      return null;
+  for (const build of attempts) {
+    try {
+      const resp = await fetch(build());
+      if (!resp.ok) {
+        logger.warn('NVIS query HTTP', resp.status, resp.statusText);
+        continue;
+      }
+      const json = await resp.json();
+      // identify → results[].attributes; query → features[].attributes.
+      const attrs: Record<string, unknown> | undefined =
+        json?.results?.[0]?.attributes || json?.features?.[0]?.attributes;
+      if (!attrs) continue;
+      const result = resolveFromAttributes(attrs);
+      if (result) {
+        cache[key] = result;
+        return result;
+      }
+    } catch (e) {
+      logger.warn('NVIS query failed', e);
     }
-    const json = await resp.json();
-    const feat = json?.features?.[0];
-    if (!feat || !feat.attributes) {
-      cache[key] = null;
-      return null;
-    }
-    const mvgName = extractMVGName(feat.attributes);
-    if (!mvgName) {
-      cache[key] = null;
-      return null;
-    }
-    const mapped = mapMVGToVegetation(mvgName);
-    const result: NVISResult = {
-      vegetationType: mapped.vegetation,
-      confidence: mapped.confidence,
-      mvgName,
-      source: 'nvis',
-    };
-    cache[key] = result;
-    return result;
-  } catch (e) {
-    logger.warn('NVIS query failed', e);
-    cache[key] = null;
-    return null;
   }
+
+  cache[key] = null;
+  return null;
 }
 
 export function _clearNVISCache() {

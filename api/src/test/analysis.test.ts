@@ -18,6 +18,8 @@ import {
   resolveMaxSlopeDegrees,
 } from '../services/productionModel';
 import { parseGetSamplesResponse, buildGetSamplesUrl } from '../services/elevationService';
+import { buildStandardEquipment, standardEquipmentId } from '../data/standardEquipment';
+import { Machinery, Aircraft, HandCrew } from '../models/equipment';
 
 let passed = 0;
 function test(name: string, fn: () => void | Promise<void>) {
@@ -197,6 +199,60 @@ async function main() {
     assert.strictEqual(res.metadata.analysisParameters.segmentCount, 2);
     assert.strictEqual(res.metadata.analysisParameters.profileFromClient, true);
     assert.ok(res.metadata.analysisParameters.maxSlope >= 20);
+  });
+
+  console.log('Standard equipment catalogue:');
+
+  const toSpec = (e: any): EquipmentSpec => ({
+    id: e.id, name: e.name, type: e.type,
+    allowedTerrain: e.allowedTerrain, allowedVegetation: e.allowedVegetation,
+    clearingRate: e.clearingRate, costPerHour: e.costPerHour, description: e.description,
+    maxSlope: (e as Machinery).maxSlope, cutWidthMeters: (e as Machinery).cutWidthMeters,
+    dropLength: (e as Aircraft).dropLength, turnaroundMinutes: (e as Aircraft).turnaroundMinutes,
+    capacityLitres: (e as Aircraft).capacityLitres, costPerDrop: (e as Aircraft).costPerDrop,
+    crewSize: (e as HandCrew).crewSize, clearingRatePerPerson: (e as HandCrew).clearingRatePerPerson,
+  });
+
+  await test('catalogue has all three resource kinds with deterministic ids', () => {
+    const cat = buildStandardEquipment();
+    assert.ok(cat.length >= 12, 'expected a substantial catalogue');
+    assert.ok(cat.some((e) => e.type === 'Machinery'));
+    assert.ok(cat.some((e) => e.type === 'Aircraft'));
+    assert.ok(cat.some((e) => e.type === 'HandCrew'));
+    assert.ok(cat.every((e) => e.standard === true));
+    assert.ok(cat.every((e) => e.id.startsWith('STD-')));
+    const ids = cat.map((e) => e.id);
+    assert.strictEqual(new Set(ids).size, ids.length, 'ids must be unique');
+    assert.ok(ids.includes(standardEquipmentId('DOZER-MED')));
+  });
+
+  await test('every standard item passes analysis validation (no validation errors)', async () => {
+    const specs = buildStandardEquipment().map(toSpec);
+    const res = await svc.analyzeEquipment(
+      baseRequest([{ length: 1000, slopeDegrees: 5, vegetation: 'grassland' }]),
+      specs
+    );
+    assert.deepStrictEqual(res.metadata.validationErrors, [], res.metadata.validationErrors.join('; '));
+    assert.ok(res.calculations.every((c) => !c.validationErrors || c.validationErrors.length === 0));
+  });
+
+  await test('standard catalogue returns compatible estimates with time and cost on a real route', async () => {
+    const specs = buildStandardEquipment().map(toSpec);
+    const res = await svc.analyzeEquipment(
+      {
+        ...baseRequest([
+          { length: 1500, slopeDegrees: 8, vegetation: 'grassland' },
+          { length: 800, slopeDegrees: 18, vegetation: 'mediumscrub' },
+          { length: 400, slopeDegrees: 28, vegetation: 'heavyforest' },
+        ]),
+        breakWidthMeters: 4,
+      },
+      specs
+    );
+    const compatible = res.calculations.filter((c) => c.compatible);
+    assert.ok(compatible.length >= 5, 'most standards should be compatible on a mixed route');
+    assert.ok(compatible.every((c) => c.time > 0), 'compatible items must report positive time');
+    assert.ok(compatible.some((c) => c.cost > 0), 'costs should be computed from configured rates');
   });
 
   console.log('Elevation profile parsing:');

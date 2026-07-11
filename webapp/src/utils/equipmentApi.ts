@@ -9,6 +9,7 @@
  */
 
 import { CreateEquipmentInput, EquipmentApi, EquipmentCoreType, UpdateEquipmentInput } from '../types/equipmentApi';
+import { STANDARD_EQUIPMENT } from '../config/standardEquipment';
 
 // Use relative /api by default so Vite dev server proxy (configured in vite.config.ts)
 // can forward requests to the Functions host and avoid CORS during development.
@@ -23,72 +24,10 @@ async function handle<T>(res: Response): Promise<T> {
   return res.json();
 }
 
-// Mock data for development when backend is not available
-const mockTimestamp = new Date().toISOString();
-const mockEquipment: EquipmentApi[] = [
-  {
-    id: '1',
-    type: 'Machinery',
-    name: 'Bulldozer D8T',
-    description: 'Heavy-duty bulldozer for clearing medium vegetation',
-    clearingRate: 150,
-    costPerHour: 400,
-    maxSlope: 44, // can operate on steep terrain (up to 44 degrees)
-    allowedTerrain: ['flat', 'medium', 'steep'],
-    allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
-    active: true,
-    version: 1,
-    createdAt: mockTimestamp,
-    updatedAt: mockTimestamp
-  },
-  {
-    id: '2',
-    type: 'Machinery', 
-    name: 'Track Loader',
-    description: 'Medium-duty loader for lighter terrain',
-    clearingRate: 80,
-    costPerHour: 200,
-    maxSlope: 24, // limited to flat and medium terrain (max 24 degrees)
-    allowedTerrain: ['flat', 'medium'],
-    allowedVegetation: ['grassland', 'lightshrub'],
-    active: true,
-    version: 1,
-    createdAt: mockTimestamp,
-    updatedAt: mockTimestamp
-  },
-  {
-    id: '3',
-    type: 'Aircraft',
-    name: 'Helicopter Bell 214',
-    description: 'Medium-lift helicopter for aerial support',
-    dropLength: 500,
-    turnaroundMinutes: 15,
-    costPerHour: 3000,
-    speed: 200,
-    allowedTerrain: ['flat', 'medium', 'steep', 'very_steep'],
-    allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
-    active: true,
-    version: 1,
-    createdAt: mockTimestamp,
-    updatedAt: mockTimestamp
-  },
-  {
-    id: '4',
-    type: 'HandCrew',
-    name: 'Strike Team',
-    description: 'Standard 6-person fire crew',
-    crewSize: 6,
-    clearingRatePerPerson: 15,
-    costPerHour: 120,
-    equipmentList: ['Hand tools', 'Chainsaws', 'Water packs'],
-    allowedTerrain: ['flat', 'medium', 'steep'],
-    allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
-    active: true,
-    version: 1,
-    createdAt: mockTimestamp,
-    updatedAt: mockTimestamp
-  }
-];
+// Fallback catalogue: the built-in standard equipment (mirrors the backend
+// catalogue the API seeds). Used when the backend is unavailable or returns an
+// empty list, so the UI is never blank and estimates can always be produced.
+const mockEquipment: EquipmentApi[] = STANDARD_EQUIPMENT;
 
 // Development mode fallback helper
 const isDevelopment = import.meta.env.DEV;
@@ -96,7 +35,7 @@ async function withFallback<T>(apiCall: () => Promise<T>, fallback: T): Promise<
   if (!isDevelopment) {
     return apiCall();
   }
-  
+
   try {
     return await apiCall();
   } catch (error: any) {
@@ -112,13 +51,15 @@ export async function listEquipment(): Promise<EquipmentApi[]> {
     async () => {
       const res = await fetch(`${baseUrl}/equipment`);
       const data = await handle<EquipmentApi[]>(res);
-      
-      // If backend returns empty array in development, use mock data instead
-      if (isDevelopment && (!data || data.length === 0)) {
-        console.warn('Backend returned empty equipment list, using mock data in development');
-        return mockEquipment;
+
+      // If the backend returns an empty list, fall back to the built-in standard
+      // catalogue so the equipment lists and estimates are never blank. The
+      // backend also seeds these on first use, so the two converge on refresh.
+      if (!data || data.length === 0) {
+        console.warn('Backend returned empty equipment list, using standard catalogue');
+        return STANDARD_EQUIPMENT;
       }
-      
+
       return data;
     },
     mockEquipment

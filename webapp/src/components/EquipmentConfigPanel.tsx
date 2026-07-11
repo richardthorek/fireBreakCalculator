@@ -197,7 +197,10 @@ const EquipmentListComponent: React.FC<{
           <InlineEditComponent key={item.id} item={item} onSave={saveEdit} onCancel={() => setEditingId(null)} saving={saving} terrainOptions={terrainOptions} vegetationOptions={vegetationOptions} terrainLabel={terrainLabel} vegLabel={vegLabel} terrainExample={terrainExample} vegExample={vegExample} />
         ) : (
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
-            <div className="eq-name text" title={item.name}>{item.name}</div>
+            <div className="eq-name text" title={item.name}>
+              {item.name}
+              {item.standard && <span className="tag mini" title="Built-in standard catalogue item — you can edit or delete it">Std</span>}
+            </div>
             {item.type === 'Machinery' && <div className="eq-small text">{(item as MachineryApi).clearingRate || '-'} m/h</div>}
             {item.type === 'Aircraft' && (
               <div className="eq-small text" title={`Turnaround ${(item as AircraftApi).turnaroundMinutes ?? '-'} min`}>

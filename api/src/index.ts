@@ -6,6 +6,7 @@ import './functions/elevationProfile';
 import './functions/equipmentCreate';
 import './functions/equipmentDelete';
 import './functions/equipmentList';
+import './functions/equipmentSeed';
 import './functions/equipmentUpdate';
 import './functions/vegetationMappingCreate';
 import './functions/vegetationMappingDelete';
