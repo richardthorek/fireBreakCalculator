@@ -10,51 +10,84 @@
 
 :root {
   /* ========================================
-   * COLOR TOKENS
+   * BRAND COLORS — Signal Red + Hi-Vis Amber
    * ======================================== */
+  --rfs-core-red: #D8232A;
+  --rfs-core-red-dark: #B01620;
+  --rfs-core-red-light: #E0555A;
+  --accent-amber: #F6A609;
+  --accent-amber-dark: #D98A00;
+  --accent-amber-ink: #241A00;
 
-  /* Background Colors */
+  /* Legacy aliases for back-compat */
+  --rfs-lime: var(--accent-amber);
+  --rfs-lime-dark: var(--accent-amber-dark);
+
+  /* ========================================
+   * NEUTRAL COLORS — Cool Slate Ramp
+   * ======================================== */
+  --rfs-black: #0C1220;
+  --rfs-white: #FFFFFF;
+  --rfs-dark-grey: #55607A;
+  --rfs-light-grey: #D3DAE6;
+  --rfs-neutral-light: #F4F6F9;
+  --rfs-neutral-medium: #E6EAF1;
+  --rfs-neutral-dark: #1E2637;
+
+  /* ========================================
+   * SEMANTIC COLORS
+   * ======================================== */
+  --ui-green: #1E9E62;
+  --ui-amber: #F6A609;
+  --ui-blue: #2563EB;
+
+  --surface-success: #E4F5EC;
+  --text-success-strong: #0B5C3B;
+  --surface-warning: #FDF0D6;
+  --text-warning-strong: #9A6800;
+  --surface-info: #E8F0FE;
+  --text-info-strong: #1B4F8F;
+  --surface-error: #FCEBEB;
+  --text-error-strong: #B01620;
+
+  /* Legacy aliases */
   --color-bg-primary: #0f1115;
   --color-bg-secondary: #1e293b;
   --color-bg-tertiary: #1e2937;
   --color-bg-elevated: #233040;
   --color-bg-overlay: rgba(0, 0, 0, 0.7);
 
-  /* Text Colors */
   --color-text-primary: #f5f7fa;
   --color-text-secondary: #cbd5e1;
   --color-text-tertiary: #94a3b8;
   --color-text-muted: #64748b;
   --color-text-inverse: #0f1115;
 
-  /* Border Colors */
   --color-border-primary: #334155;
   --color-border-secondary: #475569;
   --color-border-subtle: #1f2937;
-  --color-border-focus: #3b82f6;
+  --color-border-focus: #2563EB;
 
-  /* Interactive/Accent Colors */
-  --color-accent-primary: #3b82f6;
-  --color-accent-secondary: #2563eb;
-  --color-accent-hover: rgba(59, 130, 246, 0.1);
-  --color-accent-active: rgba(59, 130, 246, 0.2);
+  --color-accent-primary: #2563EB;
+  --color-accent-secondary: #1e40af;
+  --color-accent-hover: rgba(37, 99, 235, 0.1);
+  --color-accent-active: rgba(37, 99, 235, 0.2);
 
-  /* Status Colors */
-  --color-success: #10b981;
-  --color-success-hover: #059669;
-  --color-success-light: rgba(16, 185, 129, 0.1);
+  --color-success: #1E9E62;
+  --color-success-hover: #16a34a;
+  --color-success-light: rgba(30, 158, 98, 0.1);
 
-  --color-warning: #f59e0b;
-  --color-warning-hover: #d97706;
-  --color-warning-light: rgba(245, 158, 11, 0.1);
+  --color-warning: #F6A609;
+  --color-warning-hover: #D98A00;
+  --color-warning-light: rgba(246, 166, 9, 0.1);
 
-  --color-danger: #ef4444;
-  --color-danger-hover: #dc2626;
-  --color-danger-light: rgba(239, 68, 68, 0.1);
+  --color-danger: #D8232A;
+  --color-danger-hover: #B01620;
+  --color-danger-light: rgba(216, 35, 42, 0.1);
 
-  --color-info: #3b82f6;
-  --color-info-hover: #2563eb;
-  --color-info-light: rgba(59, 130, 246, 0.1);
+  --color-info: #2563EB;
+  --color-info-hover: #1e40af;
+  --color-info-light: rgba(37, 99, 235, 0.1);
 
   /* Terrain Colors (Standardized) */
   --color-terrain-flat: #10b981;
@@ -73,10 +106,8 @@
    * ======================================== */
 
   /* Font Families */
-  --font-family-base: system-ui, -apple-system, 'Segoe UI', Roboto, Oxygen, Ubuntu,
-                       Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
-  --font-family-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas,
-                       'Courier New', monospace;
+  --font-family-base: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  --font-family-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   /* Font Sizes - 8px baseline scale */
   --font-size-xs: 0.75rem;    /* 12px - minimum readable */
@@ -125,19 +156,19 @@
    * BORDER RADIUS TOKENS
    * ======================================== */
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 
   /* ========================================
-   * SHADOW TOKENS
+   * SHADOW TOKENS (softer, layered)
    * ======================================== */
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --shadow-md: 0 2px 6px -2px rgba(16, 24, 40, 0.10), 0 6px 16px -6px rgba(16, 24, 40, 0.12);
+  --shadow-lg: 0 12px 30px -10px rgba(16, 24, 40, 0.16);
   --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.6);
   --shadow-focus: 0 0 0 3px var(--color-accent-hover);
 
@@ -189,6 +220,20 @@
 }
 
 /* ========================================
+ * TYPOGRAPHY RULES
+ * ======================================== */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Archivo', 'Public Sans', sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+}
+
+code, .mono, .slug, .category-code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ========================================
  * LIGHT THEME OVERRIDES
  * ======================================== */
 
@@ -214,9 +259,30 @@
 
   /* Shadows (lighter in light mode) */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.15);
-  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 6px -2px rgba(0, 0, 0, 0.1), 0 6px 16px -6px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 12px 30px -10px rgba(0, 0, 0, 0.16);
   --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme='dark'] {
+  --rfs-core-red: #E5484D;
+  --rfs-core-red-dark: #F26A6E;
+  --rfs-core-red-text: #FF8085;
+  --accent-amber: #F6A609;
+  --accent-amber-text: #FFC759;
+
+  --surface-success: #0F2A1F;
+  --text-success-strong: #8BE4B5;
+  --surface-warning: #2A2008;
+  --text-warning-strong: #FFC759;
+  --surface-info: #12233D;
+  --text-info-strong: #9EC5FF;
+  --surface-error: #2A1315;
+  --text-error-strong: #FF8085;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 34px -12px rgba(0, 0, 0, 0.65);
 }
 
 /* ========================================
