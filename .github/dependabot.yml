@@ -6,7 +6,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "webapp"
@@ -15,21 +15,10 @@ updates:
       include: "scope"
     reviewers:
       - "richardthorek"
-    # Group minor and patch updates together to reduce PR noise
     groups:
-      development-dependencies:
-        patterns:
-          - "@types/*"
-          - "@vitejs/*"
-        update-types:
-          - "minor"
-          - "patch"
-      production-dependencies:
+      all-dependencies:
         patterns:
           - "*"
-        exclude-patterns:
-          - "@types/*"
-          - "@vitejs/*"
         update-types:
           - "minor"
           - "patch"
@@ -40,7 +29,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "api"
@@ -50,17 +39,9 @@ updates:
     reviewers:
       - "richardthorek"
     groups:
-      azure-dependencies:
+      all-dependencies:
         patterns:
-          - "@azure/*"
-        update-types:
-          - "minor"
-          - "patch"
-      development-dependencies:
-        patterns:
-          - "@types/*"
-          - "typescript"
-          - "rimraf"
+          - "*"
         update-types:
           - "minor"
           - "patch"
@@ -71,7 +52,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "scripts"
