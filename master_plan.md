@@ -1,252 +1,61 @@
-# Fire Break Calculator - Master Plan
+# Fire Break Calculator — Master Plan
 
-**Last Updated**: July 11, 2026  
-**Document Owner**: Project Maintainers  
-**Related Docs**: [CLAUDE.md](CLAUDE.md), [.github/copilot-instructions.md](.github/copilot-instructions.md)
+**Last Updated**: July 11, 2026
+**Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
 
 ## ⚠️ MANDATORY WORKFLOW
 
-### BEFORE Starting Work
-1. **READ** this entire document to understand context and current state
-2. **REVIEW** the Forward Roadmap to find your task and acceptance criteria
-3. **VERIFY** your work aligns with the documented vision
-
-### AFTER Completing Work
-1. **UPDATE** this file — add a dated entry in Recent Updates
-2. **LINK** your PR/issue in the relevant roadmap section
-3. **MARK** roadmap items complete (📋 → ✅)
-
-### DO NOT Create
-- Post-work summary documents (everything goes here)
-- Separate status/tracking files
-- Duplicate documentation of what's in this plan
-
-### The Only Docs That Matter
-1. **THIS FILE** (`master_plan.md`) — single source of truth
-2. **As-built docs** in `docs/`:
-   - `NVIS_INTEGRATION.md` — vegetation data strategy
-   - `CALCULATION_REVIEW.md` — estimate model
-   - `VEGETATION_OVERRIDES.md` — override workflow
-3. **Machine-readable registers**:
-   - `api-register.md` — API endpoints (update on code change)
-   - `component-register.md` — React components (update on code change)
+**Before starting:** read this document; find your step below; check the linked design doc for detail.
+**After finishing:** add a dated entry in Recent Updates, link the PR, flip the step status (📋 → ✅), and update the relevant design doc / register.
+**Never create** new planning/status/summary docs — planning lives here; technical detail lives in the linked docs; everything else is doc sprawl.
 
 ---
 
-## Project Overview
+## Vision
 
-A geospatial planning tool for rural firefighters. Users draw a fire-break/trail line on a map and get grounded estimates of **time, cost, and resources** to build it — segment by segment, accounting for actual slope and vegetation along the line.
+A **mitigation copilot** for rural firefighters: draw a line, get grounded time/cost/resource estimates, a smarter path, official fire-danger context, and a cited, plain-language briefing — then hand the plan to the tools agencies already use (FireMapper, ArcGIS, Avenza, GPS).
 
-**Core principle:** Never present fabricated data as real analysis. All estimates must flag confidence, fall back gracefully, and warn when using estimated/mock data.
+**Non-negotiable principles**
+1. **Deterministic core.** All numbers come from the calculation engine and published models. The AI layer narrates and cites; it never computes ([docs/AI_ASSISTANT.md](docs/AI_ASSISTANT.md)).
+2. **Data honesty.** Estimated/fallback data is always flagged, end to end — including in exports. A missing value is shown as missing, never defaulted silently.
+3. **Don't rebuild what exists.** AFDRS/BOM own fire danger; Spark/Phoenix own spread prediction. We display official products and integrate.
+4. Field-ready: offline-capable, touch-first, low data.
 
-**Current tech stack:** React 18 + Vite 7 + TypeScript / Azure Functions (Node 22) + TypeScript / Mapbox GL JS / Azure Table Storage / Azure Static Web Apps.
+## Current state
 
----
+- **Estimates:** per-segment production model in the API is the sole engine ([docs/CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md)).
+- **Vegetation:** NVIS national spine + NSW SVTM overlay; state expansion frozen ([docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)).
+- **Route intelligence:** corridor pathfinding, chainage-addressed segment detail, elevation profile, rule-based Plan Assistant, tabbed analysis UI — shipped in PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163) ([docs/ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md)).
 
-## Goals & Vision
+## The Plan
 
-### Strategic Goals (Current Quarter)
+| # | Step | Scope (one line) | Detail | Status |
+|---|------|-------------------|--------|--------|
+| 0 | **Route intelligence & analysis UI** | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ PR #163 |
+| 1 | **Universal GIS export pack** | GeoJSON/KML/KMZ/SHP export with provenance flags → covers FireMapper/QGIS/Earth; file import (perimeters, lines) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 | 📋 |
+| 2 | **Infrastructure-aware optimizer** | Existing trails/roads as discounted edges, waterway/cleared-land anchors, water-point & cadastre advisory layers | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §Designed | 📋 |
+| 3 | **AFDRS & live context** | Official fire danger rating + behaviour index for plan location/date; hotspots & incidents layers; break-adequacy heuristics keyed to AFDRS, doctrine-cited | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 | 📋 |
+| 4 | **AI assistant** | Azure AI Foundry (OpenAI-spec API) via IaC; RAG doctrine KB; grounded briefings, doctrine callouts, cited chat; hard anti-hallucination controls | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) | 📋 |
+| 5 | **Agency hand-off** | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike (fallback: KMZ) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 | 📋 |
+| 6 | **Field hardening** | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion, vegetation NoData uplift | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) | 📋 |
 
-**1. Accessibility & Safety (P0)**  
-WCAG 2.1 AA compliance. Touch targets ≥44×44px, color contrast ≥4.5:1, confirmation dialogs for destructive actions, ARIA landmarks, keyboard navigation, reduced-motion support.
+Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
-**2. Data Accuracy (Ongoing)**  
-Real elevation data (DEM), authoritative vegetation (NVIS + NSW overlay), explicit confidence scoring, graceful fallbacks, transparent data provenance.
+## Architecture snapshot
 
-**3. Professional UI/UX (Q2-Q3)**  
-Design token system, consistent component library, modern patterns, responsive mobile-first.
-
-**4. Field-Ready (Q3-Q4)**  
-Offline-first PWA, mobile optimization, touch-friendly controls, minimal data usage.
-
-### Non-Goals (Out of Scope)
-- Real-time fire tracking
-- Multi-user collaboration
-- Integration with dispatch systems (future consideration)
-
----
+React 18 + Vite + TS (`/webapp`) · Azure Functions Node 22 (`/api`) · Azure Table Storage · Mapbox GL JS · Azure Static Web Apps, Bicep IaC (`/infra`, OIDC).
+Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined chainage profile → `POST /api/analysis/calculate` → per-segment estimates + flags → UI/assistant/exports.
+Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
 
-### July 11, 2026 — Route Intelligence & Analysis UI Overhaul
-
-**Objective:** Turn the tool from a calculator into a technical assistant: smarter routing, richer segment detail, and a narrative layer that explains the analysis.
-
-**What shipped (frontend, no API changes):**
-- **Corridor route optimizer** (`webapp/src/utils/routeOptimizer.ts`): between the user's waypoints, searches a lateral lattice (stations × 9 lanes, capped at ~250 vegetation cells/leg), costs each edge by distance × traversal-slope × fuel using real DEM elevations (one batched `/api/elevation/profile` call) and cached NVIS/NSW vegetation samples, then runs a lane-constrained dynamic program. Result previews as a dashed line on the map with an original-vs-optimized comparison (length, max slope, steep metres, heavy-timber metres); applying it re-runs the full analysis. Estimated/fallback samples propagate to a `usedEstimatedData` flag shown in the UI.
-- **Plan Assistant** (`webapp/src/utils/planInsights.ts` + `AdvisorPanel`): deterministic rule-based insights ranked by severity — steep/very-steep pinch points and heavy-timber pockets located by chainage with one-tap "show on map", data-confidence caveats, crewing strategy (fastest machine + hand-crew pairing for steep metres, aircraft pre-planning in heavy fuel), and an optimize-route nudge. Plus a 0–100 difficulty score.
-- **Terrain detail**: interactive SVG elevation profile (slope-colored, vegetation band, hover synced to a map marker via chainage) and a joined per-segment breakdown table (chainage, grade, fuel, confidence, estimated flags, locate-on-map). `analyzeTrackSlopes` now emits a downsampled `elevationProfile`.
-- **Analysis panel restructured into tabs** (Overview / Terrain / Equipment / Assistant) with summary stat tiles and an attention strip; all existing content (conditions, quick options, export, overlap matrix, equipment tables) preserved within the same design language.
-- **Map layers**: segment/insight highlight, profile-hover marker, optimized-route preview, and programmatic line replacement (apply optimized route).
-
-**Verification:** webapp `tsc -b && vite build` clean; API unit tests still pass (18 checks); 22-check Node smoke test of the real optimizer/chainage/insights code against a synthetic ridge + timber pocket (optimizer measurably reduces steep ground and heavy timber, endpoints fixed, honest flags preserved).
-
-### July 11, 2026 — Vegetation Data Strategy: NVIS-First (Discovery, Confirmation, Design)
-
-**Objective:** Settle how the tool sources a comprehensive, consistent view of vegetation (fuel) across Australia.
-
-**What was tested:**  
-Live queries to every candidate vegetation endpoint from a CI-class network. NVIS national is adequate and uniform (tested across rainforest, tall forest, savanna, arid Acacia, genuine Mallee, Jarrah, cleared cropland, ocean). The documented "Victoria Mallee failure" was a bad test point (cleared farmland where NVIS returning MVG 25 "cleared" is correct); genuine Mallee returns MVG 14 as expected.
-
-**Decision:**  
-**Standardise on NVIS national as the vegetation spine; keep the existing NSW SVTM overlay; freeze per-state expansion.** Only NSW (in use), QLD, VIC, and TAS have anonymous public endpoints; WA is auth-gated (401), SA/NT have no open path — so a state hierarchy would still be NVIS across ~half the country (the inconsistency it aimed to remove).
-
-**Confirmed endpoint structures (2026-07-11):**
-- NVIS `.../NVIS_ext_mvg/MapServer` layer 0 is a **raster** (use `identify`). MVG code in `UniqueValue.Pixel Value` (string 1–32 or `"NoData"` over water); name in `Raster.MVG_NAME`. Outside AU → empty `results`.
-- NSW `.../SVTM_NSW_Extant_PCT/MapServer/3` is a feature layer with `vegForm`/`vegClass`/`PCTName` (~25 m, kept as the one high-fidelity overlay).
-
-**Documentation:**  
-- **[docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)** — new consolidated vegetation as-built (sources, endpoint structures, appropriate use, deferred state overlays, implementation spec).
-- Four stale docs marked **superseded** (STATE_VEGETATION_*, NVIS_FIDELITY_REPORT).
-
-### July 10, 2026 — Calculation Engine Overhaul: Per-Segment, Grounded Production Model
-
-**PR:** [#148](https://github.com/richardthorek/fireBreakCalculator/pull/148)
-
-**What changed:**  
-Replaced the whole-route heuristic estimate with an accurate, per-segment production model grounded in published fireline-production literature (NWCG 2021, Victorian DELWP Report 56). Reinstated real machinery slope-safety limits.
-
-**Key deliverables:**
-- `api/src/services/productionModel.ts` — resource-specific speed multipliers, slope limits.
-- `api/src/services/equipmentAnalysis.ts` — per-segment integration, slope-limit resolution, aircraft load-coverage model.
-- `webapp/src/utils/routeProfile.ts` — joins slope (~10 m) and vegetation (~200 m) samples, honours overrides.
-- Backend is now the sole accurate engine; frontend delegates (offline fallback retained).
-- 11 unit tests; all pass.
-
-**Infrastructure as code:**  
-Bicep/Azure Static Web Apps pipeline; OIDC login (no deployment-token secret stored); `infra/README.md` documents one-time setup.
-
-**Data provenance:**  
-Slope and vegetation analyses flag fallback data (`usedMockElevation`, `usedFallbackData`); UI shows prominent "estimated data in use" warning.
-
-**Impact:**  
-Estimates now reflect the actual mix of slope and fuel along the line, not a single worst case. Machinery is no longer recommended for unsafe slopes. Rate model is grounded and tunable.
+- **2026-07-11 — Route Intelligence & UI overhaul** (PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163)): corridor pathfinding over real DEM + NVIS/NSW samples with apply/dismiss preview; rule-based Plan Assistant with chainage-located hazards; elevation profile + segment breakdown; tabbed analysis workspace. Verified: builds clean, API tests pass, 22-check optimizer smoke test. As-built: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md).
+- **2026-07-11 — Master plan replaced** with the mitigation-copilot direction above (steps 1–6); detail moved to [AI_ASSISTANT.md](docs/AI_ASSISTANT.md), [GIS_INTEROP.md](docs/GIS_INTEROP.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md). Prior plan content preserved in git history.
+- **2026-07-11 — Vegetation strategy: NVIS-first confirmed**; per-state expansion frozen. See [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md).
+- **2026-07-10 — Calculation engine overhaul** (PR [#148](https://github.com/richardthorek/fireBreakCalculator/pull/148)): per-segment grounded production model (NWCG 2021, DELWP 56), machinery slope limits, backend as sole engine. See [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md).
 
 ---
 
-## Forward Roadmap
-
-**Priority:** P0 = Blocking/safety, P1 = Major features, P2 = Enhancements, P3 = Polish.
-
-### Phase 1: Critical Fixes — Accessibility & Safety (P0)
-**Target:** Q2 2026 (2–3 weeks) | **Status**: 📋 Planned
-
-1. **Confirmation dialogs for destructive actions** (delete equipment/vegetation)
-   - Files: `ConfirmDialog.tsx`, update config panels
-2. **Touch targets ≥44×44px** (equipment tags, formation icons)
-   - Files: `styles-config.css`, `styles.css`
-3. **Color contrast ≥4.5:1 WCAG AA** (equipment hover, formation text)
-   - Files: `styles-config.css`, `styles.css`
-4. **Reduce-motion support** (`prefers-reduced-motion: reduce`)
-   - Files: `styles.css`
-5. **ARIA landmarks & focus management** (main, complementary, aria-selected)
-   - Files: `App.tsx`, config panels, analysis panel
-
----
-
-### Data Quality: Vegetation NVIS-First Uplift (P1)
-**Target:** 1 sprint | **Status**: 📋 Planned (design complete, ready to implement)
-
-**Scope:**
-1. Make `NoData`/empty-result handling explicit and unit-tested (`nvisVegetationService.ts`)
-2. Surface "modified/low-fidelity" flag for MVG 24/25/26/27/28/99 through to the panel
-3. Keep NSW overlay; freeze state expansion — remove TODO scaffolding in router
-4. Fix false Victoria test point (`-36.0,141.0` is cleared farmland; use genuine Mallee coord)
-
-**Acceptance:** `NoData`/ocean/out-of-AU never yield non-`estimated` classes (tested); cleared segments flagged + overridable; no new state services; fidelity test passes.
-
----
-
-### Route Intelligence & Analysis UI Overhaul (P1)
-**Status**: ✅ Complete (July 11, 2026 — see Recent Updates; PR: claude/ui-overhaul-pathfinding-or5fma)
-
-- ✅ Corridor pathfinding around steep slope / heavy timber (preview → apply)
-- ✅ Tabbed analysis workspace (Overview / Terrain / Equipment / Assistant)
-- ✅ Interactive elevation profile + per-segment breakdown with map sync
-- ✅ Rule-based Plan Assistant (hazard chainages, crewing strategy, difficulty score)
-- Follow-ups (📋): touch/hover parity for the profile on mobile, optimizer waypoint pinning UI, optimizer-aware estimates comparison in Equipment tab
-
----
-
-### Phase 2: Visual Consistency & Polish (P1)
-**Target:** Q2–Q3 2026 (3–4 weeks) | **Status**: 📋 Planned
-
-- Replace hardcoded colors with design tokens
-- Apply typography system (eliminate fractional sizes)
-- Apply 8px baseline spacing grid throughout
-- Add skeleton loading states
-- Standardize button usage
-
----
-
-### Phase 3: UX Enhancements (P2)
-**Target:** Q3 2026 (3–4 weeks) | **Status**: 📋 Planned
-
-- Toast notification system
-- Drawing gesture help overlay
-- Result export (PDF/CSV)
-- Equipment presets/favorites
-- Improved mobile keyboard handling
-
----
-
-### Phase 4: Polish & Delight (P3)
-**Target:** Q4 2026 (2–3 weeks) | **Status**: 📋 Planned
-
-- Micro-interactions, smooth transitions
-- Dark mode toggle
-- Keyboard shortcuts modal
-- Advanced route visualization (3D preview, vehicle routing)
-
----
-
-## Project Architecture
-
-### Technology Stack
-- **Frontend:** React 18 + Vite 7 + TypeScript 5, Mapbox GL JS
-- **Backend:** Azure Functions (Node.js 22) + TypeScript 5
-- **Database:** Azure Table Storage
-- **Deployment:** Azure Static Web Apps (OIDC + Bicep IaC)
-- **Package Manager:** npm
-
-### Key Component Paths
-- **Frontend:** `/webapp` (React app, Vite)
-- **Backend:** `/api` (Azure Functions, serverless)
-- **Shared:** `/scripts` (data seeding, utilities)
-- **Infrastructure:** `/infra` (Bicep, IaC)
-- **Docs:** `/docs` (as-built + registers; see README)
-
-### Data Flow
-1. User draws line on map → sampled at ~200 m intervals for vegetation, ~10 m for slope
-2. Frontend calls backend `POST /api/analysis/calculate` with segment profile
-3. Backend applies production model (per-segment, slope/fuel multipliers, machinery limits)
-4. Response includes time/cost/resources + metadata (mean/max slope, confidence, coverage)
-5. Frontend renders results in analysis panel; all fallback/estimated data flagged
-
-### Key Services
-- **Vegetation:** NVIS national (100 m raster, `identify` query) + NSW SVTM overlay (25 m feature layer)
-- **Elevation:** Azure DEM ImageServer (server-side) + Mapbox Terrain-RGB fallback
-- **Production model:** Published rates (NWCG 2021, DELWP 56) × fuel/slope multipliers × equipment type
-
-### Testing
-- **Frontend:** Vite test suite, TypeScript strict mode
-- **Backend:** 11 unit checks on production model + analysis logic
-- **Coverage target:** >80% on critical paths; all PRs must pass CI
-
----
-
-## How to Contribute
-
-1. **Pick a roadmap item** (or create an issue for new work)
-2. **Create a feature branch** (e.g., `feature/accessibility-fixes`)
-3. **Implement & test** (`npm run lint`, `npm test`, `npm run build`)
-4. **Submit PR** with clear description and issue link
-5. **Update this file** after merge (Recent Updates entry, roadmap status flip)
-
-See [CLAUDE.md](CLAUDE.md) for AI contributor guidance, [docs/README.md](docs/README.md) for doc discipline.
-
----
-
-**Next review:** After Phase 1 completion (accessibility fixes)
+**Next review:** after Step 1 (GIS export pack) ships.
