@@ -197,6 +197,27 @@ const resolveElevation = async (
   return getElevationMapbox(lat, lng, { zoom: DEFAULT_TERRAIN_ZOOM });
 };
 
+/**
+ * Batch elevation sampler for arbitrary point sets (e.g. the route optimizer's
+ * corridor grid). Prefers a single authoritative DEM request; falls back to
+ * Terrain-RGB tiles (then mock) per point. `estimated` is true when any value
+ * did not come from real elevation data, so callers can flag results honestly.
+ */
+export const sampleElevationsBatch = async (
+  points: { lat: number; lng: number }[]
+): Promise<{ elevations: number[]; estimated: boolean }> => {
+  if (points.length === 0) return { elevations: [], estimated: false };
+  const mockCountAtStart = mockElevationUseCount;
+  const profile = await fetchElevationProfile(points);
+  if (profile) {
+    return { elevations: profile.elevations, estimated: profile.estimated };
+  }
+  const elevations = await Promise.all(
+    points.map(p => getElevationMapbox(p.lat, p.lng, { zoom: DEFAULT_TERRAIN_ZOOM }))
+  );
+  return { elevations, estimated: mockElevationUseCount > mockCountAtStart };
+};
+
 /** Deterministically generate the elevation sample points for a mini-segment. */
 const computeProfilePoints = (
   start: { lat: number; lng: number },
@@ -322,6 +343,9 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   let totalDistance = 0;
   let slopeDistanceSum = 0; // for weighted average
   let maxSlope = 0;
+  // Fine-grained elevation profile (chainage → elevation/local slope) kept for
+  // the elevation-profile chart; sampled from the same ~10 m points as slopes.
+  const elevationProfile: { distanceM: number; elevation: number; slope: number }[] = [];
 
   for (const plan of segmentPlan) {
     const { start, end, distance, profilePoints } = plan;
@@ -343,6 +367,14 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
       if (subSlope > maxSubSlope) maxSubSlope = subSlope;
       weightedSlopeSum += subSlope * subDist;
       totalSubDist += subDist;
+      if (elevationProfile.length === 0) {
+        elevationProfile.push({ distanceM: totalDistance, elevation: elevs[0], slope: subSlope });
+      }
+      elevationProfile.push({
+        distanceM: totalDistance + Math.min(totalSubDist, distance),
+        elevation: elevs[k + 1],
+        slope: subSlope
+      });
     }
 
     // Use maxSubSlope to detect steep gullies; use weighted average as segment slope
@@ -393,12 +425,25 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   const slopeDistribution = { flat: 0, medium: 0, steep: 0, very_steep: 0 } as Record<SlopeCategory, number> & { very_steep: number };
   for (const s of mergedSegments) slopeDistribution[s.category] += s.distance;
 
+  // Downsample the profile to a bounded size so long routes stay cheap to render.
+  const MAX_PROFILE_POINTS = 600;
+  let profileOut = elevationProfile;
+  if (elevationProfile.length > MAX_PROFILE_POINTS) {
+    const step = elevationProfile.length / MAX_PROFILE_POINTS;
+    profileOut = [];
+    for (let i = 0; i < MAX_PROFILE_POINTS; i++) {
+      profileOut.push(elevationProfile[Math.floor(i * step)]);
+    }
+    profileOut.push(elevationProfile[elevationProfile.length - 1]);
+  }
+
   return {
     totalDistance,
     segments: mergedSegments,
     maxSlope,
     averageSlope: totalDistance > 0 ? slopeDistanceSum / totalDistance : 0,
     slopeDistribution,
+    elevationProfile: profileOut,
     usedMockElevation: mockElevationUseCount > mockCountAtStart
   };
 };

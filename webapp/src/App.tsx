@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Settings2 } from 'lucide-react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
@@ -18,6 +18,9 @@ import {
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
 import { readPlanFromUrl } from './utils/planSharing';
+import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
+import { optimizeRoute, OptimizedRouteResult } from './utils/routeOptimizer';
+import { OptimizerStatus } from './components/AdvisorPanel';
 import { logger } from './utils/logger';
 
 // Import site logo/favicon as a module so the bundler rewrites the path
@@ -60,6 +63,101 @@ const App: React.FC = () => {
   // state and let MapboxMapView react to it and perform the map interaction.
   const handleSearchLocationSelected = useCallback((location: { lat: number; lng: number; label: string }) => {
     setSearchLocation(location);
+  }, []);
+
+  // --- Route intelligence state ---------------------------------------------
+  // Highlighted chainage range (from insight "show on map" / segment locate).
+  const [highlightRange, setHighlightRange] = useState<{ startM: number; endM: number } | null>(null);
+  // Elevation-profile hover position (chainage in metres) → synced map marker.
+  const [hoverChainage, setHoverChainage] = useState<number | null>(null);
+  // Corridor route optimizer lifecycle. The result's coords render as a dashed
+  // preview on the map until the user applies or dismisses them.
+  const [optimizerStatus, setOptimizerStatus] = useState<OptimizerStatus>('idle');
+  const [optimizerProgress, setOptimizerProgress] = useState(0);
+  const [optimizerResult, setOptimizerResult] = useState<OptimizedRouteResult | null>(null);
+  const [optimizerError, setOptimizerError] = useState<string | null>(null);
+  const [applyLineRequest, setApplyLineRequest] = useState<{ coords: { lat: number; lng: number }[]; version: number } | null>(null);
+  const optimizeAbortRef = useRef<AbortController | null>(null);
+  const applyVersionRef = useRef(0);
+
+  const chainageIndex = useMemo(
+    () => (lineCoords && lineCoords.length >= 2 ? buildChainageIndex(lineCoords) : null),
+    [lineCoords]
+  );
+  const highlightCoords = useMemo(
+    () => (chainageIndex && highlightRange ? sliceByChainage(chainageIndex, highlightRange.startM, highlightRange.endM) : null),
+    [chainageIndex, highlightRange]
+  );
+  const hoverPoint = useMemo(
+    () => (chainageIndex && hoverChainage != null ? pointAtChainage(chainageIndex, hoverChainage) : null),
+    [chainageIndex, hoverChainage]
+  );
+
+  const handleLocateSegment = useCallback((startM: number, endM: number) => {
+    setHighlightRange(prev =>
+      prev && Math.abs(prev.startM - startM) < 1 && Math.abs(prev.endM - endM) < 1 ? null : { startM, endM }
+    );
+  }, []);
+
+  const handleHoverChainage = useCallback((m: number | null) => setHoverChainage(m), []);
+
+  // Reset route-intelligence state whenever the drawn line changes (including
+  // after an optimized route is applied — the preview must not linger).
+  const handleLineCoordsChange = useCallback((coords: { lat: number; lng: number }[] | null) => {
+    setLineCoords(coords);
+    setHighlightRange(null);
+    setHoverChainage(null);
+    optimizeAbortRef.current?.abort();
+    setOptimizerStatus('idle');
+    setOptimizerResult(null);
+    setOptimizerError(null);
+    setOptimizerProgress(0);
+  }, []);
+
+  const handleOptimize = useCallback(async () => {
+    if (!lineCoords || lineCoords.length < 2) return;
+    optimizeAbortRef.current?.abort();
+    const controller = new AbortController();
+    optimizeAbortRef.current = controller;
+    setOptimizerStatus('running');
+    setOptimizerProgress(0);
+    setOptimizerError(null);
+    setOptimizerResult(null);
+    try {
+      const result = await optimizeRoute(lineCoords, {
+        signal: controller.signal,
+        onProgress: (f) => setOptimizerProgress(f),
+      });
+      if (controller.signal.aborted) return;
+      if (!result) {
+        setOptimizerStatus('error');
+        setOptimizerError('This line could not be optimized (too short or sampling failed).');
+        return;
+      }
+      setOptimizerResult(result);
+      setOptimizerStatus('done');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      logger.error('Route optimization failed', error);
+      setOptimizerStatus('error');
+      setOptimizerError(error instanceof Error ? error.message : 'Route optimization failed');
+    }
+  }, [lineCoords]);
+
+  const handleApplyOptimized = useCallback(() => {
+    if (!optimizerResult) return;
+    applyVersionRef.current += 1;
+    setApplyLineRequest({ coords: optimizerResult.coords, version: applyVersionRef.current });
+    // The map will emit onLineChange for the new geometry, which resets the
+    // optimizer state (handleLineCoordsChange) and re-runs all analyses.
+  }, [optimizerResult]);
+
+  const handleDismissOptimized = useCallback(() => {
+    optimizeAbortRef.current?.abort();
+    setOptimizerStatus('idle');
+    setOptimizerResult(null);
+    setOptimizerError(null);
+    setOptimizerProgress(0);
   }, []);
   
   // Raw remote equipment (backend canonical) + loading state
@@ -498,8 +596,12 @@ const App: React.FC = () => {
             onInitialLocationSettled={setInitialLocationSettled}
             initialUserLocation={prefetchedLocation}
             selectedSearchLocation={searchLocation}
-            onLineChange={setLineCoords}
+            onLineChange={handleLineCoordsChange}
             initialLine={sharedPlan?.coords || null}
+            highlightCoords={highlightCoords}
+            hoverPoint={hoverPoint}
+            optimizedPreview={optimizerStatus === 'done' && optimizerResult ? optimizerResult.coords : null}
+            applyLineRequest={applyLineRequest}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -524,6 +626,16 @@ const App: React.FC = () => {
             lineCoords={lineCoords}
             initialBreakWidthMeters={sharedPlan?.breakWidthMeters}
             initialVegetationOverride={sharedPlan?.vegetation}
+            onLocateSegment={handleLocateSegment}
+            activeHighlightRange={highlightRange}
+            onHoverChainage={handleHoverChainage}
+            optimizerStatus={optimizerStatus}
+            optimizerProgress={optimizerProgress}
+            optimizerResult={optimizerResult}
+            optimizerError={optimizerError}
+            onOptimize={handleOptimize}
+            onApplyOptimized={handleApplyOptimized}
+            onDismissOptimized={handleDismissOptimized}
           />
         </div>
         <IntegratedConfigPanel 

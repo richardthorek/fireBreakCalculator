@@ -1,6 +1,6 @@
 # Component Register
 
-**Last Updated**: February 8, 2026
+**Last Updated**: July 11, 2026
 **Purpose**: Machine-readable catalog of all React components
 **Update Policy**: MUST update when components are added, modified, or removed
 
@@ -32,6 +32,16 @@ This is a **living document** that should be kept synchronized with the codebase
 | EquipmentResults | `webapp/src/components/EquipmentResults.tsx` | `{ results, ... }` | Equipment analysis results table | None |
 | OverlapMatrix | `webapp/src/components/OverlapMatrix.tsx` | `{ terrainData, vegetationData, ... }` | Terrain/vegetation distribution matrix | None |
 | GuidancePanel | `webapp/src/components/GuidancePanel.tsx` | `{ showHelp, ... }` | Help and instructions content | None |
+
+## Route Intelligence Components (July 2026 UI overhaul)
+
+| Component | Path | Props Interface | Purpose | Key Dependencies |
+|-----------|------|-----------------|---------|------------------|
+| ElevationProfile | `webapp/src/components/ElevationProfile.tsx` | `{ trackAnalysis, vegetationAnalysis, onHoverChainage }` | Interactive SVG elevation/slope/fuel profile with map-synced hover | chainage util, categories |
+| SegmentBreakdown | `webapp/src/components/SegmentBreakdown.tsx` | `{ trackAnalysis, vegetationAnalysis, onLocate, activeRange }` | Joined per-segment chainage table with map locate | chainage util |
+| AdvisorPanel | `webapp/src/components/AdvisorPanel.tsx` | `{ assessment, optimizerStatus/result, onOptimize/Apply/Dismiss, onLocate }` | Plan Assistant: ranked insight cards + route optimizer compare/apply | planInsights, routeOptimizer |
+
+Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/routeOptimizer.ts` (corridor least-cost pathfinding over DEM + NVIS/NSW samples).
 
 ## Planned Components (from Roadmap)
 

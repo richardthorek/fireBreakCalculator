@@ -40,6 +40,14 @@ interface MapboxMapViewProps {
   onLineChange?: (coords: { lat: number; lng: number }[] | null) => void;
   /** A plan line to restore on load (e.g. from a shared link). Drawn + analysed once. */
   initialLine?: { lat: number; lng: number }[] | null;
+  /** Coordinates of a line slice to highlight (insight "show on map" / segment locate). */
+  highlightCoords?: { lat: number; lng: number }[] | null;
+  /** Synced marker for the elevation-profile hover position. */
+  hoverPoint?: { lat: number; lng: number } | null;
+  /** Optimized-route preview coordinates (rendered as a dashed line until applied). */
+  optimizedPreview?: { lat: number; lng: number }[] | null;
+  /** When set (version bumps), replace the drawn line with these coords and re-analyse. */
+  applyLineRequest?: { coords: { lat: number; lng: number }[]; version: number } | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -57,7 +65,11 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   initialUserLocation = null,
   selectedSearchLocation,
   onLineChange,
-  initialLine = null
+  initialLine = null,
+  highlightCoords = null,
+  hoverPoint = null,
+  optimizedPreview = null,
+  applyLineRequest = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -97,6 +109,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // work triggered when fitBounds and later easeTo/moveend both fire.
   const initialSettledSignalledRef = useRef(false);
   const [dropsVersion, setDropsVersion] = useState(0);
+  // Exposes the init-scoped line-change handler to prop-driven effects
+  // (optimized-route apply) so they can trigger the same analysis pipeline.
+  const handleLineChangeRef = useRef<((feature: any) => void) | null>(null);
+  const appliedLineVersionRef = useRef(0);
 
   // Initialize map relying solely on hosted style
   useEffect(() => {
@@ -443,6 +459,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       await analyzeAndRender(latlngs);
       setDropsVersion(v => v + 1);
     };
+    handleLineChangeRef.current = handleLineChange;
     map.on('draw.create', (e: any) => handleLineChange(e.features[0]));
     map.on('draw.update', (e: any) => handleLineChange(e.features[0]));
     map.on('draw.delete', () => {
@@ -515,6 +532,96 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       dropMarkersRef.current.set(id, markers);
     });
   }, [selectedAircraftForPreview, aircraft, dropsVersion]);
+
+  // --- Prop-driven overlay layers (highlight / hover / optimized preview) ----
+
+  /** Upsert a GeoJSON source+layer for a simple line/point overlay; remove when coords empty. */
+  const setOverlay = (
+    id: string,
+    geometry: { type: 'LineString'; coordinates: number[][] } | { type: 'Point'; coordinates: number[] } | null,
+    layer: any
+  ) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      try {
+        if (!geometry) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          if (map.getLayer(`${id}-casing`)) map.removeLayer(`${id}-casing`);
+          if (map.getSource(id)) map.removeSource(id);
+          return;
+        }
+        const data = { type: 'Feature' as const, properties: {}, geometry };
+        const existing = map.getSource(id);
+        if (existing) {
+          existing.setData(data);
+        } else {
+          map.addSource(id, { type: 'geojson', data } as any);
+          if (layer.casing) map.addLayer({ ...layer.casing, id: `${id}-casing`, source: id });
+          map.addLayer({ ...layer.main, id, source: id });
+        }
+      } catch (e) {
+        logger.warn(`Failed to update overlay ${id}`, e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  };
+
+  // Segment/insight highlight: bright casing + white core over the slice.
+  useEffect(() => {
+    const coords = highlightCoords && highlightCoords.length >= 2
+      ? highlightCoords.map(c => [c.lng, c.lat])
+      : null;
+    setOverlay('segment-highlight', coords ? { type: 'LineString', coordinates: coords } : null, {
+      casing: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 14, 'line-opacity': 0.55, 'line-blur': 2 } },
+      main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 3, 'line-opacity': 0.95 } }
+    });
+  }, [highlightCoords]);
+
+  // Elevation-profile hover marker.
+  useEffect(() => {
+    setOverlay('profile-hover-point', hoverPoint ? { type: 'Point', coordinates: [hoverPoint.lng, hoverPoint.lat] } : null, {
+      main: { type: 'circle', paint: { 'circle-radius': 7, 'circle-color': '#F6A609', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } }
+    });
+  }, [hoverPoint]);
+
+  // Optimized route preview: dashed amber line with dark casing.
+  useEffect(() => {
+    const coords = optimizedPreview && optimizedPreview.length >= 2
+      ? optimizedPreview.map(c => [c.lng, c.lat])
+      : null;
+    setOverlay('optimized-route-preview', coords ? { type: 'LineString', coordinates: coords } : null, {
+      casing: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#0C1220', 'line-width': 7, 'line-opacity': 0.6 } },
+      main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 4, 'line-dasharray': [1.6, 1.4], 'line-opacity': 0.95 } }
+    });
+  }, [optimizedPreview]);
+
+  // Replace the drawn line when an optimized route is applied. Runs the same
+  // pipeline as a manual draw so all analyses re-run against the new geometry.
+  useEffect(() => {
+    if (!applyLineRequest || applyLineRequest.version === appliedLineVersionRef.current) return;
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    const handler = handleLineChangeRef.current;
+    if (!map || !draw || !handler || applyLineRequest.coords.length < 2) return;
+    appliedLineVersionRef.current = applyLineRequest.version;
+    try {
+      draw.deleteAll();
+      const feature = {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'LineString', coordinates: applyLineRequest.coords.map(p => [p.lng, p.lat]) }
+      };
+      draw.add(feature);
+      handler(feature);
+    } catch (e) {
+      logger.warn('Failed to apply optimized line', e);
+    }
+  }, [applyLineRequest]);
 
   // Analysis + rendering
   const analyzeAndRender = async (latlngs: any[]) => {

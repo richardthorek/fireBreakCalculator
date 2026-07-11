@@ -140,9 +140,23 @@ export interface TrackAnalysis {
     steep: number;
     very_steep: number;
   };
+  /** Fine-grained elevation samples along the line (chainage in metres from
+   *  the start, elevation in metres, local slope in degrees). Powers the
+   *  elevation-profile chart; downsampled to a bounded size. */
+  elevationProfile?: ElevationProfileSample[];
   /** True when any elevation sample fell back to the mock service — the
    *  analysis then contains ESTIMATED terrain and must be flagged to the user. */
   usedMockElevation?: boolean;
+}
+
+/** One sample of the along-line elevation profile. */
+export interface ElevationProfileSample {
+  /** Chainage: distance from the start of the line, metres. */
+  distanceM: number;
+  /** Elevation in metres. */
+  elevation: number;
+  /** Local slope (degrees) of the sub-step ending at this sample. */
+  slope: number;
 }
 
 /** Vegetation segment data from Mapbox Terrain v2 analysis */

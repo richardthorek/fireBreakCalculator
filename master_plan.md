@@ -70,6 +70,19 @@ Offline-first PWA, mobile optimization, touch-friendly controls, minimal data us
 
 ## Recent Updates
 
+### July 11, 2026 — Route Intelligence & Analysis UI Overhaul
+
+**Objective:** Turn the tool from a calculator into a technical assistant: smarter routing, richer segment detail, and a narrative layer that explains the analysis.
+
+**What shipped (frontend, no API changes):**
+- **Corridor route optimizer** (`webapp/src/utils/routeOptimizer.ts`): between the user's waypoints, searches a lateral lattice (stations × 9 lanes, capped at ~250 vegetation cells/leg), costs each edge by distance × traversal-slope × fuel using real DEM elevations (one batched `/api/elevation/profile` call) and cached NVIS/NSW vegetation samples, then runs a lane-constrained dynamic program. Result previews as a dashed line on the map with an original-vs-optimized comparison (length, max slope, steep metres, heavy-timber metres); applying it re-runs the full analysis. Estimated/fallback samples propagate to a `usedEstimatedData` flag shown in the UI.
+- **Plan Assistant** (`webapp/src/utils/planInsights.ts` + `AdvisorPanel`): deterministic rule-based insights ranked by severity — steep/very-steep pinch points and heavy-timber pockets located by chainage with one-tap "show on map", data-confidence caveats, crewing strategy (fastest machine + hand-crew pairing for steep metres, aircraft pre-planning in heavy fuel), and an optimize-route nudge. Plus a 0–100 difficulty score.
+- **Terrain detail**: interactive SVG elevation profile (slope-colored, vegetation band, hover synced to a map marker via chainage) and a joined per-segment breakdown table (chainage, grade, fuel, confidence, estimated flags, locate-on-map). `analyzeTrackSlopes` now emits a downsampled `elevationProfile`.
+- **Analysis panel restructured into tabs** (Overview / Terrain / Equipment / Assistant) with summary stat tiles and an attention strip; all existing content (conditions, quick options, export, overlap matrix, equipment tables) preserved within the same design language.
+- **Map layers**: segment/insight highlight, profile-hover marker, optimized-route preview, and programmatic line replacement (apply optimized route).
+
+**Verification:** webapp `tsc -b && vite build` clean; API unit tests still pass (18 checks); 22-check Node smoke test of the real optimizer/chainage/insights code against a synthetic ridge + timber pocket (optimizer measurably reduces steep ground and heavy timber, endpoints fixed, honest flags preserved).
+
 ### July 11, 2026 — Vegetation Data Strategy: NVIS-First (Discovery, Confirmation, Design)
 
 **Objective:** Settle how the tool sources a comprehensive, consistent view of vegetation (fuel) across Australia.
@@ -143,6 +156,17 @@ Estimates now reflect the actual mix of slope and fuel along the line, not a sin
 4. Fix false Victoria test point (`-36.0,141.0` is cleared farmland; use genuine Mallee coord)
 
 **Acceptance:** `NoData`/ocean/out-of-AU never yield non-`estimated` classes (tested); cleared segments flagged + overridable; no new state services; fidelity test passes.
+
+---
+
+### Route Intelligence & Analysis UI Overhaul (P1)
+**Status**: ✅ Complete (July 11, 2026 — see Recent Updates; PR: claude/ui-overhaul-pathfinding-or5fma)
+
+- ✅ Corridor pathfinding around steep slope / heavy timber (preview → apply)
+- ✅ Tabbed analysis workspace (Overview / Terrain / Equipment / Assistant)
+- ✅ Interactive elevation profile + per-segment breakdown with map sync
+- ✅ Rule-based Plan Assistant (hazard chainages, crewing strategy, difficulty score)
+- Follow-ups (📋): touch/hover parity for the profile on mobile, optimizer waypoint pinning UI, optimizer-aware estimates comparison in Equipment tab
 
 ---
 
