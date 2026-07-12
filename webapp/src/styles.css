@@ -2514,6 +2514,58 @@ button:focus {
   display: inline-block;
 }
 
+.area-recon-toggle-btn {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 990;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.area-recon-toggle-btn:hover { border-color: #38bdf8; color: #ffffff; }
+.area-recon-toggle-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
+
+.area-recon-badge {
+  position: absolute;
+  top: 68px;
+  left: 20px;
+  z-index: 990;
+  background: rgba(56, 189, 248, 0.85);
+  color: #04121c;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.area-recon-badge.error { background: rgba(216, 35, 42, 0.85); color: #fff; }
+
+.area-recon-clear-btn {
+  position: absolute;
+  top: 68px;
+  left: 20px;
+  z-index: 990;
+  background: rgba(15, 23, 42, 0.85);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.area-recon-clear-btn:hover { border-color: #38bdf8; color: #ffffff; }
+
 .live-feeds-control {
   position: absolute;
   top: 120px;
