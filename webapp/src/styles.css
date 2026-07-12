@@ -2702,6 +2702,14 @@ button:focus {
   font-size: 13px;
 }
 
+/* When rendered inside the analysis panel */
+.live-layers-tab-content .live-feeds-control {
+  position: static;
+  top: auto;
+  right: auto;
+  z-index: auto;
+}
+
 /* Match .area-recon-toggle-btn so all map overlay buttons share one visual language */
 .live-feeds-toggle-btn {
   background: rgba(15, 23, 42, 0.85);
@@ -2722,6 +2730,15 @@ button:focus {
   border-color: #F6A609;
 }
 
+/* When rendered inside the analysis panel tab */
+.live-layers-tab-content .live-feeds-toggle-btn {
+  width: 100%;
+  background: rgba(31, 41, 55, 0.6);
+  box-shadow: none;
+  padding: 10px 12px;
+  justify-content: flex-start;
+}
+
 .live-feeds-panel {
   margin-top: 8px;
   background: rgba(10, 14, 20, 0.94);
@@ -2735,6 +2752,18 @@ button:focus {
   overflow-y: auto;
   color: #e8ecf1;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* When rendered inside the analysis panel tab */
+.live-layers-tab-content .live-feeds-panel {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100vh - 300px);
+  max-height: calc(100dvh - 300px);
+  box-shadow: none;
+  background: transparent;
+  border: none;
 }
 
 .live-feeds-caveat {

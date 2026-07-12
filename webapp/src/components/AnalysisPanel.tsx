@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Truck, Wrench, Plane, Users, LayoutDashboard, Mountain, Sparkles } from 'lucide-react';
+import { Truck, Wrench, Plane, Users, LayoutDashboard, Mountain, Sparkles, Flame } from 'lucide-react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
@@ -28,6 +28,9 @@ import { ExportImportControls } from './ExportImportControls';
 import { ExportPlanInput } from '../utils/gisExport';
 import { ImportedFeatures } from '../utils/gisImport';
 import { logger } from '../utils/logger';
+import { LiveFeedsControl } from './LiveFeedsControl';
+import type { LiveFeedMapData } from '../utils/liveFeedLayers';
+import type { ViewBounds } from '../utils/liveFeedsService';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -80,10 +83,13 @@ interface AnalysisPanelProps {
   onAddOverlay?: (features: ImportedFeatures) => void;
   overlayCount?: number;
   onClearOverlays?: () => void;
+  /** Live feeds wiring (state lives in App so the map can render layers). */
+  viewBounds?: ViewBounds | null;
+  onLiveFeedData?: (data: LiveFeedMapData) => void;
 }
 
 /** Analysis panel tabs. */
-type AnalysisTab = 'overview' | 'terrain' | 'equipment' | 'assistant';
+type AnalysisTab = 'overview' | 'terrain' | 'equipment' | 'assistant' | 'live-layers';
 
 // Use centralized type definitions from classification.ts
 // Using TerrainLevel directly from classification.ts for consistency
@@ -320,7 +326,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onImportAsPlan,
   onAddOverlay,
   overlayCount = 0,
-  onClearOverlays
+  onClearOverlays,
+  viewBounds = null,
+  onLiveFeedData
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation.
   // A shared plan may seed an explicit override.
@@ -937,6 +945,15 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             <span>Assistant</span>
             {attentionCount > 0 && <span className="tab-badge" aria-label={`${attentionCount} items need attention`}>{attentionCount}</span>}
           </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'live-layers'}
+            className={`analysis-tab${activeTab === 'live-layers' ? ' active' : ''}`}
+            onClick={() => setActiveTab('live-layers')}
+          >
+            <Flame size={15} strokeWidth={2} aria-hidden />
+            <span>Live Layers</span>
+          </button>
         </div>
       )}
       <div className="analysis-content" id="analysis-content">
@@ -1176,6 +1193,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             />
             <AiAssistantCard payload={assistantPayload} />
           </>
+        )}
+        {activeTab === 'live-layers' && (
+          <div className="live-layers-tab-content">
+            <LiveFeedsControl viewBounds={viewBounds} onData={onLiveFeedData ?? (() => {})} />
+          </div>
         )}
         {!distance ? (
           <>

@@ -10,11 +10,11 @@ import { MachinerySpec, AircraftSpec, HandCrewSpec, VegetationAnalysis, TrackAna
 import { EquipmentApi, CreateEquipmentInput, MachineryApi, AircraftApi, HandCrewApi } from './types/equipmentApi';
 import { listEquipment, createEquipment, updateEquipmentItem, deleteEquipment } from './utils/equipmentApi';
 import { VegetationFormationMappingApi, CreateVegetationMappingInput } from './types/vegetationMappingApi';
-import { 
-  listVegetationMappings, 
-  createVegetationMapping, 
-  updateVegetationMappingItem, 
-  deleteVegetationMapping 
+import {
+  listVegetationMappings,
+  createVegetationMapping,
+  updateVegetationMappingItem,
+  deleteVegetationMapping
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
 import { readPlanFromUrl } from './utils/planSharing';
@@ -23,6 +23,8 @@ import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/rou
 import { scanArea } from './utils/areaScan';
 import { OptimizerStatus } from './components/AdvisorPanel';
 import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
+import { LiveFeedMapData } from './utils/liveFeedLayers';
+import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
 
 // Import site logo/favicon as a module so the bundler rewrites the path
@@ -285,6 +287,10 @@ const App: React.FC = () => {
   // --- GIS import: overlays + import-as-plan ---------------------------------
   const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);
   const overlayIdRef = useRef(0);
+
+  // --- Live feeds: hotspots, fire boundaries, incidents -----------------------
+  const [liveFeedData, setLiveFeedData] = useState<LiveFeedMapData>({ hotspots: null, boundaries: null, incidents: null });
+  const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
 
   const handleAddOverlay = useCallback((features: ImportedFeatures) => {
     overlayIdRef.current += 1;
@@ -758,6 +764,8 @@ const App: React.FC = () => {
             areaReconHeatmap={areaReconStatus === 'done' ? areaReconHeatmap : null}
             areaReconStatus={areaReconStatus}
             onClearAreaRecon={handleClearAreaRecon}
+            onViewBoundsChange={setViewBounds}
+            liveFeedData={liveFeedData}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -797,6 +805,8 @@ const App: React.FC = () => {
             onAddOverlay={handleAddOverlay}
             overlayCount={contextOverlays.length}
             onClearOverlays={handleClearOverlays}
+            viewBounds={viewBounds}
+            onLiveFeedData={setLiveFeedData}
           />
         </div>
         <IntegratedConfigPanel 

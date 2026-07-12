@@ -11,7 +11,6 @@ import { logger } from '../utils/logger';
 import { SearchControl } from './SearchControl';
 import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
-import { LiveFeedsControl } from './LiveFeedsControl';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -106,6 +105,10 @@ interface MapboxMapViewProps {
   /** Area recon scan lifecycle, for the status badge + clear button. */
   areaReconStatus?: 'idle' | 'running' | 'done' | 'error';
   onClearAreaRecon?: () => void;
+  /** Current map view bounds — emitted when the view changes. */
+  onViewBoundsChange?: (bounds: ViewBounds | null) => void;
+  /** Live feed data to render on the map. */
+  liveFeedData?: LiveFeedMapData;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -139,7 +142,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onAreaReconBoxDrawn,
   areaReconHeatmap = null,
   areaReconStatus = 'idle',
-  onClearAreaRecon
+  onClearAreaRecon,
+  onViewBoundsChange,
+  liveFeedData: externalLiveFeedData
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -254,7 +259,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       try {
         const b = map.getBounds();
         if (!b) return;
-        setViewBounds({ minLat: b.getSouth(), maxLat: b.getNorth(), minLng: b.getWest(), maxLng: b.getEast() });
+        const bounds = { minLat: b.getSouth(), maxLat: b.getNorth(), minLng: b.getWest(), maxLng: b.getEast() };
+        setViewBounds(bounds);
+        onViewBoundsChange?.(bounds);
       } catch { /* map not ready */ }
     };
     map.on('moveend', updateViewBounds);
@@ -1094,19 +1101,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   }, [areaReconHeatmap]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
-  // incidents. Data is fetched by LiveFeedsControl; this just syncs it onto
-  // the map whenever it changes.
+  // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
+  // this just syncs it onto the map whenever it changes.
+  const effectiveLiveFeedData = externalLiveFeedData ?? liveFeedData;
   useEffect(() => {
     const map = mapRef.current;
     const mapboxgl = mapLibRef.current;
     if (!map || !mapboxgl) return;
-    const apply = () => applyLiveFeedLayers(map, mapboxgl, liveFeedData);
+    const apply = () => applyLiveFeedLayers(map, mapboxgl, effectiveLiveFeedData);
     if (map.isStyleLoaded && !map.isStyleLoaded()) {
       map.once('idle', apply);
     } else {
       apply();
     }
-  }, [liveFeedData]);
+  }, [effectiveLiveFeedData]);
 
   // Imported reference overlays: polygons (fire perimeters) as translucent red
   // fill + outline, lines as dashed slate. Sources are keyed by overlay id.
@@ -1352,7 +1360,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           Clear scan
         </button>
       )}
-      <LiveFeedsControl viewBounds={viewBounds} onData={setLiveFeedData} />
     </div>
   );
 };
