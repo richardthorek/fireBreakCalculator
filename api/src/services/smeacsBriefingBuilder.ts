@@ -79,8 +79,24 @@ export function buildSmeacsBriefing(payload: AssistantPayload): SmeacsBriefing {
     executionLines.push('No compatible equipment found — review Equipment tab and select alternatives.');
   }
 
-  executionLines.push('Entry point: [Road name, grid ref — from road access analysis].'); // Placeholder for access logic (PR B)
-  executionLines.push('Approach: [Indicative route summary — from Mapbox Directions, verify locally].'); // Placeholder for access logic (PR B)
+  // Entry point from access routing (or placeholder if unavailable)
+  if (payload.entryPoint) {
+    const roadInfo = payload.entryPoint.roadName
+      ? `${payload.entryPoint.roadName} (${payload.entryPoint.roadKind})`
+      : payload.entryPoint.roadKind;
+    const gap = payload.entryPoint.gapM > 0 ? ` — ~${Math.round(payload.entryPoint.gapM)} m gap from line` : '';
+    executionLines.push(`Entry point: ${roadInfo}${gap}. OSM-mapped — verify gate access on approach.`);
+  } else {
+    executionLines.push('Entry point: [Road access data unavailable — confirm nearest road on ground].');
+  }
+
+  // Approach directions from Mapbox Directions (or placeholder)
+  if (payload.approachSteps && payload.approachSteps.length > 0) {
+    const roadSequence = payload.approachSteps.map((step) => `${step.roadName} (~${Math.round(step.distanceM / 1000)} km)`).join(' → ');
+    executionLines.push(`Approach: ${roadSequence}. Verify locally and confirm final access conditions.`);
+  } else {
+    executionLines.push('Approach: [Route guidance unavailable offline — plan access to entry point locally].');
+  }
 
   const criticalInsights = payload.insights.filter((i) => i.severity === 'critical' || i.severity === 'warning');
   if (criticalInsights.length > 0) {

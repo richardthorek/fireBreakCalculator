@@ -23,6 +23,19 @@ export interface LatLng {
   lng: number;
 }
 
+export interface AccessPoint {
+  coords: LatLng;
+  roadName?: string;
+  roadKind: string;
+  gapM: number;
+  forLineEnd: 'start' | 'end';
+}
+
+export interface AccessRouteStep {
+  roadName: string;
+  distanceM: number;
+}
+
 export interface AssistantPayload {
   distanceM: number;
   breakWidthM: number;
@@ -41,6 +54,8 @@ export interface AssistantPayload {
   endCoords?: LatLng;
   locality?: string;
   taskedResourceTypes?: string[];
+  entryPoint?: AccessPoint;
+  approachSteps?: AccessRouteStep[];
 }
 
 export interface AssistantCitation {
