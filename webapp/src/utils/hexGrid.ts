@@ -151,6 +151,38 @@ export function chooseHexSize(corridorLength: number, halfWidth: number, targetC
 }
 
 /**
+ * Generate hex centres covering a rectangular box (local coords), for the
+ * area-recon scan — no guide line, just every hex whose centre falls inside
+ * the box. Same axial-range-then-filter approach as `generateCorridorHexes`.
+ */
+export function generateBoxHexes(
+  minPt: LocalPoint,
+  maxPt: LocalPoint,
+  size: number
+): { hex: AxialCoord; center: LocalPoint }[] {
+  const corners = [
+    localToAxial({ x: minPt.x, y: minPt.y }, size),
+    localToAxial({ x: maxPt.x, y: minPt.y }, size),
+    localToAxial({ x: minPt.x, y: maxPt.y }, size),
+    localToAxial({ x: maxPt.x, y: maxPt.y }, size),
+  ];
+  const qMin = Math.min(...corners.map(c => c.q)) - 2;
+  const qMax = Math.max(...corners.map(c => c.q)) + 2;
+  const rMin = Math.min(...corners.map(c => c.r)) - 2;
+  const rMax = Math.max(...corners.map(c => c.r)) + 2;
+
+  const out: { hex: AxialCoord; center: LocalPoint }[] = [];
+  for (let q = qMin; q <= qMax; q++) {
+    for (let r = rMin; r <= rMax; r++) {
+      const center = axialToLocal({ q, r }, size);
+      if (center.x < minPt.x || center.x > maxPt.x || center.y < minPt.y || center.y > maxPt.y) continue;
+      out.push({ hex: { q, r }, center });
+    }
+  }
+  return out;
+}
+
+/**
  * Generate hex centres covering a corridor of `halfWidth` metres either side
  * of `pathLocal`, at the given hex size. Unbounded by design — callers that
  * need a hard cap should adjust `size` and regenerate (see routeOptimizer's

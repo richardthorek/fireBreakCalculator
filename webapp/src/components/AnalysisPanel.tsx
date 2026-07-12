@@ -69,6 +69,7 @@ interface AnalysisPanelProps {
   /** Route optimizer wiring (state lives in App so the map can preview). */
   optimizerStatus?: OptimizerStatus;
   optimizerProgress?: number;
+  optimizerPhase?: string;
   optimizerResult?: OptimizedRouteResult | null;
   optimizerError?: string | null;
   onOptimize?: () => void;
@@ -310,6 +311,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onHoverChainage,
   optimizerStatus = 'idle',
   optimizerProgress = 0,
+  optimizerPhase,
   optimizerResult = null,
   optimizerError = null,
   onOptimize,
@@ -1165,6 +1167,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               onLocate={onLocateSegment}
               optimizerStatus={optimizerStatus}
               optimizerProgress={optimizerProgress}
+              optimizerPhase={optimizerPhase}
               optimizerResult={optimizerResult}
               optimizerError={optimizerError}
               onOptimize={onOptimize}

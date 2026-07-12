@@ -83,6 +83,29 @@ interface MapboxMapViewProps {
     polygon: { lat: number; lng: number }[];
     costNormalized: number;
   }[] | null;
+  /** Optimizer progress (0..1) — drives the WP3 progress-synced sweep so its
+   *  leading edge tracks how far the search has actually gotten instead of
+   *  a fixed-period ping-pong. */
+  optimizerProgress?: number;
+  /** WP2 — streamed scan cells: grid outlines build out, then colour in as
+   *  each cell is sampled. Distinct from `optimizerHeatmap`, which only
+   *  appears once the search is fully done. */
+  scanCells?: { polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }[] | null;
+  /** WP2 — the live Dijkstra frontier's current best-guess path. */
+  scanBestPath?: { lat: number; lng: number }[] | null;
+  /** WP6 — true while the area-recon box tool is armed (next two map clicks
+   *  define opposite corners of the scan box). */
+  areaReconActive?: boolean;
+  onAreaReconActiveChange?: (active: boolean) => void;
+  /** Fired once the user finishes drawing the recon box (two clicks). */
+  onAreaReconBoxDrawn?: (sw: { lat: number; lng: number }, ne: { lat: number; lng: number }) => void;
+  /** Cost-normalised hex cells from the area recon scan — same shape as
+   *  `optimizerHeatmap`, rendered as its own layer so it survives independently
+   *  of any route search. */
+  areaReconHeatmap?: { polygon: { lat: number; lng: number }[]; costNormalized: number }[] | null;
+  /** Area recon scan lifecycle, for the status badge + clear button. */
+  areaReconStatus?: 'idle' | 'running' | 'done' | 'error';
+  onClearAreaRecon?: () => void;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -107,7 +130,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   applyLineRequest = null,
   contextOverlays = [],
   optimizerScanning = false,
-  optimizerHeatmap = null
+  optimizerHeatmap = null,
+  optimizerProgress = 0,
+  scanCells = null,
+  scanBestPath = null,
+  areaReconActive = false,
+  onAreaReconActiveChange,
+  onAreaReconBoxDrawn,
+  areaReconHeatmap = null,
+  areaReconStatus = 'idle',
+  onClearAreaRecon
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -162,6 +194,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => {
     try { reducedMotionRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* ignore */ }
   }, []);
+  // WP3: the sweep eases toward this every frame instead of a fixed clock.
+  const optimizerProgressRef = useRef(0);
+  useEffect(() => { optimizerProgressRef.current = optimizerProgress; }, [optimizerProgress]);
+
+  // WP6 — area recon box tool. Click handlers are registered once at map
+  // init (see the big init effect below), so they read these refs for the
+  // latest prop values/callbacks rather than closing over stale props.
+  const areaReconActiveRef = useRef(false);
+  useEffect(() => { areaReconActiveRef.current = areaReconActive; }, [areaReconActive]);
+  const onAreaReconActiveChangeRef = useRef(onAreaReconActiveChange);
+  useEffect(() => { onAreaReconActiveChangeRef.current = onAreaReconActiveChange; }, [onAreaReconActiveChange]);
+  const onAreaReconBoxDrawnRef = useRef(onAreaReconBoxDrawn);
+  useEffect(() => { onAreaReconBoxDrawnRef.current = onAreaReconBoxDrawn; }, [onAreaReconBoxDrawn]);
+  const areaReconStartRef = useRef<{ lat: number; lng: number } | null>(null);
 
   // Live context feeds (hotspots, fire boundaries, incidents) — the control
   // panel owns fetching/refresh; this component just tracks the current map
@@ -547,6 +593,35 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       logger.info(`Hosted style loaded (${(style.layers || []).length} layers)`);
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
+
+    // WP6 — area recon box tool: while armed, the first click sets one
+    // corner, the second finishes the box and hands it to the parent. Reads
+    // refs (not props) since this listener is bound once at map init.
+    map.on('click', (e: any) => {
+      if (!areaReconActiveRef.current) return;
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      if (!areaReconStartRef.current) {
+        areaReconStartRef.current = pt;
+        return;
+      }
+      const sw = areaReconStartRef.current;
+      areaReconStartRef.current = null;
+      onAreaReconActiveChangeRef.current?.(false);
+      onAreaReconBoxDrawnRef.current?.(sw, pt);
+    });
+    map.on('mousemove', (e: any) => {
+      if (!areaReconActiveRef.current || !areaReconStartRef.current) return;
+      const sw = areaReconStartRef.current;
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      const coords = [
+        [sw.lng, sw.lat], [pt.lng, sw.lat], [pt.lng, pt.lat], [sw.lng, pt.lat], [sw.lng, sw.lat],
+      ];
+      setOverlay('area-recon-preview', { type: 'Polygon', coordinates: [coords] }, {
+        main: { type: 'fill', paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.12 } },
+        casing: { type: 'line', paint: { 'line-color': '#38bdf8', 'line-width': 2, 'line-dasharray': [2, 2] } },
+      });
+    });
+
     return () => { map.remove(); };
     })();
   }, []);
@@ -662,6 +737,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     });
   }, [hoverPoint]);
 
+  // WP6 — clear the box-preview and any half-drawn corner whenever the area
+  // recon tool is switched off (finished, cancelled, or toggled off).
+  useEffect(() => {
+    if (!areaReconActive) {
+      areaReconStartRef.current = null;
+      setOverlay('area-recon-preview', null, {});
+    }
+  }, [areaReconActive]);
+
   // Optimized route preview: dashed amber line with dark casing.
   useEffect(() => {
     const coords = optimizedPreview && optimizedPreview.length >= 2
@@ -675,12 +759,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
   // Corridor scanning sweep — theatre shown while the route optimizer is
   // actively searching. A translucent band grows across the line's bounding
-  // envelope with a bright leading edge, visually hinting "the system is
-  // reading terrain and vegetation across this area" ahead of the real hex
-  // heatmap landing. Purely decorative and non-interactive; skipped outright
-  // under prefers-reduced-motion (the heatmap below still appears on
-  // completion, just without the animated build-up).
+  // envelope with a bright leading edge. WP3: one-directional and
+  // progress-synced — the edge eases toward the real scan fraction
+  // (`optimizerProgressRef`) every frame instead of ping-ponging on a fixed
+  // clock, so it reveals the actual search instead of just decorating the
+  // wait. Purely non-interactive; skipped outright under
+  // prefers-reduced-motion (the heatmap below still appears on completion,
+  // just without the animated build-up).
   const scanAnimRef = useRef<number | null>(null);
+  const scanEasedTRef = useRef(0);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -690,6 +777,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         cancelAnimationFrame(scanAnimRef.current);
         scanAnimRef.current = null;
       }
+      scanEasedTRef.current = 0;
       setOverlay('scan-band', null, {});
       setOverlay('scan-line', null, {});
     };
@@ -718,12 +806,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     minLng -= padLng; maxLng += padLng; minLat -= padLat; maxLat += padLat;
     const axis: 'lng' | 'lat' = (maxLng - minLng) >= (maxLat - minLat) ? 'lng' : 'lat';
 
-    const durationMs = 2600;
-    const startTime = performance.now();
-    const frame = (now: number) => {
+    scanEasedTRef.current = 0;
+    const frame = () => {
       if (!mapRef.current) return;
-      const elapsed = (now - startTime) % (durationMs * 2);
-      const t = elapsed < durationMs ? elapsed / durationMs : 2 - elapsed / durationMs; // ping-pong 0→1→0
+      // Ease toward the real scan progress rather than a fixed-period
+      // ping-pong — the sweep visually tracks how far the search has
+      // actually gotten.
+      const target = Math.max(0, Math.min(1, optimizerProgressRef.current));
+      scanEasedTRef.current += (target - scanEasedTRef.current) * 0.08;
+      const t = scanEasedTRef.current;
 
       const bandCoords: number[][] = axis === 'lng'
         ? [
@@ -838,6 +929,169 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     return () => remove();
   }, [optimizerHeatmap]);
+
+  // WP2 — streamed scan cells: grid outlines building out, then colouring in
+  // as each cell is sampled, so the wait shows the search actually happening
+  // instead of an end-of-run reveal. Distinct source from `hex-heatmap`
+  // above, which only appears once `optimizerHeatmap` lands (the final,
+  // definitive result) — the parent clears `scanCells` at that point.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cells = scanCells;
+
+    const remove = () => {
+      try {
+        if (map.getLayer('hex-scan-outline')) map.removeLayer('hex-scan-outline');
+        if (map.getLayer('hex-scan')) map.removeLayer('hex-scan');
+        if (map.getSource('hex-scan')) map.removeSource('hex-scan');
+      } catch (e) { /* style may already be gone */ }
+    };
+
+    if (!cells || cells.length === 0) {
+      remove();
+      return;
+    }
+
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: cells.map(c => ({
+        type: 'Feature' as const,
+        properties: { cost: c.costNormalized, revealed: c.revealed ? 1 : 0 },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+
+    const apply = () => {
+      try {
+        const existing = map.getSource('hex-scan');
+        if (existing) {
+          existing.setData(data);
+          return;
+        }
+        map.addSource('hex-scan', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'hex-scan',
+          type: 'fill',
+          source: 'hex-scan',
+          paint: {
+            // Unrevealed cells (still just grid outline, not yet sampled)
+            // sit at a neutral grey; revealed ones pick up the same
+            // green→amber→red gradient the final heatmap uses.
+            'fill-color': [
+              'case', ['==', ['get', 'revealed'], 0], '#334155',
+              ['interpolate', ['linear'], ['get', 'cost'], 0, '#1E9E62', 0.5, '#F6A609', 1, '#D8232A'],
+            ],
+            'fill-opacity': ['case', ['==', ['get', 'revealed'], 0], 0.12, 0.32],
+          },
+        });
+        map.addLayer({
+          id: 'hex-scan-outline',
+          type: 'line',
+          source: 'hex-scan',
+          paint: { 'line-color': 'rgba(255,255,255,0.10)', 'line-width': 0.5 },
+        });
+      } catch (e) {
+        logger.warn('Failed to render scan cells', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+
+    return () => remove();
+  }, [scanCells]);
+
+  // WP2 — the live Dijkstra frontier's current best-guess path, so
+  // pathfinding is visibly crawling the grid rather than appearing only
+  // once the search finishes.
+  useEffect(() => {
+    const coords = scanBestPath && scanBestPath.length >= 2
+      ? scanBestPath.map(c => [c.lng, c.lat])
+      : null;
+    setOverlay('scan-frontier', coords ? { type: 'LineString', coordinates: coords } : null, {
+      main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#38bdf8', 'line-width': 2.5, 'line-opacity': 0.75, 'line-dasharray': [0.5, 1.5] } }
+    });
+  }, [scanBestPath]);
+
+  // WP6 — area recon heatmap: same rendering as the route optimizer's
+  // heatmap, but its own source so a scanned box survives independently of
+  // any route search (neither clears the other).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cells = areaReconHeatmap;
+
+    const remove = () => {
+      try {
+        if (map.getLayer('area-recon-heatmap-outline')) map.removeLayer('area-recon-heatmap-outline');
+        if (map.getLayer('area-recon-heatmap')) map.removeLayer('area-recon-heatmap');
+        if (map.getSource('area-recon-heatmap')) map.removeSource('area-recon-heatmap');
+      } catch (e) { /* style may already be gone */ }
+    };
+
+    if (!cells || cells.length === 0) {
+      remove();
+      return;
+    }
+
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: cells.map(c => ({
+        type: 'Feature' as const,
+        properties: { cost: c.costNormalized },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+
+    const apply = () => {
+      try {
+        const existing = map.getSource('area-recon-heatmap');
+        if (existing) {
+          existing.setData(data);
+          return;
+        }
+        map.addSource('area-recon-heatmap', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'area-recon-heatmap',
+          type: 'fill',
+          source: 'area-recon-heatmap',
+          paint: {
+            'fill-color': [
+              'interpolate', ['linear'], ['get', 'cost'],
+              0, '#1E9E62',
+              0.5, '#F6A609',
+              1, '#D8232A',
+            ],
+            'fill-opacity': reducedMotionRef.current ? 0.32 : 0,
+          },
+        });
+        map.addLayer({
+          id: 'area-recon-heatmap-outline',
+          type: 'line',
+          source: 'area-recon-heatmap',
+          paint: { 'line-color': 'rgba(56,189,248,0.35)', 'line-width': 0.5 },
+        });
+        if (!reducedMotionRef.current) {
+          map.setPaintProperty('area-recon-heatmap', 'fill-opacity-transition', { duration: 900 });
+          requestAnimationFrame(() => {
+            try { mapRef.current?.setPaintProperty('area-recon-heatmap', 'fill-opacity', 0.32); } catch { /* map gone */ }
+          });
+        }
+      } catch (e) {
+        logger.warn('Failed to render area recon heatmap', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+
+    return () => remove();
+  }, [areaReconHeatmap]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl; this just syncs it onto
@@ -1076,6 +1330,27 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       )}
       {fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
+      )}
+      {onAreaReconActiveChange && (
+        <button
+          type="button"
+          className={`area-recon-toggle-btn${areaReconActive ? ' active' : ''}`}
+          onClick={() => onAreaReconActiveChange(!areaReconActive)}
+          title="Scan a box for terrain and vegetation difficulty, before drawing a line through it"
+        >
+          {areaReconActive ? 'Click two corners…' : 'Scan area'}
+        </button>
+      )}
+      {areaReconStatus === 'running' && (
+        <div className="area-recon-badge">Scanning area…</div>
+      )}
+      {areaReconStatus === 'error' && (
+        <div className="area-recon-badge error">Area scan failed</div>
+      )}
+      {areaReconStatus === 'done' && onClearAreaRecon && (
+        <button type="button" className="area-recon-clear-btn" onClick={onClearAreaRecon}>
+          Clear scan
+        </button>
       )}
       <LiveFeedsControl viewBounds={viewBounds} onData={setLiveFeedData} />
     </div>

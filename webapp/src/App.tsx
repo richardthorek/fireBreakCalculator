@@ -19,7 +19,8 @@ import {
 import { _clearNSWCache } from './utils/nswVegetationService';
 import { readPlanFromUrl } from './utils/planSharing';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
-import { optimizeRoute, OptimizedRouteResult } from './utils/routeOptimizer';
+import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
+import { scanArea } from './utils/areaScan';
 import { OptimizerStatus } from './components/AdvisorPanel';
 import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { logger } from './utils/logger';
@@ -75,11 +76,28 @@ const App: React.FC = () => {
   // preview on the map until the user applies or dismisses them.
   const [optimizerStatus, setOptimizerStatus] = useState<OptimizerStatus>('idle');
   const [optimizerProgress, setOptimizerProgress] = useState(0);
+  const [optimizerPhase, setOptimizerPhase] = useState<string | undefined>();
   const [optimizerResult, setOptimizerResult] = useState<OptimizedRouteResult | null>(null);
   const [optimizerError, setOptimizerError] = useState<string | null>(null);
   const [applyLineRequest, setApplyLineRequest] = useState<{ coords: { lat: number; lng: number }[]; version: number } | null>(null);
   const optimizeAbortRef = useRef<AbortController | null>(null);
   const applyVersionRef = useRef(0);
+  // WP2 — streamed scan visualization: grid outlines build out, then colour
+  // in as each cell is sampled, then the live Dijkstra frontier's current
+  // best-guess path. Keyed by cell centre so repeated 'grid'/'cells' events
+  // (one wide pass per leg, all drawing from the same shared grid) merge
+  // into one set rather than re-adding duplicates.
+  const [scanCells, setScanCells] = useState<{ polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }[]>([]);
+  const [scanBestPath, setScanBestPath] = useState<{ lat: number; lng: number }[]>([]);
+  const scanCellsMapRef = useRef(new Map<string, { polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }>());
+  // WP5 auto-run: applying an optimized route replaces the drawn line, which
+  // fires the same onLineChange path that triggers auto-optimize — without
+  // this guard, apply -> auto-optimize -> apply would loop. Set right before
+  // requesting the apply, cleared once the resulting line-change has been
+  // seen (handleLineCoordsChange runs synchronously in the same tick as the
+  // map's onLineChange, so this window is exactly one line-change).
+  const suppressAutoOptimizeRef = useRef(false);
+  const autoOptimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const chainageIndex = useMemo(
     () => (lineCoords && lineCoords.length >= 2 ? buildChainageIndex(lineCoords) : null),
@@ -113,6 +131,10 @@ const App: React.FC = () => {
     setOptimizerResult(null);
     setOptimizerError(null);
     setOptimizerProgress(0);
+    setOptimizerPhase(undefined);
+    scanCellsMapRef.current.clear();
+    setScanCells([]);
+    setScanBestPath([]);
   }, []);
 
   const handleOptimize = useCallback(async () => {
@@ -122,12 +144,42 @@ const App: React.FC = () => {
     optimizeAbortRef.current = controller;
     setOptimizerStatus('running');
     setOptimizerProgress(0);
+    setOptimizerPhase('grid');
     setOptimizerError(null);
     setOptimizerResult(null);
+    scanCellsMapRef.current.clear();
+    setScanCells([]);
+    setScanBestPath([]);
     try {
       const result = await optimizeRoute(lineCoords, {
         signal: controller.signal,
-        onProgress: (f) => setOptimizerProgress(f),
+        onProgress: (f, phase) => {
+          setOptimizerProgress(f);
+          if (phase) setOptimizerPhase(phase);
+        },
+        onScanEvent: (event) => {
+          if (event.phase === 'grid' && event.data?.cells) {
+            for (const c of event.data.cells) {
+              const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
+              if (!scanCellsMapRef.current.has(key)) {
+                scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: 0, revealed: false });
+              }
+            }
+            setScanCells(Array.from(scanCellsMapRef.current.values()));
+          } else if (event.phase === 'cells' && event.data?.cells) {
+            for (const c of event.data.cells) {
+              const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
+              scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: c.costNormalized, revealed: true });
+            }
+            setScanCells(Array.from(scanCellsMapRef.current.values()));
+          } else if (event.phase === 'search' && event.data?.bestPath) {
+            setScanBestPath(event.data.bestPath);
+          } else if (event.phase === 'done') {
+            scanCellsMapRef.current.clear();
+            setScanCells([]);
+            setScanBestPath([]);
+          }
+        },
       });
       if (controller.signal.aborted) return;
       if (!result) {
@@ -147,6 +199,7 @@ const App: React.FC = () => {
 
   const handleApplyOptimized = useCallback(() => {
     if (!optimizerResult) return;
+    suppressAutoOptimizeRef.current = true;
     applyVersionRef.current += 1;
     setApplyLineRequest({ coords: optimizerResult.coords, version: applyVersionRef.current });
     // The map will emit onLineChange for the new geometry, which resets the
@@ -159,6 +212,74 @@ const App: React.FC = () => {
     setOptimizerResult(null);
     setOptimizerError(null);
     setOptimizerProgress(0);
+    setOptimizerPhase(undefined);
+    scanCellsMapRef.current.clear();
+    setScanCells([]);
+    setScanBestPath([]);
+  }, []);
+
+  // WP5 — auto-run: once the drawn line is long enough to be worth a hex
+  // search, start one automatically a beat after the user stops drawing,
+  // rather than waiting for a manual tap. Skipped right after an apply (the
+  // suppress guard above) so applying a result can't re-trigger itself.
+  useEffect(() => {
+    if (autoOptimizeTimerRef.current) {
+      clearTimeout(autoOptimizeTimerRef.current);
+      autoOptimizeTimerRef.current = null;
+    }
+    if (suppressAutoOptimizeRef.current) {
+      suppressAutoOptimizeRef.current = false;
+      return;
+    }
+    if (!lineCoords || lineCoords.length < 2) return;
+    const length = buildChainageIndex(lineCoords).total;
+    if (length < 120) return;
+    autoOptimizeTimerRef.current = setTimeout(() => {
+      handleOptimize();
+    }, 800);
+    return () => {
+      if (autoOptimizeTimerRef.current) {
+        clearTimeout(autoOptimizeTimerRef.current);
+        autoOptimizeTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineCoords]);
+
+  // --- WP6: area recon — draw a box, get the terrain+vegetation heatmap ------
+  const [areaReconActive, setAreaReconActive] = useState(false);
+  const [areaReconStatus, setAreaReconStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [areaReconHeatmap, setAreaReconHeatmap] = useState<HexHeatmapCell[] | null>(null);
+  const [areaReconEstimated, setAreaReconEstimated] = useState(false);
+  const areaReconAbortRef = useRef<AbortController | null>(null);
+
+  const handleAreaReconBoxDrawn = useCallback(async (sw: { lat: number; lng: number }, ne: { lat: number; lng: number }) => {
+    areaReconAbortRef.current?.abort();
+    const controller = new AbortController();
+    areaReconAbortRef.current = controller;
+    setAreaReconStatus('running');
+    setAreaReconHeatmap(null);
+    try {
+      const result = await scanArea(sw, ne, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!result) {
+        setAreaReconStatus('error');
+        return;
+      }
+      setAreaReconHeatmap(result.heatmap);
+      setAreaReconEstimated(result.usedEstimatedData);
+      setAreaReconStatus('done');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      logger.error('Area recon scan failed', error);
+      setAreaReconStatus('error');
+    }
+  }, []);
+
+  const handleClearAreaRecon = useCallback(() => {
+    areaReconAbortRef.current?.abort();
+    setAreaReconStatus('idle');
+    setAreaReconHeatmap(null);
   }, []);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
@@ -628,6 +749,15 @@ const App: React.FC = () => {
             contextOverlays={contextOverlays}
             optimizerScanning={optimizerStatus === 'running'}
             optimizerHeatmap={optimizerStatus === 'done' && optimizerResult ? optimizerResult.heatmap : null}
+            optimizerProgress={optimizerProgress}
+            scanCells={optimizerStatus === 'running' ? scanCells : null}
+            scanBestPath={optimizerStatus === 'running' ? scanBestPath : null}
+            areaReconActive={areaReconActive}
+            onAreaReconActiveChange={setAreaReconActive}
+            onAreaReconBoxDrawn={handleAreaReconBoxDrawn}
+            areaReconHeatmap={areaReconStatus === 'done' ? areaReconHeatmap : null}
+            areaReconStatus={areaReconStatus}
+            onClearAreaRecon={handleClearAreaRecon}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -657,6 +787,7 @@ const App: React.FC = () => {
             onHoverChainage={handleHoverChainage}
             optimizerStatus={optimizerStatus}
             optimizerProgress={optimizerProgress}
+            optimizerPhase={optimizerPhase}
             optimizerResult={optimizerResult}
             optimizerError={optimizerError}
             onOptimize={handleOptimize}
