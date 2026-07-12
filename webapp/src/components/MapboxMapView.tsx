@@ -9,9 +9,33 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
 import { SearchControl } from './SearchControl';
+import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
+import type { ViewBounds } from '../utils/liveFeedsService';
+import { LiveFeedsControl } from './LiveFeedsControl';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
+
+/** Bounding box [[minLng,minLat],[maxLng,maxLat]] of all coordinates in a GeoJSON object. */
+const geojsonBounds = (geojson: any): [[number, number], [number, number]] | null => {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const visit = (coords: any) => {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === 'number') {
+      const [lng, lat] = coords;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    } else {
+      coords.forEach(visit);
+    }
+  };
+  const features = geojson?.type === 'FeatureCollection' ? geojson.features : [geojson];
+  for (const f of features ?? []) visit(f?.geometry?.coordinates);
+  if (!isFinite(minLng)) return null;
+  return [[minLng, minLat], [maxLng, maxLat]];
+};
 
 const DEFAULT_CENTER: [number, number] = [147.0, -32.0];
 const DEFAULT_ZOOM = 6;
@@ -40,6 +64,25 @@ interface MapboxMapViewProps {
   onLineChange?: (coords: { lat: number; lng: number }[] | null) => void;
   /** A plan line to restore on load (e.g. from a shared link). Drawn + analysed once. */
   initialLine?: { lat: number; lng: number }[] | null;
+  /** Coordinates of a line slice to highlight (insight "show on map" / segment locate). */
+  highlightCoords?: { lat: number; lng: number }[] | null;
+  /** Synced marker for the elevation-profile hover position. */
+  hoverPoint?: { lat: number; lng: number } | null;
+  /** Optimized-route preview coordinates (rendered as a dashed line until applied). */
+  optimizedPreview?: { lat: number; lng: number }[] | null;
+  /** When set (version bumps), replace the drawn line with these coords and re-analyse. */
+  applyLineRequest?: { coords: { lat: number; lng: number }[]; version: number } | null;
+  /** Imported reference overlays (fire perimeters, other lines) — non-editable context. */
+  contextOverlays?: { id: string; name: string; geojson: any }[];
+  /** True while the route optimizer is actively searching — drives the
+   *  corridor scanning sweep animation (skipped under reduced motion). */
+  optimizerScanning?: boolean;
+  /** Cost-normalised hex cells from the optimizer's widest search pass —
+   *  rendered as a smooth green→amber→red suitability heatmap once ready. */
+  optimizerHeatmap?: {
+    polygon: { lat: number; lng: number }[];
+    costNormalized: number;
+  }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -57,7 +100,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   initialUserLocation = null,
   selectedSearchLocation,
   onLineChange,
-  initialLine = null
+  initialLine = null,
+  highlightCoords = null,
+  hoverPoint = null,
+  optimizedPreview = null,
+  applyLineRequest = null,
+  contextOverlays = [],
+  optimizerScanning = false,
+  optimizerHeatmap = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -97,6 +147,27 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // work triggered when fitBounds and later easeTo/moveend both fire.
   const initialSettledSignalledRef = useRef(false);
   const [dropsVersion, setDropsVersion] = useState(0);
+  // Exposes the init-scoped line-change handler to prop-driven effects
+  // (optimized-route apply) so they can trigger the same analysis pipeline.
+  const handleLineChangeRef = useRef<((feature: any) => void) | null>(null);
+  const appliedLineVersionRef = useRef(0);
+  // Latest drawn line, kept outside React state so the scan-sweep animation
+  // (a rAF loop, not a render) can read the current envelope every frame.
+  const lastLineCoordsRef = useRef<{ lat: number; lng: number }[] | null>(null);
+  // WCAG 2.1 reduced-motion preference, checked once — the corridor scan
+  // sweep is pure decoration and is skipped entirely when the user has
+  // asked for less motion (the heatmap itself still appears, just without
+  // an animated fade).
+  const reducedMotionRef = useRef(false);
+  useEffect(() => {
+    try { reducedMotionRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* ignore */ }
+  }, []);
+
+  // Live context feeds (hotspots, fire boundaries, incidents) — the control
+  // panel owns fetching/refresh; this component just tracks the current map
+  // view (to drive the hotspots bbox query) and renders whatever it's given.
+  const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
+  const [liveFeedData, setLiveFeedData] = useState<LiveFeedMapData>({ hotspots: null, boundaries: null, incidents: null });
 
   // Initialize map relying solely on hosted style
   useEffect(() => {
@@ -130,6 +201,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
+
+    // Track the current view bounds for the live-feeds control (hotspots
+    // query needs a bbox). Updated on every pan/zoom and once at load.
+    const updateViewBounds = () => {
+      try {
+        const b = map.getBounds();
+        if (!b) return;
+        setViewBounds({ minLat: b.getSouth(), maxLat: b.getNorth(), minLng: b.getWest(), maxLng: b.getEast() });
+      } catch { /* map not ready */ }
+    };
+    map.on('moveend', updateViewBounds);
+    map.once('load', updateViewBounds);
     // If the parent prefetched the user's location, use it immediately to
     // reduce the time-to-move. Otherwise fall back to permission-based check.
     if (initialUserLocation && initialUserLocation.lat && initialUserLocation.lng) {
@@ -436,6 +519,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       // mapboxgl.LngLat isn't available as a static import when loaded dynamically,
       // so construct simple objects compatible with downstream utilities instead
       const latlngs = feature.geometry.coordinates.map((c: number[]) => ({ lat: c[1], lng: c[0] }));
+      lastLineCoordsRef.current = latlngs;
       const distance = calculateDistance(latlngs);
       setFireBreakDistance(distance);
       onDistanceChange(distance);
@@ -443,9 +527,11 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       await analyzeAndRender(latlngs);
       setDropsVersion(v => v + 1);
     };
+    handleLineChangeRef.current = handleLineChange;
     map.on('draw.create', (e: any) => handleLineChange(e.features[0]));
     map.on('draw.update', (e: any) => handleLineChange(e.features[0]));
     map.on('draw.delete', () => {
+      lastLineCoordsRef.current = null;
       setFireBreakDistance(null);
       onDistanceChange(null);
       if (map.getLayer('slope-segments')) map.removeLayer('slope-segments');
@@ -516,6 +602,335 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     });
   }, [selectedAircraftForPreview, aircraft, dropsVersion]);
 
+  // --- Prop-driven overlay layers (highlight / hover / optimized preview) ----
+
+  /** Upsert a GeoJSON source+layer for a simple line/point/polygon overlay; remove when geometry is null. */
+  const setOverlay = (
+    id: string,
+    geometry:
+      | { type: 'LineString'; coordinates: number[][] }
+      | { type: 'Point'; coordinates: number[] }
+      | { type: 'Polygon'; coordinates: number[][][] }
+      | null,
+    layer: any
+  ) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      try {
+        if (!geometry) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          if (map.getLayer(`${id}-casing`)) map.removeLayer(`${id}-casing`);
+          if (map.getSource(id)) map.removeSource(id);
+          return;
+        }
+        const data = { type: 'Feature' as const, properties: {}, geometry };
+        const existing = map.getSource(id);
+        if (existing) {
+          existing.setData(data);
+        } else {
+          map.addSource(id, { type: 'geojson', data } as any);
+          if (layer.casing) map.addLayer({ ...layer.casing, id: `${id}-casing`, source: id });
+          map.addLayer({ ...layer.main, id, source: id });
+        }
+      } catch (e) {
+        logger.warn(`Failed to update overlay ${id}`, e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  };
+
+  // Segment/insight highlight: bright casing + white core over the slice.
+  useEffect(() => {
+    const coords = highlightCoords && highlightCoords.length >= 2
+      ? highlightCoords.map(c => [c.lng, c.lat])
+      : null;
+    setOverlay('segment-highlight', coords ? { type: 'LineString', coordinates: coords } : null, {
+      casing: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 14, 'line-opacity': 0.55, 'line-blur': 2 } },
+      main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 3, 'line-opacity': 0.95 } }
+    });
+  }, [highlightCoords]);
+
+  // Elevation-profile hover marker.
+  useEffect(() => {
+    setOverlay('profile-hover-point', hoverPoint ? { type: 'Point', coordinates: [hoverPoint.lng, hoverPoint.lat] } : null, {
+      main: { type: 'circle', paint: { 'circle-radius': 7, 'circle-color': '#F6A609', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } }
+    });
+  }, [hoverPoint]);
+
+  // Optimized route preview: dashed amber line with dark casing.
+  useEffect(() => {
+    const coords = optimizedPreview && optimizedPreview.length >= 2
+      ? optimizedPreview.map(c => [c.lng, c.lat])
+      : null;
+    setOverlay('optimized-route-preview', coords ? { type: 'LineString', coordinates: coords } : null, {
+      casing: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#0C1220', 'line-width': 7, 'line-opacity': 0.6 } },
+      main: { type: 'line', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 4, 'line-dasharray': [1.6, 1.4], 'line-opacity': 0.95 } }
+    });
+  }, [optimizedPreview]);
+
+  // Corridor scanning sweep — theatre shown while the route optimizer is
+  // actively searching. A translucent band grows across the line's bounding
+  // envelope with a bright leading edge, visually hinting "the system is
+  // reading terrain and vegetation across this area" ahead of the real hex
+  // heatmap landing. Purely decorative and non-interactive; skipped outright
+  // under prefers-reduced-motion (the heatmap below still appears on
+  // completion, just without the animated build-up).
+  const scanAnimRef = useRef<number | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const stopScan = () => {
+      if (scanAnimRef.current != null) {
+        cancelAnimationFrame(scanAnimRef.current);
+        scanAnimRef.current = null;
+      }
+      setOverlay('scan-band', null, {});
+      setOverlay('scan-line', null, {});
+    };
+
+    if (!optimizerScanning) {
+      stopScan();
+      return;
+    }
+
+    const coords = lastLineCoordsRef.current;
+    if (!coords || coords.length < 2 || reducedMotionRef.current) {
+      // No envelope to sweep, or motion is disabled — skip the animation
+      // silently; the heatmap effect below still runs when data arrives.
+      return () => stopScan();
+    }
+
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const c of coords) {
+      if (c.lng < minLng) minLng = c.lng;
+      if (c.lng > maxLng) maxLng = c.lng;
+      if (c.lat < minLat) minLat = c.lat;
+      if (c.lat > maxLat) maxLat = c.lat;
+    }
+    const padLng = (maxLng - minLng) * 0.18 + 0.002;
+    const padLat = (maxLat - minLat) * 0.18 + 0.002;
+    minLng -= padLng; maxLng += padLng; minLat -= padLat; maxLat += padLat;
+    const axis: 'lng' | 'lat' = (maxLng - minLng) >= (maxLat - minLat) ? 'lng' : 'lat';
+
+    const durationMs = 2600;
+    const startTime = performance.now();
+    const frame = (now: number) => {
+      if (!mapRef.current) return;
+      const elapsed = (now - startTime) % (durationMs * 2);
+      const t = elapsed < durationMs ? elapsed / durationMs : 2 - elapsed / durationMs; // ping-pong 0→1→0
+
+      const bandCoords: number[][] = axis === 'lng'
+        ? [
+            [minLng, minLat],
+            [minLng + (maxLng - minLng) * t, minLat],
+            [minLng + (maxLng - minLng) * t, maxLat],
+            [minLng, maxLat],
+            [minLng, minLat],
+          ]
+        : [
+            [minLng, minLat],
+            [maxLng, minLat],
+            [maxLng, minLat + (maxLat - minLat) * t],
+            [minLng, minLat + (maxLat - minLat) * t],
+            [minLng, minLat],
+          ];
+      const linePos = axis === 'lng' ? minLng + (maxLng - minLng) * t : minLat + (maxLat - minLat) * t;
+      const lineCoords: number[][] = axis === 'lng'
+        ? [[linePos, minLat], [linePos, maxLat]]
+        : [[minLng, linePos], [maxLng, linePos]];
+
+      setOverlay('scan-band', { type: 'Polygon', coordinates: [bandCoords] }, {
+        main: { type: 'fill', paint: { 'fill-color': '#F6A609', 'fill-opacity': 0.05 } }
+      });
+      setOverlay('scan-line', { type: 'LineString', coordinates: lineCoords }, {
+        main: { type: 'line', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#F6A609', 'line-width': 2.5, 'line-blur': 3, 'line-opacity': 0.85 } }
+      });
+
+      scanAnimRef.current = requestAnimationFrame(frame);
+    };
+    scanAnimRef.current = requestAnimationFrame(frame);
+
+    return () => stopScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optimizerScanning]);
+
+  // Hex cost heatmap — the scan's result. Smooth green→amber→red gradient
+  // (a Mapbox `interpolate` expression, not discrete buckets) over every hex
+  // the widest search pass considered, so the crew sees exactly what the
+  // optimizer weighed up, not just the line it chose. Fades in on arrival;
+  // set instantly under reduced motion.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cells = optimizerHeatmap;
+
+    const remove = () => {
+      try {
+        if (map.getLayer('hex-heatmap-outline')) map.removeLayer('hex-heatmap-outline');
+        if (map.getLayer('hex-heatmap')) map.removeLayer('hex-heatmap');
+        if (map.getSource('hex-heatmap')) map.removeSource('hex-heatmap');
+      } catch (e) { /* style may already be gone */ }
+    };
+
+    if (!cells || cells.length === 0) {
+      remove();
+      return;
+    }
+
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: cells.map(c => ({
+        type: 'Feature' as const,
+        properties: { cost: c.costNormalized },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+
+    const apply = () => {
+      try {
+        const existing = map.getSource('hex-heatmap');
+        if (existing) {
+          existing.setData(data);
+          return;
+        }
+        map.addSource('hex-heatmap', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'hex-heatmap',
+          type: 'fill',
+          source: 'hex-heatmap',
+          paint: {
+            'fill-color': [
+              'interpolate', ['linear'], ['get', 'cost'],
+              0, '#1E9E62',
+              0.5, '#F6A609',
+              1, '#D8232A',
+            ],
+            'fill-opacity': reducedMotionRef.current ? 0.32 : 0,
+          },
+        });
+        map.addLayer({
+          id: 'hex-heatmap-outline',
+          type: 'line',
+          source: 'hex-heatmap',
+          paint: { 'line-color': 'rgba(255,255,255,0.10)', 'line-width': 0.5 },
+        });
+        if (!reducedMotionRef.current) {
+          map.setPaintProperty('hex-heatmap', 'fill-opacity-transition', { duration: 900 });
+          requestAnimationFrame(() => {
+            try { mapRef.current?.setPaintProperty('hex-heatmap', 'fill-opacity', 0.32); } catch { /* map gone */ }
+          });
+        }
+      } catch (e) {
+        logger.warn('Failed to render hex heatmap', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+
+    return () => remove();
+  }, [optimizerHeatmap]);
+
+  // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
+  // incidents. Data is fetched by LiveFeedsControl; this just syncs it onto
+  // the map whenever it changes.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    if (!map || !mapboxgl) return;
+    const apply = () => applyLiveFeedLayers(map, mapboxgl, liveFeedData);
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  }, [liveFeedData]);
+
+  // Imported reference overlays: polygons (fire perimeters) as translucent red
+  // fill + outline, lines as dashed slate. Sources are keyed by overlay id.
+  const renderedOverlayIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      try {
+        const wanted = new Set(contextOverlays.map(o => `ctx-${o.id}`));
+        // Remove overlays no longer wanted.
+        for (const key of Array.from(renderedOverlayIdsRef.current)) {
+          if (!wanted.has(key)) {
+            for (const suffix of ['-fill', '-line']) {
+              if (map.getLayer(`${key}${suffix}`)) map.removeLayer(`${key}${suffix}`);
+            }
+            if (map.getSource(key)) map.removeSource(key);
+            renderedOverlayIdsRef.current.delete(key);
+          }
+        }
+        // Add new overlays.
+        for (const overlay of contextOverlays) {
+          const key = `ctx-${overlay.id}`;
+          if (renderedOverlayIdsRef.current.has(key)) continue;
+          map.addSource(key, { type: 'geojson', data: overlay.geojson } as any);
+          map.addLayer({
+            id: `${key}-fill`,
+            type: 'fill',
+            source: key,
+            filter: ['==', ['geometry-type'], 'Polygon'],
+            paint: { 'fill-color': '#D8232A', 'fill-opacity': 0.18 }
+          });
+          map.addLayer({
+            id: `${key}-line`,
+            type: 'line',
+            source: key,
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#D8232A', 'line-width': 2.5, 'line-dasharray': [2, 1.5], 'line-opacity': 0.85 }
+          });
+          renderedOverlayIdsRef.current.add(key);
+          // Bring the newly imported overlay into view.
+          const bounds = geojsonBounds(overlay.geojson);
+          if (bounds) map.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 14 });
+        }
+      } catch (e) {
+        logger.warn('Failed to update context overlays', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  }, [contextOverlays]);
+
+  // Replace the drawn line when an optimized route is applied. Runs the same
+  // pipeline as a manual draw so all analyses re-run against the new geometry.
+  useEffect(() => {
+    if (!applyLineRequest || applyLineRequest.version === appliedLineVersionRef.current) return;
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    const handler = handleLineChangeRef.current;
+    if (!map || !draw || !handler || applyLineRequest.coords.length < 2) return;
+    appliedLineVersionRef.current = applyLineRequest.version;
+    try {
+      draw.deleteAll();
+      const feature = {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'LineString', coordinates: applyLineRequest.coords.map(p => [p.lng, p.lat]) }
+      };
+      draw.add(feature);
+      handler(feature);
+    } catch (e) {
+      logger.warn('Failed to apply optimized line', e);
+    }
+  }, [applyLineRequest]);
+
   // Analysis + rendering
   const analyzeAndRender = async (latlngs: any[]) => {
     setIsAnalyzing(true); onAnalyzingChange?.(true);
@@ -555,6 +970,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
           { padding: 80, duration: 0 }
         );
+        lastLineCoordsRef.current = initialLine;
         const distance = calculateDistance(initialLine);
         setFireBreakDistance(distance);
         onDistanceChange(distance);
@@ -661,6 +1077,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       {fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
       )}
+      <LiveFeedsControl viewBounds={viewBounds} onData={setLiveFeedData} />
     </div>
   );
 };
