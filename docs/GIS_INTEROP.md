@@ -1,6 +1,6 @@
 # GIS Interoperability & Live Context
 
-**Status:** §1 export pack and §4 file import are ✅ **built** (July 2026, PR #163: `webapp/src/utils/gisExport.ts`, `gisImport.ts`, `components/ExportImportControls.tsx`). §4 live situational feeds are 📋 **designed with endpoints confirmed** (national DEA Hotspots + Digital Atlas boundaries, tested 2026-07-11). Avenza GeoPDF and ArcGIS Online push remain 📋 designed. AFDRS fire-danger integration is a **separate upcoming task**.
+**Status:** §1 export pack and §4 file import are ✅ **built** (July 2026, PR #163: `webapp/src/utils/gisExport.ts`, `gisImport.ts`, `components/ExportImportControls.tsx`). §4 live situational feeds — national (DEA Hotspots, Digital Atlas boundaries) + jurisdictional incidents (NSW/VIC/SA/WA/ACT) — are ✅ **built** (2026-07-12: `liveFeedsService.ts`, `liveFeedLayers.ts`, `LiveFeedsControl.tsx`). QLD/TAS/NT incidents remain unavailable (no CORS-clean feed found); documented below for follow-up. Avenza GeoPDF and ArcGIS Online push remain 📋 designed. AFDRS fire-danger integration is **blocked on a sourcing decision** (the official rating is access-gated, not just unbuilt) — see the assessment in §4.
 **Owner doc for:** export formats, agency GIS integration (ArcGIS Online, FireMapper, Avenza), live data feeds in (AFDRS, hotspots, perimeters).
 
 **Principle:** meet crews where they already work. A plan that can't leave the app dies in the app.
@@ -33,21 +33,22 @@ Publish a plan as a **hosted feature layer** so it appears live in agency dashbo
 
 ## 4. Imports & live context feeds
 
-**File import is ✅ built** (`gisImport.ts` + `ExportImportControls.tsx`): GeoJSON/KML/KMZ/GPX → user chooses "use as plan line" (replaces the drawn line, full re-analysis) or "add as map overlay" (translucent red reference layer, auto-zoom). 50k-vertex cap; unreadable files fail visibly. Live feeds below are **designed with confirmed endpoints** (endpoint testing 2026-07-11); implementation is Step 3.
+**File import is ✅ built** (`gisImport.ts` + `ExportImportControls.tsx`): GeoJSON/KML/KMZ/GPX → user chooses "use as plan line" (replaces the drawn line, full re-analysis) or "add as map overlay" (translucent red reference layer, auto-zoom). 50k-vertex cap; unreadable files fail visibly.
 
-**National-first (mirrors the NVIS-first decision).** Two *official, single-contract national* feeds are the spine — **DEA Hotspots** (thermal detections) and the **Digital Atlas near-real-time bushfire boundaries** (extents/perimeters). Both are Geoscience Australia products, CC BY 4.0, and browser-CORS-clean, so the frontend can call them directly behind an env var exactly like NVIS. We do **not** build a per-state incident-feed hierarchy as the primary source. Per-jurisdiction *incident warning* feeds (alert levels) are a secondary, optional overlay — see below.
+**National-first (mirrors the NVIS-first decision), ✅ built 2026-07-12.** Two *official, single-contract national* feeds are the spine — **DEA Hotspots** (thermal detections) and the **Digital Atlas near-real-time bushfire boundaries** (extents/perimeters). Both are Geoscience Australia products, CC BY 4.0, and browser-CORS-clean, so the frontend calls them directly behind an env var exactly like NVIS (`liveFeedsService.ts`). We did **not** build a per-state incident-feed hierarchy as the primary source. Per-jurisdiction *incident/warning* feeds are a secondary overlay, symbolised with Australian Warning System–style triangle icons (`liveFeedLayers.ts`) — built for the CORS-clean jurisdictions (NSW, VIC, SA, WA, ACT); QLD/TAS/NT are documented but not wired in (see the per-jurisdiction table below). `LiveFeedsControl.tsx` is the toggle/status panel (per-source ✓/✗, "as of" timestamps, attribution, explicit "no feed yet" list for uncovered states).
 
 | Feed | Use | Source | Coverage | Status |
 |------|-----|--------|----------|--------|
 | Fire perimeters / existing lines | Draw context; import a line as a plan | KML/KMZ/GeoJSON/GPX file import — covers FireMapper exports | — | ✅ built |
-| **Hotspots** | Situational-awareness layer: recent satellite thermal detections | DEA Sentinel Hotspots WFS (Geoscience Australia) | **National** | 📋 endpoint confirmed |
-| **NRT bushfire boundaries** | Situational-awareness layer: current fire & prescribed-burn extents | Digital Atlas of Australia — NBIC near-real-time boundaries (Geoscience Australia) | **National** (excl. NT) | 📋 endpoint confirmed |
-| Incidents / warnings | Optional overlay: agency alert level per incident (AWS vocabulary) | Per-jurisdiction feeds (NSW RFS, VIC, SA CFS, …) — no single national feed | Jurisdictional aggregate | 📋 designed, phased |
-| **AFDRS fire danger** | OFFICIAL rating + fire behaviour index for the plan's district/date | AFDRS/BOM published feeds. **We display the official product — we do not rebuild spread prediction** (Spark/Phoenix exist) | National | 📋 **separate next task** |
+| **Hotspots** | Situational-awareness layer: recent satellite thermal detections | DEA Sentinel Hotspots WFS (Geoscience Australia) | **National** | ✅ built |
+| **NRT bushfire boundaries** | Situational-awareness layer: current fire & prescribed-burn extents | Digital Atlas of Australia — NBIC near-real-time boundaries (Geoscience Australia) | **National** (excl. NT) | ✅ built |
+| Incidents / warnings | AWS-symbolised overlay: agency alert level per incident | Per-jurisdiction feeds (NSW RFS, VIC EMV, SA CFS, WA DFES, ACT ESA) — no single national feed | 5/8 jurisdictions | ✅ built |
+| Incidents / warnings — QLD, TAS, NT | Same, once a usable feed is found | See per-jurisdiction table below | 3/8 jurisdictions | 📋 not covered — endpoint drifted/blocked/ToS-restricted |
+| **AFDRS fire danger** | OFFICIAL rating + fire behaviour index for the plan's district/date | AFDRS/BOM published feeds. **We display the official product — we do not rebuild spread prediction** (Spark/Phoenix exist) | National | 📋 **separate next task — see assessment below** |
 
-All feeds: attribution displayed, timestamps shown ("as of …"), hard fail-visible when stale/unavailable — a missing value is shown as missing, never defaulted. These are **advisory situational layers, not safety-of-life products**; the Digital Atlas metadata says so explicitly and we surface that.
+All feeds: attribution displayed, timestamps shown ("as of …"), hard fail-visible when stale/unavailable — a missing value is shown as missing, never defaulted. These are **advisory situational layers, not safety-of-life products**; the Digital Atlas metadata says so explicitly and we surface that in the panel caveat.
 
-> **AFDRS is deliberately out of this step.** The fire-danger rating + behaviour-index integration (and the break-adequacy heuristics keyed to it) is its own upcoming task; only the two national situational feeds + the incident-overlay design are covered here.
+> **AFDRS is deliberately out of this step**, per explicit direction: don't rebuild fire-behaviour prediction, AFDRS already owns that. See the standalone assessment at the end of this section for what a "display the official product" integration actually requires, and the one open question that needs a decision before building it.
 
 ### Confirmed endpoint structures (endpoint testing 2026-07-11)
 
@@ -77,30 +78,60 @@ Verified with live queries from a CI-class network. Field names and shapes below
   - Provenance is per-feature (`agency`, `state`, `capt_date`, `capt_method`) — surface it; a boundary captured days ago must show its `capt_date`.
   - Scientific product, **not for safety-of-life** — display that caveat.
 
-#### Incidents / warnings (jurisdictional — no national feed)
+#### Incidents / warnings (jurisdictional — no national feed) — ✅ 5/8 built
 
-There is **no single national incidents/warnings GeoJSON**. The national layer is the **Australian Warning System (AWS)** — a *shared vocabulary* (Advice / Watch and Act / Emergency Warning + standard icons), **not a feed**. Each agency publishes its own incident feed, in varying formats and with varying CORS. Confirmed on 2026-07-11:
+There is **no single national incidents/warnings GeoJSON**. The national layer is the **Australian Warning System (AWS)** — a *shared vocabulary* (Advice / Watch and Act / Emergency Warning + standard icons), **not a feed**. Each agency publishes its own incident feed, in varying formats and with varying CORS. Confirmed 2026-07-11, re-verified 2026-07-12 (WA's status corrected — a working CORS-clean API exists, superseding the earlier "needs proxy" note):
 
 | Jurisdiction | Feed | Format | CORS | Status |
 |---|---|---|---|---|
-| NSW (RFS) | `rfs.nsw.gov.au/feeds/majorIncidents.json` | GeoJSON | `*` | ✅ reachable |
-| VIC (EMV) | `emergency.vic.gov.au/public/osom-geojson.json` | GeoJSON | `*` | ✅ reachable |
-| SA (CFS) | `data.eso.sa.gov.au/prod/cfs/criimson/cfs_current_incidents.json` | JSON | `*` | ✅ reachable |
-| QLD (QFD) | moved to `fire.qld.gov.au` (RSS / CAP-AU) | RSS/CAP | — | endpoint drifted |
-| WA (DFES) | Emergency WA (`emergency.wa.gov.au`) | JSON/other | none | needs proxy |
-| TAS (TFS) | TasALERT (`alert.tas.gov.au`) | — | none | needs proxy |
-| ACT (ESA) | community GeoJSON mirror (`beyondtracks/act-esa-incidents-geojson`) | GeoJSON | — | mirror |
-| NT (PFES) | NT fire incident map | — | — | limited |
+| NSW (RFS) | `rfs.nsw.gov.au/feeds/majorIncidents.json` | GeoJSON | `*` | ✅ built |
+| VIC (EMV) | `emergency.vic.gov.au/public/osom-geojson.json` (gzip-compressed response) | GeoJSON | `*` | ✅ built |
+| SA (CFS) | `data.eso.sa.gov.au/prod/cfs/criimson/cfs_current_incidents.json` | JSON array | `*` | ✅ built |
+| WA (DFES) | `api.emergency.wa.gov.au/v1/incidents` + `/v1/warnings` | JSON | `*` | ✅ built |
+| ACT (ESA) | `esa.act.gov.au/feeds/currentincidents.xml` | GeoRSS | `*` | ✅ built |
+| QLD (QFD) | S3-hosted `publiccontent-gis-psba-qld-gov-au.s3.amazonaws.com/.../bushfireAlert.json` reachable, CORS `*`, but coordinates are **EPSG:3857** (Web Mercator), not WGS84 — needs a projection step our other parsers don't | GeoJSON (EPSG:3857) | `*` | 📋 not covered — reprojection needed, see below |
+| TAS (TFS) | No working public endpoint found (`alert.tas.gov.au` 404s on guessed paths, `fire.tas.gov.au` 403s) | — | — | 📋 not covered — no reachable endpoint found |
+| NT (PFES) | `pfes.nt.gov.au/incidentmap/json/warnings.json` reachable, CORS `*`, but is **BOM fire-danger-rating area warnings, not incident points** (no lat/lng per record — `area_code`/`area_name` only) and its own `note` field says *"do not use, scrape or re-publish this file"* | JSON (non-standard, ToS-restricted) | `*` | 📋 not covered — wrong data shape + explicit no-republish notice |
 
-- **NSW RFS shape (confirmed):** GeoJSON `FeatureCollection`; geometries are `Point` **or** `GeometryCollection` (point + perimeter polygon). Properties: `title`, `category` (e.g. `"Planned Burn"`), `pubDate` (`dd/mm/yyyy h:mm:ss AM`), `guid`, `link`, plus a **`description` HTML blob** carrying the structured fields (`ALERT LEVEL`, `LOCATION`, `COUNCIL AREA`, `STATUS`, `TYPE`, `FIRE`, `SIZE`, `RESPONSIBLE AGENCY`) — must be parsed out of the HTML.
-- **Design conclusion:** treat incident/warning points as a **secondary optional overlay**, phased. Start with the CORS-clean GeoJSON feeds (NSW, VIC, SA) callable direct; route the CORS-none / non-GeoJSON jurisdictions (QLD, WA, TAS, ACT, NT) through a **thin backend aggregator** (`GET /api/incidents?bbox=`) that normalises each into a common shape keyed to **AWS alert levels** and caches briefly. The two national feeds above already deliver situational awareness for v1 **without** this layer — it is an uplift, not a blocker.
+- **NSW RFS shape:** GeoJSON `FeatureCollection`; geometries are `Point` **or** `GeometryCollection` (point + perimeter polygon). Properties: `title`, `category` (e.g. `"Planned Burn"`), `pubDate` (`dd/mm/yyyy h:mm:ss AM`), `guid`, `link`, plus a **`description` HTML blob** carrying the structured fields (`ALERT LEVEL`, `LOCATION`, `COUNCIL AREA`, `STATUS`, `TYPE`, `FIRE`, `SIZE`, `RESPONSIBLE AGENCY`) — parsed out of the HTML with a regex (no HTML is ever rendered as HTML — see security note below).
+- **VIC EMV shape:** GeoJSON; the response is **gzip-compressed regardless of `Accept-Encoding`** — a plain `fetch().json()` handles this transparently in a browser, but a raw `curl` needs `--compressed`. `feedType` splits into `incident` / `warning` / `burn-area` (skip `burn-area` — it duplicates the national NRT boundaries layer). Properties: `sourceOrg`, `category1`/`category2`, `status`, `name`, `sizeFmt`, `created`/`updated` (ISO), `action`. Warning level lives in `category1` for `feedType:"warning"` rows (values seen: `"Advice"`).
+- **SA CFS shape:** plain JSON **array** (not GeoJSON) of incidents; `Location` is a `"lat,lng"` string that must be split and parsed (empty string for some records — skip). `Date`/`Time` are separate DD/MM/YYYY + HH:mm fields. `Level` is CFS's internal response level, not an AWS warning level — mapped to plain `'incident'` rather than guessed at an AWS category.
+- **WA DFES shape:** two endpoints — `/v1/incidents` (`incidents[]`, `incident-status`, `incident-type`) and `/v1/warnings` (`warnings[]`, AWS level encoded in `entitySubType`, e.g. `"warnings_bushfire--advice"` → `advice`). Coordinates are usually `location.{latitude,longitude}`, with a `geo-source.features[0].geometry` fallback for some records. Both fetched in parallel per refresh; one endpoint failing doesn't block the other (`Promise.allSettled`).
+- **ACT ESA shape:** GeoRSS (`<item><georss:point>lat lng</georss:point>...`), not GeoJSON — parsed with the existing bounded, namespace-blind `xmlScan.ts` (never `DOMParser`, per the CodeQL fix in `gisImport.ts`; untrusted feed XML gets the same treatment as untrusted import files). Structured fields live in a `description` text blob (`Status: …`, not HTML-escaped like NSW's).
+- **Security note:** every jurisdiction's free-text fields (titles, descriptions, statuses) are rendered into map popups using `textContent`/`createTextNode` only (`liveFeedLayers.ts`) — never `innerHTML` — since these are untrusted third-party strings.
+- **Why QLD/TAS/NT are out:** each has a *specific, documented* blocker rather than "didn't get to it" — QLD needs an EPSG:3857→4326 reprojection the other five parsers don't (small effort, but a different code path — do it as its own follow-up rather than bolting a one-off transform into the shared parser); TAS has no reachable public endpoint from two guessed URL families (a documented `alert.tas.gov.au` API may exist behind auth or an undocumented path — needs a human to find TFS's actual public feed, if one exists); NT's only reachable JSON is danger-rating-area warnings (not incidents) carrying an explicit "do not scrape or re-publish" notice — respecting that, not routing around it.
+- **Design outcome:** 5 of 8 jurisdictions built directly from the frontend (all are CORS `*`, so no backend aggregator was needed after all — the originally-designed `GET /api/incidents?bbox=` proxy turned out to be unnecessary for every reachable feed). `LiveFeedsControl.tsx` lists NSW/VIC/SA/WA/ACT with live status and explicitly names QLD/TAS/NT as **not covered** in its panel, so a quiet gap in one part of the country is never mistaken for "no incidents there."
+
+### AFDRS fire-danger assessment (2026-07-12) — **stopped, needs a sourcing decision**
+
+Explicit brief for this item was: display the *official* AFDRS rating/behaviour-index product only, no spread-model rebuild — and if that official product turns out to need "a full prediction API," stop and flag it rather than build a workaround. That is exactly what happened, one step earlier than expected: **the official rating itself isn't openly available, before spread prediction even enters the picture.**
+
+What was checked, live, the same way the other feeds in this section were verified:
+
+1. **The public-facing AFDRS site (`afdrs.com.au`) is a rendered webpage only.** Fetched and read directly — no mention of an API, developer docs, data feed, or web service anywhere on it; it points the public to TV/radio/apps/state-agency websites, not to machine-readable data.
+2. **BOM does publish machine-readable FDR products** — 1-day, 4-day, 7-day Fire Danger Rating, and the Forest Fire Danger Index (ADFD) — listed in BOM's data catalogue. But every one of them is **gated behind BOM's Registered User program** (`reg.bom.gov.au`), described as a **cost-recovered service** typically granted to **Emergency Management agencies** — not a self-serve public API/key. This is a licensing/access-control barrier, not a documentation gap.
+3. **Checked whether any state agency republishes FDR as open data**, the way NSW/VIC/SA/WA/ACT do for incidents (which all turned out CORS-clean with no agreement needed). Nothing found: NSW's public `sixmaps/RFS` ArcGIS service (the one plausible lead a search surfaced) turned out to be topographic/cadastral layers, not fire-danger data, when queried live. No other state exposed an equivalent.
+4. **This is a materially different situation from hotspots/boundaries/incidents above.** Those are genuinely open data (CC BY, `access: Open`, no registration) that just needed discovering and testing. AFDRS's official rating product is licensed/access-controlled at the source — more endpoint-hunting won't change that.
+
+**Nothing was built for Step 3a.** No scraping, no reverse-engineering an internal Fire Danger Viewer API, no rebuilding a rating model from raw weather+fuel inputs — all of that would either violate the access control this gate represents or contradict "display the official product, don't rebuild it." Per your instruction, this is the point to stop and hand back the decision, not push through with a workaround.
+
+**Options, not a recommendation you're locked into:**
+
+| Option | What it takes | Result |
+|---|---|---|
+| **(a) Apply for BOM Registered User access** | An org-level application to BOM (likely a cost-recovery agreement; eligibility criteria unconfirmed for a non-agency applicant) | Turns this into a normal "display the official product" build, same shape as hotspots/boundaries above |
+| **(b) Deeper per-state search** | This session did one targeted pass per state, not exhaustive — a state RFS/CFA/QFES/etc. portal could still have an open FDR layer that didn't surface via search | Possible free path if one exists; unconfirmed |
+| **(c) Third-party redistributor** | Find a commercial or partner feed that already holds BOM registered-user access and redistributes it | Needs its own licence/cost check; not investigated |
+| **(d) Descope to heuristics without a live rating** | Not recommended — contradicts the "display the official product" brief; would mean inventing a substitute rating, the exact thing this task exists to avoid |
+
+Recommend (a) as the standard path — it's how other AFDRS-consuming apps get this data — but who applies, under what name, and what it costs is an organisational call, not something resolvable from inside this session.
 
 ## 5. Sequencing
 1. Export pack (GeoJSON/KML/KMZ/SHP) — highest reach per effort, all client-side. ✅
 2. File import (perimeters/lines). ✅
-3. **National situational layers** — DEA Hotspots + Digital Atlas NRT bushfire boundaries, direct-from-frontend (env-var URLs, CORS-clean), attribution + "as of" + advisory caveat. *(this step)*
-4. Incident/warning overlay — CORS-clean jurisdictions (NSW/VIC/SA) direct; backend aggregator for the rest, normalised to AWS levels. *(uplift, after 3)*
-5. AFDRS fire-danger rating + behaviour index. **Separate task** — display official product only.
+3. **National situational layers** — DEA Hotspots + Digital Atlas NRT bushfire boundaries, direct-from-frontend (env-var URLs, CORS-clean), attribution + "as of" + advisory caveat. ✅
+4. Incident/warning overlay, AWS-symbolised — NSW/VIC/SA/WA/ACT direct from the frontend (all turned out CORS-clean; no backend aggregator needed). ✅ (5/8; QLD/TAS/NT tracked as follow-ups with specific blockers, see above)
+5. AFDRS fire-danger rating + behaviour index. **Blocked on a sourcing decision, not effort** — the official rating is access-gated (BOM Registered User program), not just undocumented; see the assessment above. Nothing to build until that's resolved.
 6. Avenza GeoPDF spike → ship or fall back to KMZ guidance.
 7. ArcGIS Online push (OAuth + REST).
 

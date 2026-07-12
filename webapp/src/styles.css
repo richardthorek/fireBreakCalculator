@@ -2507,6 +2507,128 @@ button:focus {
   display: inline-block;
 }
 
+.live-feeds-control {
+  position: absolute;
+  top: 120px;
+  right: 20px;
+  z-index: 980;
+  font-size: 13px;
+}
+
+.live-feeds-toggle-btn {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+.live-feeds-control.open .live-feeds-toggle-btn {
+  border-color: #F6A609;
+}
+
+.live-feeds-panel {
+  margin-top: 8px;
+  background: rgba(10, 14, 20, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 12px;
+  width: 280px;
+  max-width: calc(100vw - 40px);
+  max-height: 60vh;
+  overflow-y: auto;
+  color: #e8ecf1;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.live-feeds-caveat {
+  font-size: 11px;
+  color: #f5a623;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.livefeed-row {
+  margin-bottom: 12px;
+}
+
+.livefeed-row:last-child {
+  margin-bottom: 0;
+}
+
+.livefeed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.livefeed-toggle input {
+  cursor: pointer;
+}
+
+.livefeed-spinner {
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.livefeed-detail {
+  margin-top: 4px;
+  margin-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  color: #b8c2cf;
+}
+
+.livefeed-error {
+  margin-top: 4px;
+  margin-left: 22px;
+  font-size: 11.5px;
+  color: #ff8a80;
+}
+
+.livefeed-attr {
+  font-size: 10.5px;
+  color: #7d8a99;
+  line-height: 1.3;
+}
+
+.livefeed-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.livefeed-sources .src-ok {
+  color: #6fd88a;
+}
+
+.livefeed-sources .src-fail {
+  color: #ff8a80;
+}
+
+.livefeed-popup {
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+.livefeed-popup div {
+  margin-bottom: 2px;
+}
+
 .aircraft-drop-marker {
   width: 12px;
   height: 12px;
