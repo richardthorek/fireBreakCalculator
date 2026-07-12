@@ -14,6 +14,7 @@
     "fflate": "^0.8.3",
     "lucide-react": "^1.24.0",
     "mapbox-gl": "^3.18.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "utm-latlng": "^1.0.8"

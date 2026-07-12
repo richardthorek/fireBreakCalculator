@@ -192,5 +192,6 @@ export async function buildSmeacsPdf(
 
   // Convert to Blob and return
   const pdfBytes = await doc.save();
-  return new Blob([pdfBytes], { type: 'application/pdf' });
+  // Uint8Array-backed Blob; cast keeps TS happy across lib versions.
+  return new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
 }
