@@ -10,6 +10,19 @@
  *
  * OSM completeness varies in remote areas; consumers must label reused trails
  * as "mapped trail — verify trafficability" (see docs/ROUTE_INTELLIGENCE.md).
+ *
+ * Resilience: the public `overpass-api.de` instance enforces a strict 2
+ * concurrent-slot-per-IP quota (`GET /api/status`) and is intermittently
+ * flaky under load (observed transient `406`s with no rate-limit signal —
+ * a known quirk of its multi-backend load balancer). A single 429/406/5xx
+ * used to permanently sink that leg's trail lookup for the whole optimize
+ * run. We now fail over through a short list of public mirrors and remember
+ * whichever one last worked so subsequent legs in the same run skip
+ * straight past a struggling primary instead of re-discovering the same
+ * rate limit on every leg (confirmed live 2026-07-12: `maps.mail.ru`
+ * returns byte-identical results to the primary and is a valid fallback;
+ * `overpass.kumi.systems` is the community-standard fallback but only
+ * resolves over IPv6 — kept in the list for browsers with IPv6 egress).
  */
 
 import { LatLng } from './chainage';
@@ -28,8 +41,24 @@ export interface InfrastructureData {
   available: boolean;
 }
 
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-const FETCH_TIMEOUT_MS = 15000;
+const env = (import.meta as any).env ?? {};
+
+/** Endpoints tried in order; a working one is remembered across calls this
+ *  session so later legs don't re-pay the cost of a rate-limited primary. */
+const OVERPASS_ENDPOINTS: string[] = env.VITE_OVERPASS_URLS
+  ? String(env.VITE_OVERPASS_URLS).split(',').map((s: string) => s.trim()).filter(Boolean)
+  : [
+      'https://overpass-api.de/api/interpreter',
+      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter',
+    ];
+
+/** Per-attempt timeout — deliberately shorter than the old single-endpoint
+ *  15s so a stuck/overloaded mirror doesn't eat the whole query budget. */
+const FETCH_TIMEOUT_MS = 10000;
+
+/** Index of the endpoint that last succeeded; tried first on the next call. */
+let preferredEndpointIndex = 0;
 
 /** Highway classes that represent reusable broken ground for a fire break. */
 const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential';
@@ -40,9 +69,36 @@ const bboxCache = new Map<string, InfrastructureData>();
 const bboxKey = (s: number, w: number, n: number, e: number) =>
   [s, w, n, e].map(v => v.toFixed(3)).join(',');
 
+/** One attempt against a single Overpass endpoint. Throws on any failure
+ *  (non-2xx status, network error, timeout) — never a silent empty result,
+ *  so the caller can distinguish "no trails here" from "couldn't ask". */
+async function queryEndpoint(url: string, query: string, signal?: AbortSignal): Promise<any> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const onOuterAbort = () => controller.abort();
+  signal?.addEventListener('abort', onOuterAbort);
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`Overpass HTTP ${resp.status} from ${new URL(url).host}`);
+    return await resp.json();
+  } finally {
+    window.clearTimeout(timer);
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
+}
+
 /**
  * Fetch reusable trails/roads within a bounding box (south, west, north, east).
- * Returns `{ available: false }` on any failure — never throws.
+ * Tries each configured Overpass endpoint in turn (starting from whichever
+ * last succeeded), moving on immediately on a transient failure — a
+ * rate-limited or flaky mirror is not worth retrying locally, it just wastes
+ * the query budget for this leg. Returns `{ available: false }` only after
+ * every endpoint has failed; never throws.
  */
 export async function fetchCorridorInfrastructure(
   south: number,
@@ -57,43 +113,39 @@ export async function fetchCorridorInfrastructure(
 
   const query = `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${south},${west},${north},${east});out geom;`;
 
-  try {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const onOuterAbort = () => controller.abort();
-    signal?.addEventListener('abort', onOuterAbort);
-    let json: any;
+  const order = [
+    ...OVERPASS_ENDPOINTS.slice(preferredEndpointIndex),
+    ...OVERPASS_ENDPOINTS.slice(0, preferredEndpointIndex),
+  ];
+
+  let lastError: unknown;
+  for (const url of order) {
+    if (signal?.aborted) break;
     try {
-      const resp = await fetch(OVERPASS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      if (!resp.ok) throw new Error(`Overpass HTTP ${resp.status}`);
-      json = await resp.json();
-    } finally {
-      window.clearTimeout(timer);
-      signal?.removeEventListener('abort', onOuterAbort);
+      const json = await queryEndpoint(url, query, signal);
+      const trails: InfrastructureTrail[] = (json?.elements ?? [])
+        .filter((el: any) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2)
+        .map((el: any) => ({
+          name: el.tags?.name,
+          kind: el.tags?.highway ?? 'track',
+          coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+        }));
+
+      const data: InfrastructureData = { trails, available: true };
+      bboxCache.set(key, data);
+      preferredEndpointIndex = OVERPASS_ENDPOINTS.indexOf(url);
+      logger.debug(`Overpass corridor query via ${new URL(url).host}: ${trails.length} reusable ways`);
+      return data;
+    } catch (e) {
+      lastError = e;
+      logger.warn(`Overpass endpoint failed (${new URL(url).host}), trying next`, e);
     }
-
-    const trails: InfrastructureTrail[] = (json?.elements ?? [])
-      .filter((el: any) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2)
-      .map((el: any) => ({
-        name: el.tags?.name,
-        kind: el.tags?.highway ?? 'track',
-        coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
-      }));
-
-    const data: InfrastructureData = { trails, available: true };
-    bboxCache.set(key, data);
-    logger.debug(`Overpass corridor query: ${trails.length} reusable ways`);
-    return data;
-  } catch (e) {
-    // Do NOT cache failures — a later attempt may succeed.
-    logger.warn('Overpass infrastructure query failed; optimizing on terrain/fuel only', e);
-    return { trails: [], available: false };
   }
+
+  // Do NOT cache failures — a later attempt (different endpoint order, or
+  // the primary's quota having refreshed) may succeed.
+  logger.warn('All Overpass endpoints failed; optimizing on terrain/fuel only', lastError);
+  return { trails: [], available: false };
 }
 
 /**

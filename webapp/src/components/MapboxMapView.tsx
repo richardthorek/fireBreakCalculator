@@ -9,6 +9,9 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
 import { SearchControl } from './SearchControl';
+import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
+import type { ViewBounds } from '../utils/liveFeedsService';
+import { LiveFeedsControl } from './LiveFeedsControl';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -160,6 +163,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     try { reducedMotionRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* ignore */ }
   }, []);
 
+  // Live context feeds (hotspots, fire boundaries, incidents) — the control
+  // panel owns fetching/refresh; this component just tracks the current map
+  // view (to drive the hotspots bbox query) and renders whatever it's given.
+  const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
+  const [liveFeedData, setLiveFeedData] = useState<LiveFeedMapData>({ hotspots: null, boundaries: null, incidents: null });
+
   // Initialize map relying solely on hosted style
   useEffect(() => {
     // mark effect body as async by creating and invoking an async function
@@ -192,6 +201,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
+
+    // Track the current view bounds for the live-feeds control (hotspots
+    // query needs a bbox). Updated on every pan/zoom and once at load.
+    const updateViewBounds = () => {
+      try {
+        const b = map.getBounds();
+        if (!b) return;
+        setViewBounds({ minLat: b.getSouth(), maxLat: b.getNorth(), minLng: b.getWest(), maxLng: b.getEast() });
+      } catch { /* map not ready */ }
+    };
+    map.on('moveend', updateViewBounds);
+    map.once('load', updateViewBounds);
     // If the parent prefetched the user's location, use it immediately to
     // reduce the time-to-move. Otherwise fall back to permission-based check.
     if (initialUserLocation && initialUserLocation.lat && initialUserLocation.lng) {
@@ -818,6 +839,21 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     return () => remove();
   }, [optimizerHeatmap]);
 
+  // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
+  // incidents. Data is fetched by LiveFeedsControl; this just syncs it onto
+  // the map whenever it changes.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    if (!map || !mapboxgl) return;
+    const apply = () => applyLiveFeedLayers(map, mapboxgl, liveFeedData);
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+  }, [liveFeedData]);
+
   // Imported reference overlays: polygons (fire perimeters) as translucent red
   // fill + outline, lines as dashed slate. Sources are keyed by overlay id.
   const renderedOverlayIdsRef = useRef<Set<string>>(new Set());
@@ -1041,6 +1077,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       {fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
       )}
+      <LiveFeedsControl viewBounds={viewBounds} onData={setLiveFeedData} />
     </div>
   );
 };
