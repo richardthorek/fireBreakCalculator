@@ -104,6 +104,27 @@ export const DOCTRINE_CHUNKS: DoctrineChunk[] = [
     text: 'Any estimated, fallback, or mock value in this application must stay flagged end to end (usedMockElevation, usedFallbackData, per-segment estimated) so results can be marked as indicative rather than authoritative. This is a safety property: fabricated data must never present as real analysis.',
     tags: ['honesty', 'estimated', 'fallback', 'confidence', 'data'],
   },
+  {
+    id: 'rfs-plant-protective-structures',
+    title: 'Heavy plant protective structures for firefighting',
+    source: 'NSW RFS Operational Procedure Guide — Heavy Plant, AS 2294/ISO 3471, ISO 3449',
+    text: 'Heavy plant used for fire work must be fitted with Roll Over Protection (ROPS — AS 2294/ISO 3471) and Falling Object Protection (FOPS — ISO 3449), with operator seatbelts worn at all times. Modern earth-moving machinery on fire incidents must also feature Operator Protection Guarding (OPG) as specified in the NSW RFS Heavy Plant OPG.',
+    tags: ['safety', 'plant', 'rops', 'fops', 'opg', 'protection', 'machinery'],
+  },
+  {
+    id: 'rfs-escort-appliance',
+    title: 'Firefighting appliance escort requirements for heavy plant',
+    source: 'NSW RFS Operational Procedure Guide — Heavy Plant',
+    text: 'One firefighting appliance is required to accompany each heavy plant when there is any risk of fire impact or equipment-caused fire. For tasks with negligible fire risk (e.g. make-safe operations), one appliance may be assigned to up to five plant. Escort appliances protect the operator, field support and equipment if fire conditions escalate.',
+    tags: ['safety', 'plant', 'escort', 'appliance', 'firefighting', 'coordination'],
+  },
+  {
+    id: 'rfs-plant-supervision',
+    title: 'Supervision ratios for heavy plant on fire operations',
+    source: 'NSW RFS Operational Procedure Guide — Heavy Plant',
+    text: 'A Heavy Plant Supervisor is required when three or more heavy plant are tasked for a fire incident. A Plant Operations Manager must be assigned to the Incident Management Team (IMT) when five or more heavy plant are tasked.',
+    tags: ['safety', 'supervision', 'plant', 'management', 'coordination'],
+  },
 ];
 
 const CHUNKS_BY_ID = new Map(DOCTRINE_CHUNKS.map((c) => [c.id, c]));

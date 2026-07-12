@@ -30,6 +30,8 @@ export interface SharedPlan {
   breakWidthMeters?: number;
   /** Manual vegetation override, if the user set one. */
   vegetation?: VegetationType;
+  /** User-drawn access lines (annotation; not part of analysis). */
+  accessLines?: LatLng[][];
 }
 
 const round = (n: number) => Math.round(n * 1e5) / 1e5; // ~1 m precision
@@ -49,6 +51,9 @@ export function encodePlan(plan: SharedPlan): string {
     c: plan.coords.map((p) => [round(p.lat), round(p.lng)]),
     ...(plan.breakWidthMeters ? { w: plan.breakWidthMeters } : {}),
     ...(plan.vegetation ? { g: plan.vegetation } : {}),
+    ...(plan.accessLines && plan.accessLines.length > 0
+      ? { a: plan.accessLines.map((line) => line.map((p) => [round(p.lat), round(p.lng)])) }
+      : {}),
   };
   return toBase64Url(JSON.stringify(payload));
 }
@@ -79,7 +84,24 @@ export function decodePlan(encoded: string): SharedPlan | null {
       typeof obj.w === 'number' && Number.isFinite(obj.w) && obj.w > 0 && obj.w <= 1000
         ? obj.w
         : undefined;
-    return { coords, breakWidthMeters, vegetation };
+    const accessLines = Array.isArray(obj.a)
+      ? obj.a
+          .map((line: unknown) => {
+            if (!Array.isArray(line)) return null;
+            return line
+              .filter((p: unknown) => Array.isArray(p) && p.length === 2)
+              .map((p: [number, number]) => ({ lat: p[0], lng: p[1] }))
+              .filter(
+                (p: LatLng) =>
+                  Number.isFinite(p.lat) &&
+                  Number.isFinite(p.lng) &&
+                  p.lat >= -90 && p.lat <= 90 &&
+                  p.lng >= -180 && p.lng <= 180
+              );
+          })
+          .filter((line: any) => line && line.length >= 2)
+      : undefined;
+    return { coords, breakWidthMeters, vegetation, ...(accessLines && accessLines.length > 0 ? { accessLines } : {}) };
   } catch {
     return null;
   }

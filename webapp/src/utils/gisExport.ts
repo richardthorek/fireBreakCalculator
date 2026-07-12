@@ -29,6 +29,8 @@ export interface ExportPlanInput {
   difficultyLabel?: string;
   /** Plan name used in file metadata. */
   name?: string;
+  /** User-drawn access lines (annotation, exported with role: access). */
+  accessLines?: LatLng[][];
 }
 
 interface SegmentWithCoords extends JoinedSegment {
