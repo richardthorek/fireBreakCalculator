@@ -25,6 +25,12 @@ or no reception, and it must **never present fabricated data as real analysis**.
      estimate model.
    - [`docs/VEGETATION_OVERRIDES.md`](docs/VEGETATION_OVERRIDES.md) — user override
      of auto-detected vegetation.
+   - [`docs/ROUTE_INTELLIGENCE.md`](docs/ROUTE_INTELLIGENCE.md) — corridor
+     pathfinding, chainage model, Plan Assistant rules.
+   - [`docs/GIS_INTEROP.md`](docs/GIS_INTEROP.md) — export/import formats,
+     agency GIS integration, live feeds.
+   - [`docs/AI_ASSISTANT.md`](docs/AI_ASSISTANT.md) — LLM layer, knowledge base,
+     grounding contract, hosting/IaC.
    - [`docs/api-register.md`](docs/api-register.md) / [`docs/component-register.md`](docs/component-register.md)
      — machine-readable catalogs; update when endpoints/components change.
 

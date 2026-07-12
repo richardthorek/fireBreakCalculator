@@ -19,7 +19,7 @@ function buildQuery(payload: AssistantPayload): string {
  * AI narration when the model is configured and stays grounded, otherwise a
  * deterministic template built straight from the payload. Never a dead end.
  */
-async function assistantBriefing(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
+export async function assistantBriefing(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   let body: { payload?: AssistantPayload };
   try {
     body = JSON.parse(await req.text());
@@ -60,7 +60,18 @@ async function assistantBriefing(req: HttpRequest, ctx: InvocationContext): Prom
     }
   }
 
-  const response: AssistantResponse = { source: 'template', text: buildTemplateBriefing(payload), citations: [] };
+  // isAssistantPayload already validates topEquipment/insights element shape,
+  // but this is the endpoint's last resort before returning — a future edit
+  // to buildTemplateBriefing() shouldn't be able to turn "always 200" into a
+  // 500, so it gets one more safety net here.
+  let text: string;
+  try {
+    text = buildTemplateBriefing(payload);
+  } catch (error: any) {
+    ctx.error('Template briefing formatting failed unexpectedly', error?.message);
+    text = 'Briefing unavailable for this plan — check the Terrain and Equipment tabs directly.';
+  }
+  const response: AssistantResponse = { source: 'template', text, citations: [] };
   return { status: 200, jsonBody: response, headers: { 'Content-Type': 'application/json' } };
 }
 

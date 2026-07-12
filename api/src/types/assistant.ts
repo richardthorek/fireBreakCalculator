@@ -46,19 +46,49 @@ export interface AssistantResponse {
   citations: AssistantCitation[];
 }
 
+function isFiniteNumber(v: any): boolean {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function isEquipmentSummary(v: any): v is AssistantEquipmentSummary {
+  return (
+    v &&
+    typeof v.name === 'string' &&
+    typeof v.type === 'string' &&
+    isFiniteNumber(v.timeHours) &&
+    isFiniteNumber(v.cost) &&
+    typeof v.compatibilityLevel === 'string'
+  );
+}
+
+function isInsightSummary(v: any): v is AssistantInsightSummary {
+  return v && typeof v.severity === 'string' && typeof v.title === 'string' && typeof v.detail === 'string';
+}
+
+/**
+ * Validates the full shape, including array elements — this is a public,
+ * anonymous HTTP endpoint (see assistantBriefing.ts/assistantChat.ts), so the
+ * request body is untrusted input at a system boundary. A malformed
+ * topEquipment/insights entry that slipped past a shallow check used to reach
+ * buildTemplateBriefing() unguarded and crash with an uncaught TypeError.
+ * NaN is rejected (not just `typeof === 'number'`) so a garbled upstream
+ * value can't silently become `null` when serialized into the model prompt.
+ */
 export function isAssistantPayload(v: any): v is AssistantPayload {
   return (
     v &&
-    typeof v.distanceM === 'number' &&
-    typeof v.breakWidthM === 'number' &&
-    typeof v.maxSlopeDeg === 'number' &&
-    typeof v.meanSlopeDeg === 'number' &&
+    isFiniteNumber(v.distanceM) &&
+    isFiniteNumber(v.breakWidthM) &&
+    isFiniteNumber(v.maxSlopeDeg) &&
+    isFiniteNumber(v.meanSlopeDeg) &&
     typeof v.predominantVegetation === 'string' &&
-    typeof v.vegetationConfidence === 'number' &&
+    isFiniteNumber(v.vegetationConfidence) &&
     typeof v.estimatedData === 'boolean' &&
-    typeof v.difficultyScore === 'number' &&
+    isFiniteNumber(v.difficultyScore) &&
     typeof v.difficultyLabel === 'string' &&
     Array.isArray(v.topEquipment) &&
-    Array.isArray(v.insights)
+    v.topEquipment.every(isEquipmentSummary) &&
+    Array.isArray(v.insights) &&
+    v.insights.every(isInsightSummary)
   );
 }

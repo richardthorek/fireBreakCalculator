@@ -99,8 +99,16 @@ export async function fetchCorridorInfrastructure(
 /**
  * Minimum planar distance (metres) from a point to any trail polyline.
  * Fine at corridor scale; returns Infinity when there are no trails.
+ *
+ * `earlyExitThreshold`: both call sites (routeOptimizer.ts) only need to know
+ * "is this point within TRAIL_SNAP_M of a trail", not the exact minimum —
+ * passing that threshold here lets the scan stop the moment it finds a
+ * close-enough segment instead of checking every remaining vertex of every
+ * remaining trail. This matters at scale: a wide-corridor optimizer pass can
+ * call this once per hex cell (hundreds) against every OSM way Overpass
+ * returned for the bbox (which can itself have thousands of vertices).
  */
-export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrail[]): number {
+export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrail[], earlyExitThreshold = 0): number {
   let best = Infinity;
   const mPerDegLat = 111320;
   const mPerDegLng = 111320 * Math.cos((point.lat * Math.PI) / 180);
@@ -117,7 +125,10 @@ export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrai
       let t = lenSq > 0 ? -(ax * dx + ay * dy) / lenSq : 0;
       t = Math.max(0, Math.min(1, t));
       const d = Math.hypot(ax + t * dx, ay + t * dy);
-      if (d < best) best = d;
+      if (d < best) {
+        best = d;
+        if (best <= earlyExitThreshold) return best;
+      }
     }
   }
   return best;

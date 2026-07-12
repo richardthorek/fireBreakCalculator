@@ -37,7 +37,7 @@ function isValidHistory(v: any): v is ChatHistoryTurn[] {
  * `source: 'unavailable'` message pointing back at the deterministic UI,
  * never a guess dressed up as an answer.
  */
-async function assistantChat(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
+export async function assistantChat(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   let body: { payload?: AssistantPayload; question?: string; history?: ChatHistoryTurn[] };
   try {
     body = JSON.parse(await req.text());

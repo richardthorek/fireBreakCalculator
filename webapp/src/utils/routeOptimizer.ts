@@ -196,7 +196,7 @@ async function sampleNodes(
     elevation: elevRes.elevations[i],
     vegetation: vegRes[i].type,
     vegEstimated: vegRes[i].estimated,
-    onTrail: trails.length > 0 && distanceToNearestTrail(p, trails) <= TRAIL_SNAP_M,
+    onTrail: trails.length > 0 && distanceToNearestTrail(p, trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
   }));
   return { nodes, estimated: elevRes.estimated || vegRes.some(v => v.estimated) };
 }
@@ -299,8 +299,9 @@ interface HexPassResult {
 /**
  * Run one search pass: tile the corridor around `guidePath` in hexagons,
  * sample each cell, run Dijkstra from A to B over the hex adjacency graph
- * (with A/B connected directly to every hex within reach, plus a direct
- * A–B fallback edge so a path always exists), and return the cheapest chain.
+ * (with A/B connected to every hex within reach — no direct A–B edge; see
+ * `optimizeLegHex`'s abort handling and the module doc for why), and return
+ * the cheapest chain.
  */
 async function runHexPass(
   A: LatLng,
@@ -308,7 +309,7 @@ async function runHexPass(
   guidePath: LatLng[],
   halfWidth: number,
   targetCount: number,
-  trails: InfrastructureTrail[],
+  trailsPromise: Promise<InfrastructureTrail[]>,
   signal: AbortSignal | undefined
 ): Promise<HexPassResult | null> {
   const origin = guidePath[Math.floor(guidePath.length / 2)];
@@ -333,7 +334,15 @@ async function runHexPass(
 
   const hexLatLngs = cellsRaw.map(c => toLatLng(proj, c.center));
   const allPoints = [A, B, ...hexLatLngs];
-  const [elevRes, vegRes] = await Promise.all([sampleElevationsBatch(allPoints), sampleVegetation(allPoints, signal)]);
+  // trailsPromise is only awaited HERE (not before building the hex grid
+  // above) so pass 0 overlaps its wait for the corridor's Overpass fetch
+  // with its own elevation/vegetation sampling instead of paying both
+  // latencies back to back — measured ~500ms off a ~2s single-leg search.
+  const [elevRes, vegRes, trails] = await Promise.all([
+    sampleElevationsBatch(allPoints),
+    sampleVegetation(allPoints, signal),
+    trailsPromise,
+  ]);
   if (signal?.aborted) return null;
   const estimated = elevRes.estimated || vegRes.some(v => v.estimated);
 
@@ -349,7 +358,7 @@ async function runHexPass(
       elevation: elevRes.elevations[i],
       vegetation: vegRes[i].type,
       vegEstimated: vegRes[i].estimated,
-      onTrail: trails.length > 0 && distanceToNearestTrail(p, trails) <= TRAIL_SNAP_M,
+      onTrail: trails.length > 0 && distanceToNearestTrail(p, trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
     });
     localById.set(id, local);
   });
@@ -473,18 +482,37 @@ async function optimizeLegHex(
     Math.max(60, Math.min(options.maxOffsetM ?? Math.min(700, Math.max(150, legLen * 0.45)), legLen * 1.3))
   );
 
-  // One infrastructure fetch per leg (widest corridor bbox), reused by every pass.
+  if (signal?.aborted) {
+    // The caller checks signal.aborted immediately after this call and
+    // discards the result either way — skip every network round trip rather
+    // than spend more data on a result nobody will use. Matters in the
+    // field: this app is built for poor/no-reception use, so a cancelled
+    // optimize shouldn't keep making requests.
+    return { optimizedNodes: [], originalNodes: [], heatmapCells: [], usedEstimatedData: false, infrastructureAvailable: true, nodesEvaluated: 0 };
+  }
+
+  // One infrastructure fetch per leg (widest corridor bbox), reused by every
+  // pass — NOT awaited here. It's handed to runHexPass as a promise so pass
+  // 0's own elevation/vegetation sampling runs concurrently with it instead
+  // of waiting for it first; every later pass reuses the same (by then
+  // already-resolved) promise for free.
   const marginDeg = (baseHalfWidth + 200) / 111320;
   const lats = [A.lat, B.lat];
   const lngs = [A.lng, B.lng];
-  const infra = await fetchCorridorInfrastructure(
+  const infraPromise = fetchCorridorInfrastructure(
     Math.min(...lats) - marginDeg,
     Math.min(...lngs) - marginDeg,
     Math.max(...lats) + marginDeg,
     Math.max(...lngs) + marginDeg,
     signal
   );
-  const trails = infra.trails;
+  const trailsPromise = infraPromise.then(infra => infra.trails);
+
+  // Independent of the hex search itself (only needs A/B/trails, both already
+  // in flight) — kicked off alongside the pass loop instead of after it so
+  // its latency overlaps the search instead of adding to it.
+  const straightPts = interpolateLine(A, B, 60);
+  const originalPromise = trailsPromise.then(trails => sampleNodes(straightPts, trails, signal));
 
   let guidePath: LatLng[] = [A, B];
   let best: HexPassResult | null = null;
@@ -496,7 +524,7 @@ async function optimizeLegHex(
     if (signal?.aborted) break;
     const cfg = PASS_CONFIGS[i];
     const halfWidth = Math.max(25, baseHalfWidth * cfg.widthFactor);
-    const pass = await runHexPass(A, B, guidePath, halfWidth, cfg.targetCount, trails, signal);
+    const pass = await runHexPass(A, B, guidePath, halfWidth, cfg.targetCount, trailsPromise, signal);
     onLegProgress((i + 1) / PASS_CONFIGS.length);
     if (!pass) continue;
     usedEstimatedData = usedEstimatedData || pass.estimated;
@@ -506,13 +534,18 @@ async function optimizeLegHex(
     guidePath = pass.pathNodes.map(n => ({ lat: n.lat, lng: n.lng }));
   }
 
-  const straightPts = interpolateLine(A, B, 60);
-  const original = await sampleNodes(straightPts, trails, signal);
+  // By this point trailsPromise (derived from infraPromise) has already
+  // settled — every pass and originalPromise awaited it — so this resolves
+  // immediately; it's just how the settled `.available` flag gets back out.
+  const [original, infra] = await Promise.all([originalPromise, infraPromise]);
   usedEstimatedData = usedEstimatedData || original.estimated;
 
   if (!best) {
-    // Every pass failed (shouldn't happen given the A–B fallback edge, but
-    // stay honest and safe): fall back to the straight line as "optimized" too.
+    // Every pass failed to connect A to B in the hex graph (extremely rare —
+    // would need a corridor thinner than the hex size somewhere along it).
+    // Fail safe rather than fabricate an "optimized" result: report the
+    // straight line as both, so effort/length compare as identical and the
+    // UI reads as "no improvement found" rather than lying about one.
     return {
       optimizedNodes: original.nodes,
       originalNodes: original.nodes,
