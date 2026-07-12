@@ -43,7 +43,64 @@ Retrieval (`retrieveDoctrine(query, topK)`) is **keyword-overlap scoring today**
 
 **Not yet built:** doctrine callouts enriching the rule-based insight cards themselves (e.g. the slope-limit insight quoting the machinery guidance it derives from) — the two systems currently sit side by side rather than being woven together; audience-selectable briefing tone (crew leader / IC / landholder); export into the print-briefing/KMZ flows.
 
-## 5. Data flow
+## 5. Operator briefing pack — SMEACS, PDF/text hand-off, access directions — 📋 planned ([issue #166](https://github.com/richardthorek/fireBreakCalculator/issues/166))
+
+**Goal:** the briefing must be something a crew leader can *hand to an operator*: a SMEACS-structured briefing exportable as a PDF (with a static map image) or copied as plain text for SMS/WhatsApp, telling the operator where the job is, how to get there by road, where to enter, and the standard safety requirements that apply to the tasked resources.
+
+### 5.1 SMEACS structure (deterministic first, AI narration second)
+
+Six sections per NSW RFS doctrine ([Issuing Orders](https://www.rfs.nsw.gov.au/resources/publications/doctrine/foundational/issuing-orders)): **S**ituation, **M**ission, **E**xecution, **A**dministration & Logistics, **C**ommand & Communications, **S**afety. (Issue #166 says "Actions" and "Command and Control"; the doctrinal headings are Administration & Logistics and Command & Communications — use the doctrinal wording, noted back on the issue.)
+
+- New `SmeacsBriefing` type (api + webapp): `{ section, heading, lines[], userEditable, citations[] }` per section.
+- `buildSmeacsBriefing(payload)` in `briefingTemplate.ts` — pure, deterministic, unit-testable. Section content sources:
+  - **Situation** — locality ("~N km *direction* of *place*", Mapbox reverse geocode + existing `gridReference.ts` UTM refs), line length/width, terrain (max/mean slope), predominant fuel + confidence, difficulty score, estimated-data caveat.
+  - **Mission** — one templated sentence (construct N m fire break, width, from grid ref A to grid ref B) + a user-editable objective field.
+  - **Execution** — recommended resource(s) + time estimates from `topEquipment`, chainage-located hazards from `insights`, suggested entry point + approach summary (§5.3), work direction.
+  - **Administration & Logistics** — user-editable (staging area, fuel/water, timings); blank fields render as explicit "— confirm at briefing" placeholders, never invented.
+  - **Command & Communications** — user-editable (IC/supervisor, callsigns, channels) with the same explicit-blank rule; auto-includes the doctrinal supervision thresholds when ≥3 plant are tasked (§5.2).
+  - **Safety** — dynamic hazards (steep runs, heavy fuel, estimated data) + the standard doctrine checklist for the tasked resource types (§5.2), every standard item citation-chipped.
+- **Honesty rule extended:** a field the app cannot know (callsign, staging) is shown as an editable blank, and user-entered text is labelled user-supplied in exports. The app never fabricates operational facts.
+- **AI narration (optional layer):** the existing `/api/assistant/briefing` flow gains a `format: 'smeacs'` mode — the model narrates each section from the same payload under the existing grounding gate, falling back per-section to the deterministic template. The template version is the product; AI is polish.
+- `AssistantPayload` grows: start/end coords + grid refs, locality string, access summary (§5.3), tasked-resource types. All new fields validated in `isAssistantPayload` (public endpoint).
+
+### 5.2 Standard safety/logistics doctrine (knowledge-base expansion)
+
+New curated `DoctrineChunk`s, same rules as the existing 11 (real checkable source, nothing generated), keyed to resource types so the Safety section pulls only what applies:
+
+| Topic | Source to transcribe from | Facts (as researched, verify wording at implementation) |
+|-------|---------------------------|------------------------|
+| Plant protective structures | [NSW RFS Heavy Plant OPG](https://www.rfs.nsw.gov.au/resources/publications/doctrine/operational-protocols/rfs-opg-heavy-plant); AS 2294 / ISO 3471 (ROPS), ISO 3449 (FOPS) | ROPS + FOPS + Operator Protection Guarding compliant; seatbelt worn |
+| Escort appliance | NSW RFS Heavy Plant OPG | 1 firefighting appliance per heavy plant where fire-impact risk exists; 1 per up to 5 plant where risk negligible (e.g. make-safe) |
+| Supervision | NSW RFS Heavy Plant OPG | Heavy Plant Supervisor at ≥3 plant tasked; Plant Operations Manager in IMT at ≥5 |
+| Comms | NSW RFS Heavy Plant OPG / Communications SOPs | Radio contact between operator, escort appliance and supervisor; fireground channel at briefing |
+| Night ops / lighting | NSW RFS Heavy Plant OPG | Adequate work lighting for night operations |
+| Hand crew / aircraft items | existing NWCG/DELWP chunks + RFS doctrine | slope limits, LACES/safety zones, drop-zone clearance |
+
+**Constraint discovered while planning:** rfs.nsw.gov.au 403s automated fetches — the OPG wording must be **manually read and transcribed with attribution** at implementation time. Do not paraphrase from memory into fake "requirements"; anything unverified ships as "confirm against current OPG" or not at all.
+
+### 5.3 Access directions (consumes Route Intelligence §"Road access & approach")
+
+The briefing consumes, never computes, the access data: suggested entry point (road name/kind + grid ref + coords), approach summary from the nearest town/staging point (Mapbox Directions, summarised to road names + distances), and any user-drawn access lines. All labelled "indicative — verify locally"; omitted (stated as unavailable) when offline. Design detail lives in [ROUTE_INTELLIGENCE.md](ROUTE_INTELLIGENCE.md).
+
+### 5.4 Outputs
+
+1. **PDF** — client-side (`pdf-lib` or `jspdf`, lazy-loaded like `shp-write`), embedding a static map image + the six sections + citations + generated-timestamp + data-honesty banner. Supersedes the bare `printBriefing()` sheet (which stays as the no-dependency print fallback). This is a *plain briefing PDF* — the Avenza *geospatial* PDF spike ([GIS_INTEROP.md](GIS_INTEROP.md) §2) remains separate.
+2. **Copy as text** — plain-text SMEACS renderer (short lines, no markdown, SMS-friendly), `navigator.clipboard` + `navigator.share()` on mobile; includes the existing share-link URL and the static-map image URL (so a text message carries the picture as a link).
+3. **Static map image** — Mapbox Static Images API URL with plan line + access line + entry-point marker overlays (GeoJSON overlay params, token already in app). Offline fallback: `map.getCanvas().toDataURL()` snapshot (needs `preserveDrawingBuffer` only at capture time — investigate `preserveDrawingBuffer:false` + `map.triggerRepaint` capture pattern before accepting the perf cost).
+
+### 5.5 Surface
+
+A **Briefing** section in the Assistant tab (or promoted to its own tab if it crowds the card): Generate → six-section preview with editable blanks → Export PDF / Copy text / Share. Existing one-paragraph AI briefing remains as the "quick" variant.
+
+### 5.6 Sequencing (3 PRs), tests, risks
+
+1. **PR A — SMEACS core:** types, `buildSmeacsBriefing`, doctrine chunks (manually transcribed), payload extension, text renderer + copy/share, editable-blanks UI. Unit tests: section builder per payload permutation, explicit-blank rendering, payload validation, doctrine retrieval by resource type.
+2. **PR B — access intelligence:** entry-point suggestion, Directions summary, access-line draw mode + exports (see ROUTE_INTELLIGENCE.md). Smoke checks in the existing optimizer suite pattern.
+3. **PR C — PDF + static map + AI narration mode:** grounding tests extended to SMEACS mode (per-section fallback), static-map URL builder unit-tested, manual render check on phone-width.
+
+Risks: Mapbox Directions/Static tile costs and token scopes (verify the public token's allowed APIs); `navigator.share` file-attach support varies (URL-in-text is the guaranteed path); RFS wording transcription is a manual gate; SMEACS heading divergence needs a nod from the issue author (asked on #166).
+
+## 6. Data flow
 
 ```
 AnalysisPanel (assessment + calculations)

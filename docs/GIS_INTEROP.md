@@ -22,6 +22,7 @@ All exports carry data-provenance fields (`estimated_elevation_data`, `estimated
 
 ## 2. Avenza-ready georeferenced PDF
 Geospatial PDF (ISO 32000 georegistration) of the plan map + briefing panel so any phone with the free Avenza app can navigate the line offline with GPS.
+> Distinct from the **plain SMEACS briefing PDF** planned in [AI_ASSISTANT.md](AI_ASSISTANT.md) §5.4 (client-side, static map image, no georegistration) — that one is a hand-off document, this one is a navigation product. Access-line features (`role: access`, [ROUTE_INTELLIGENCE.md](ROUTE_INTELLIGENCE.md)) will be carried by all §1 export formats when built.
 - Approach: server-side Azure Function (`/api/export/geopdf`) rendering a static map (Mapbox Static Images API) + geo-registration dictionary via `pdf-lib`; **spike required** to validate Avenza accepts our registration before committing.
 - Fallback if spike fails: KMZ + Avenza's native KMZ import (already covered by pack above).
 
