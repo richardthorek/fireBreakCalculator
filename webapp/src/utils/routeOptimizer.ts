@@ -37,6 +37,7 @@ import { fetchStateVegetation } from './stateVegetationRouter';
 import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateCorridorHexes, polylineLengthLocal, LocalProjection,
+  LocalPoint, AxialCoord, distanceToPolylineLocal,
 } from './hexGrid';
 import { logger } from './logger';
 
@@ -117,6 +118,19 @@ export interface OptimizedRouteResult {
   passesPerLeg: number;
 }
 
+export type ScanPhase = 'grid' | 'cells' | 'search' | 'pass' | 'done';
+
+/** One streamed scan-visualization event. `data` shape depends on `phase`:
+ *  grid → { cells: HexHeatmapCell[] } (uncoloured, cost 0);
+ *  cells → { cells: HexHeatmapCell[] } (coloured, cost-normalised, this pass only);
+ *  search → { visited: LatLng[]; bestPath: LatLng[] } (Dijkstra frontier snapshot);
+ *  pass/done → no data, just a boundary marker. */
+export interface ScanEvent {
+  phase: ScanPhase;
+  progress: number;
+  data?: { cells?: HexHeatmapCell[]; visited?: LatLng[]; bestPath?: LatLng[] };
+}
+
 export interface OptimizeOptions {
   /** Max lateral half-width of the WIDE (pass 1) search corridor, metres.
    *  Defaults to a generous spread — see PASS_CONFIGS. */
@@ -125,10 +139,12 @@ export interface OptimizeOptions {
   signal?: AbortSignal;
   /** Progress callback: (fraction 0-1, phase name). */
   onProgress?: (fraction: number, phase?: string) => void;
+  /** Scan visualization events: grid build-out → cell colouring → live pathfinding. */
+  onScanEvent?: (event: ScanEvent) => void;
 }
 
 /** A sampled point with everything the cost model needs. */
-interface SampledNode {
+export interface SampledNode {
   lat: number;
   lng: number;
   elevation: number;
@@ -137,7 +153,7 @@ interface SampledNode {
   onTrail: boolean;
 }
 
-interface RawHeatmapCell {
+export interface RawHeatmapCell {
   center: LatLng;
   polygon: LatLng[];
   unitCost: number;
@@ -146,11 +162,48 @@ interface RawHeatmapCell {
   estimated: boolean;
 }
 
-/** Vegetation cache keyed at ~100 m — matches the NVIS raster resolution. */
+/** Vegetation cache keyed at ~100 m — matches the NVIS raster resolution.
+ *  Exported (via sampleVegetation) so the area-recon scan (WP6) can share it:
+ *  points sampled while scanning a box are cache hits when later pathfinding
+ *  crosses the same ground, and vice versa. */
 const vegCache = new Map<string, { type: VegetationType; estimated: boolean }>();
 const vegKey = (lat: number, lng: number) => `${lat.toFixed(3)},${lng.toFixed(3)}`;
 
-async function sampleVegetation(points: LatLng[], signal?: AbortSignal): Promise<{ type: VegetationType; estimated: boolean }[]> {
+/** Elevation cache keyed at ~30 m — finer than vegetation since slope is more
+ *  locally variable. Shared between route optimization and area recon so a
+ *  scanned box directly speeds up pathfinding through it (and vice versa). */
+const ELEV_CACHE_DEG = 30 / 111320;
+const elevCache = new Map<string, { value: number; estimated: boolean }>();
+const elevKey = (lat: number, lng: number) => `${Math.round(lat / ELEV_CACHE_DEG)},${Math.round(lng / ELEV_CACHE_DEG)}`;
+
+export async function sampleElevationsCached(points: LatLng[]): Promise<{ elevations: number[]; estimated: boolean }> {
+  if (points.length === 0) return { elevations: [], estimated: false };
+  const results: number[] = new Array(points.length);
+  let estimated = false;
+  const missingIdx: number[] = [];
+  const missingPts: LatLng[] = [];
+  points.forEach((p, i) => {
+    const cached = elevCache.get(elevKey(p.lat, p.lng));
+    if (cached) {
+      results[i] = cached.value;
+      estimated = estimated || cached.estimated;
+    } else {
+      missingIdx.push(i);
+      missingPts.push(p);
+    }
+  });
+  if (missingPts.length > 0) {
+    const res = await sampleElevationsBatch(missingPts);
+    missingIdx.forEach((idx, j) => {
+      results[idx] = res.elevations[j];
+      elevCache.set(elevKey(points[idx].lat, points[idx].lng), { value: res.elevations[j], estimated: res.estimated });
+    });
+    estimated = estimated || res.estimated;
+  }
+  return { elevations: results, estimated };
+}
+
+export async function sampleVegetation(points: LatLng[], signal?: AbortSignal): Promise<{ type: VegetationType; estimated: boolean }[]> {
   const unique = new Map<string, LatLng>();
   for (const p of points) {
     const k = vegKey(p.lat, p.lng);
@@ -189,7 +242,7 @@ async function sampleNodes(
   signal?: AbortSignal
 ): Promise<{ nodes: SampledNode[]; estimated: boolean }> {
   if (points.length === 0) return { nodes: [], estimated: false };
-  const [elevRes, vegRes] = await Promise.all([sampleElevationsBatch(points), sampleVegetation(points, signal)]);
+  const [elevRes, vegRes] = await Promise.all([sampleElevationsCached(points), sampleVegetation(points, signal)]);
   const nodes = points.map((p, i) => ({
     lat: p.lat,
     lng: p.lng,
@@ -203,7 +256,7 @@ async function sampleNodes(
 
 /** Edge cost between two sampled nodes: metres × slope factor × mean fuel factor,
  *  discounted when the edge follows a mapped trail. */
-function edgeCost(a: SampledNode, b: SampledNode): { cost: number; dist: number; slope: number; onTrail: boolean } {
+export function edgeCost(a: SampledNode, b: SampledNode): { cost: number; dist: number; slope: number; onTrail: boolean } {
   const dist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
   if (dist <= 0) return { cost: 0, dist: 0, slope: 0, onTrail: false };
   const slope = calculateSlope(a.elevation, b.elevation, dist);
@@ -244,17 +297,47 @@ function pathStats(nodes: SampledNode[]): RouteComparisonStats {
   };
 }
 
-/** Simple sparse Dijkstra over a small (≤ ~1500 node) adjacency graph. */
-function dijkstra(
+/** Reconstruct the best path known SO FAR to whichever settled node is
+ *  closest to `endId` by tentative distance — used to show a live "current
+ *  best guess" path while the search is still running (WP2 streaming). */
+function partialPathTo(prev: Map<string, string>, dist: Map<string, number>, visited: Set<string>, startId: string): string[] {
+  let closest: string | null = null;
+  let closestDist = Infinity;
+  for (const id of visited) {
+    const d = dist.get(id) ?? Infinity;
+    if (d < closestDist) { closestDist = d; closest = id; }
+  }
+  if (closest === null) return [];
+  const path: string[] = [closest];
+  let cur = closest;
+  while (cur !== startId) {
+    const p = prev.get(cur);
+    if (p === undefined) break;
+    path.unshift(p);
+    cur = p;
+  }
+  return path;
+}
+
+/**
+ * Sparse Dijkstra over a small (≤ ~1500 node) adjacency graph. Yields to the
+ * event loop every ~40 node-pops (negligible overhead at this graph size) so
+ * the caller's `onYield` can paint a frontier/partial-path frame — this is
+ * what makes the search visibly "crawl" the grid instead of appearing
+ * end-of-run-only (WP2).
+ */
+async function dijkstra(
   nodes: Map<string, SampledNode>,
   adjacency: Map<string, string[]>,
   startId: string,
-  endId: string
-): { path: string[]; cost: number } | null {
+  endId: string,
+  onYield?: (visited: string[], partialPath: string[]) => void
+): Promise<{ path: string[]; cost: number } | null> {
   const dist = new Map<string, number>();
   const prev = new Map<string, string>();
   const visited = new Set<string>();
   dist.set(startId, 0);
+  let pops = 0;
   while (true) {
     let u: string | null = null;
     let best = Infinity;
@@ -266,6 +349,11 @@ function dijkstra(
     }
     if (u === null || u === endId) break;
     visited.add(u);
+    pops++;
+    if (onYield && pops % 40 === 0) {
+      onYield(Array.from(visited), partialPathTo(prev, dist, visited, startId));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
     for (const v of adjacency.get(u) ?? []) {
       if (visited.has(v) || !nodes.has(v)) continue;
       const { cost } = edgeCost(nodes.get(u)!, nodes.get(v)!);
@@ -296,12 +384,25 @@ interface HexPassResult {
   estimated: boolean;
 }
 
+/** Pre-built hex tiling handed in for the wide pass — WP1's single route-wide
+ *  grid, shared across every leg so nothing renders twice at two alignments. */
+interface SharedGrid {
+  proj: LocalProjection;
+  size: number;
+  cellsRaw: { hex: AxialCoord; center: LocalPoint }[];
+}
+
 /**
- * Run one search pass: tile the corridor around `guidePath` in hexagons,
- * sample each cell, run Dijkstra from A to B over the hex adjacency graph
- * (with A/B connected to every hex within reach — no direct A–B edge; see
- * `optimizeLegHex`'s abort handling and the module doc for why), and return
- * the cheapest chain.
+ * Run one search pass: tile the corridor around `guidePath` in hexagons
+ * (or, when `sharedGrid` is given, filter down from the pre-built route-wide
+ * grid instead of building a new one — this is what stops each leg's wide
+ * pass from rendering its own misaligned grid), sample each cell, run
+ * Dijkstra from A to B over the hex adjacency graph (with A/B connected to
+ * every hex within reach — no direct A–B edge; see `optimizeLegHex`'s abort
+ * handling and the module doc for why), and return the cheapest chain.
+ *
+ * When `onScanEvent` is given, streams grid → cells → search events so the
+ * UI can show the scan actually happening instead of an end-of-run reveal.
  */
 async function runHexPass(
   A: LatLng,
@@ -310,27 +411,59 @@ async function runHexPass(
   halfWidth: number,
   targetCount: number,
   trailsPromise: Promise<InfrastructureTrail[]>,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  sharedGrid?: SharedGrid,
+  onScanEvent?: (event: ScanEvent) => void
 ): Promise<HexPassResult | null> {
-  const origin = guidePath[Math.floor(guidePath.length / 2)];
-  const proj: LocalProjection = makeProjection(origin);
-  const pathLocal = guidePath.map(p => toLocal(proj, p));
-  const pathLen = Math.max(1, polylineLengthLocal(pathLocal));
+  let proj: LocalProjection;
+  let size: number;
+  let cellsRaw: { hex: AxialCoord; center: LocalPoint }[];
 
-  let size = chooseHexSize(pathLen, halfWidth, targetCount);
-  let cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
-  const MAX_HEX_CELLS = 1000;
-  let tries = 0;
-  while (cellsRaw.length > MAX_HEX_CELLS && tries < 5) {
-    size *= 1.25;
+  if (sharedGrid) {
+    proj = sharedGrid.proj;
+    size = sharedGrid.size;
+    const guideLocal = guidePath.map(p => toLocal(proj, p));
+    cellsRaw = sharedGrid.cellsRaw.filter(c => distanceToPolylineLocal(c.center, guideLocal) <= halfWidth);
+  } else {
+    const origin = guidePath[Math.floor(guidePath.length / 2)];
+    proj = makeProjection(origin);
+    const pathLocal = guidePath.map(p => toLocal(proj, p));
+    const pathLen = Math.max(1, polylineLengthLocal(pathLocal));
+    size = chooseHexSize(pathLen, halfWidth, targetCount);
     cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
-    tries++;
-  }
-  if (cellsRaw.length < 3) {
-    size *= 0.5;
-    cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
+    const MAX_HEX_CELLS = 1000;
+    let tries = 0;
+    while (cellsRaw.length > MAX_HEX_CELLS && tries < 5) {
+      size *= 1.25;
+      cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
+      tries++;
+    }
+    if (cellsRaw.length < 3) {
+      size *= 0.5;
+      cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
+    }
   }
   if (signal?.aborted || cellsRaw.length === 0) return null;
+
+  if (onScanEvent) {
+    onScanEvent({
+      phase: 'grid',
+      progress: 0,
+      data: {
+        cells: cellsRaw.map(cell => {
+          const corners = hexCorners(cell.center, size).map(c => toLatLng(proj, c));
+          return {
+            center: toLatLng(proj, cell.center),
+            polygon: [...corners, corners[0]],
+            costNormalized: 0,
+            vegetation: 'grassland' as VegetationType,
+            onTrail: false,
+            estimated: false,
+          };
+        }),
+      },
+    });
+  }
 
   const hexLatLngs = cellsRaw.map(c => toLatLng(proj, c.center));
   const allPoints = [A, B, ...hexLatLngs];
@@ -339,7 +472,7 @@ async function runHexPass(
   // with its own elevation/vegetation sampling instead of paying both
   // latencies back to back — measured ~500ms off a ~2s single-leg search.
   const [elevRes, vegRes, trails] = await Promise.all([
-    sampleElevationsBatch(allPoints),
+    sampleElevationsCached(allPoints),
     sampleVegetation(allPoints, signal),
     trailsPromise,
   ]);
@@ -348,7 +481,7 @@ async function runHexPass(
 
   const idFor = (i: number) => (i === 0 ? 'A' : i === 1 ? 'B' : hexKey(cellsRaw[i - 2].hex));
   const nodeMap = new Map<string, SampledNode>();
-  const localById = new Map<string, { x: number; y: number }>();
+  const localById = new Map<string, LocalPoint>();
   allPoints.forEach((p, i) => {
     const id = idFor(i);
     const local = i < 2 ? toLocal(proj, p) : cellsRaw[i - 2].center;
@@ -403,14 +536,9 @@ async function runHexPass(
   // connect A to B, the caller treats this pass as failed and falls back to
   // the honestly-resampled straight line instead of a lying shortcut edge.
 
-  const result = dijkstra(nodeMap, adjacency, 'A', 'B');
-  if (!result) return null;
-
-  const pathNodes = result.path.map(id => nodeMap.get(id)!);
-
-  // Per-hex unit cost (average cost-per-metre over incident edges) drives
-  // the heatmap — a genuine terrain+vegetation traversal-difficulty metric,
-  // not just a proxy.
+  // Per-hex unit cost (average cost-per-metre over incident edges) — computed
+  // BEFORE the search so the 'cells' scan event can colour the grid in before
+  // pathfinding starts (grid → colouring → pathfinding, per WP2).
   const cells: RawHeatmapCell[] = cellsRaw.map(cell => {
     const id = hexKey(cell.hex);
     const node = nodeMap.get(id)!;
@@ -434,6 +562,28 @@ async function runHexPass(
       estimated: node.vegEstimated,
     };
   });
+
+  if (onScanEvent) {
+    onScanEvent({ phase: 'cells', progress: 0.3, data: { cells: normalizeHeatmap(cells) } });
+  }
+
+  const result = await dijkstra(nodeMap, adjacency, 'A', 'B', onScanEvent
+    ? (visitedIds, partialIds) => {
+        onScanEvent({
+          phase: 'search',
+          progress: 0.3 + 0.7 * Math.min(1, visitedIds.length / Math.max(1, cellsRaw.length)),
+          data: {
+            bestPath: partialIds
+              .map(id => nodeMap.get(id))
+              .filter((n): n is SampledNode => !!n)
+              .map(n => ({ lat: n.lat, lng: n.lng })),
+          },
+        });
+      }
+    : undefined);
+  if (!result) return null;
+
+  const pathNodes = result.path.map(id => nodeMap.get(id)!);
 
   return { pathNodes, cost: result.cost, cells, nodesEvaluated: cellsRaw.length, estimated };
 }
@@ -472,8 +622,10 @@ async function optimizeLegHex(
   B: LatLng,
   options: OptimizeOptions,
   signal: AbortSignal | undefined,
+  sharedGrid: SharedGrid | null,
   onLegProgress: (fraction: number) => void
 ): Promise<LegHexResult> {
+  const { onScanEvent } = options;
   const legLen = calculateDistance(A.lat, A.lng, B.lat, B.lng);
   // Wide by default — aggressive spread so a single run finds what a few
   // manual re-runs used to stumble into.
@@ -524,7 +676,15 @@ async function optimizeLegHex(
     if (signal?.aborted) break;
     const cfg = PASS_CONFIGS[i];
     const halfWidth = Math.max(25, baseHalfWidth * cfg.widthFactor);
-    const pass = await runHexPass(A, B, guidePath, halfWidth, cfg.targetCount, trailsPromise, signal);
+    // Only the wide pass (i === 0) uses the shared route-wide grid — WP1.
+    // Refine/polish stay per-leg (they're never rendered, so there's nothing
+    // to layer), and only the wide pass streams scan events — WP2's
+    // "watch it happen" visuals are about the search the user actually sees.
+    const pass = await runHexPass(
+      A, B, guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
+      i === 0 && sharedGrid ? sharedGrid : undefined,
+      i === 0 ? onScanEvent : undefined
+    );
     onLegProgress((i + 1) / PASS_CONFIGS.length);
     if (!pass) continue;
     usedEstimatedData = usedEstimatedData || pass.estimated;
@@ -566,7 +726,7 @@ async function optimizeLegHex(
   };
 }
 
-function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
+export function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
   if (cells.length === 0) return [];
   let min = Infinity, max = -Infinity;
   for (const c of cells) {
@@ -585,19 +745,63 @@ function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
 }
 
 /**
+ * WP1 — build the one grid the whole route's wide pass shares: a single
+ * tangent-plane projection and a single hex size, sized off the widest of
+ * every leg's own wide-pass corridor. Each leg's wide pass then filters down
+ * from this instead of building its own projection+size, which is what
+ * used to produce a second, misaligned grid at every shared waypoint on a
+ * multi-leg line.
+ */
+function buildSharedWideGrid(waypoints: LatLng[], maxOffsetM?: number): SharedGrid | null {
+  if (waypoints.length < 2) return null;
+  const mid = waypoints[Math.floor(waypoints.length / 2)];
+  const proj = makeProjection(mid);
+  const pathLocal = waypoints.map(p => toLocal(proj, p));
+  const pathLen = Math.max(1, polylineLengthLocal(pathLocal));
+
+  // Same half-width heuristic as a single leg's wide pass (see
+  // optimizeLegHex), evaluated per-leg — the shared grid must cover every
+  // leg's own wide corridor, so it takes the widest rather than an average.
+  let maxHalfWidth = 60;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const legLen = calculateDistance(waypoints[i].lat, waypoints[i].lng, waypoints[i + 1].lat, waypoints[i + 1].lng);
+    const hw = Math.min(900, Math.max(60, Math.min(maxOffsetM ?? Math.min(700, Math.max(150, legLen * 0.45)), legLen * 1.3)));
+    if (hw > maxHalfWidth) maxHalfWidth = hw;
+  }
+
+  let size = chooseHexSize(pathLen, maxHalfWidth, 1500);
+  let cellsRaw = generateCorridorHexes(pathLocal, maxHalfWidth, size);
+  const MAX_HEX_CELLS = 1500;
+  let tries = 0;
+  while (cellsRaw.length > MAX_HEX_CELLS && tries < 5) {
+    size *= 1.25;
+    cellsRaw = generateCorridorHexes(pathLocal, maxHalfWidth, size);
+    tries++;
+  }
+  if (cellsRaw.length < 3) return null;
+  return { proj, size, cellsRaw };
+}
+
+/**
  * Optimize the route between the user's waypoints.
  *
  * Each leg gets three hex-grid search passes (wide → refine → polish); the
  * cheapest of the three becomes that leg's contribution to the final route.
+ * The wide pass draws from one route-wide shared grid (WP1) so a multi-leg
+ * line never renders two misaligned heatmaps.
  */
 export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOptions = {}): Promise<OptimizedRouteResult | null> {
   if (waypoints.length < 2) return null;
-  const { signal, onProgress } = options;
+  const { signal, onProgress, onScanEvent } = options;
+
+  const sharedGrid = buildSharedWideGrid(waypoints, options.maxOffsetM);
 
   const optimizedCoords: LatLng[] = [waypoints[0]];
   const optimizedNodeSeqs: SampledNode[][] = [];
   const originalNodeSeqs: SampledNode[][] = [];
-  const rawHeatmapCells: RawHeatmapCell[] = [];
+  // Keyed by cell centre so a shared-grid cell straddling two legs' corridors
+  // is counted (and rendered) exactly once — the other half of WP1's fix.
+  const heatmapByKey = new Map<string, RawHeatmapCell>();
   let usedEstimatedData = false;
   let infrastructureAvailable = true;
   let nodesEvaluated = 0;
@@ -616,24 +820,27 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
       optimizedNodeSeqs.push(sampled.nodes);
       originalNodeSeqs.push(sampled.nodes);
       optimizedCoords.push(B);
-      onProgress?.((leg + 1) / (waypoints.length - 1));
+      onProgress?.((leg + 1) / (waypoints.length - 1), 'terrain');
       continue;
     }
 
-    const legResult = await optimizeLegHex(A, B, options, signal, frac => {
-      onProgress?.((leg + frac) / (waypoints.length - 1));
+    const legResult = await optimizeLegHex(A, B, options, signal, sharedGrid, frac => {
+      onProgress?.((leg + frac) / (waypoints.length - 1), 'search');
     });
     if (signal?.aborted) return null;
 
     usedEstimatedData = usedEstimatedData || legResult.usedEstimatedData;
     infrastructureAvailable = infrastructureAvailable && legResult.infrastructureAvailable;
     nodesEvaluated += legResult.nodesEvaluated;
-    rawHeatmapCells.push(...legResult.heatmapCells);
+    for (const cell of legResult.heatmapCells) {
+      const key = `${cell.center.lat.toFixed(6)},${cell.center.lng.toFixed(6)}`;
+      if (!heatmapByKey.has(key)) heatmapByKey.set(key, cell);
+    }
     optimizedNodeSeqs.push(legResult.optimizedNodes);
     originalNodeSeqs.push(legResult.originalNodes);
     for (const n of legResult.optimizedNodes.slice(1)) optimizedCoords.push({ lat: n.lat, lng: n.lng });
 
-    onProgress?.((leg + 1) / (waypoints.length - 1));
+    onProgress?.((leg + 1) / (waypoints.length - 1), 'search');
   }
 
   const optimized = pathStats(optimizedNodeSeqs.flat());
@@ -641,6 +848,8 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
   const improvement = original.effortScore > 0 ? (original.effortScore - optimized.effortScore) / original.effortScore : 0;
 
   const simplified = simplifyPath(optimizedCoords, 15);
+
+  onScanEvent?.({ phase: 'done', progress: 1 });
 
   return {
     coords: simplified,
@@ -650,7 +859,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     usedEstimatedData,
     infrastructureAvailable,
     nodesEvaluated,
-    heatmap: normalizeHeatmap(rawHeatmapCells),
+    heatmap: normalizeHeatmap(Array.from(heatmapByKey.values())),
     passesPerLeg: PASS_CONFIGS.length,
   };
 }
