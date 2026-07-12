@@ -1,6 +1,6 @@
 # API Register
 
-**Last Updated**: February 8, 2026  
+**Last Updated**: July 11, 2026  
 **Purpose**: Machine-readable catalog of all API endpoints
 **Update Policy**: MUST update when endpoints are added, modified, or removed
 
@@ -57,6 +57,31 @@ interface VegetationMapping {
   etag?: string;             // Concurrency control
 }
 ```
+
+## AI Assistant Endpoints
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/assistant/briefing` | POST | One-shot field briefing narrating the current analysis. Always 200: returns a validated AI narration when the model is configured and stays grounded, otherwise a deterministic template built from the payload. | `{ payload: AssistantPayload }` | `AssistantResponse` | No |
+| `/api/assistant/chat` | POST | Grounded Q&A over the current plan. No template fallback — an unconfigured/unreachable model or a failed grounding check returns `source: 'unavailable'` with a plain message, never a guess. | `{ payload: AssistantPayload, question: string, history?: {role,content}[] }` (question ≤500 chars, history ≤6 turns of ≤800 chars) | `AssistantResponse` | No |
+
+```typescript
+interface AssistantPayload {
+  distanceM: number; breakWidthM: number; maxSlopeDeg: number; meanSlopeDeg: number;
+  predominantVegetation: string; vegetationConfidence: number; estimatedData: boolean;
+  difficultyScore: number; difficultyLabel: string;
+  topEquipment: { name: string; type: string; timeHours: number; cost: number; compatibilityLevel: string }[];
+  insights: { severity: string; title: string; detail: string }[];
+}
+
+interface AssistantResponse {
+  source: 'ai' | 'template' | 'unavailable';
+  text: string;
+  citations: { id: string; title: string; source: string }[];
+}
+```
+
+Backed by an Azure AI Foundry model deployment (`AI_FOUNDRY_ENDPOINT`/`AI_FOUNDRY_API_KEY`/`AI_FOUNDRY_DEPLOYMENT_NAME` app settings, provisioned via `infra/main.bicep`'s `deployAiAssistant` flag — off by default). Every AI response is validated against the payload before being returned; see [AI_ASSISTANT.md](AI_ASSISTANT.md) for the grounding contract.
 
 ## External Integrations
 

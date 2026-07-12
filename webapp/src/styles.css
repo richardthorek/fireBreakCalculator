@@ -4837,3 +4837,137 @@ button:focus {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* --- AI assistant card (briefing + grounded chat) --- */
+.ai-assistant-card {
+  border: 1px solid rgba(37,99,235,0.35);
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(37,99,235,0.08), rgba(30,36,51,0.5) 55%);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.ai-assistant-header { display: flex; gap: 0.55rem; align-items: flex-start; color: #60a5fa; }
+.ai-assistant-header h5 { margin: 0; color: #f5f7fa; font-size: 0.85rem; }
+.ai-assistant-caption { margin: 0.15rem 0 0; color: #94a3b8; font-size: 0.73rem; line-height: 1.4; }
+
+.ai-briefing-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  min-height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: #2563EB;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.ai-briefing-btn:hover { background: #1e40af; }
+
+.ai-loading { display: flex; align-items: center; gap: 0.5rem; color: #cbd5e1; font-size: 0.78rem; }
+.ai-spinner { animation: optimizer-spin 1s linear infinite; color: #60a5fa; }
+
+.ai-briefing-result { display: flex; flex-direction: column; gap: 0.4rem; }
+.ai-briefing-text { margin: 0; color: #e2e8f0; font-size: 0.82rem; line-height: 1.55; white-space: pre-line; }
+
+.ai-source-badge {
+  align-self: flex-start;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  color: #cbd5e1;
+}
+.ai-source-ai { background: rgba(37,99,235,0.18); color: #93c5fd; }
+.ai-source-template { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+.ai-source-unavailable { background: rgba(148,163,184,0.1); color: #94a3b8; }
+
+.ai-citations { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ai-citation-chip {
+  font-size: 0.66rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid rgba(96,165,250,0.3);
+  background: rgba(96,165,250,0.08);
+  color: #93c5fd;
+  cursor: help;
+}
+
+.ai-briefing-regenerate {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+  min-height: 30px;
+  border: 1px solid #2a3442;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.ai-briefing-regenerate:hover { color: #e2e8f0; border-color: #475569; }
+
+.ai-chat { display: flex; flex-direction: column; gap: 0.55rem; border-top: 1px solid rgba(42,52,66,0.6); padding-top: 0.55rem; }
+
+.ai-chat-turn { display: flex; flex-direction: column; gap: 0.3rem; }
+.ai-chat-question {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.4rem 0.65rem;
+  border-radius: 10px 10px 2px 10px;
+  background: rgba(37,99,235,0.15);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+}
+.ai-chat-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 92%;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px 10px 10px 2px;
+  background: rgba(15,17,21,0.5);
+  border: 1px solid #2a3442;
+}
+.ai-chat-answer p { margin: 0; color: #e2e8f0; font-size: 0.79rem; line-height: 1.5; }
+
+.ai-chat-input-row { display: flex; gap: 0.4rem; }
+.ai-chat-input {
+  flex: 1 1 auto;
+  min-height: 40px;
+  padding: 0.4rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #2a3442;
+  background: rgba(15,17,21,0.6);
+  color: #f5f7fa;
+  font-size: 0.8rem;
+}
+.ai-chat-input:focus { outline: none; border-color: #2563EB; }
+
+.ai-chat-send {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: #2563EB;
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.ai-chat-send:hover:not(:disabled) { background: #1e40af; }
+.ai-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ai-chat-error { color: #fca5a5; font-size: 0.75rem; }

@@ -14,6 +14,8 @@ import { HelpContent } from './HelpContent';
 import { ElevationProfile } from './ElevationProfile';
 import { SegmentBreakdown } from './SegmentBreakdown';
 import { AdvisorPanel, OptimizerStatus } from './AdvisorPanel';
+import { AiAssistantCard } from './AiAssistantCard';
+import { buildAssistantPayload, AssistantPayload } from '../utils/assistantApi';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
@@ -745,6 +747,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
   }, [distance, trackAnalysis, vegetationAnalysis, finalCalculations, breakWidthMeters]);
 
+  // Compact payload for the AI assistant — built from the same analysis
+  // state the rule engine uses, so anything the model restates is checkable.
+  const assistantPayload = useMemo<AssistantPayload | null>(() => {
+    if (!distance) return null;
+    return buildAssistantPayload({
+      distance,
+      breakWidthMeters,
+      trackAnalysis,
+      vegetationAnalysis,
+      equipmentResults: finalCalculations as any[],
+      assessment
+    });
+  }, [distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, finalCalculations, assessment]);
+
   const attentionCount = assessment
     ? assessment.insights.filter(i => i.severity === 'critical' || i.severity === 'warning').length
     : 0;
@@ -1142,18 +1158,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           </div>
         )}
         {distance && activeTab === 'assistant' && (
-          <AdvisorPanel
-            assessment={assessment}
-            hasLine={!!distance}
-            onLocate={onLocateSegment}
-            optimizerStatus={optimizerStatus}
-            optimizerProgress={optimizerProgress}
-            optimizerResult={optimizerResult}
-            optimizerError={optimizerError}
-            onOptimize={onOptimize}
-            onApplyOptimized={onApplyOptimized}
-            onDismissOptimized={onDismissOptimized}
-          />
+          <>
+            <AdvisorPanel
+              assessment={assessment}
+              hasLine={!!distance}
+              onLocate={onLocateSegment}
+              optimizerStatus={optimizerStatus}
+              optimizerProgress={optimizerProgress}
+              optimizerResult={optimizerResult}
+              optimizerError={optimizerError}
+              onOptimize={onOptimize}
+              onApplyOptimized={onApplyOptimized}
+              onDismissOptimized={onDismissOptimized}
+            />
+            <AiAssistantCard payload={assistantPayload} />
+          </>
         )}
         {!distance ? (
           <>
