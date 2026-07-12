@@ -23,6 +23,7 @@ interface AdvisorPanelProps {
   /** Route optimizer wiring */
   optimizerStatus: OptimizerStatus;
   optimizerProgress?: number;
+  optimizerPhase?: string;
   optimizerResult?: OptimizedRouteResult | null;
   optimizerError?: string | null;
   onOptimize?: () => void;
@@ -47,13 +48,18 @@ const severityLabel: Record<PlanInsight['severity'], string> = {
   info: 'Note',
 };
 
-/** Coarse pass label from overall progress (0..1) — exact per-leg pass tracking
- *  isn't threaded through the progress callback, but thirds read well enough
- *  to tell the user what stage the search is in. */
-const passLabel = (progress: number): string => {
-  if (progress < 0.34) return 'Pass 1 of 3 — wide corridor scan';
-  if (progress < 0.67) return 'Pass 2 of 3 — refining around the best path';
-  return 'Pass 3 of 3 — polishing the route';
+/** Phase-aware progress messages: plain language instead of algorithm jargon. */
+const phaseMessage = (phase?: string, progress?: number): string => {
+  switch (phase) {
+    case 'grid': return 'Laying out a survey grid over your corridor…';
+    case 'terrain': return 'Reading terrain and vegetation…';
+    case 'search':
+      if (!progress) return 'Testing possible paths…';
+      if (progress < 0.34) return 'Wide scan — exploring broadly…';
+      if (progress < 0.67) return 'Refining — narrowing in on the best…';
+      return 'Polishing — fine-tuning…';
+    default: return 'Optimizing…';
+  }
 };
 
 const StatDelta: React.FC<{ label: string; before: string; after: string; better: boolean | null }> = ({ label, before, after, better }) => (
@@ -73,6 +79,7 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
   onLocate,
   optimizerStatus,
   optimizerProgress = 0,
+  optimizerPhase,
   optimizerResult,
   optimizerError,
   onOptimize,
@@ -99,8 +106,7 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
           <div>
             <h5>Route optimization</h5>
             <p className="optimizer-caption">
-              Tiles the corridor around your line in hexagons — the same grid style Uber's H3 uses for routing — and
-              searches three passes (wide scan, refine, polish) for a path that avoids steep ground and heavy timber.
+              Searches the corridor around your line for a path that avoids steep ground and heavy timber.
             </p>
           </div>
         </div>
@@ -114,7 +120,7 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
         {optimizerStatus === 'running' && (
           <div className="optimizer-progress" role="status">
             <LoaderCircle className="optimizer-spinner" size={16} aria-hidden />
-            <span>{passLabel(optimizerProgress)} — {Math.round(optimizerProgress * 100)}%</span>
+            <span>{phaseMessage(optimizerPhase, optimizerProgress)} {Math.round(optimizerProgress * 100)}%</span>
           </div>
         )}
 
@@ -130,7 +136,9 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
             <div className={`optimizer-verdict${result.improvement > 0.03 ? ' positive' : ''}`}>
               {result.improvement > 0.03
                 ? `Found a path ~${Math.round(result.improvement * 100)}% easier to build`
-                : 'Your line is already close to optimal in this corridor'}
+                : result.improvement > -0.001
+                  ? 'Your line is already close to optimal in this corridor'
+                  : 'This path is slightly harder to build'}
             </div>
             {result.heatmap.length > 0 && (
               <div className="heatmap-legend">
@@ -192,7 +200,7 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
               </div>
             )}
             <div className="optimizer-actions">
-              {result.improvement > 0.01 && (
+              {result.coords.length > 0 && (
                 <button type="button" className="optimizer-apply-btn" onClick={onApplyOptimized}>
                   <Check size={14} strokeWidth={2.5} aria-hidden /> Apply optimized route
                 </button>

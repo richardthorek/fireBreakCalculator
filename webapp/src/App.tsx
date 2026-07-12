@@ -75,6 +75,7 @@ const App: React.FC = () => {
   // preview on the map until the user applies or dismisses them.
   const [optimizerStatus, setOptimizerStatus] = useState<OptimizerStatus>('idle');
   const [optimizerProgress, setOptimizerProgress] = useState(0);
+  const [optimizerPhase, setOptimizerPhase] = useState<string | undefined>();
   const [optimizerResult, setOptimizerResult] = useState<OptimizedRouteResult | null>(null);
   const [optimizerError, setOptimizerError] = useState<string | null>(null);
   const [applyLineRequest, setApplyLineRequest] = useState<{ coords: { lat: number; lng: number }[]; version: number } | null>(null);
@@ -113,6 +114,7 @@ const App: React.FC = () => {
     setOptimizerResult(null);
     setOptimizerError(null);
     setOptimizerProgress(0);
+    setOptimizerPhase(undefined);
   }, []);
 
   const handleOptimize = useCallback(async () => {
@@ -122,12 +124,16 @@ const App: React.FC = () => {
     optimizeAbortRef.current = controller;
     setOptimizerStatus('running');
     setOptimizerProgress(0);
+    setOptimizerPhase('grid');
     setOptimizerError(null);
     setOptimizerResult(null);
     try {
       const result = await optimizeRoute(lineCoords, {
         signal: controller.signal,
-        onProgress: (f) => setOptimizerProgress(f),
+        onProgress: (f, phase) => {
+          setOptimizerProgress(f);
+          if (phase) setOptimizerPhase(phase);
+        },
       });
       if (controller.signal.aborted) return;
       if (!result) {
@@ -159,6 +165,7 @@ const App: React.FC = () => {
     setOptimizerResult(null);
     setOptimizerError(null);
     setOptimizerProgress(0);
+    setOptimizerPhase(undefined);
   }, []);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
@@ -657,6 +664,7 @@ const App: React.FC = () => {
             onHoverChainage={handleHoverChainage}
             optimizerStatus={optimizerStatus}
             optimizerProgress={optimizerProgress}
+            optimizerPhase={optimizerPhase}
             optimizerResult={optimizerResult}
             optimizerError={optimizerError}
             onOptimize={handleOptimize}

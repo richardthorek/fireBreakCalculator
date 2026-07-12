@@ -123,8 +123,8 @@ export interface OptimizeOptions {
   maxOffsetM?: number;
   /** Abort signal for cancelling long optimizations. */
   signal?: AbortSignal;
-  /** Progress callback (0..1), smoothed across legs and passes. */
-  onProgress?: (fraction: number) => void;
+  /** Progress callback: (fraction 0-1, phase name). */
+  onProgress?: (fraction: number, phase?: string) => void;
 }
 
 /** A sampled point with everything the cost model needs. */
