@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Search } from 'lucide-react';
 import { searchAddresses, debounce, type GeocodingResult } from '../utils/geocoding';
 import { parseCoordinates, formatDecimalDegrees, type ParsedCoordinates } from '../utils/coordinateParser';
 import { parseSixDigitGrid, findPossibleGridLocations, type GridMatch, parseGridReference } from '../utils/gridReference';
@@ -263,7 +264,7 @@ export const SearchControl: React.FC<SearchControlProps> = ({
 
       <div className="search-input-container">
         <div className="search-input-wrapper">
-          <span className="search-icon">🔍</span>
+          <Search size={15} strokeWidth={2} className="search-icon" aria-hidden />
           <input
             ref={inputRef}
             type="text"
