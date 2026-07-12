@@ -16,6 +16,7 @@ This is a **living document** that should be kept synchronized with the codebase
 | MapboxMapView | `webapp/src/components/MapboxMapView.tsx` | `{ onDistanceUpdate, onAnalysisComplete, ... }` | Map container, drawing controls, geospatial calculations | mapbox-gl, @mapbox/mapbox-gl-draw |
 | AnalysisPanel | `webapp/src/components/AnalysisPanel.tsx` | `{ distance, terrainData, vegetationData, ... }` | Results display panel, equipment recommendations | EquipmentResults, OverlapMatrix, GuidancePanel |
 | IntegratedConfigPanel | `webapp/src/components/IntegratedConfigPanel.tsx` | `{ isOpen, onClose, ... }` | Configuration sidebar with tabbed interface | EquipmentConfigPanel, VegetationConfigPanel |
+| AccountControl | `webapp/src/components/AccountControl.tsx` | `{ onSessionChange, onLoadPlan, plansVersion }` | Header suite account control: Station Manager sign-in/out, saved-plan list (load/delete); hidden unless `VITE_SUITE_AUTH_URL` set | suiteAuth util, savedPlansApi util, lucide-react |
 
 ## Configuration Components
 

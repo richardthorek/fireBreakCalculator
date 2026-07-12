@@ -35,6 +35,30 @@ interface Equipment {
 }
 ```
 
+## Saved Plans Endpoints (suite subscription)
+
+All saved-plan endpoints require a Station Manager JWT (`Authorization: Bearer <token>`), validated server-side against SM `GET /api/auth/me`, and the org's `fireBreakEnabled` entitlement. Responses when not satisfied: `401` (no/invalid token), `403` (plan lacks the entitlement), `503` (`SUITE_AUTH_URL` unset on the deployment), `502` (Station Manager unreachable). Storage: Table Storage (`SAVED_PLANS_TABLE_NAME`, default `savedplans`), PartitionKey = SM user id.
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/plans` | GET | List the caller's saved plans (most recently updated first) | None | `SavedPlan[]` | Yes (SM JWT + `fireBreakEnabled`) |
+| `/api/plans` | POST | Save a plan (cap: 100 per user → `409` when full) | `{ name, data }` | `SavedPlan` (201) | Yes (SM JWT + `fireBreakEnabled`) |
+| `/api/plans/{id}` | PUT | Rename/replace a saved plan | `{ name, data }` | `SavedPlan` | Yes (SM JWT + `fireBreakEnabled`) |
+| `/api/plans/{id}` | DELETE | Delete a saved plan | None | `204 No Content` | Yes (SM JWT + `fireBreakEnabled`) |
+
+### Saved Plan Data Model
+```typescript
+interface SavedPlan {
+  id: string;         // RowKey (uuid)
+  userId: string;     // PartitionKey — Station Manager user id
+  name: string;       // 1–120 chars
+  data: string;       // URL-safe-base64 payload from the webapp's encodePlan()
+                      // (same envelope as a share link; <= 100,000 chars)
+  createdAt: string;  // ISO
+  updatedAt: string;  // ISO
+}
+```
+
 ## Vegetation Mapping Endpoints
 
 | Endpoint | Method | Purpose | Request Body | Response | Auth Required |

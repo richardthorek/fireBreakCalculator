@@ -17,7 +17,10 @@ import {
   deleteVegetationMapping
 } from './utils/vegetationMappingApi';
 import { _clearNSWCache } from './utils/nswVegetationService';
-import { readPlanFromUrl } from './utils/planSharing';
+import { readPlanFromUrl, encodePlan, SharedPlan } from './utils/planSharing';
+import { AccountControl } from './components/AccountControl';
+import { SuiteSession } from './utils/suiteAuth';
+import { createSavedPlan, SavedPlanApi } from './utils/savedPlansApi';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
 import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
 import { scanArea } from './utils/areaScan';
@@ -68,6 +71,40 @@ const App: React.FC = () => {
   const handleSearchLocationSelected = useCallback((location: { lat: number; lng: number; label: string }) => {
     setSearchLocation(location);
   }, []);
+
+  // --- Suite account (Station Manager subscription) ------------------------
+  // Signed-in session lifted from the header AccountControl. Cloud plan saves
+  // are gated on the org's fireBreakEnabled entitlement; the calculator itself
+  // stays fully usable anonymously.
+  const [suiteSession, setSuiteSession] = useState<SuiteSession | null>(null);
+  // Bumped after each save so the AccountControl's plan list refreshes.
+  const [plansVersion, setPlansVersion] = useState(0);
+
+  const handleSuiteSessionChange = useCallback((session: SuiteSession | null) => {
+    setSuiteSession(session);
+  }, []);
+
+  // Persist the current plan (identical payload to the share link) to the
+  // user's account via the saved-plans API.
+  const handleSaveToCloud = useCallback(async (name: string, plan: SharedPlan) => {
+    if (!suiteSession) throw new Error('Sign in to save plans');
+    await createSavedPlan(suiteSession.token, { name, data: encodePlan(plan) });
+    setPlansVersion(v => v + 1);
+  }, [suiteSession]);
+
+  // Restore a saved plan through the exact same hardened path a shared link
+  // uses: put the encoded payload in the URL fragment and reload, so line,
+  // break width and vegetation override all come back together.
+  const handleLoadSavedPlan = useCallback((plan: SavedPlanApi) => {
+    if (
+      lineCoords && lineCoords.length >= 2 &&
+      !window.confirm(`Load "${plan.name}"? This replaces the line currently on the map.`)
+    ) {
+      return;
+    }
+    window.location.hash = `plan=${plan.data}`;
+    window.location.reload();
+  }, [lineCoords]);
 
   // --- Route intelligence state ---------------------------------------------
   // Highlighted chainage range (from insight "show on map" / segment locate).
@@ -722,6 +759,11 @@ const App: React.FC = () => {
           />
         </div>
         <div className="header-right">
+          <AccountControl
+            onSessionChange={handleSuiteSessionChange}
+            onLoadPlan={handleLoadSavedPlan}
+            plansVersion={plansVersion}
+          />
           <button
             className="config-panel-toggle"
             onClick={() => setIsConfigOpen(v => !v)}
@@ -807,6 +849,8 @@ const App: React.FC = () => {
             onClearOverlays={handleClearOverlays}
             viewBounds={viewBounds}
             onLiveFeedData={setLiveFeedData}
+            canSaveToCloud={!!suiteSession?.fireBreakEnabled}
+            onSaveToCloud={handleSaveToCloud}
           />
         </div>
         <IntegratedConfigPanel 

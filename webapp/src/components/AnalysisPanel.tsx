@@ -20,7 +20,7 @@ import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 import { buildRouteProfile } from '../utils/routeProfile';
-import { buildShareUrl, printBriefing } from '../utils/planSharing';
+import { buildShareUrl, printBriefing, SharedPlan } from '../utils/planSharing';
 import { buildPlanAssessment } from '../utils/planInsights';
 import { OptimizedRouteResult } from '../utils/routeOptimizer';
 import { formatChainage, LatLng } from '../utils/chainage';
@@ -86,6 +86,11 @@ interface AnalysisPanelProps {
   /** Live feeds wiring (state lives in App so the map can render layers). */
   viewBounds?: ViewBounds | null;
   onLiveFeedData?: (data: LiveFeedMapData) => void;
+  /** True when a signed-in suite user with the fireBreakEnabled entitlement
+   *  can save plans to their account (shows the "Save plan" button). */
+  canSaveToCloud?: boolean;
+  /** Persist the current plan to the user's account (App owns auth + API). */
+  onSaveToCloud?: (name: string, plan: SharedPlan) => Promise<void>;
 }
 
 /** Analysis panel tabs. */
@@ -328,7 +333,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   overlayCount = 0,
   onClearOverlays,
   viewBounds = null,
-  onLiveFeedData
+  onLiveFeedData,
+  canSaveToCloud = false,
+  onSaveToCloud
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation.
   // A shared plan may seed an explicit override.
@@ -797,6 +804,27 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (shareStatus !== 'Link copied') setTimeout(() => setShareStatus(null), 2500);
   };
 
+  // Save the current plan (same payload as the share link) to the signed-in
+  // user's account. Availability (auth + entitlement) is decided by App.
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const handleSaveToCloud = async () => {
+    if (!canExport || !onSaveToCloud) return;
+    const name = window.prompt('Name this plan:', 'Fire break plan');
+    if (!name || !name.trim()) return;
+    setSaveStatus('Saving…');
+    try {
+      await onSaveToCloud(name.trim(), {
+        coords: lineCoords!,
+        breakWidthMeters,
+        vegetation: useAutoDetected ? undefined : selectedVegetation
+      });
+      setSaveStatus('Saved');
+    } catch (err) {
+      setSaveStatus(err instanceof Error ? err.message : 'Save failed');
+    }
+    setTimeout(() => setSaveStatus(null), 3000);
+  };
+
   // Payload for the GIS export pack — same joined segments the panel displays.
   const exportInput = useMemo<ExportPlanInput | null>(() => {
     if (!canExport || !distance) return null;
@@ -1100,6 +1128,17 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             >
               🔗 {shareStatus || 'Share link'}
             </button>
+            {canSaveToCloud && (
+              <button
+                type="button"
+                className="plan-export-btn"
+                onClick={handleSaveToCloud}
+                disabled={!canExport}
+                title="Save this plan to your account so it can be restored on any device"
+              >
+                💾 {saveStatus || 'Save plan'}
+              </button>
+            )}
             <ExportImportControls
               exportInput={exportInput}
               onImportAsPlan={coords => onImportAsPlan?.(coords)}

@@ -1,0 +1,254 @@
+/* Header account control (suite sign-in + saved plans). Matches the dark
+   header chrome used by .config-panel-toggle in styles.css. */
+
+.account-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.account-toggle {
+  background-color: #1E2637;
+  color: #F3F6FB;
+  border: 1px solid #233149;
+  border-radius: 12px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: background-color 0.2s, border-color 0.2s;
+  font-family: 'Archivo', sans-serif;
+  font-weight: 600;
+  max-width: 180px;
+}
+
+.account-toggle:hover {
+  background-color: #233149;
+  border-color: #334155;
+}
+
+.account-toggle .account-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #101827;
+  color: #F3F6FB;
+  border: 1px solid #233149;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 1rem;
+  z-index: 1200;
+}
+
+.account-panel h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.account-hint {
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+  color: #9AA8BF;
+  line-height: 1.4;
+}
+
+.account-hint a,
+.account-upgrade a {
+  color: #7FB5FF;
+}
+
+.account-signin label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  margin-bottom: 0.6rem;
+  color: #C7D2E4;
+}
+
+.account-signin input {
+  background: #1E2637;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #F3F6FB;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.account-signin input:focus {
+  outline: 2px solid #7FB5FF;
+  outline-offset: 1px;
+}
+
+.account-primary {
+  width: 100%;
+  background: #E5281B;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.account-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.account-error {
+  background: rgba(229, 40, 27, 0.15);
+  border: 1px solid rgba(229, 40, 27, 0.5);
+  border-radius: 8px;
+  color: #FFB4AE;
+  font-size: 0.8rem;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.account-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: #C7D2E4;
+}
+
+.account-plan-badge {
+  background: #233149;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.account-plans-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.account-plan-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.account-plan-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: #1E2637;
+  border: 1px solid #233149;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+}
+
+.account-plan-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-plan-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-plan-date {
+  font-size: 0.7rem;
+  color: #9AA8BF;
+}
+
+.account-plan-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.account-icon-btn {
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #C7D2E4;
+  padding: 0.35rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.account-icon-btn:hover {
+  background: #233149;
+}
+
+.account-icon-btn.account-danger:hover {
+  border-color: rgba(229, 40, 27, 0.6);
+  color: #FFB4AE;
+}
+
+.account-upgrade p {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #C7D2E4;
+}
+
+.account-signout {
+  margin-top: 0.9rem;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #C7D2E4;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.account-signout:hover {
+  background: #233149;
+}
+
+@media (max-width: 640px) {
+  .account-toggle .account-label {
+    display: none;
+  }
+  .account-panel {
+    position: fixed;
+    top: 64px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+}
