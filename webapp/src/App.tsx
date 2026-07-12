@@ -81,6 +81,14 @@ const App: React.FC = () => {
   const [applyLineRequest, setApplyLineRequest] = useState<{ coords: { lat: number; lng: number }[]; version: number } | null>(null);
   const optimizeAbortRef = useRef<AbortController | null>(null);
   const applyVersionRef = useRef(0);
+  // WP5 auto-run: applying an optimized route replaces the drawn line, which
+  // fires the same onLineChange path that triggers auto-optimize — without
+  // this guard, apply -> auto-optimize -> apply would loop. Set right before
+  // requesting the apply, cleared once the resulting line-change has been
+  // seen (handleLineCoordsChange runs synchronously in the same tick as the
+  // map's onLineChange, so this window is exactly one line-change).
+  const suppressAutoOptimizeRef = useRef(false);
+  const autoOptimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const chainageIndex = useMemo(
     () => (lineCoords && lineCoords.length >= 2 ? buildChainageIndex(lineCoords) : null),
@@ -153,6 +161,7 @@ const App: React.FC = () => {
 
   const handleApplyOptimized = useCallback(() => {
     if (!optimizerResult) return;
+    suppressAutoOptimizeRef.current = true;
     applyVersionRef.current += 1;
     setApplyLineRequest({ coords: optimizerResult.coords, version: applyVersionRef.current });
     // The map will emit onLineChange for the new geometry, which resets the
@@ -167,6 +176,34 @@ const App: React.FC = () => {
     setOptimizerProgress(0);
     setOptimizerPhase(undefined);
   }, []);
+
+  // WP5 — auto-run: once the drawn line is long enough to be worth a hex
+  // search, start one automatically a beat after the user stops drawing,
+  // rather than waiting for a manual tap. Skipped right after an apply (the
+  // suppress guard above) so applying a result can't re-trigger itself.
+  useEffect(() => {
+    if (autoOptimizeTimerRef.current) {
+      clearTimeout(autoOptimizeTimerRef.current);
+      autoOptimizeTimerRef.current = null;
+    }
+    if (suppressAutoOptimizeRef.current) {
+      suppressAutoOptimizeRef.current = false;
+      return;
+    }
+    if (!lineCoords || lineCoords.length < 2) return;
+    const length = buildChainageIndex(lineCoords).total;
+    if (length < 120) return;
+    autoOptimizeTimerRef.current = setTimeout(() => {
+      handleOptimize();
+    }, 800);
+    return () => {
+      if (autoOptimizeTimerRef.current) {
+        clearTimeout(autoOptimizeTimerRef.current);
+        autoOptimizeTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineCoords]);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
   const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);

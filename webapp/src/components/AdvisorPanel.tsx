@@ -121,6 +121,9 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
           <div className="optimizer-progress" role="status">
             <LoaderCircle className="optimizer-spinner" size={16} aria-hidden />
             <span>{phaseMessage(optimizerPhase, optimizerProgress)} {Math.round(optimizerProgress * 100)}%</span>
+            <button type="button" className="optimizer-cancel-btn" onClick={onDismissOptimized}>
+              <X size={13} strokeWidth={2.5} aria-hidden /> Cancel
+            </button>
           </div>
         )}
 
