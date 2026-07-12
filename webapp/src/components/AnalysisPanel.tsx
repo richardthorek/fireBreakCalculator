@@ -5,17 +5,28 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Truck, Wrench, Plane, Users } from 'lucide-react';
+import { Truck, Wrench, Plane, Users, LayoutDashboard, Mountain, Sparkles } from 'lucide-react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
 import { DistributionBar } from './DistributionBar';
 import { OverlapMatrix } from './OverlapMatrix';
 import { HelpContent } from './HelpContent';
+import { ElevationProfile } from './ElevationProfile';
+import { SegmentBreakdown } from './SegmentBreakdown';
+import { AdvisorPanel, OptimizerStatus } from './AdvisorPanel';
+import { AiAssistantCard } from './AiAssistantCard';
+import { buildAssistantPayload, AssistantPayload } from '../utils/assistantApi';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 import { buildRouteProfile } from '../utils/routeProfile';
-import { buildShareUrl, toGPX, downloadFile, printBriefing } from '../utils/planSharing';
+import { buildShareUrl, printBriefing } from '../utils/planSharing';
+import { buildPlanAssessment } from '../utils/planInsights';
+import { OptimizedRouteResult } from '../utils/routeOptimizer';
+import { formatChainage, LatLng } from '../utils/chainage';
+import { ExportImportControls } from './ExportImportControls';
+import { ExportPlanInput } from '../utils/gisExport';
+import { ImportedFeatures } from '../utils/gisImport';
 import { logger } from '../utils/logger';
 
 interface AnalysisPanelProps {
@@ -49,7 +60,29 @@ interface AnalysisPanelProps {
    *  (or attempted fallback). Gate heavy backend analysis until this is true to
    *  avoid spamming the backend while the map is still settling. */
   mapSettled?: boolean;
+  /** Ask the map to highlight a chainage range of the line. */
+  onLocateSegment?: (startM: number, endM: number) => void;
+  /** Currently highlighted chainage range (marks active row in segment table). */
+  activeHighlightRange?: { startM: number; endM: number } | null;
+  /** Elevation-profile hover position → map marker sync. */
+  onHoverChainage?: (chainageM: number | null) => void;
+  /** Route optimizer wiring (state lives in App so the map can preview). */
+  optimizerStatus?: OptimizerStatus;
+  optimizerProgress?: number;
+  optimizerResult?: OptimizedRouteResult | null;
+  optimizerError?: string | null;
+  onOptimize?: () => void;
+  onApplyOptimized?: () => void;
+  onDismissOptimized?: () => void;
+  /** GIS import wiring (state lives in App so the map can render overlays). */
+  onImportAsPlan?: (coords: LatLng[]) => void;
+  onAddOverlay?: (features: ImportedFeatures) => void;
+  overlayCount?: number;
+  onClearOverlays?: () => void;
 }
+
+/** Analysis panel tabs. */
+type AnalysisTab = 'overview' | 'terrain' | 'equipment' | 'assistant';
 
 // Use centralized type definitions from classification.ts
 // Using TerrainLevel directly from classification.ts for consistency
@@ -271,7 +304,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   mapSettled = false,
   lineCoords = null,
   initialBreakWidthMeters,
-  initialVegetationOverride
+  initialVegetationOverride,
+  onLocateSegment,
+  activeHighlightRange = null,
+  onHoverChainage,
+  optimizerStatus = 'idle',
+  optimizerProgress = 0,
+  optimizerResult = null,
+  optimizerError = null,
+  onOptimize,
+  onApplyOptimized,
+  onDismissOptimized,
+  onImportAsPlan,
+  onAddOverlay,
+  overlayCount = 0,
+  onClearOverlays
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation.
   // A shared plan may seed an explicit override.
@@ -286,6 +333,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     () => typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
   const [selectedAircraftForPreview, setSelectedAircraftForPreview] = useState<string[]>(externalSelected);
+  // Active tab of the analysis workspace.
+  const [activeTab, setActiveTab] = useState<AnalysisTab>('overview');
 
   // Backend analysis state (always use backend)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
@@ -685,6 +734,37 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     compatibilityLevel: isCompatibilityLevel(r.compatibilityLevel) ? r.compatibilityLevel : 'incompatible'
   })) : calculations;
 
+  // Plan Assistant assessment — deterministic insights derived from the same
+  // analyses the estimates use (never fabricated on top of them).
+  const assessment = useMemo(() => {
+    if (!distance) return null;
+    return buildPlanAssessment({
+      distance,
+      trackAnalysis,
+      vegetationAnalysis,
+      equipmentResults: finalCalculations as any[],
+      breakWidthMeters
+    });
+  }, [distance, trackAnalysis, vegetationAnalysis, finalCalculations, breakWidthMeters]);
+
+  // Compact payload for the AI assistant — built from the same analysis
+  // state the rule engine uses, so anything the model restates is checkable.
+  const assistantPayload = useMemo<AssistantPayload | null>(() => {
+    if (!distance) return null;
+    return buildAssistantPayload({
+      distance,
+      breakWidthMeters,
+      trackAnalysis,
+      vegetationAnalysis,
+      equipmentResults: finalCalculations as any[],
+      assessment
+    });
+  }, [distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, finalCalculations, assessment]);
+
+  const attentionCount = assessment
+    ? assessment.insights.filter(i => i.severity === 'critical' || i.severity === 'warning').length
+    : 0;
+
   // --- Share & export -------------------------------------------------------
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const canExport = !!(lineCoords && lineCoords.length >= 2);
@@ -707,11 +787,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     if (shareStatus !== 'Link copied') setTimeout(() => setShareStatus(null), 2500);
   };
 
-  const handleExportGpx = () => {
-    if (!canExport) return;
-    const gpx = toGPX(lineCoords!, 'Fire break plan');
-    downloadFile(`fire-break-${new Date().toISOString().slice(0, 10)}.gpx`, gpx, 'application/gpx+xml');
-  };
+  // Payload for the GIS export pack — same joined segments the panel displays.
+  const exportInput = useMemo<ExportPlanInput | null>(() => {
+    if (!canExport || !distance) return null;
+    return {
+      coords: lineCoords!,
+      distance,
+      trackAnalysis,
+      vegetationAnalysis,
+      breakWidthMeters,
+      difficultyScore: assessment?.difficultyScore,
+      difficultyLabel: assessment?.difficultyLabel,
+      name: 'Fire break plan',
+    };
+  }, [canExport, distance, lineCoords, trackAnalysis, vegetationAnalysis, breakWidthMeters, assessment]);
 
   const handlePrintBriefing = () => {
     if (!distance) return;
@@ -807,6 +896,47 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
         quickAircraft={quickAircraft}
         quickHandCrew={quickHandCrew}
       />
+      {distance != null && (
+        <div className="analysis-tabs" role="tablist" aria-label="Analysis sections">
+          <button
+            role="tab"
+            aria-selected={activeTab === 'overview'}
+            className={`analysis-tab${activeTab === 'overview' ? ' active' : ''}`}
+            onClick={() => setActiveTab('overview')}
+          >
+            <LayoutDashboard size={15} strokeWidth={2} aria-hidden />
+            <span>Overview</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'terrain'}
+            className={`analysis-tab${activeTab === 'terrain' ? ' active' : ''}`}
+            onClick={() => setActiveTab('terrain')}
+          >
+            <Mountain size={15} strokeWidth={2} aria-hidden />
+            <span>Terrain</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'equipment'}
+            className={`analysis-tab${activeTab === 'equipment' ? ' active' : ''}`}
+            onClick={() => setActiveTab('equipment')}
+          >
+            <Truck size={15} strokeWidth={2} aria-hidden />
+            <span>Equipment</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'assistant'}
+            className={`analysis-tab${activeTab === 'assistant' ? ' active' : ''}`}
+            onClick={() => setActiveTab('assistant')}
+          >
+            <Sparkles size={15} strokeWidth={2} aria-hidden />
+            <span>Assistant</span>
+            {attentionCount > 0 && <span className="tab-badge" aria-label={`${attentionCount} items need attention`}>{attentionCount}</span>}
+          </button>
+        </div>
+      )}
       <div className="analysis-content" id="analysis-content">
         {distance && (trackAnalysis?.usedMockElevation || vegetationAnalysis?.usedFallbackData) && (
           <div className="data-quality-warning" role="alert">
@@ -824,7 +954,53 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </div>
           </div>
         )}
-        {distance && (
+        {distance && activeTab === 'overview' && (
+          <div className="stat-tiles" aria-label="Plan summary">
+            <div className="stat-tile">
+              <span className="stat-tile-value">{formatChainage(distance)}</span>
+              <span className="stat-tile-label">Line length</span>
+            </div>
+            {trackAnalysis && (
+              <div className="stat-tile">
+                <span className="stat-tile-value">{Math.round(trackAnalysis.maxSlope)}°</span>
+                <span className="stat-tile-label">Max slope</span>
+              </div>
+            )}
+            {assessment && (
+              <div className={`stat-tile difficulty-${assessment.difficultyLabel.toLowerCase()}`}>
+                <span className="stat-tile-value">{assessment.difficultyLabel}</span>
+                <span className="stat-tile-label">Difficulty {assessment.difficultyScore}/100</span>
+              </div>
+            )}
+            {(() => {
+              const fastest = (finalCalculations as any[])
+                .filter(r => r.compatible && r.time > 0)
+                .sort((a, b) => a.time - b.time)[0];
+              return fastest ? (
+                <div className="stat-tile">
+                  <span className="stat-tile-value">{fastest.time >= 10 ? Math.round(fastest.time) : fastest.time.toFixed(1)} h</span>
+                  <span className="stat-tile-label">Fastest option</span>
+                </div>
+              ) : null;
+            })()}
+          </div>
+        )}
+        {distance && activeTab === 'overview' && assessment && attentionCount > 0 && (
+          <button
+            type="button"
+            className="attention-strip"
+            onClick={() => setActiveTab('assistant')}
+            aria-label={`${attentionCount} findings need attention — open Assistant`}
+          >
+            <Sparkles size={14} strokeWidth={2} aria-hidden />
+            <span>
+              {assessment.insights.find(i => i.severity === 'critical' || i.severity === 'warning')?.title}
+              {attentionCount > 1 ? ` — and ${attentionCount - 1} more` : ''}
+            </span>
+            <span className="attention-strip-cta">Open Assistant →</span>
+          </button>
+        )}
+        {distance && activeTab === 'overview' && (
           <div className="conditions-section">
             <div className="conditions-group break-width-group">
               <label htmlFor="break-width-select">Target break width</label>
@@ -894,7 +1070,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             )}
           </div>
         )}
-        {distance && (
+        {distance && activeTab === 'overview' && (
           <div className="plan-export-toolbar">
             <button
               type="button"
@@ -905,15 +1081,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             >
               🔗 {shareStatus || 'Share link'}
             </button>
-            <button
-              type="button"
-              className="plan-export-btn"
-              onClick={handleExportGpx}
-              disabled={!canExport}
-              title="Download the line as GPX for a vehicle/handheld GPS"
-            >
-              📍 GPX
-            </button>
+            <ExportImportControls
+              exportInput={exportInput}
+              onImportAsPlan={coords => onImportAsPlan?.(coords)}
+              onAddOverlay={features => onAddOverlay?.(features)}
+              overlayCount={overlayCount}
+              onClearOverlays={() => onClearOverlays?.()}
+            />
             <button
               type="button"
               className="plan-export-btn"
@@ -924,16 +1098,27 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </button>
           </div>
         )}
-        {trackAnalysis && (
-          <div className="slope-analysis-section">
-            <h4>Slope Analysis</h4>
-            <div className="slope-summary">
-              <div className="slope-stats">
-                <span>Max: {Math.round(trackAnalysis.maxSlope)}°</span>
-                <span>Avg: {Math.round(trackAnalysis.averageSlope)}°</span>
-                <span>Segments: {trackAnalysis.segments.length}</span>
-              </div>
-              {isExpanded && (
+        {distance && activeTab === 'terrain' && !trackAnalysis && (
+          <div className="vegetation-loading">Terrain analysis pending…</div>
+        )}
+        {distance && activeTab === 'terrain' && trackAnalysis && (
+          <div className="terrain-tab">
+            <div className="terrain-section">
+              <h4>Elevation Profile</h4>
+              <ElevationProfile
+                trackAnalysis={trackAnalysis}
+                vegetationAnalysis={vegetationAnalysis}
+                onHoverChainage={onHoverChainage}
+              />
+            </div>
+            <div className="slope-analysis-section">
+              <h4>Slope Analysis</h4>
+              <div className="slope-summary">
+                <div className="slope-stats">
+                  <span>Max: {Math.round(trackAnalysis.maxSlope)}°</span>
+                  <span>Avg: {Math.round(trackAnalysis.averageSlope)}°</span>
+                  <span>Segments: {trackAnalysis.segments.length}</span>
+                </div>
                 <div className="slope-distribution">
                   <DistributionBar
                     categories={SLOPE_CATEGORIES}
@@ -942,33 +1127,70 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                     ariaLabel="Slope distribution"
                   />
                 </div>
-              )}
-            </div>
-            {isExpanded && vegetationAnalysis && (
-              <div className="overlap-section">
-                <h5 className="overlap-title">Slope × Vegetation Overlap</h5>
-                <OverlapMatrix trackAnalysis={trackAnalysis} vegetationAnalysis={vegetationAnalysis} />
-                <div className="overlap-aux">
-                  <div className="overlap-legend">
-                    <div className="legend-title">Vegetation legend</div>
-                    <div className="legend-items">
-                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#00aa00"></span><span className="dist-legend-label">Grass</span></div>
-                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#c8c800"></span><span className="dist-legend-label">Light</span></div>
-                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#ff8800"></span><span className="dist-legend-label">Medium</span></div>
-                      <div className="dist-legend-item"><span className="dist-swatch" data-color="#006400"></span><span className="dist-legend-label">Heavy</span></div>
+              </div>
+              {vegetationAnalysis && (
+                <div className="overlap-section">
+                  <h5 className="overlap-title">Slope × Vegetation Overlap</h5>
+                  <OverlapMatrix trackAnalysis={trackAnalysis} vegetationAnalysis={vegetationAnalysis} />
+                  <div className="overlap-aux">
+                    <div className="overlap-legend">
+                      <div className="legend-title">Vegetation legend</div>
+                      <div className="legend-items">
+                        <div className="dist-legend-item"><span className="dist-swatch" data-color="#00aa00"></span><span className="dist-legend-label">Grass</span></div>
+                        <div className="dist-legend-item"><span className="dist-swatch" data-color="#c8c800"></span><span className="dist-legend-label">Light</span></div>
+                        <div className="dist-legend-item"><span className="dist-swatch" data-color="#ff8800"></span><span className="dist-legend-label">Medium</span></div>
+                        <div className="dist-legend-item"><span className="dist-swatch" data-color="#006400"></span><span className="dist-legend-label">Heavy</span></div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+            <div className="terrain-section">
+              <h4>Segment Breakdown</h4>
+              <SegmentBreakdown
+                trackAnalysis={trackAnalysis}
+                vegetationAnalysis={vegetationAnalysis}
+                onLocate={onLocateSegment}
+                activeRange={activeHighlightRange}
+              />
+            </div>
           </div>
         )}
+        {distance && activeTab === 'assistant' && (
+          <>
+            <AdvisorPanel
+              assessment={assessment}
+              hasLine={!!distance}
+              onLocate={onLocateSegment}
+              optimizerStatus={optimizerStatus}
+              optimizerProgress={optimizerProgress}
+              optimizerResult={optimizerResult}
+              optimizerError={optimizerError}
+              onOptimize={onOptimize}
+              onApplyOptimized={onApplyOptimized}
+              onDismissOptimized={onDismissOptimized}
+            />
+            <AiAssistantCard payload={assistantPayload} />
+          </>
+        )}
         {!distance ? (
-          <HelpContent />
+          <>
+            <div className="plan-export-toolbar empty-state-toolbar">
+              <ExportImportControls
+                exportInput={null}
+                onImportAsPlan={coords => onImportAsPlan?.(coords)}
+                onAddOverlay={features => onAddOverlay?.(features)}
+                overlayCount={overlayCount}
+                onClearOverlays={() => onClearOverlays?.()}
+              />
+            </div>
+            <HelpContent />
+          </>
         ) : (
           <>
             {/* Diagnostic message when no calculations are available */}
-            {finalCalculations.length === 0 && (() => {
+            {activeTab === 'overview' && finalCalculations.length === 0 && (() => {
               // Extract diagnostic conditions for better readability
               const isMapInitializing = !mapSettled;
               const isBackendUnavailable = mapSettled && backendAvailable === false; // explicitly false, not null (initializing)
@@ -1006,6 +1228,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
               );
             })()}
+            {activeTab === 'overview' && (
             <div className="best-options-summary">
               <h4>Quick Options</h4>
               <div className="best-options-grid">
@@ -1078,7 +1301,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
               </div>
             </div>
-            {isExpanded && (
+            )}
+            {activeTab === 'equipment' && (
               <div className="equipment-summary">
                 <h4>All Equipment Options</h4>
                 <div className="equipment-categories">

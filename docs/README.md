@@ -14,6 +14,12 @@ Update them when the code changes in those areas.
   (per-segment, slope/fuel multipliers, machinery limits).
 - **[VEGETATION_OVERRIDES.md](VEGETATION_OVERRIDES.md)** — User override workflow
   for auto-detected vegetation.
+- **[ROUTE_INTELLIGENCE.md](ROUTE_INTELLIGENCE.md)** — Corridor pathfinding, chainage
+  model, Plan Assistant rules (as-built) + infrastructure-aware optimizer (design).
+- **[GIS_INTEROP.md](GIS_INTEROP.md)** — Export formats, ArcGIS/FireMapper/Avenza
+  integration, AFDRS & live feeds (design).
+- **[AI_ASSISTANT.md](AI_ASSISTANT.md)** — LLM layer on Azure AI Foundry: grounding
+  contract, doctrine RAG, anti-hallucination controls (design).
 
 ## Machine-Readable Registers (Update on code changes)
 
@@ -35,6 +41,9 @@ Update them when the code changes in those areas.
 | Vegetation data strategy & endpoints | `NVIS_INTEGRATION.md` (this folder) |
 | How estimates are calculated | `CALCULATION_REVIEW.md` (this folder) |
 | How users override vegetation | `VEGETATION_OVERRIDES.md` (this folder) |
+| Pathfinding & Plan Assistant internals | `ROUTE_INTELLIGENCE.md` (this folder) |
+| Exports, agency GIS, AFDRS feeds | `GIS_INTEROP.md` (this folder) |
+| AI assistant architecture & guardrails | `AI_ASSISTANT.md` (this folder) |
 | All API endpoints | `api-register.md` (this folder) |
 | All React components | `component-register.md` (this folder) |
 

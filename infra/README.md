@@ -12,7 +12,8 @@ resources never breaks CI — re-running the workflow rebuilds the whole environ
 | --- | --- |
 | Storage Account (`Standard_LRS`) + tables `equipment`, `vegetation` | Equipment specs and vegetation formation mappings |
 | Static Web App (Free/Standard) | React frontend + managed Azure Functions API |
-| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME`, `DEM_IMAGESERVER_URL` |
+| Azure AI Foundry account + model deployment (optional, `deployAiAssistant`) | Grounded briefings/chat for the Plan Assistant — see below |
+| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME`, `DEM_IMAGESERVER_URL`, `AI_FOUNDRY_ENDPOINT`, `AI_FOUNDRY_API_KEY`, `AI_FOUNDRY_DEPLOYMENT_NAME` |
 
 ### Elevation data source (`DEM_IMAGESERVER_URL`)
 
@@ -26,6 +27,30 @@ client-side Mapbox Terrain-RGB (the app still works, just less accurate).
 
 Pass it at deploy time by adding to the workflow's `az deployment group create`:
 `--parameters demImageServerUrl="https://…/ImageServer"`.
+
+### AI assistant (`deployAiAssistant`)
+
+Off by default — the app is fully functional without it (the rule-based Plan
+Assistant is the deterministic core; see `docs/AI_ASSISTANT.md` for the
+grounding contract that keeps the AI layer honest). To enable:
+
+```bash
+az deployment group create \
+  --resource-group "$RG" \
+  --template-file infra/main.bicep \
+  --parameters deployAiAssistant=true aiFoundryLocation=eastus2 \
+               aiModelName=gpt-4o-mini aiModelVersion=2024-07-18
+```
+
+**Verify before first deploy** (this Bicep was written without access to a
+live `az`/Bicep compiler in this session — sanity-checked by hand against
+known-good patterns, but not mechanically validated):
+- `Microsoft.CognitiveServices/accounts` API version `2024-10-01` and `kind: 'AIServices'` are current for your subscription (`az provider show --namespace Microsoft.CognitiveServices`).
+- `aiModelName`/`aiModelVersion` are available in `aiFoundryLocation` (model availability varies by region — check the [Azure AI Foundry model catalog](https://ai.azure.com)).
+- Quota for the chosen `aiModelCapacity` (GlobalStandard, thousands of tokens/minute) exists in the subscription/region.
+
+Run a `--what-if` first: `az deployment group create --what-if ...` with the
+same parameters, before applying for real.
 
 ## One-time Azure setup (OIDC — no long-lived credentials)
 
