@@ -659,6 +659,12 @@ html, body {
 
 /* Ensure header children are laid out inline and can shrink appropriately. */
 .app-header .header-left { display:flex; align-items:center; gap:0.75rem; flex:0 0 auto; }
+.app-header .header-right { gap: 0.5rem; }
+/* The legacy "Equipment Configuration Panel" rule further down makes
+   .config-panel-toggle absolutely positioned at the header's right edge,
+   which overlays the account control. Inside the header it must flow in
+   the header-right flex row. */
+.app-header .config-panel-toggle { position: static; transform: none; }
 .app-header .header-center { display:flex; align-items:center; justify-content:center; flex:1 1 auto; min-width:0; }
 .app-header .header-right { display:flex; align-items:center; justify-content:flex-end; flex:0 0 auto; }
 
