@@ -18,6 +18,11 @@ export interface AssistantInsightSummary {
   detail: string;
 }
 
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
 export interface AssistantPayload {
   distanceM: number;
   breakWidthM: number;
@@ -31,6 +36,11 @@ export interface AssistantPayload {
   difficultyLabel: string;
   topEquipment: AssistantEquipmentSummary[];
   insights: AssistantInsightSummary[];
+  // SMEACS briefing fields (optional for backwards compatibility)
+  startCoords?: LatLng;
+  endCoords?: LatLng;
+  locality?: string;
+  taskedResourceTypes?: string[];
 }
 
 export interface AssistantCitation {
@@ -44,6 +54,20 @@ export interface AssistantResponse {
   source: 'ai' | 'template' | 'unavailable';
   text: string;
   citations: AssistantCitation[];
+}
+
+export interface SmeacsBriefingSection {
+  section: 'situation' | 'mission' | 'execution' | 'administration' | 'command' | 'safety';
+  heading: string;
+  lines: string[];
+  userEditable: boolean;
+  citations: AssistantCitation[];
+}
+
+export interface SmeacsBriefing {
+  sections: SmeacsBriefingSection[];
+  generatedAt: string;
+  dataHonestyCaveat?: string;
 }
 
 function isFiniteNumber(v: any): boolean {
@@ -65,6 +89,16 @@ function isInsightSummary(v: any): v is AssistantInsightSummary {
   return v && typeof v.severity === 'string' && typeof v.title === 'string' && typeof v.detail === 'string';
 }
 
+function isLatLng(v: any): v is LatLng {
+  return (
+    v &&
+    isFiniteNumber(v.lat) &&
+    isFiniteNumber(v.lng) &&
+    v.lat >= -90 && v.lat <= 90 &&
+    v.lng >= -180 && v.lng <= 180
+  );
+}
+
 /**
  * Validates the full shape, including array elements — this is a public,
  * anonymous HTTP endpoint (see assistantBriefing.ts/assistantChat.ts), so the
@@ -75,7 +109,7 @@ function isInsightSummary(v: any): v is AssistantInsightSummary {
  * value can't silently become `null` when serialized into the model prompt.
  */
 export function isAssistantPayload(v: any): v is AssistantPayload {
-  return (
+  const baseValid =
     v &&
     isFiniteNumber(v.distanceM) &&
     isFiniteNumber(v.breakWidthM) &&
@@ -89,6 +123,17 @@ export function isAssistantPayload(v: any): v is AssistantPayload {
     Array.isArray(v.topEquipment) &&
     v.topEquipment.every(isEquipmentSummary) &&
     Array.isArray(v.insights) &&
-    v.insights.every(isInsightSummary)
-  );
+    v.insights.every(isInsightSummary);
+
+  if (!baseValid) return false;
+
+  if (v.startCoords !== undefined && !isLatLng(v.startCoords)) return false;
+  if (v.endCoords !== undefined && !isLatLng(v.endCoords)) return false;
+  if (v.locality !== undefined && typeof v.locality !== 'string') return false;
+  if (v.taskedResourceTypes !== undefined) {
+    if (!Array.isArray(v.taskedResourceTypes)) return false;
+    if (!v.taskedResourceTypes.every((t: any) => typeof t === 'string')) return false;
+  }
+
+  return true;
 }
