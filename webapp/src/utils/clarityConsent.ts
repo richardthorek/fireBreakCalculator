@@ -19,26 +19,14 @@ export function initClarityConsent() {
 
   const banner = document.createElement('div');
   banner.className = 'clarity-consent-banner';
-  banner.style.position = 'fixed';
-  banner.style.left = '12px';
-  banner.style.right = '12px';
-  banner.style.bottom = '12px';
-  banner.style.zIndex = '10000';
-  banner.style.background = 'rgba(30,36,51,0.98)';
-  banner.style.border = '1px solid #2a3442';
-  banner.style.padding = '12px';
-  banner.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
-  banner.style.borderRadius = '6px';
-  banner.style.fontSize = '14px';
-  banner.style.color = '#f5f7fa';
-  banner.style.backdropFilter = 'blur(8px)';
-  (banner.style as any).webkitBackdropFilter = 'blur(8px)';
+  // Layout/responsive styling lives in styles.css (.clarity-consent-banner) so
+  // the banner can compact itself on phones instead of covering the panel.
   banner.innerHTML = `
-    <div style="display:flex;gap:12px;align-items:center;justify-content:space-between">
-      <div style="flex:1;color:#f5f7fa;line-height:1.4">We use Microsoft Clarity to collect anonymous usage data to improve this tool. By consenting you allow session recording for analytics.</div>
-      <div style="flex-shrink:0;display:flex;gap:8px">
-        <button id="clarity-accept" style="background:#10b981;color:#fff;border:none;padding:8px 12px;border-radius:4px;cursor:pointer;font-weight:500;transition:background 0.2s">Accept</button>
-        <button id="clarity-reject" style="background:rgba(107,114,128,0.2);color:#94a3b8;border:1px solid #374151;padding:8px 12px;border-radius:4px;cursor:pointer;font-weight:500;transition:all 0.2s">Reject</button>
+    <div class="clarity-consent-inner">
+      <div class="clarity-consent-text">We use Microsoft Clarity to collect anonymous usage data to improve this tool. By consenting you allow session recording for analytics.</div>
+      <div class="clarity-consent-actions">
+        <button id="clarity-accept" class="clarity-consent-accept">Accept</button>
+        <button id="clarity-reject" class="clarity-consent-reject">Reject</button>
       </div>
     </div>
   `;
@@ -47,23 +35,6 @@ export function initClarityConsent() {
 
   const accept = document.getElementById('clarity-accept')!;
   const reject = document.getElementById('clarity-reject')!;
-
-  // Add hover effects
-  accept.addEventListener('mouseenter', () => {
-    accept.style.background = '#059669';
-  });
-  accept.addEventListener('mouseleave', () => {
-    accept.style.background = '#10b981';
-  });
-
-  reject.addEventListener('mouseenter', () => {
-    reject.style.background = 'rgba(107,114,128,0.3)';
-    reject.style.borderColor = '#4b5563';
-  });
-  reject.addEventListener('mouseleave', () => {
-    reject.style.background = 'rgba(107,114,128,0.2)';
-    reject.style.borderColor = '#374151';
-  });;
 
   const setConsent = (granted: boolean) => {
     localStorage.setItem(storageKey, granted ? 'granted' : 'denied');

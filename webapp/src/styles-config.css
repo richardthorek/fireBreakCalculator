@@ -23,6 +23,8 @@
   height: 100dvh; /* dynamic viewport */
   max-height: 100dvh;
   box-sizing: border-box;
+  /* Keep the panel's bottom controls above the iPhone home indicator */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Configuration header - 10% of height allocation */
@@ -941,22 +943,23 @@
   align-items: center;
 }
 
-/* Place the icon in its own left area (outside the input's inner padding). This prevents overlap
-   and keeps the icon visually before the input zone. */
+/* Icon sits inside the input pill on the left, like a standard search field. */
 .search-icon {
-  position: relative;
-  left: 0;
-  margin-left: 8px;
-  margin-right: 8px;
-  font-size: 14px;
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   color: #64748b;
   z-index: 2;
+  pointer-events: none;
   flex: 0 0 auto;
 }
 
-.search-input {
+/* Scoped to .search-control so this wins over the legacy .search-input rule
+   in styles.css (which loads after this file). */
+.search-control .search-input {
   width: 100%;
-  padding: 10px 40px 10px 8px; /* reduce left padding because icon sits outside */
+  padding: 10px 40px 10px 34px; /* left padding clears the in-field icon */
   background: rgba(30, 41, 59, 0.8);
   border: 1px solid #475569;
   border-radius: 24px;

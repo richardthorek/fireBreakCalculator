@@ -40,11 +40,18 @@
 html, body, #root, .app-shell {
   margin: 0;
   padding: 0;
-  height: 100vh; /* Ensure full viewport */
+  height: 100vh; /* Fallback for browsers without dynamic viewport units */
+  height: 100dvh; /* iOS Safari: track the visual viewport as the URL bar collapses/expands */
   width: 100%;
   font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: #0f1115;
   color: #f5f7fa;
+}
+
+html, body {
+  /* Map app: never rubber-band the page itself; panning belongs to the map */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .app-shell {
@@ -88,6 +95,9 @@ html, body, #root, .app-shell {
   padding: 0.5rem 1rem;
   background-color: #1e293b;
   position: relative;
+  border-bottom: 1px solid #2a3442;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  z-index: 10; /* keep the shadow above the map */
 }
 
 /* Ensure any older absolute rules are not applied to header children */
@@ -292,7 +302,7 @@ html, body, #root, .app-shell {
 .integrated-config-panel .config-content {
   flex: 1;
   overflow-y: auto;
-  height: calc(100vh - 150px); /* Account for header, tabs, and notice */
+  min-height: 0; /* Flex sizing handles the height; a hard vh here breaks on iOS */
   padding-right: 0.5rem; /* Add padding for scrollbar */
 }
 
@@ -551,7 +561,7 @@ html, body, #root, .app-shell {
 .popup-bar-fill[data-color="#ff0000"] { background: #ff0000; }
 
 /* Equipment configuration modern table */
-.equipment-config-panel.sidebar { position:fixed; top:10vh; right:0; width: min(860px, 100%); max-width:100%; height:90vh; background:rgba(20,25,34,0.98); border-left:1px solid #1e2732; box-shadow:-4px 0 12px -2px rgba(0,0,0,0.5); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); display:flex; flex-direction:column; z-index:900; }
+.equipment-config-panel.sidebar { position:fixed; top:10vh; top:10dvh; right:0; width: min(860px, 100%); max-width:100%; height:90vh; height:90dvh; background:rgba(20,25,34,0.98); border-left:1px solid #1e2732; box-shadow:-4px 0 12px -2px rgba(0,0,0,0.5); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); display:flex; flex-direction:column; z-index:900; }
 .equipment-config-panel.sidebar .config-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid #233040; }
 .equip-tabs { display:flex; align-items:center; gap:8px; padding:8px 12px; background:#16202b; border-bottom:1px solid #233040; flex-wrap:wrap; }
 .equip-tab-spacer { flex:1; }
@@ -623,7 +633,7 @@ html, body, #root, .app-shell {
 
 /* Responsive adjustments: stack fields on narrow screens to avoid horizontal overflow */
 @media (max-width: 760px) {
-  .equipment-config-panel.sidebar { width: 100%; right: 0; left: 0; top: 8vh; height: 92vh; }
+  .equipment-config-panel.sidebar { width: 100%; right: 0; left: 0; top: 8vh; top: 8dvh; height: 92vh; height: 92dvh; }
   .equip-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; grid-template-columns: none; }
   .eq-actions { justify-content: flex-start; }
   .eq-tags { justify-content: flex-start; }
@@ -707,10 +717,17 @@ html, body, #root, .app-shell {
 
 .analysis-section {
   flex: 0 0 auto;
-  /* Allow panel to grow with content on mobile, max 50vh for reasonable scrolling */
+  /* Allow panel to grow with content on mobile, max 50dvh for reasonable scrolling */
   height: auto;
   max-height: 50vh;
+  max-height: 50dvh;
   min-height: 200px;
+  /* Flex column so the inner panel can stretch to fill whatever height this
+     section resolves to (content-capped on mobile, full column on desktop). */
+  display: flex;
+  flex-direction: column;
+  /* Keep bottom content clear of the iPhone home indicator (viewport-fit=cover) */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Collapsed state for mobile: only show header, minimal space */
@@ -723,6 +740,7 @@ html, body, #root, .app-shell {
 /* Expanded state for mobile: takes more vertical space */
 .analysis-section.expanded {
   max-height: 70vh;
+  max-height: 70dvh;
 }
 
 /* Desktop: analysis panel on right side */
@@ -736,23 +754,25 @@ html, body, #root, .app-shell {
     min-width: 0;
   }
 
-  .analysis-section {
+  /* One rule for every state: the section is a full-height flex column and the
+     panel card inside stretches to fill it. The mobile max-height caps above
+     have higher specificity for .expanded/.collapsed, so they are explicitly
+     neutralised here — this was why the panel didn't fill the side column. */
+  .analysis-section,
+  .analysis-section.expanded,
+  .analysis-section.collapsed {
     flex: 0 0 400px;
     height: auto;
     max-height: none;
     min-height: 0;
+    /* Gutter turns the panel into a floating card over the app background */
+    padding: 10px 10px 10px 4px;
+    transition: flex-basis 0.25s ease;
   }
 
-  /* Expanded dashboard mode on desktop: wider panel, full height */
+  /* Expanded dashboard mode on desktop: wider panel */
   .analysis-section.expanded {
     flex: 0 0 600px;
-    height: 100%;
-  }
-
-  /* Collapsed state on desktop: allow panel to shrink */
-  .analysis-section.collapsed {
-    flex: 0 0 400px;
-    height: auto;
   }
 }
 
@@ -767,6 +787,7 @@ html, body, #root, .app-shell {
 
   .analysis-section.collapsed {
     max-height: 22vh;
+    max-height: 22dvh;
     min-height: 0;
   }
 
@@ -1023,6 +1044,75 @@ html, body, #root, .app-shell {
 /* Clarity Consent Banner Styling */
 .clarity-consent-banner {
   font-family: inherit;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 10000;
+  background: rgba(30, 36, 51, 0.98);
+  border: 1px solid #2a3442;
+  padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #f5f7fa;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  /* Keep it a toast on wide screens rather than a full-width strip */
+  max-width: 560px;
+  margin-left: auto;
+}
+
+.clarity-consent-inner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap; /* On phones the buttons drop below the text instead of squeezing it */
+}
+
+.clarity-consent-text {
+  flex: 1 1 260px;
+  color: #f5f7fa;
+  line-height: 1.4;
+}
+
+.clarity-consent-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.clarity-consent-accept {
+  background: #10b981;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.clarity-consent-accept:hover {
+  background: #059669;
+}
+
+.clarity-consent-reject {
+  background: rgba(107, 114, 128, 0.2);
+  color: #94a3b8;
+  border: 1px solid #374151;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.clarity-consent-reject:hover {
+  background: rgba(107, 114, 128, 0.3);
+  border-color: #4b5563;
 }
 
 .clarity-consent-banner button:focus {
@@ -1119,10 +1209,13 @@ button:focus {
 
 /* Analysis Panel Styles - Permanent Panel */
 .analysis-panel-permanent {
-  height: 100%;
+  /* Fill the .analysis-section flex column in every state (collapsed strip on
+     mobile, full-height sidebar on desktop). */
+  flex: 1 1 auto;
+  min-height: 0;
   background: rgba(15,17,21,0.95);
   border: 1px solid #2a3442;
-  border-radius: 8px;
+  border-radius: 12px;
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
@@ -1195,6 +1288,41 @@ button:focus {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+/* Slim, theme-matched scrollbars for the app's scrolling panels */
+.analysis-content,
+.config-content,
+.search-results,
+.live-feeds-panel,
+.equip-content {
+  scrollbar-width: thin;
+  scrollbar-color: #3a4559 transparent;
+}
+
+.analysis-content::-webkit-scrollbar,
+.config-content::-webkit-scrollbar,
+.search-results::-webkit-scrollbar,
+.live-feeds-panel::-webkit-scrollbar,
+.equip-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.analysis-content::-webkit-scrollbar-thumb,
+.config-content::-webkit-scrollbar-thumb,
+.search-results::-webkit-scrollbar-thumb,
+.live-feeds-panel::-webkit-scrollbar-thumb,
+.equip-content::-webkit-scrollbar-thumb {
+  background: #3a4559;
+  border-radius: 4px;
+}
+
+.analysis-content::-webkit-scrollbar-track,
+.config-content::-webkit-scrollbar-track,
+.search-results::-webkit-scrollbar-track,
+.live-feeds-panel::-webkit-scrollbar-track,
+.equip-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Best Options Summary */
@@ -2574,18 +2702,21 @@ button:focus {
   font-size: 13px;
 }
 
+/* Match .area-recon-toggle-btn so all map overlay buttons share one visual language */
 .live-feeds-toggle-btn {
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
 }
+
+.live-feeds-toggle-btn:hover { border-color: #F6A609; color: #ffffff; }
 
 .live-feeds-control.open .live-feeds-toggle-btn {
   border-color: #F6A609;
@@ -2600,6 +2731,7 @@ button:focus {
   width: 280px;
   max-width: calc(100vw - 40px);
   max-height: 60vh;
+  max-height: 60dvh;
   overflow-y: auto;
   color: #e8ecf1;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
