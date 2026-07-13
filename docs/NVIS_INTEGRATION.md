@@ -69,7 +69,12 @@ shapes below are what the code parses.
 - **Structural behaviours the code must account for** (confirmed by test):
   - **Ocean / data gaps** return `UniqueValue.Pixel Value = "NoData"`. This is a
     **string, not a number** — `parseInt` yields `NaN`, so it must fall through
-    to the next source, never resolve to a class.
+    to the next source, never resolve to a class. `extractMVGCode` now guards the
+    `NoData` sentinel *and* trusts only the explicit code/pixel-value field when
+    one is present; it no longer scans incidental numeric fields (`Raster.SORT_ORDER`,
+    `Raster.COUNT`), which for a `NoData` pixel would otherwise resolve to a bogus
+    MVG (`SORT_ORDER "28"` → "Sea and estuaries" → grassland). The broad scan is
+    kept only as a last resort for older releases that expose no code field.
   - **Outside Australia** (e.g. NZ) returns an **empty `results` array**. The
     `AUS_BBOX` short-circuit in the service handles this before the network call.
   - `extractMVGCode()` prefers pixel-value/MVG-code fields, which is why
@@ -191,11 +196,12 @@ Design is complete; the following is a small, self-contained implementation task
 None of it changes the public API or the user-facing model — it makes NVIS usage
 explicit and honest.
 
-1. **Make `NoData` handling explicit and tested.** In `nvisVegetationService.ts`,
-   guard that a non-numeric `Pixel Value` (`"NoData"`) and an empty `results`
-   array both return `null` (fall through). Add a unit test feeding a `NoData`
-   attribute bag and asserting `null`. *(Currently correct by consequence of the
-   `MVG_CLASSES` lookup failing — make it intentional and covered.)*
+1. ~~**Make `NoData` handling explicit and tested.**~~ ✅ **Done (2026-07-13).**
+   `extractMVGCode` now guards the `"NoData"` sentinel and trusts only the explicit
+   code/pixel-value field when present, so ocean/data-gap points fall through
+   instead of resolving to a bogus MVG via `Raster.SORT_ORDER`/`COUNT`. Empty
+   `results` arrays already fall through. Validated with a standalone Node repro
+   of the extractor (the webapp package has no unit-test runner configured yet).
 2. **Surface "modified/low-fidelity" segments.** Carry a boolean flag (e.g.
    `modified` / `lowFidelity`) on `StateVegetationResult` → `VegetationSegment`
    for MVG 24/25/26/27/28/99, and show it in the analysis panel ("Cleared/modified
