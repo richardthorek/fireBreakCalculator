@@ -34,6 +34,9 @@ param environmentName string = 'prod'
 @description('ArcGIS ImageServer URL for the bare-earth DEM used by the elevation-profile API. Leave empty to fall back to client-side Mapbox Terrain-RGB. Verify the endpoint before production.')
 param demImageServerUrl string = ''
 
+@description('Station Manager (Bushie Tools) base URL used to validate suite sign-in tokens and read the fireBreakEnabled entitlement. Leave empty to disable account features (saved-plan endpoints return 503). This app\'s origin must also be present in Station Manager\'s FRONTEND_URLS for CORS.')
+param suiteAuthUrl string = ''
+
 @description('Provision the Azure AI Foundry account + model deployment for the AI assistant (grounded briefings/chat). Off by default so existing environments do not pick up new cost on redeploy; the app works with the deterministic rule engine either way.')
 param deployAiAssistant bool = false
 
@@ -93,6 +96,11 @@ resource equipmentTable 'Microsoft.Storage/storageAccounts/tableServices/tables@
 resource vegetationTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
   parent: tableService
   name: 'vegetation'
+}
+
+resource savedPlansTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
+  parent: tableService
+  name: 'savedplans'
 }
 
 // --- Static Web App (frontend + managed Functions API) ----------------------
@@ -162,6 +170,10 @@ resource swaSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
     TABLES_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
     EQUIPMENT_TABLE_NAME: 'equipment'
     VEGETATION_TABLE_NAME: 'vegetation'
+    SAVED_PLANS_TABLE_NAME: 'savedplans'
+    // Suite auth (Station Manager). Empty → saved-plan endpoints return 503 and
+    // the webapp hides account features; the calculator stays fully anonymous.
+    SUITE_AUTH_URL: suiteAuthUrl
     // Elevation profile source. Empty → API returns 'unavailable' and the client
     // falls back to Mapbox Terrain-RGB, so the app still works before this is set.
     DEM_IMAGESERVER_URL: demImageServerUrl
