@@ -724,7 +724,12 @@ async function optimizeLegHex(
   options: OptimizeOptions,
   signal: AbortSignal | undefined,
   sharedGrid: SharedGrid | null,
-  onLegProgress: (fraction: number) => void
+  onLegProgress: (fraction: number) => void,
+  /** This leg's endpoints extended by one waypoint of context on each side
+   *  (the previous leg's start / next leg's end), when they exist. Used ONLY
+   *  to shape the WIDE pass's corridor mask (see below) — the search itself
+   *  still only connects A to B. */
+  wideGuideWaypoints: LatLng[] = [A, B]
 ): Promise<LegHexResult> {
   const { onScanEvent } = options;
   const legLen = calculateDistance(A.lat, A.lng, B.lat, B.lng);
@@ -781,8 +786,23 @@ async function optimizeLegHex(
     // Refine/polish stay per-leg (they're never rendered, so there's nothing
     // to layer), and only the wide pass streams scan events — WP2's
     // "watch it happen" visuals are about the search the user actually sees.
+    //
+    // The wide pass's corridor MASK (which shared-grid cells fall inside this
+    // leg's search/heatmap) is filtered by distance to `wideGuideWaypoints`
+    // rather than plain [A, B]: a straight-line-only mask makes each leg's
+    // rendered corridor a sharp-cornered "sausage" around just that segment,
+    // so at a multi-leg vertex two independently-straight buffers cross at an
+    // angle instead of blending — visually "several overlapping straight
+    // areas" rather than one continuous corridor. Extending the mask polyline
+    // by one waypoint of context on each side makes the corridor bend
+    // smoothly through the joint (matching the neighbouring leg's mask there)
+    // without risking the SEARCH itself wandering into a distant, unrelated
+    // leg's territory — A/B (the actual Dijkstra endpoints) are unchanged, so
+    // only the corridor shape softens, not which ground is reachable as a
+    // "shortcut". Refine/polish (i > 0) keep the tight, leg-only guide since
+    // they narrow toward this leg's own found path and are never rendered.
     const pass = await runHexPass(
-      A, B, guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
+      A, B, i === 0 ? wideGuideWaypoints : guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
       i === 0 && sharedGrid ? sharedGrid : undefined,
       i === 0 ? onScanEvent : undefined
     );
@@ -926,9 +946,20 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
       continue;
     }
 
+    // Extend the wide-pass corridor mask by one waypoint of context on each
+    // side (the previous leg's start / next leg's end) so the rendered
+    // corridor bends smoothly through shared vertices instead of two
+    // independently-straight per-leg buffers crossing at an angle there.
+    const wideGuideWaypoints = [
+      leg > 0 ? waypoints[leg - 1] : undefined,
+      A,
+      B,
+      leg + 2 < waypoints.length ? waypoints[leg + 2] : undefined,
+    ].filter((p): p is LatLng => !!p);
+
     const legResult = await optimizeLegHex(A, B, options, signal, sharedGrid, frac => {
       onProgress?.((leg + frac) / (waypoints.length - 1), 'search');
-    });
+    }, wideGuideWaypoints);
     if (signal?.aborted) return null;
 
     usedEstimatedData = usedEstimatedData || legResult.usedEstimatedData;
