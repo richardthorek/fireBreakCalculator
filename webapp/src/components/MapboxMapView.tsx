@@ -77,10 +77,13 @@ interface MapboxMapViewProps {
    *  corridor scanning sweep animation (skipped under reduced motion). */
   optimizerScanning?: boolean;
   /** Cost-normalised hex cells from the optimizer's widest search pass —
-   *  rendered as a smooth green→amber→red suitability heatmap once ready. */
+   *  rendered as a smooth green→amber→red suitability heatmap once ready.
+   *  Each cell carries BOTH normalisations so `heatmapColorMode` can switch
+   *  between them without re-running the search. */
   optimizerHeatmap?: {
     polygon: { lat: number; lng: number }[];
     costNormalized: number;
+    costNormalizedObjective: number;
   }[] | null;
   /** Optimizer progress (0..1) — drives the WP3 progress-synced sweep so its
    *  leading edge tracks how far the search has actually gotten instead of
@@ -89,7 +92,13 @@ interface MapboxMapViewProps {
   /** WP2 — streamed scan cells: grid outlines build out, then colour in as
    *  each cell is sampled. Distinct from `optimizerHeatmap`, which only
    *  appears once the search is fully done. */
-  scanCells?: { polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }[] | null;
+  scanCells?: { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }[] | null;
+  /** Which heatmap scale to render: 'objective' (fixed, absolute difficulty —
+   *  heavy timber is always at least amber, a 45°+ slope always red,
+   *  regardless of what else is in the scan) or 'relative' (stretched to the
+   *  min/max of THIS scan's own cells — useful for comparing paths within one
+   *  corridor). Defaults to 'objective'. */
+  heatmapColorMode?: 'relative' | 'objective';
   /** WP2 — the live Dijkstra frontier's current best-guess path. */
   scanBestPath?: { lat: number; lng: number }[] | null;
   /** WP6 — true while the area-recon box tool is armed (next two map clicks
@@ -101,7 +110,7 @@ interface MapboxMapViewProps {
   /** Cost-normalised hex cells from the area recon scan — same shape as
    *  `optimizerHeatmap`, rendered as its own layer so it survives independently
    *  of any route search. */
-  areaReconHeatmap?: { polygon: { lat: number; lng: number }[]; costNormalized: number }[] | null;
+  areaReconHeatmap?: { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number }[] | null;
   /** Area recon scan lifecycle, for the status badge + clear button. */
   areaReconStatus?: 'idle' | 'running' | 'done' | 'error';
   onClearAreaRecon?: () => void;
@@ -135,6 +144,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   optimizerScanning = false,
   optimizerHeatmap = null,
   optimizerProgress = 0,
+  heatmapColorMode = 'objective',
   scanCells = null,
   scanBestPath = null,
   areaReconActive = false,
@@ -885,7 +895,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       type: 'FeatureCollection' as const,
       features: cells.map(c => ({
         type: 'Feature' as const,
-        properties: { cost: c.costNormalized },
+        properties: { cost: heatmapColorMode === 'relative' ? c.costNormalized : c.costNormalizedObjective },
         geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
       })),
     };
@@ -935,7 +945,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     }
 
     return () => remove();
-  }, [optimizerHeatmap]);
+  }, [optimizerHeatmap, heatmapColorMode]);
 
   // WP2 — streamed scan cells: grid outlines building out, then colouring in
   // as each cell is sampled, so the wait shows the search actually happening
@@ -964,7 +974,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       type: 'FeatureCollection' as const,
       features: cells.map(c => ({
         type: 'Feature' as const,
-        properties: { cost: c.costNormalized, revealed: c.revealed ? 1 : 0 },
+        properties: { cost: heatmapColorMode === 'relative' ? c.costNormalized : c.costNormalizedObjective, revealed: c.revealed ? 1 : 0 },
         geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
       })),
     };
@@ -1009,7 +1019,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     }
 
     return () => remove();
-  }, [scanCells]);
+  }, [scanCells, heatmapColorMode]);
 
   // WP2 — the live Dijkstra frontier's current best-guess path, so
   // pathfinding is visibly crawling the grid rather than appearing only
@@ -1048,7 +1058,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       type: 'FeatureCollection' as const,
       features: cells.map(c => ({
         type: 'Feature' as const,
-        properties: { cost: c.costNormalized },
+        properties: { cost: heatmapColorMode === 'relative' ? c.costNormalized : c.costNormalizedObjective },
         geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
       })),
     };
@@ -1098,7 +1108,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     }
 
     return () => remove();
-  }, [areaReconHeatmap]);
+  }, [areaReconHeatmap, heatmapColorMode]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);

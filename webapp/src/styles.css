@@ -5202,6 +5202,32 @@ button:focus {
   white-space: nowrap;
 }
 
+.heatmap-legend-block { display: flex; flex-direction: column; gap: 0.3rem; }
+
+.heatmap-mode-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid #2a3442;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.heatmap-mode-btn {
+  border: none;
+  background: rgba(15,17,21,0.6);
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.22rem 0.55rem;
+  cursor: pointer;
+}
+
+.heatmap-mode-btn:not(:last-child) { border-right: 1px solid #2a3442; }
+.heatmap-mode-btn:hover { color: #e2e8f0; }
+.heatmap-mode-btn.active { background: rgba(246,166,9,0.18); color: #f6a609; }
+
+.heatmap-mode-hint { margin: 0; color: #64748b; font-size: 0.66rem; line-height: 1.4; }
+
 /* --- AI assistant card (briefing + grounded chat) --- */
 .ai-assistant-card {
   border: 1px solid rgba(37,99,235,0.35);

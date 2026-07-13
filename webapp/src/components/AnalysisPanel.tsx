@@ -78,6 +78,10 @@ interface AnalysisPanelProps {
   onOptimize?: () => void;
   onApplyOptimized?: () => void;
   onDismissOptimized?: () => void;
+  /** Corridor-scan heatmap colour scale (state lives in App so the map and
+   *  this panel's legend/toggle stay in sync). */
+  heatmapColorMode?: 'relative' | 'objective';
+  onHeatmapColorModeChange?: (mode: 'relative' | 'objective') => void;
   /** GIS import wiring (state lives in App so the map can render overlays). */
   onImportAsPlan?: (coords: LatLng[]) => void;
   onAddOverlay?: (features: ImportedFeatures) => void;
@@ -328,6 +332,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onOptimize,
   onApplyOptimized,
   onDismissOptimized,
+  heatmapColorMode = 'objective',
+  onHeatmapColorModeChange,
   onImportAsPlan,
   onAddOverlay,
   overlayCount = 0,
@@ -1229,6 +1235,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               onOptimize={onOptimize}
               onApplyOptimized={onApplyOptimized}
               onDismissOptimized={onDismissOptimized}
+              heatmapColorMode={heatmapColorMode}
+              onHeatmapColorModeChange={onHeatmapColorModeChange}
             />
             <AiAssistantCard payload={assistantPayload} />
           </>

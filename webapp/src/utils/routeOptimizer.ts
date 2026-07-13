@@ -76,6 +76,74 @@ const slopeCost = (slopeDeg: number): number => {
   return f;
 };
 
+/**
+ * OBJECTIVE (absolute) difficulty severity — a fixed scale independent of
+ * whatever else is in the current scan, as opposed to `costNormalized`'s
+ * per-scan min/max stretch. That relative scale is genuinely useful for
+ * comparing paths WITHIN one corridor, but on its own it means "heavy timber"
+ * only reads as difficult if something even worse happens to sit nearby in
+ * that particular scan — a flat heavy-forest patch can render green purely
+ * because a steep ridge elsewhere stretched the scale. A crew doesn't
+ * experience fuel that way: heavy timber is hard to cut through regardless of
+ * what else is on the map.
+ *
+ * Each cell's objective severity is `max(vegSeverity, slopeSeverity)` plus a
+ * small bonus when both are elevated (a genuinely compounding combination —
+ * steep AND heavy fuel — should read harder than either alone). Because it's
+ * a max-based floor, heavy forest's severity value is a GUARANTEED MINIMUM
+ * for that cell's colour, however gentle the slope and whatever else the scan
+ * contains — this is what "objective" means here.
+ *
+ * Anchors are fixed, human-meaningful reference points, not fitted constants:
+ * - Vegetation severities are proportioned off the same `VEGETATION_COST`
+ *   ladder used for actual routing cost, so the two scales agree with each
+ *   other; heavy forest's floor (0.55) sits just past the amber stop (0.5) on
+ *   the green→amber→red gradient, satisfying "heavy timber is always at
+ *   least amber".
+ * - Slope severity anchors mirror the SAME safety limits the equipment-
+ *   compatibility engine uses (api/src/services/productionModel.ts
+ *   `DEFAULT_MAX_SLOPE_DEGREES`): 25° (machinery's default operating limit)
+ *   sits at the amber stop, 45° (hand crews' outer limit) sits at red — i.e.
+ *   "objective" here means "relative to standard equipment capability", not
+ *   to the specific equipment loaded in this deployment. A fully
+ *   equipment-aware heatmap (recolouring for whichever resource is selected)
+ *   is a larger follow-on, not attempted here.
+ */
+const VEG_SEVERITY: Record<VegetationType, number> = {
+  grassland: 0.0,
+  lightshrub: 0.18,
+  mediumscrub: 0.38,
+  heavyforest: 0.55,
+};
+
+/** [slopeDegrees, severity 0..1] anchors; interpolated linearly, clamped at ends. */
+const SLOPE_SEVERITY_ANCHORS: [number, number][] = [
+  [0, 0.0],
+  [10, 0.14],
+  [25, 0.5],
+  [35, 0.78],
+  [45, 1.0],
+];
+
+function interpolateSeverity(anchors: [number, number][], x: number): number {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  const last = anchors[anchors.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [x0, y0] = anchors[i];
+    const [x1, y1] = anchors[i + 1];
+    if (x >= x0 && x <= x1) return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  }
+  return last[1];
+}
+
+/** Objective (absolute) difficulty severity 0..1 for a cell's average slope + fuel. */
+function objectiveSeverity(avgSlopeDeg: number, veg: VegetationType): number {
+  const v = VEG_SEVERITY[veg];
+  const s = interpolateSeverity(SLOPE_SEVERITY_ANCHORS, Math.abs(avgSlopeDeg));
+  return Math.min(1, Math.max(v, s) + 0.3 * Math.min(v, s));
+}
+
 /** Fuel-cost discount when an edge follows a mapped trail — the ground is already broken. */
 const TRAIL_FUEL_DISCOUNT = 0.35;
 /** A node counts as "on trail" within this distance of a mapped way (metres). */
@@ -103,8 +171,16 @@ export interface HexHeatmapCell {
   /** Closed polygon ring (7 points, first = last) for map rendering. */
   polygon: LatLng[];
   center: LatLng;
-  /** 0..1 normalized traversal cost — 0 = easiest (green), 1 = hardest (red). */
+  /** 0..1 traversal cost normalised to the MIN/MAX of this scan's own cells —
+   *  0 = easiest and 1 = hardest ground FOUND IN THIS CORRIDOR. Good for
+   *  comparing paths within one scan; a bad idea for judging fuel/slope
+   *  severity in absolute terms (see `costNormalizedObjective`). */
   costNormalized: number;
+  /** 0..1 ABSOLUTE difficulty severity, independent of anything else in this
+   *  scan — heavy forest always sits at least at the amber floor and a 45°+
+   *  slope always reads red, regardless of what else is nearby. See
+   *  `objectiveSeverity()`. */
+  costNormalizedObjective: number;
   vegetation: VegetationType;
   onTrail: boolean;
   /** True when this cell's vegetation sample was estimated/fallback data. */
@@ -172,6 +248,10 @@ export interface RawHeatmapCell {
   center: LatLng;
   polygon: LatLng[];
   unitCost: number;
+  /** Average traversal slope (degrees) over this cell's incident edges —
+   *  feeds the fixed-scale objective severity, independent of `unitCost`'s
+   *  per-scan stretch. */
+  avgSlopeDegrees: number;
   vegetation: VegetationType;
   onTrail: boolean;
   estimated: boolean;
@@ -471,6 +551,7 @@ async function runHexPass(
             center: toLatLng(proj, cell.center),
             polygon: [...corners, corners[0]],
             costNormalized: 0,
+            costNormalizedObjective: 0,
             vegetation: 'grassland' as VegetationType,
             onTrail: false,
             estimated: false,
@@ -559,19 +640,24 @@ async function runHexPass(
     const node = nodeMap.get(id)!;
     const neighborIds = (adjacency.get(id) ?? []).filter(nid => nodeMap.has(nid) && nid !== 'A' && nid !== 'B');
     let unitCost = 0.6;
+    let avgSlopeDegrees = 0;
     if (neighborIds.length > 0) {
-      let sum = 0;
+      let costSum = 0;
+      let slopeSum = 0;
       for (const nid of neighborIds) {
         const e = edgeCost(node, nodeMap.get(nid)!);
-        if (e.dist > 0) sum += e.cost / e.dist;
+        if (e.dist > 0) costSum += e.cost / e.dist;
+        slopeSum += e.slope;
       }
-      unitCost = sum / neighborIds.length;
+      unitCost = costSum / neighborIds.length;
+      avgSlopeDegrees = slopeSum / neighborIds.length;
     }
     const corners = hexCorners(cell.center, size).map(c => toLatLng(proj, c));
     return {
       center: { lat: node.lat, lng: node.lng },
       polygon: [...corners, corners[0]],
       unitCost,
+      avgSlopeDegrees,
       vegetation: node.vegetation,
       onTrail: node.onTrail,
       estimated: node.vegEstimated,
@@ -753,6 +839,7 @@ export function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
     center: c.center,
     polygon: c.polygon,
     costNormalized: span > 1e-9 ? (c.unitCost - min) / span : 0.5,
+    costNormalizedObjective: objectiveSeverity(c.avgSlopeDegrees, c.vegetation),
     vegetation: c.vegetation,
     onTrail: c.onTrail,
     estimated: c.estimated,
