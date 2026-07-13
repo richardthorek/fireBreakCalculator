@@ -472,7 +472,10 @@ async function dijkstra(
 }
 
 interface HexPassResult {
-  pathNodes: SampledNode[];
+  /** The cheapest A→B chain, or null when the search couldn't connect them in
+   *  this pass's graph. The scanned `cells` are still returned either way so the
+   *  corridor always renders. */
+  pathNodes: SampledNode[] | null;
   cost: number;
   cells: RawHeatmapCell[];
   nodesEvaluated: number;
@@ -519,6 +522,17 @@ async function runHexPass(
     size = sharedGrid.size;
     const guideLocal = guidePath.map(p => toLocal(proj, p));
     cellsRaw = sharedGrid.cellsRaw.filter(c => distanceToPolylineLocal(c.center, guideLocal) <= halfWidth);
+    if (cellsRaw.length < 3) {
+      // The route-wide shared grid was too coarse for this leg's (narrow/short)
+      // corridor, so the filter caught too few cells — the leg would otherwise
+      // drop out of both the search and the heatmap. Build a dedicated finer
+      // corridor for it instead, keeping the shared projection so its cells
+      // still align with the rest of the route's grid.
+      const pathLocal = guidePath.map(p => toLocal(proj, p));
+      const pathLen = Math.max(1, polylineLengthLocal(pathLocal));
+      size = chooseHexSize(pathLen, halfWidth, targetCount);
+      cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
+    }
   } else {
     const origin = guidePath[Math.floor(guidePath.length / 2)];
     proj = makeProjection(origin);
@@ -682,7 +696,16 @@ async function runHexPass(
         });
       }
     : undefined);
-  if (!result) return null;
+
+  // A failed search (couldn't connect A→B in this pass's graph) still scanned
+  // every cell — return those so the leg's corridor renders in the heatmap
+  // regardless. Only the optimized PATH falls back (handled by the caller);
+  // the analysis coverage does not. This is what stops later legs of a
+  // multi-leg line from showing "no analysis" whenever their wide-pass graph
+  // happened not to connect.
+  if (!result) {
+    return { pathNodes: null, cost: Infinity, cells, nodesEvaluated: cellsRaw.length, estimated };
+  }
 
   const pathNodes = result.path.map(id => nodeMap.get(id)!);
 
@@ -773,7 +796,8 @@ async function optimizeLegHex(
   const originalPromise = trailsPromise.then(trails => sampleNodes(straightPts, trails, signal));
 
   let guidePath: LatLng[] = [A, B];
-  let best: HexPassResult | null = null;
+  // Only ever holds a pass that actually connected A→B (pathNodes non-null).
+  let best: (HexPassResult & { pathNodes: SampledNode[] }) | null = null;
   let widePassCells: RawHeatmapCell[] = [];
   let usedEstimatedData = false;
   let nodesEvaluated = 0;
@@ -810,9 +834,16 @@ async function optimizeLegHex(
     if (!pass) continue;
     usedEstimatedData = usedEstimatedData || pass.estimated;
     nodesEvaluated += pass.nodesEvaluated;
+    // The wide pass's scanned cells are the heatmap for this leg — keep them
+    // even when the pass found no connecting path, so the corridor still
+    // renders for every leg, not just the ones whose search connected.
     if (i === 0) widePassCells = pass.cells;
-    if (!best || pass.cost < best.cost) best = pass;
-    guidePath = pass.pathNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    // Only a pass that actually found a path can improve the route or guide the
+    // next (finer) pass; a failed pass still contributed its cells above.
+    if (pass.pathNodes) {
+      if (!best || pass.cost < best.cost) best = { ...pass, pathNodes: pass.pathNodes };
+      guidePath = pass.pathNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    }
   }
 
   // By this point trailsPromise (derived from infraPromise) has already
@@ -826,11 +857,13 @@ async function optimizeLegHex(
     // would need a corridor thinner than the hex size somewhere along it).
     // Fail safe rather than fabricate an "optimized" result: report the
     // straight line as both, so effort/length compare as identical and the
-    // UI reads as "no improvement found" rather than lying about one.
+    // UI reads as "no improvement found" rather than lying about one — but
+    // still surface the scanned corridor (widePassCells) so the leg shows its
+    // analysis coverage instead of a blank gap in the heatmap.
     return {
       optimizedNodes: original.nodes,
       originalNodes: original.nodes,
-      heatmapCells: [],
+      heatmapCells: widePassCells,
       usedEstimatedData,
       infrastructureAvailable: infra.available,
       nodesEvaluated,
