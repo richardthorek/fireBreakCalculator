@@ -16,6 +16,14 @@
 #   Variables (optional, defaults shown):
 #     AZURE_RESOURCE_GROUP     — default: rg-firebreakcalc
 #     AZURE_LOCATION           — default: australiaeast
+#     SUITE_AUTH_URL           — Station Manager (Bushie Tools) base URL used
+#                                for suite sign-in + entitlements. Baked into
+#                                the webapp as VITE_SUITE_AUTH_URL and set as
+#                                the SUITE_AUTH_URL app setting on the SWA API.
+#                                Default: https://bungrfs-linux.azurewebsites.net
+#                                (set to '' to disable account features).
+#                                NOTE: this app's origin must also be present in
+#                                Station Manager's FRONTEND_URLS for CORS.
 #
 # No SWA deployment-token secret is needed: the token is read at deploy time
 # with `az staticwebapp secrets list`, so deleting/recreating the resource
@@ -40,6 +48,7 @@ on:
 env:
   RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-firebreakcalc' }}
   LOCATION: ${{ vars.AZURE_LOCATION || 'australiaeast' }}
+  SUITE_AUTH_URL: ${{ vars.SUITE_AUTH_URL || 'https://bungrfs-linux.azurewebsites.net' }}
 
 jobs:
   build_and_test:
@@ -62,6 +71,7 @@ jobs:
         working-directory: ./webapp
         env:
           VITE_MAPBOX_ACCESS_TOKEN: ${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
+          VITE_SUITE_AUTH_URL: ${{ env.SUITE_AUTH_URL }}
         run: |
           npm ci
           npm run build
@@ -94,7 +104,7 @@ jobs:
           DEPLOY_OUT=$(az deployment group create \
             --resource-group "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters storageLocation="$LOCATION" \
+            --parameters storageLocation="$LOCATION" suiteAuthUrl="$SUITE_AUTH_URL" \
             --query "properties.outputs" --output json)
           echo "swa_name=$(echo "$DEPLOY_OUT" | jq -r '.staticWebAppName.value')" >> "$GITHUB_OUTPUT"
           echo "hostname=$(echo "$DEPLOY_OUT" | jq -r '.staticWebAppHostname.value')" >> "$GITHUB_OUTPUT"
@@ -113,6 +123,7 @@ jobs:
         uses: Azure/static-web-apps-deploy@v1
         env:
           VITE_MAPBOX_ACCESS_TOKEN: ${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
+          VITE_SUITE_AUTH_URL: ${{ env.SUITE_AUTH_URL }}
         with:
           azure_static_web_apps_api_token: ${{ steps.swa_token.outputs.token }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
