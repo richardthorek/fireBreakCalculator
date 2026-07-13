@@ -118,36 +118,46 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
     const feat = json?.features?.[0];
     if (!feat || !feat.attributes) { cache[key] = null; return null; }
     const { vegClass, vegForm, PCTName } = feat.attributes as Record<string, string | null>;
-    
-    let vegetationType: VegetationType;
-    let confidence: number;
-    let source: string;
-    
-    // First try to use the dynamic vegetation mapping
+
+    // Prefer a curated DB mapping when one exists; otherwise fall through to the
+    // structural regex heuristic (mapNSWToInternal). The dynamic mapper now
+    // returns null on a miss instead of a flat `mediumscrub` default, so an
+    // unmapped formation (e.g. "…Messmate Forest") is classified by its
+    // structure — forest → heavyforest, grassland → grassland — rather than
+    // being silently collapsed to medium scrub.
+    let vegetationType: VegetationType | undefined;
+    let confidence = 0;
+    let source = '';
+
     try {
       // Use the hierarchical mapping system: formation > class > type (PCT)
       const formationName = vegForm || '';
       const className = vegClass || undefined;
       const typeName = PCTName || undefined; // We can use PCT name as the type name
-      
-      const result = await mapFormationToVegetationType(formationName, className, typeName);
-      vegetationType = result.vegetation;
-      confidence = result.confidence;
-      source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
-      logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
-    } catch (error) {
-      // Fall back to hardcoded mapping if dynamic mapping fails
-      logger.warn('Dynamic vegetation mapping failed, falling back to hardcoded mapping', error);
-      const fallbackResult = mapNSWToInternal(vegClass, vegForm, PCTName);
-      if (!fallbackResult) { 
-        cache[key] = null; 
-        return null; 
+
+      const dynamic = await mapFormationToVegetationType(formationName, className, typeName);
+      if (dynamic) {
+        vegetationType = dynamic.vegetation;
+        confidence = dynamic.confidence;
+        source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
+        logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
       }
-      vegetationType = fallbackResult.vegetationType;
-      confidence = fallbackResult.confidence;
-      source = fallbackResult.source;
+    } catch (error) {
+      logger.warn('Dynamic vegetation mapping failed, falling back to heuristic mapping', error);
     }
-    
+
+    // No curated match (or the dynamic path errored) — classify by structure.
+    if (!vegetationType) {
+      const heuristic = mapNSWToInternal(vegClass, vegForm, PCTName);
+      if (!heuristic) {
+        cache[key] = null;
+        return null;
+      }
+      vegetationType = heuristic.vegetationType;
+      confidence = heuristic.confidence;
+      source = `Heuristic mapping: ${heuristic.source}`;
+    }
+
     const result: NSWVegResultRaw = {
       vegetationType,
       confidence,
@@ -156,7 +166,7 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
       vegForm,
       pctName: PCTName
     };
-    
+
     cache[key] = result;
     return result;
   } catch (e) {
