@@ -43,12 +43,27 @@ import { logger } from './logger';
 
 export type { LatLng };
 
-/** Cost multipliers per vegetation class (relative effort of building line). */
+/**
+ * Cost multipliers per vegetation class — relative effort of building line
+ * through each fuel, as a multiple of flat-grassland effort.
+ *
+ * Grounded in the production model's fuel SPEED factors (productionModel.ts),
+ * inverted to effort-per-metre relative to grassland:
+ *   machinery  → 1.0 / 1.25 / 1.82 / 2.86   (grass/light/medium/heavy)
+ *   hand crew  → 1.0 / 1.61 / 2.63 / 4.55
+ * The earlier weights (1.0/1.2/1.7/2.6) tracked only the machinery end, which
+ * under-weighted fuel: heavier vegetation is the primary obstacle a fire break
+ * must be cut through, and its influence on route choice was being swamped by
+ * slope (whose multiplier ranges far wider). These sit on a machinery↔hand-crew
+ * blend so heavy timber reads as the major deterrent it is — the optimizer now
+ * works harder to route around heavy fuel, and the same weighting drives the
+ * cost heatmap so slope AND fuel visibly combine to make a cell "red".
+ */
 const VEGETATION_COST: Record<VegetationType, number> = {
   grassland: 1.0,
-  lightshrub: 1.2,
-  mediumscrub: 1.7,
-  heavyforest: 2.6,
+  lightshrub: 1.4,
+  mediumscrub: 2.2,
+  heavyforest: 3.8,
 };
 
 /** Traversal-slope multiplier. Quadratic ramp with hard penalties at machinery limits. */
