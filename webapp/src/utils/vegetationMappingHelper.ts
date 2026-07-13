@@ -39,28 +39,29 @@ export async function getVegetationMappings(): Promise<VegetationFormationMappin
 }
 
 /**
- * Map vegetation formation name to application vegetation type using hierarchical mapping
- * Supports formation -> class -> type hierarchy with overrides
- * Falls back to default mapping if no match is found
+ * Map vegetation formation name to application vegetation type using the curated
+ * hierarchical DB mappings (formation → class → type, with overrides).
+ *
+ * Returns `null` when there is no curated match (or no mappings are available) so
+ * the caller can fall through to its own heuristic. This is deliberate: a
+ * hardcoded default here (previously `mediumscrub @ 0.5`) silently swallowed
+ * EVERY unmapped formation — including forests and grasslands — into medium
+ * scrub, which is exactly the kind of fabricated, uniform result a planning tool
+ * must not present. The NSW service's regex heuristic (`mapNSWToInternal`) is a
+ * far better fallback than a flat constant, so we defer to it rather than guess.
  */
 export async function mapFormationToVegetationType(
-  formationName: string, 
+  formationName: string,
   className?: string | null,
   typeName?: string | null
-): Promise<{ vegetation: VegetationType; confidence: number }> {
-  // Default fallback mapping
-  const defaultResult: { vegetation: VegetationType; confidence: number } = { 
-    vegetation: 'mediumscrub', 
-    confidence: 0.5 
-  };
-  
+): Promise<{ vegetation: VegetationType; confidence: number } | null> {
   try {
     const mappings = await getVegetationMappings();
     if (!mappings || mappings.length === 0) {
-      logger.warn('No vegetation mappings available, using default mapping');
-      return defaultResult;
+      logger.debug('No curated vegetation mappings available; caller will use its heuristic');
+      return null;
     }
-    
+
     // First try to find an exact match with formation, class, and type
     if (formationName && className && typeName) {
       const typeMatch = mappings.find(m => 
@@ -112,17 +113,17 @@ export async function mapFormationToVegetationType(
       }
     }
     
-    // No match found
+    // No curated match found — let the caller fall back to its own heuristic.
     const details = [
       formationName,
       className ? `class: ${className}` : '',
       typeName ? `type: ${typeName}` : ''
     ].filter(Boolean).join(', ');
-    
-    logger.warn(`No vegetation mapping found for: ${details}`);
-    return defaultResult;
+
+    logger.debug(`No curated vegetation mapping for: ${details}; caller will use its heuristic`);
+    return null;
   } catch (error) {
     logger.error('Error mapping vegetation formation:', error);
-    return defaultResult;
+    return null;
   }
 }

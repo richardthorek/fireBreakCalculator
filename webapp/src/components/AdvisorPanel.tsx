@@ -29,6 +29,10 @@ interface AdvisorPanelProps {
   onOptimize?: () => void;
   onApplyOptimized?: () => void;
   onDismissOptimized?: () => void;
+  /** Corridor-scan heatmap colour scale: 'objective' (fixed, absolute
+   *  difficulty) or 'relative' (stretched to this scan's own min/max). */
+  heatmapColorMode?: 'relative' | 'objective';
+  onHeatmapColorModeChange?: (mode: 'relative' | 'objective') => void;
 }
 
 const severityIcon = (severity: PlanInsight['severity']) => {
@@ -85,6 +89,8 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
   onOptimize,
   onApplyOptimized,
   onDismissOptimized,
+  heatmapColorMode = 'objective',
+  onHeatmapColorModeChange,
 }) => {
   if (!hasLine) {
     return (
@@ -144,13 +150,44 @@ export const AdvisorPanel: React.FC<AdvisorPanelProps> = ({
                   : 'This path is slightly harder to build'}
             </div>
             {result.heatmap.length > 0 && (
-              <div className="heatmap-legend">
-                <span className="heatmap-legend-title">Corridor scan</span>
-                <span className="heatmap-legend-gradient" aria-hidden />
-                <span className="heatmap-legend-labels">
-                  <span>Easy going</span>
-                  <span>Steep / heavy fuel</span>
-                </span>
+              <div className="heatmap-legend-block">
+                <div className="heatmap-legend">
+                  <span className="heatmap-legend-title">Corridor scan</span>
+                  <span className="heatmap-legend-gradient" aria-hidden />
+                  <span className="heatmap-legend-labels">
+                    <span>Easy going</span>
+                    <span>Steep / heavy fuel</span>
+                  </span>
+                </div>
+                {onHeatmapColorModeChange && (
+                  <div className="heatmap-mode-toggle" role="radiogroup" aria-label="Heatmap colour scale">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={heatmapColorMode === 'objective'}
+                      className={`heatmap-mode-btn${heatmapColorMode === 'objective' ? ' active' : ''}`}
+                      onClick={() => onHeatmapColorModeChange('objective')}
+                      title="Fixed difficulty scale — heavy timber always reads at least amber, a 45°+ slope always reads red, regardless of what else is in this scan."
+                    >
+                      Objective
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={heatmapColorMode === 'relative'}
+                      className={`heatmap-mode-btn${heatmapColorMode === 'relative' ? ' active' : ''}`}
+                      onClick={() => onHeatmapColorModeChange('relative')}
+                      title="Stretched to this scan's own easiest→hardest ground — good for comparing paths within this corridor, but the same ground can look easier or harder depending on what else is nearby."
+                    >
+                      Relative
+                    </button>
+                  </div>
+                )}
+                <p className="heatmap-mode-hint">
+                  {heatmapColorMode === 'objective'
+                    ? 'Objective: fixed difficulty — heavy timber is always at least amber, steep ground (45°+) is always red, regardless of what else this scan found. Pinned to standard equipment limits, not the specific machines you have configured — a well-matched machine may still handle a "hard" cell.'
+                    : 'Relative: stretched to the easiest and hardest ground in this scan — good for comparing paths here, but the same ground can shift colour between scans.'}
+                </p>
               </div>
             )}
             <div className="optimizer-stats">

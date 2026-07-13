@@ -43,12 +43,27 @@ import { logger } from './logger';
 
 export type { LatLng };
 
-/** Cost multipliers per vegetation class (relative effort of building line). */
+/**
+ * Cost multipliers per vegetation class — relative effort of building line
+ * through each fuel, as a multiple of flat-grassland effort.
+ *
+ * Grounded in the production model's fuel SPEED factors (productionModel.ts),
+ * inverted to effort-per-metre relative to grassland:
+ *   machinery  → 1.0 / 1.25 / 1.82 / 2.86   (grass/light/medium/heavy)
+ *   hand crew  → 1.0 / 1.61 / 2.63 / 4.55
+ * The earlier weights (1.0/1.2/1.7/2.6) tracked only the machinery end, which
+ * under-weighted fuel: heavier vegetation is the primary obstacle a fire break
+ * must be cut through, and its influence on route choice was being swamped by
+ * slope (whose multiplier ranges far wider). These sit on a machinery↔hand-crew
+ * blend so heavy timber reads as the major deterrent it is — the optimizer now
+ * works harder to route around heavy fuel, and the same weighting drives the
+ * cost heatmap so slope AND fuel visibly combine to make a cell "red".
+ */
 const VEGETATION_COST: Record<VegetationType, number> = {
   grassland: 1.0,
-  lightshrub: 1.2,
-  mediumscrub: 1.7,
-  heavyforest: 2.6,
+  lightshrub: 1.4,
+  mediumscrub: 2.2,
+  heavyforest: 3.8,
 };
 
 /** Traversal-slope multiplier. Quadratic ramp with hard penalties at machinery limits. */
@@ -60,6 +75,74 @@ const slopeCost = (slopeDeg: number): number => {
   if (s >= 45) f *= 3.0; // effectively impassable for machinery
   return f;
 };
+
+/**
+ * OBJECTIVE (absolute) difficulty severity — a fixed scale independent of
+ * whatever else is in the current scan, as opposed to `costNormalized`'s
+ * per-scan min/max stretch. That relative scale is genuinely useful for
+ * comparing paths WITHIN one corridor, but on its own it means "heavy timber"
+ * only reads as difficult if something even worse happens to sit nearby in
+ * that particular scan — a flat heavy-forest patch can render green purely
+ * because a steep ridge elsewhere stretched the scale. A crew doesn't
+ * experience fuel that way: heavy timber is hard to cut through regardless of
+ * what else is on the map.
+ *
+ * Each cell's objective severity is `max(vegSeverity, slopeSeverity)` plus a
+ * small bonus when both are elevated (a genuinely compounding combination —
+ * steep AND heavy fuel — should read harder than either alone). Because it's
+ * a max-based floor, heavy forest's severity value is a GUARANTEED MINIMUM
+ * for that cell's colour, however gentle the slope and whatever else the scan
+ * contains — this is what "objective" means here.
+ *
+ * Anchors are fixed, human-meaningful reference points, not fitted constants:
+ * - Vegetation severities are proportioned off the same `VEGETATION_COST`
+ *   ladder used for actual routing cost, so the two scales agree with each
+ *   other; heavy forest's floor (0.55) sits just past the amber stop (0.5) on
+ *   the green→amber→red gradient, satisfying "heavy timber is always at
+ *   least amber".
+ * - Slope severity anchors mirror the SAME safety limits the equipment-
+ *   compatibility engine uses (api/src/services/productionModel.ts
+ *   `DEFAULT_MAX_SLOPE_DEGREES`): 25° (machinery's default operating limit)
+ *   sits at the amber stop, 45° (hand crews' outer limit) sits at red — i.e.
+ *   "objective" here means "relative to standard equipment capability", not
+ *   to the specific equipment loaded in this deployment. A fully
+ *   equipment-aware heatmap (recolouring for whichever resource is selected)
+ *   is a larger follow-on, not attempted here.
+ */
+const VEG_SEVERITY: Record<VegetationType, number> = {
+  grassland: 0.0,
+  lightshrub: 0.18,
+  mediumscrub: 0.38,
+  heavyforest: 0.55,
+};
+
+/** [slopeDegrees, severity 0..1] anchors; interpolated linearly, clamped at ends. */
+const SLOPE_SEVERITY_ANCHORS: [number, number][] = [
+  [0, 0.0],
+  [10, 0.14],
+  [25, 0.5],
+  [35, 0.78],
+  [45, 1.0],
+];
+
+function interpolateSeverity(anchors: [number, number][], x: number): number {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  const last = anchors[anchors.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [x0, y0] = anchors[i];
+    const [x1, y1] = anchors[i + 1];
+    if (x >= x0 && x <= x1) return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  }
+  return last[1];
+}
+
+/** Objective (absolute) difficulty severity 0..1 for a cell's average slope + fuel. */
+function objectiveSeverity(avgSlopeDeg: number, veg: VegetationType): number {
+  const v = VEG_SEVERITY[veg];
+  const s = interpolateSeverity(SLOPE_SEVERITY_ANCHORS, Math.abs(avgSlopeDeg));
+  return Math.min(1, Math.max(v, s) + 0.3 * Math.min(v, s));
+}
 
 /** Fuel-cost discount when an edge follows a mapped trail — the ground is already broken. */
 const TRAIL_FUEL_DISCOUNT = 0.35;
@@ -88,8 +171,16 @@ export interface HexHeatmapCell {
   /** Closed polygon ring (7 points, first = last) for map rendering. */
   polygon: LatLng[];
   center: LatLng;
-  /** 0..1 normalized traversal cost — 0 = easiest (green), 1 = hardest (red). */
+  /** 0..1 traversal cost normalised to the MIN/MAX of this scan's own cells —
+   *  0 = easiest and 1 = hardest ground FOUND IN THIS CORRIDOR. Good for
+   *  comparing paths within one scan; a bad idea for judging fuel/slope
+   *  severity in absolute terms (see `costNormalizedObjective`). */
   costNormalized: number;
+  /** 0..1 ABSOLUTE difficulty severity, independent of anything else in this
+   *  scan — heavy forest always sits at least at the amber floor and a 45°+
+   *  slope always reads red, regardless of what else is nearby. See
+   *  `objectiveSeverity()`. */
+  costNormalizedObjective: number;
   vegetation: VegetationType;
   onTrail: boolean;
   /** True when this cell's vegetation sample was estimated/fallback data. */
@@ -157,6 +248,10 @@ export interface RawHeatmapCell {
   center: LatLng;
   polygon: LatLng[];
   unitCost: number;
+  /** Average traversal slope (degrees) over this cell's incident edges —
+   *  feeds the fixed-scale objective severity, independent of `unitCost`'s
+   *  per-scan stretch. */
+  avgSlopeDegrees: number;
   vegetation: VegetationType;
   onTrail: boolean;
   estimated: boolean;
@@ -377,7 +472,10 @@ async function dijkstra(
 }
 
 interface HexPassResult {
-  pathNodes: SampledNode[];
+  /** The cheapest A→B chain, or null when the search couldn't connect them in
+   *  this pass's graph. The scanned `cells` are still returned either way so the
+   *  corridor always renders. */
+  pathNodes: SampledNode[] | null;
   cost: number;
   cells: RawHeatmapCell[];
   nodesEvaluated: number;
@@ -424,6 +522,17 @@ async function runHexPass(
     size = sharedGrid.size;
     const guideLocal = guidePath.map(p => toLocal(proj, p));
     cellsRaw = sharedGrid.cellsRaw.filter(c => distanceToPolylineLocal(c.center, guideLocal) <= halfWidth);
+    if (cellsRaw.length < 3) {
+      // The route-wide shared grid was too coarse for this leg's (narrow/short)
+      // corridor, so the filter caught too few cells — the leg would otherwise
+      // drop out of both the search and the heatmap. Build a dedicated finer
+      // corridor for it instead, keeping the shared projection so its cells
+      // still align with the rest of the route's grid.
+      const pathLocal = guidePath.map(p => toLocal(proj, p));
+      const pathLen = Math.max(1, polylineLengthLocal(pathLocal));
+      size = chooseHexSize(pathLen, halfWidth, targetCount);
+      cellsRaw = generateCorridorHexes(pathLocal, halfWidth, size);
+    }
   } else {
     const origin = guidePath[Math.floor(guidePath.length / 2)];
     proj = makeProjection(origin);
@@ -456,6 +565,7 @@ async function runHexPass(
             center: toLatLng(proj, cell.center),
             polygon: [...corners, corners[0]],
             costNormalized: 0,
+            costNormalizedObjective: 0,
             vegetation: 'grassland' as VegetationType,
             onTrail: false,
             estimated: false,
@@ -544,19 +654,24 @@ async function runHexPass(
     const node = nodeMap.get(id)!;
     const neighborIds = (adjacency.get(id) ?? []).filter(nid => nodeMap.has(nid) && nid !== 'A' && nid !== 'B');
     let unitCost = 0.6;
+    let avgSlopeDegrees = 0;
     if (neighborIds.length > 0) {
-      let sum = 0;
+      let costSum = 0;
+      let slopeSum = 0;
       for (const nid of neighborIds) {
         const e = edgeCost(node, nodeMap.get(nid)!);
-        if (e.dist > 0) sum += e.cost / e.dist;
+        if (e.dist > 0) costSum += e.cost / e.dist;
+        slopeSum += e.slope;
       }
-      unitCost = sum / neighborIds.length;
+      unitCost = costSum / neighborIds.length;
+      avgSlopeDegrees = slopeSum / neighborIds.length;
     }
     const corners = hexCorners(cell.center, size).map(c => toLatLng(proj, c));
     return {
       center: { lat: node.lat, lng: node.lng },
       polygon: [...corners, corners[0]],
       unitCost,
+      avgSlopeDegrees,
       vegetation: node.vegetation,
       onTrail: node.onTrail,
       estimated: node.vegEstimated,
@@ -581,7 +696,16 @@ async function runHexPass(
         });
       }
     : undefined);
-  if (!result) return null;
+
+  // A failed search (couldn't connect A→B in this pass's graph) still scanned
+  // every cell — return those so the leg's corridor renders in the heatmap
+  // regardless. Only the optimized PATH falls back (handled by the caller);
+  // the analysis coverage does not. This is what stops later legs of a
+  // multi-leg line from showing "no analysis" whenever their wide-pass graph
+  // happened not to connect.
+  if (!result) {
+    return { pathNodes: null, cost: Infinity, cells, nodesEvaluated: cellsRaw.length, estimated };
+  }
 
   const pathNodes = result.path.map(id => nodeMap.get(id)!);
 
@@ -623,7 +747,12 @@ async function optimizeLegHex(
   options: OptimizeOptions,
   signal: AbortSignal | undefined,
   sharedGrid: SharedGrid | null,
-  onLegProgress: (fraction: number) => void
+  onLegProgress: (fraction: number) => void,
+  /** This leg's endpoints extended by one waypoint of context on each side
+   *  (the previous leg's start / next leg's end), when they exist. Used ONLY
+   *  to shape the WIDE pass's corridor mask (see below) — the search itself
+   *  still only connects A to B. */
+  wideGuideWaypoints: LatLng[] = [A, B]
 ): Promise<LegHexResult> {
   const { onScanEvent } = options;
   const legLen = calculateDistance(A.lat, A.lng, B.lat, B.lng);
@@ -667,7 +796,8 @@ async function optimizeLegHex(
   const originalPromise = trailsPromise.then(trails => sampleNodes(straightPts, trails, signal));
 
   let guidePath: LatLng[] = [A, B];
-  let best: HexPassResult | null = null;
+  // Only ever holds a pass that actually connected A→B (pathNodes non-null).
+  let best: (HexPassResult & { pathNodes: SampledNode[] }) | null = null;
   let widePassCells: RawHeatmapCell[] = [];
   let usedEstimatedData = false;
   let nodesEvaluated = 0;
@@ -680,8 +810,23 @@ async function optimizeLegHex(
     // Refine/polish stay per-leg (they're never rendered, so there's nothing
     // to layer), and only the wide pass streams scan events — WP2's
     // "watch it happen" visuals are about the search the user actually sees.
+    //
+    // The wide pass's corridor MASK (which shared-grid cells fall inside this
+    // leg's search/heatmap) is filtered by distance to `wideGuideWaypoints`
+    // rather than plain [A, B]: a straight-line-only mask makes each leg's
+    // rendered corridor a sharp-cornered "sausage" around just that segment,
+    // so at a multi-leg vertex two independently-straight buffers cross at an
+    // angle instead of blending — visually "several overlapping straight
+    // areas" rather than one continuous corridor. Extending the mask polyline
+    // by one waypoint of context on each side makes the corridor bend
+    // smoothly through the joint (matching the neighbouring leg's mask there)
+    // without risking the SEARCH itself wandering into a distant, unrelated
+    // leg's territory — A/B (the actual Dijkstra endpoints) are unchanged, so
+    // only the corridor shape softens, not which ground is reachable as a
+    // "shortcut". Refine/polish (i > 0) keep the tight, leg-only guide since
+    // they narrow toward this leg's own found path and are never rendered.
     const pass = await runHexPass(
-      A, B, guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
+      A, B, i === 0 ? wideGuideWaypoints : guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
       i === 0 && sharedGrid ? sharedGrid : undefined,
       i === 0 ? onScanEvent : undefined
     );
@@ -689,9 +834,16 @@ async function optimizeLegHex(
     if (!pass) continue;
     usedEstimatedData = usedEstimatedData || pass.estimated;
     nodesEvaluated += pass.nodesEvaluated;
+    // The wide pass's scanned cells are the heatmap for this leg — keep them
+    // even when the pass found no connecting path, so the corridor still
+    // renders for every leg, not just the ones whose search connected.
     if (i === 0) widePassCells = pass.cells;
-    if (!best || pass.cost < best.cost) best = pass;
-    guidePath = pass.pathNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    // Only a pass that actually found a path can improve the route or guide the
+    // next (finer) pass; a failed pass still contributed its cells above.
+    if (pass.pathNodes) {
+      if (!best || pass.cost < best.cost) best = { ...pass, pathNodes: pass.pathNodes };
+      guidePath = pass.pathNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    }
   }
 
   // By this point trailsPromise (derived from infraPromise) has already
@@ -705,11 +857,13 @@ async function optimizeLegHex(
     // would need a corridor thinner than the hex size somewhere along it).
     // Fail safe rather than fabricate an "optimized" result: report the
     // straight line as both, so effort/length compare as identical and the
-    // UI reads as "no improvement found" rather than lying about one.
+    // UI reads as "no improvement found" rather than lying about one — but
+    // still surface the scanned corridor (widePassCells) so the leg shows its
+    // analysis coverage instead of a blank gap in the heatmap.
     return {
       optimizedNodes: original.nodes,
       originalNodes: original.nodes,
-      heatmapCells: [],
+      heatmapCells: widePassCells,
       usedEstimatedData,
       infrastructureAvailable: infra.available,
       nodesEvaluated,
@@ -738,6 +892,7 @@ export function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
     center: c.center,
     polygon: c.polygon,
     costNormalized: span > 1e-9 ? (c.unitCost - min) / span : 0.5,
+    costNormalizedObjective: objectiveSeverity(c.avgSlopeDegrees, c.vegetation),
     vegetation: c.vegetation,
     onTrail: c.onTrail,
     estimated: c.estimated,
@@ -824,9 +979,20 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
       continue;
     }
 
+    // Extend the wide-pass corridor mask by one waypoint of context on each
+    // side (the previous leg's start / next leg's end) so the rendered
+    // corridor bends smoothly through shared vertices instead of two
+    // independently-straight per-leg buffers crossing at an angle there.
+    const wideGuideWaypoints = [
+      leg > 0 ? waypoints[leg - 1] : undefined,
+      A,
+      B,
+      leg + 2 < waypoints.length ? waypoints[leg + 2] : undefined,
+    ].filter((p): p is LatLng => !!p);
+
     const legResult = await optimizeLegHex(A, B, options, signal, sharedGrid, frac => {
       onProgress?.((leg + frac) / (waypoints.length - 1), 'search');
-    });
+    }, wideGuideWaypoints);
     if (signal?.aborted) return null;
 
     usedEstimatedData = usedEstimatedData || legResult.usedEstimatedData;

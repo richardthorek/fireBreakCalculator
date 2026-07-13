@@ -126,9 +126,16 @@ const App: React.FC = () => {
   // best-guess path. Keyed by cell centre so repeated 'grid'/'cells' events
   // (one wide pass per leg, all drawing from the same shared grid) merge
   // into one set rather than re-adding duplicates.
-  const [scanCells, setScanCells] = useState<{ polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }[]>([]);
+  const [scanCells, setScanCells] = useState<{ polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }[]>([]);
   const [scanBestPath, setScanBestPath] = useState<{ lat: number; lng: number }[]>([]);
-  const scanCellsMapRef = useRef(new Map<string, { polygon: { lat: number; lng: number }[]; costNormalized: number; revealed: boolean }>());
+  const scanCellsMapRef = useRef(new Map<string, { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }>());
+  // Heatmap colour scale: 'objective' (fixed, absolute difficulty — heavy
+  // timber always at least amber, a 45°+ slope always red, regardless of what
+  // else is in the scan) or 'relative' (stretched to this scan's own min/max —
+  // useful for comparing paths within one corridor). Defaults to objective per
+  // field feedback that a per-scan relative scale let flat heavy-forest ground
+  // read as "easy" whenever something steeper happened to sit nearby.
+  const [heatmapColorMode, setHeatmapColorMode] = useState<'relative' | 'objective'>('objective');
   // WP5 auto-run: applying an optimized route replaces the drawn line, which
   // fires the same onLineChange path that triggers auto-optimize — without
   // this guard, apply -> auto-optimize -> apply would loop. Set right before
@@ -201,14 +208,14 @@ const App: React.FC = () => {
             for (const c of event.data.cells) {
               const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
               if (!scanCellsMapRef.current.has(key)) {
-                scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: 0, revealed: false });
+                scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: 0, costNormalizedObjective: 0, revealed: false });
               }
             }
             setScanCells(Array.from(scanCellsMapRef.current.values()));
           } else if (event.phase === 'cells' && event.data?.cells) {
             for (const c of event.data.cells) {
               const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
-              scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: c.costNormalized, revealed: true });
+              scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: c.costNormalized, costNormalizedObjective: c.costNormalizedObjective, revealed: true });
             }
             setScanCells(Array.from(scanCellsMapRef.current.values()));
           } else if (event.phase === 'search' && event.data?.bestPath) {
@@ -798,6 +805,7 @@ const App: React.FC = () => {
             optimizerScanning={optimizerStatus === 'running'}
             optimizerHeatmap={optimizerStatus === 'done' && optimizerResult ? optimizerResult.heatmap : null}
             optimizerProgress={optimizerProgress}
+            heatmapColorMode={heatmapColorMode}
             scanCells={optimizerStatus === 'running' ? scanCells : null}
             scanBestPath={optimizerStatus === 'running' ? scanBestPath : null}
             areaReconActive={areaReconActive}
@@ -843,6 +851,8 @@ const App: React.FC = () => {
             onOptimize={handleOptimize}
             onApplyOptimized={handleApplyOptimized}
             onDismissOptimized={handleDismissOptimized}
+            heatmapColorMode={heatmapColorMode}
+            onHeatmapColorModeChange={setHeatmapColorMode}
             onImportAsPlan={handleImportAsPlan}
             onAddOverlay={handleAddOverlay}
             overlayCount={contextOverlays.length}

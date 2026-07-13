@@ -78,6 +78,10 @@ interface AnalysisPanelProps {
   onOptimize?: () => void;
   onApplyOptimized?: () => void;
   onDismissOptimized?: () => void;
+  /** Corridor-scan heatmap colour scale (state lives in App so the map and
+   *  this panel's legend/toggle stay in sync). */
+  heatmapColorMode?: 'relative' | 'objective';
+  onHeatmapColorModeChange?: (mode: 'relative' | 'objective') => void;
   /** GIS import wiring (state lives in App so the map can render overlays). */
   onImportAsPlan?: (coords: LatLng[]) => void;
   onAddOverlay?: (features: ImportedFeatures) => void;
@@ -328,6 +332,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   onOptimize,
   onApplyOptimized,
   onDismissOptimized,
+  heatmapColorMode = 'objective',
+  onHeatmapColorModeChange,
   onImportAsPlan,
   onAddOverlay,
   overlayCount = 0,
@@ -364,13 +370,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [selectedQuickAircraft, setSelectedQuickAircraft] = useState<string | null>(null);
   const [selectedQuickHandCrew, setSelectedQuickHandCrew] = useState<string | null>(null);
 
-  // Test backend availability on mount
-  // Test backend availability, but delay the test until the map has settled.
-  // Running the test call (which hits the backend analysis endpoint) before the
-  // map has finished its initial pan/zoom causes unnecessary load and noisy logs.
+  // Gate for running analysis. The `mapSettled` flag exists only to avoid firing
+  // heavy analysis while the map is still doing its initial pan/zoom to the
+  // user's location — but that signal can be missed on some (esp. mobile)
+  // browsers, which would then wedge the whole panel at "No option". A drawn
+  // line is proof the map is already interactive and the user wants analysis, so
+  // treat either condition as ready. This is the safety net that stops a flaky
+  // settle signal from silently disabling every estimate.
+  const analysisReady = mapSettled || (distance != null && distance > 0);
+
+  // Test backend availability once the panel is ready (map settled, or a line is
+  // already drawn). Delaying until then avoids an early backend ping during the
+  // initial map pan while still guaranteeing the test runs once there's work.
   useEffect(() => {
-    if (!mapSettled) {
-      // Clear any previous state while waiting for the map to settle
+    if (!analysisReady) {
+      // Clear any previous state while waiting to become ready
       setBackendAvailable(null);
       return;
     }
@@ -380,7 +394,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       setBackendAvailable(available);
     };
     checkBackend();
-  }, [mapSettled]);
+  }, [analysisReady]);
   
   // Determine effective vegetation: auto-detected or manually selected
   const effectiveVegetation = useMemo(() => {
@@ -408,7 +422,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     // Delay heavy backend analysis until the map has settled (i.e. initial
     // pan/zoom to user location completed). This prevents early logs/calls
     // and gives the map time to show the user's location seamlessly.
-    if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !mapSettled) {
+    if (!distance || !trackAnalysis || !vegetationAnalysis || !backendAvailable || !analysisReady) {
       // Log why backend analysis is not running for debugging
       if (distance && trackAnalysis && vegetationAnalysis) {
         logger.debug('⏸️ Backend analysis blocked:', {
@@ -416,7 +430,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           trackAnalysis: !!trackAnalysis,
           vegetationAnalysis: !!vegetationAnalysis,
           backendAvailable,
-          mapSettled
+          analysisReady
         });
       }
       setBackendResults(null);
@@ -477,7 +491,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     };
 
     runBackendAnalysis();
-  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, breakWidthMeters, backendAvailable, mapSettled]);
+  }, [distance, trackAnalysis, vegetationAnalysis, effectiveVegetation, useAutoDetected, breakWidthMeters, backendAvailable, analysisReady]);
 
   // Handle drop preview selection changes
   const handleDropPreviewChange = (aircraftId: string, enabled: boolean) => {
@@ -510,11 +524,12 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   }, [trackAnalysis]);
 
   const calculations = useMemo<CalculationResult[]>(() => {
-    // Do not perform calculations or emit logs until the map has settled to the
-    // user's location. This prevents analysis from starting while the map is
-    // still panning/zooming on initial load and keeps console noise low.
-    if (!mapSettled) {
-      logger.debug('⏸️ Frontend calculations blocked: map not settled yet');
+    // Don't compute until ready (map settled, or a line is already drawn — the
+    // latter proves the map is interactive even if the settle signal was missed,
+    // which otherwise wedges mobile at "No option"). Avoids analysis during the
+    // initial pan while never blocking a real drawn line.
+    if (!analysisReady) {
+      logger.debug('⏸️ Frontend calculations blocked: not ready yet');
       return [];
     }
 
@@ -739,7 +754,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     return sortedResults;
-  }, [distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
+  }, [analysisReady, distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
   // Always use backend results, fallback to frontend calculations only if backend unavailable
   // Type guard for compatibilityLevel
@@ -1229,6 +1244,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               onOptimize={onOptimize}
               onApplyOptimized={onApplyOptimized}
               onDismissOptimized={onDismissOptimized}
+              heatmapColorMode={heatmapColorMode}
+              onHeatmapColorModeChange={onHeatmapColorModeChange}
             />
             <AiAssistantCard payload={assistantPayload} />
           </>
@@ -1255,14 +1272,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <>
             {/* Diagnostic message when no calculations are available */}
             {activeTab === 'overview' && finalCalculations.length === 0 && (() => {
-              // Extract diagnostic conditions for better readability
-              const isMapInitializing = !mapSettled;
-              const isBackendUnavailable = mapSettled && backendAvailable === false; // explicitly false, not null (initializing)
-              const isBackendLoading = mapSettled && backendAvailable && backendLoading;
-              const hasBackendError = mapSettled && backendAvailable && !backendLoading && backendError;
-              const hasNoEquipment = mapSettled && backendAvailable && !backendLoading && !backendError && 
+              // Extract diagnostic conditions for better readability. Keyed off
+              // `analysisReady` (the same gate the analysis uses) so the message
+              // reflects the real state rather than the raw settle signal.
+              const isMapInitializing = !analysisReady;
+              const isBackendUnavailable = analysisReady && backendAvailable === false; // explicitly false, not null (initializing)
+              const isBackendLoading = analysisReady && backendAvailable && backendLoading;
+              const hasBackendError = analysisReady && backendAvailable && !backendLoading && backendError;
+              const hasNoEquipment = analysisReady && backendAvailable && !backendLoading && !backendError &&
                                      (machinery.length === 0 && aircraft.length === 0 && handCrews.length === 0);
-              const isWaitingForData = mapSettled && backendAvailable && !backendLoading && !backendError && 
+              const isWaitingForData = analysisReady && backendAvailable && !backendLoading && !backendError &&
                                        (machinery.length > 0 || aircraft.length > 0 || handCrews.length > 0);
               
               // Don't show warning during normal map initialization - this is expected behavior

@@ -151,11 +151,32 @@ export function extractMVGCode(attributes: Record<string, unknown>): number | nu
   const codeKeys = keys.filter((k) =>
     /mvg.*(number|num|code|value)|^value$|pixel\s*value|nvisdsc1|gridcode|^mvg$|raster\.?value/i.test(k)
   );
-  // Prefer explicit MVG-code fields, then any remaining numeric candidate.
-  for (const k of [...codeKeys, ...keys]) {
-    const raw = attributes[k];
+
+  const toCode = (raw: unknown): number | null => {
+    // Ocean and data gaps come back as the string sentinel "NoData" on the pixel
+    // value field. It is NOT a class — it must fall through so the resolver moves
+    // to the next source rather than inventing a fuel class. Guard explicitly.
+    if (typeof raw === 'string' && /nodata/i.test(raw)) return null;
     const num = typeof raw === 'number' ? raw : typeof raw === 'string' ? parseInt(raw, 10) : NaN;
-    if (Number.isInteger(num) && MVG_CLASSES[num]) return num;
+    return Number.isInteger(num) && MVG_CLASSES[num] ? num : null;
+  };
+
+  // When the service exposes an explicit code/pixel-value field, trust ONLY that.
+  // Do not then scan unrelated numeric fields (SORT_ORDER, COUNT, OBJECTID): for a
+  // "NoData" pixel those would otherwise resolve to a bogus MVG (e.g. SORT_ORDER
+  // "28" → "Sea and estuaries" → grassland), fabricating fuel over open water.
+  if (codeKeys.length > 0) {
+    for (const k of codeKeys) {
+      const code = toCode(attributes[k]);
+      if (code != null) return code;
+    }
+    return null;
+  }
+
+  // No recognisable code field (older/variant NVIS releases) — last-resort scan.
+  for (const k of keys) {
+    const code = toCode(attributes[k]);
+    if (code != null) return code;
   }
   return null;
 }
@@ -182,11 +203,13 @@ function resolveFromAttributes(attributes: Record<string, unknown>): NVISResult 
   const code = extractMVGCode(attributes);
   if (code != null) {
     const mapped = mapMVGCode(code)!;
+    logger.debug(`NVIS resolved MVG ${code} "${mapped.name}" → ${mapped.vegetation} (conf ${mapped.confidence})`);
     return { vegetationType: mapped.vegetation, confidence: mapped.confidence, mvgName: mapped.name, mvgCode: code, source: 'nvis' };
   }
   const name = extractMVGName(attributes);
   if (name) {
     const mapped = mapMVGToVegetation(name);
+    logger.debug(`NVIS resolved by name "${name}" → ${mapped.vegetation} (conf ${mapped.confidence}); no MVG code field found`);
     return { vegetationType: mapped.vegetation, confidence: mapped.confidence, mvgName: name, source: 'nvis' };
   }
   return null;

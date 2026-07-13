@@ -48,6 +48,29 @@ const isMachinery = (r: EquipmentResultLike) => r.type.toLowerCase() === 'machin
 const isAircraft = (r: EquipmentResultLike) => r.type.toLowerCase() === 'aircraft';
 const isHandCrew = (r: EquipmentResultLike) => r.type.toLowerCase() === 'handcrew';
 
+/** A resource is only "usable" for a recommendation if it's compatible and has a real time estimate. */
+const usable = (r: EquipmentResultLike) => r.compatible && r.time > 0;
+
+/**
+ * Balance speed against cost. The fastest resource can cost far more for a
+ * marginal time saving — an aircraft that beats a dozer by an hour at ten times
+ * the price is rarely the right call — so among compatible options prefer the
+ * cheapest whose time is still within `SPEED_TOLERANCE×` the fastest. Falls back
+ * to the fastest when no option carries a cost. Returns both so callers can flag
+ * the trade-off when the two differ.
+ */
+const SPEED_TOLERANCE = 1.5;
+function pickByValue(options: EquipmentResultLike[]): { value?: EquipmentResultLike; fastest?: EquipmentResultLike } {
+  const pool = options.filter(usable);
+  if (pool.length === 0) return {};
+  const fastest = pool.reduce((f, c) => (c.time < f.time ? c : f));
+  const priced = pool.filter(o => o.cost > 0);
+  if (priced.length === 0) return { value: fastest, fastest };
+  const withinSpeed = priced.filter(o => o.time <= fastest.time * SPEED_TOLERANCE);
+  const value = (withinSpeed.length ? withinSpeed : priced).reduce((cheap, c) => (c.cost < cheap.cost ? c : cheap));
+  return { value, fastest };
+}
+
 interface Run {
   startM: number;
   endM: number;
@@ -230,15 +253,32 @@ export function buildPlanAssessment(params: {
   }
 
   // ---- Crewing strategy --------------------------------------------------------
-  const compatible = equipmentResults.filter(r => r.compatible && r.time > 0);
-  const bestMachine = compatible.filter(isMachinery).sort((a, b) => a.time - b.time)[0];
-  const bestCrew = compatible.filter(isHandCrew).sort((a, b) => a.time - b.time)[0];
-  const bestAir = compatible.filter(isAircraft).sort((a, b) => a.time - b.time)[0];
+  // Recommend by VALUE, not raw speed: pickByValue prefers the cheapest option
+  // within 1.5× the fastest time, so a resource that's marginally quicker at a
+  // large cost premium doesn't win by default. `fastest*` is kept only to flag
+  // the trade-off when the two differ.
+  const machinePick = pickByValue(equipmentResults.filter(isMachinery));
+  const crewPick = pickByValue(equipmentResults.filter(isHandCrew));
+  const airPick = pickByValue(equipmentResults.filter(isAircraft));
+  const bestMachine = machinePick.value;
+  const bestCrew = crewPick.value;
+  const bestAir = airPick.value;
+
+  const machineFasterButPricier =
+    machinePick.fastest &&
+    bestMachine &&
+    machinePick.fastest.id !== bestMachine.id &&
+    machinePick.fastest.cost > bestMachine.cost;
 
   if (bestMachine) {
     const partial = bestMachine.compatibilityLevel === 'partial';
     const steepM = trackAnalysis ? trackAnalysis.slopeDistribution.steep + trackAnalysis.slopeDistribution.very_steep : 0;
-    let detail = `${bestMachine.name} is the fastest viable machine at ~${fmtHours(bestMachine.time)} for the ${breakWidthMeters} m break${bestMachine.cost > 0 ? ` (≈$${Math.round(bestMachine.cost).toLocaleString()})` : ''}.`;
+    let detail = `${bestMachine.name} is the best-value machine at ~${fmtHours(bestMachine.time)} for the ${breakWidthMeters} m break${bestMachine.cost > 0 ? ` (≈$${Math.round(bestMachine.cost).toLocaleString()})` : ''}.`;
+    if (machineFasterButPricier && machinePick.fastest) {
+      const f = machinePick.fastest;
+      const saved = f.time > 0 ? bestMachine.time - f.time : 0;
+      detail += ` ${f.name} is faster (~${fmtHours(f.time)})${f.cost > 0 ? ` but ≈$${Math.round(f.cost - bestMachine.cost).toLocaleString()} dearer` : ''} — only worth it if the ~${fmtHours(Math.max(0, saved))} saved is critical.`;
+    }
     if (partial) {
       detail += ` It is outside its rated terrain for part of the line${bestMachine.note ? ` — ${bestMachine.note.toLowerCase()}` : ''}.`;
     }
@@ -256,9 +296,51 @@ export function buildPlanAssessment(params: {
       id: 'strategy',
       severity: 'advice',
       title: 'Hand crews are the primary option',
-      detail: `No machinery is compatible with this line's terrain and fuel. ${bestCrew.name} is the fastest crew option at ~${fmtHours(bestCrew.time)}. Consider re-routing to bring machinery back into play.`,
+      detail: `No machinery is compatible with this line's terrain and fuel. ${bestCrew.name} is the best-value crew option at ~${fmtHours(bestCrew.time)}. Consider re-routing to bring machinery back into play.`,
       action: 'optimize',
     });
+  }
+
+  // ---- Composite plan: machinery for the bulk, air/hand for the hard pockets --
+  // Rather than forcing one resource across ground it can't build, recommend a
+  // split: machinery on the workable majority, and aircraft (or hand crews) on
+  // the very-steep or heavy-timber pockets where a dozer is unsafe or crawls.
+  if (trackAnalysis && vegetationAnalysis && bestMachine && distance > 300) {
+    const verySteepRuns = findSlopeRuns(trackAnalysis, c => c === 'very_steep');
+    const heavyRuns = findVegetationRuns(vegetationAnalysis, 'heavyforest').filter(r => r.endM - r.startM >= 150);
+    const hardRuns = [...verySteepRuns, ...heavyRuns];
+
+    const verySteepLen = trackAnalysis.slopeDistribution.very_steep ?? 0;
+    const heavyLen = vegetationAnalysis.vegetationDistribution.heavyforest ?? 0;
+    // Approximate hard ground (steep and heavy pockets can overlap, so cap at
+    // the line length rather than double-count).
+    const hardLen = Math.min(distance, verySteepLen + heavyLen);
+    const support = bestAir ?? bestCrew;
+
+    if (support && hardRuns.length > 0 && hardLen > Math.max(200, 0.06 * distance)) {
+      const biggest = hardRuns.sort((a, b) => (b.endM - b.startM) - (a.endM - a.startM))[0];
+      const workableLen = Math.max(0, distance - hardLen);
+      const hardDescParts = [
+        verySteepLen > 50 ? `~${fmtKm(verySteepLen)} very steep` : null,
+        heavyLen > 50 ? `~${fmtKm(heavyLen)} heavy timber` : null,
+      ].filter(Boolean).join(' and ');
+      const isAir = support === bestAir;
+      const supportClause = isAir
+        ? `${support.name} to treat the ${hardDescParts || 'hardest pockets'} from the air (${support.drops ?? '?'} drops)`
+        : `${support.name} on the ${hardDescParts || 'hardest pockets'} by hand`;
+      const others = hardRuns.length - 1;
+      insights.push({
+        id: 'composite-plan',
+        severity: 'advice',
+        title: 'Composite plan may beat one resource',
+        detail:
+          `Split the job: ${bestMachine.name} builds the ~${fmtKm(workableLen)} of workable line, and stage ${supportClause} — the ground a dozer can't safely or effectively cut. ` +
+          `Biggest such pocket is at ${formatChainageRange(biggest.startM, biggest.endM)}${others > 0 ? `, plus ${others} more` : ''}. ` +
+          `This usually costs less than pushing a single resource across ground it isn't suited to.`,
+        chainage: { startM: biggest.startM, endM: biggest.endM },
+        action: 'locate',
+      });
+    }
   }
 
   if (bestAir && vegetationAnalysis) {

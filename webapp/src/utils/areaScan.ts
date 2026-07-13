@@ -98,19 +98,24 @@ export async function scanArea(sw: LatLng, ne: LatLng, options: AreaScanOptions 
     const node = nodeByKey.get(id)!;
     const neighborIds = hexNeighbors(cell.hex).map(hexKey).filter(nid => nodeByKey.has(nid));
     let unitCost = 0.6;
+    let avgSlopeDegrees = 0;
     if (neighborIds.length > 0) {
-      let sum = 0;
+      let costSum = 0;
+      let slopeSum = 0;
       for (const nid of neighborIds) {
         const e = edgeCost(node, nodeByKey.get(nid)!);
-        if (e.dist > 0) sum += e.cost / e.dist;
+        if (e.dist > 0) costSum += e.cost / e.dist;
+        slopeSum += e.slope;
       }
-      unitCost = sum / neighborIds.length;
+      unitCost = costSum / neighborIds.length;
+      avgSlopeDegrees = slopeSum / neighborIds.length;
     }
     const corners = hexCorners(cell.center, size).map(c => toLatLng(proj, c));
     return {
       center: { lat: node.lat, lng: node.lng },
       polygon: [...corners, corners[0]],
       unitCost,
+      avgSlopeDegrees,
       vegetation: node.vegetation,
       onTrail: false,
       estimated: node.vegEstimated,

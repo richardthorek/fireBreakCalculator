@@ -29,19 +29,27 @@ async function handle<T>(res: Response): Promise<T> {
 // empty list, so the UI is never blank and estimates can always be produced.
 const mockEquipment: EquipmentApi[] = STANDARD_EQUIPMENT;
 
-// Development mode fallback helper
+// Fallback helper.
+//
+// `fallbackInProduction` distinguishes reads from writes:
+// - READS (the equipment catalogue) fall back to the built-in standard
+//   catalogue in EVERY environment. A field planning tool must still produce
+//   estimates when the backend is unreachable — otherwise a transient API
+//   failure silently empties the equipment list and no resources (machinery,
+//   aircraft or hand crews) are ever recommended.
+// - WRITES only fall back in development. In production a failed write must
+//   surface as an error, never silently pretend to succeed (data honesty).
 const isDevelopment = import.meta.env.DEV;
-async function withFallback<T>(apiCall: () => Promise<T>, fallback: T): Promise<T> {
-  if (!isDevelopment) {
-    return apiCall();
-  }
-
+async function withFallback<T>(
+  apiCall: () => Promise<T>,
+  fallback: T,
+  fallbackInProduction = false
+): Promise<T> {
   try {
     return await apiCall();
   } catch (error: any) {
-    // In development, use fallback for any API error
-    // This ensures the app works even when backend is completely unavailable
-    console.warn('API call failed in development, using fallback data:', error.message);
+    if (!isDevelopment && !fallbackInProduction) throw error;
+    console.warn('API call failed, using fallback data:', error?.message ?? error);
     return fallback;
   }
 }
@@ -62,7 +70,8 @@ export async function listEquipment(): Promise<EquipmentApi[]> {
 
       return data;
     },
-    mockEquipment
+    mockEquipment,
+    true // reads fall back to the standard catalogue even in production
   );
 }
 

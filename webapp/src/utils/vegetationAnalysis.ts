@@ -212,6 +212,30 @@ const getMockLandcoverClass = (lat: number, lng: number): string => {
 };
 
 /**
+ * Run `fn` over `items` with at most `limit` promises in flight at once,
+ * preserving input order in the result. Vegetation lookups are network-bound
+ * and independent, so a bounded pool turns dozens of sequential awaits (the
+ * dominant cost of a long line's analysis) into a handful of concurrent waves
+ * without stampeding the upstream ArcGIS services.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return results;
+}
+
+/**
  * Calculate distance between two lat/lng points using Haversine formula
  * Returns distance in meters
  */
@@ -310,75 +334,81 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   let totalDistance = 0;
   let totalConfidence = 0;
 
+  // Collect the segments worth sampling (skip zero-length) so their vegetation
+  // lookups can run concurrently rather than one await at a time.
+  interface SegSpec { start: LatLngLike; end: LatLngLike; distance: number; midLat: number; midLng: number; }
+  const segSpecs: SegSpec[] = [];
   for (let i = 0; i < samplePoints.length - 1; i++) {
     const start = samplePoints[i];
     const end = samplePoints[i + 1];
-    
     const distance = calculateDistance(start.lat, getLng(start), end.lat, getLng(end));
     if (distance <= 0.001) continue; // Skip zero-length segments
-    
-    // Sample landcover at the midpoint of the segment
-    const midLat = (start.lat + end.lat) / 2;
-    const midLng = (getLng(start) + getLng(end)) / 2;
-    
+    segSpecs.push({
+      start,
+      end,
+      distance,
+      midLat: (start.lat + end.lat) / 2,
+      midLng: (getLng(start) + getLng(end)) / 2,
+    });
+  }
+
+  // Resolve every segment's vegetation with bounded concurrency. State/NVIS
+  // lookups are cached and deduped, so this only fans out real network work and
+  // keeps ordering stable for the merge step below.
+  const resolved = await mapWithConcurrency(segSpecs, 8, async (spec, i) => {
     try {
       // Query state-based vegetation service (NSW, VIC, QLD, etc.) with NVIS fallback
-      const stateVeg = await fetchStateVegetation(midLat, midLng);
-      let vegetation: VegetationType;
-      let confidence: number;
-      let landcoverClass: string;
-      let estimated = false;
-
+      const stateVeg = await fetchStateVegetation(spec.midLat, spec.midLng);
       if (stateVeg) {
-        // State service or NVIS returned data
-        vegetation = stateVeg.vegetationType;
-        confidence = stateVeg.confidence;
-        landcoverClass = stateVeg.displayLabel;
-      } else {
-        // Fall back to coarse landcover (may be mock — flagged as estimated)
-        const landcover = await fetchLandcoverData(midLat, midLng, token || '');
-        landcoverClass = landcover.cls;
-        estimated = landcover.estimated;
-        const mapped = mapLandcoverToVegetation(landcover.cls);
-        vegetation = mapped.vegetation;
-        confidence = estimated ? mapped.confidence * 0.5 : mapped.confidence;
+        return {
+          estimated: false,
+          vegetation: stateVeg.vegetationType,
+          confidence: stateVeg.confidence,
+          landcoverClass: stateVeg.displayLabel,
+          displayLabel: stateVeg.displayLabel || 'Unknown vegetation',
+        };
       }
-
-      rawSegments.push({
-        estimated,
-        start: [start.lat, getLng(start)],
-        end: [end.lat, getLng(end)],
-        coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
-        vegetationType: vegetation,
-        confidence,
-        landcoverClass,
-        // Display label from state service or landcover class
-        displayLabel: stateVeg?.displayLabel || landcoverClass || 'Unknown vegetation',
-        distance
-      });
-      
-      totalDistance += distance;
-      totalConfidence += confidence;
+      // Fall back to coarse landcover (may be mock — flagged as estimated)
+      const landcover = await fetchLandcoverData(spec.midLat, spec.midLng, token || '');
+      const mapped = mapLandcoverToVegetation(landcover.cls);
+      return {
+        estimated: landcover.estimated,
+        vegetation: mapped.vegetation,
+        confidence: landcover.estimated ? mapped.confidence * 0.5 : mapped.confidence,
+        landcoverClass: landcover.cls,
+        displayLabel: landcover.cls || 'Unknown vegetation',
+      };
     } catch (segmentError) {
-      // If individual segment fails, use fallback vegetation based on position
+      // If an individual segment fails, use deterministic fallback vegetation.
       logger.warn(`Failed to get vegetation for segment ${i}, using fallback:`, segmentError);
-      const fallbackClass = getMockLandcoverClass(midLat, midLng);
+      const fallbackClass = getMockLandcoverClass(spec.midLat, spec.midLng);
       const { vegetation, confidence } = mapLandcoverToVegetation(fallbackClass);
-
-      rawSegments.push({
+      return {
         estimated: true,
-        start: [start.lat, getLng(start)],
-        end: [end.lat, getLng(end)],
-        coords: [[start.lat, getLng(start)], [end.lat, getLng(end)]],
-        vegetationType: vegetation,
+        vegetation,
         confidence: confidence * 0.5, // Reduce confidence for fallback data
         landcoverClass: fallbackClass + ' (fallback)',
-        distance
-      });
-      
-      totalDistance += distance;
-      totalConfidence += confidence * 0.5;
+        displayLabel: fallbackClass + ' (fallback)',
+      };
     }
+  });
+
+  for (let j = 0; j < segSpecs.length; j++) {
+    const spec = segSpecs[j];
+    const r = resolved[j];
+    rawSegments.push({
+      estimated: r.estimated,
+      start: [spec.start.lat, getLng(spec.start)],
+      end: [spec.end.lat, getLng(spec.end)],
+      coords: [[spec.start.lat, getLng(spec.start)], [spec.end.lat, getLng(spec.end)]],
+      vegetationType: r.vegetation,
+      confidence: r.confidence,
+      landcoverClass: r.landcoverClass,
+      displayLabel: r.displayLabel,
+      distance: spec.distance,
+    });
+    totalDistance += spec.distance;
+    totalConfidence += r.confidence;
   }
 
   // Merge consecutive segments with the same vegetation type
