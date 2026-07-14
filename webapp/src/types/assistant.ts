@@ -21,4 +21,8 @@ export interface SmeacsBriefing {
   sections: SmeacsBriefingSection[];
   generatedAt: string;
   dataHonestyCaveat?: string;
+  /** Standing legal/operational disclaimer — always present. */
+  disclaimer?: string;
+  /** Reproducibility stamp: which estimate engine produced these numbers. */
+  provenance?: string;
 }

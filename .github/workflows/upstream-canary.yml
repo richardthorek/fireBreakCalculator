@@ -1,0 +1,27 @@
+name: Upstream data-contract canary
+
+# The app depends on ~10 free public spatial endpoints with no SLA. This probes
+# their live shape on a schedule and fails (notifying watchers) when a REQUIRED
+# upstream drifts — catching schema/behaviour changes before a field user hits
+# garbage. See scripts/canary/upstreamCanary.mjs.
+
+on:
+  schedule:
+    # Daily at 20:00 UTC (~06:00 AEST) — before the fire-season working day.
+    - cron: '0 20 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Probe upstream endpoints
+        # Mapbox check runs only if the (optional) secret is configured.
+        env:
+          MAPBOX_TOKEN: ${{ secrets.MAPBOX_TOKEN }}
+        run: node scripts/canary/upstreamCanary.mjs

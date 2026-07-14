@@ -10,6 +10,7 @@
  */
 
 import { VegetationType, VEGETATION_TYPES } from '../config/classification';
+import { DISCLAIMER_LONG, provenanceStamp, COORDINATE_REFERENCE_SYSTEM } from './../config/provenance';
 
 /** Escape a string for safe insertion as HTML text/attribute content. */
 function escapeHtml(value: unknown): string {
@@ -129,7 +130,7 @@ export function toGPX(coords: LatLng[], name = 'Fire break plan'): string {
     .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Fire Break Calculator" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><name>${esc(name)}</name><time>${new Date().toISOString()}</time></metadata>
+  <metadata><name>${esc(name)}</name><desc>${esc(`${DISCLAIMER_LONG} Datum: ${COORDINATE_REFERENCE_SYSTEM}. ${provenanceStamp()}`)}</desc><time>${new Date().toISOString()}</time></metadata>
   <trk>
     <name>${esc(name)}</name>
     <trkseg>
@@ -213,7 +214,8 @@ export function printBriefing(data: BriefingData): void {
     <table><thead><tr>
       <th>Resource</th><th>Type</th><th>Fit</th><th>Time</th><th>Cost</th><th>Notes</th>
     </tr></thead><tbody>${rows}</tbody></table>
-    <p class="sub" style="margin-top:16px">Estimates for planning only. Confirm resourcing and safety on the ground.</p>
+    <p class="warn" style="margin-top:16px">⚠️ ${escapeHtml(DISCLAIMER_LONG)}</p>
+    <p class="sub">${escapeHtml(provenanceStamp())}</p>
     <button onclick="window.print()">Print</button>
     </body></html>`;
   const w = window.open('', '_blank');

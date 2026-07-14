@@ -52,9 +52,23 @@ param aiModelVersion string = '2024-07-18'
 @description('Deployment throughput (thousands of tokens/minute for GlobalStandard). Kept low — this is a narration layer over deterministic data, not a high-volume workload.')
 param aiModelCapacity int = 10
 
+@description('Provision Application Insights (+ Log Analytics) and wire the managed Functions API to it. On by default: production observability is the single biggest gap — every field bug so far was found by users, not telemetry. The fallback-rate KPI (see api/src/services/telemetry.ts) is queryable from here.')
+param deployMonitoring bool = true
+
+@description('Monthly cost budget in the billing currency (0 disables the budget + alerts). A guard against runaway consumption-plan/AI spend from anonymous traffic.')
+param monthlyBudget int = 0
+
+@description('Email addresses notified at budget thresholds. Required (non-empty) for the budget to be created.')
+param budgetAlertEmails array = []
+
+@description('Budget start month (YYYY-MM). Defaults to the current month at deploy time; do not set manually. utcNow() is only valid as a parameter default.')
+param budgetStartMonth string = utcNow('yyyy-MM')
+
 var storageAccountName = toLower(replace('${baseName}${uniqueString(resourceGroup().id)}', '-', ''))
 var swaName = '${baseName}-${environmentName}'
 var aiFoundryName = take('${baseName}-ai-${environmentName}', 24)
+var logAnalyticsName = '${baseName}-logs-${environmentName}'
+var appInsightsName = '${baseName}-ai-insights-${environmentName}'
 
 var tags = {
   application: 'fire-break-calculator'
@@ -121,6 +135,38 @@ resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
   }
 }
 
+// --- Observability: Log Analytics + Application Insights ---------------------
+//
+// The app degrades silently by design (flagged fallbacks), so without telemetry
+// the production fallback rate — a safety KPI — is invisible. host.json already
+// configures App Insights sampling; wiring the connection string below makes the
+// managed Functions host emit to this component. Query the METRIC lines from
+// api/src/services/telemetry.ts here to build the fallback-rate dashboard/alert.
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (deployMonitoring) {
+  name: logAnalyticsName
+  location: storageLocation
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 90
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (deployMonitoring) {
+  name: appInsightsName
+  location: storageLocation
+  tags: tags
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+    IngestionMode: 'LogAnalytics'
+  }
+}
+
 // --- AI Foundry: model deployment backing the assistant (briefings + chat) --
 //
 // Optional (deployAiAssistant). The assistant is a NARRATION layer only — see
@@ -174,6 +220,9 @@ resource swaSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
     // Suite auth (Station Manager). Empty → saved-plan endpoints return 503 and
     // the webapp hides account features; the calculator stays fully anonymous.
     SUITE_AUTH_URL: suiteAuthUrl
+    // Observability. Empty → the managed Functions host simply emits no
+    // telemetry; the app is unaffected.
+    APPLICATIONINSIGHTS_CONNECTION_STRING: deployMonitoring ? appInsights.properties.ConnectionString : ''
     // Elevation profile source. Empty → API returns 'unavailable' and the client
     // falls back to Mapbox Terrain-RGB, so the app still works before this is set.
     DEM_IMAGESERVER_URL: demImageServerUrl
@@ -186,9 +235,52 @@ resource swaSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
   }
 }
 
+// --- Cost guard: monthly budget with email alerts ---------------------------
+//
+// Anonymous, un-authed endpoints on consumption billing + optional AI tokens
+// are a runaway-spend risk. The API rate-limits per client; this is the
+// backstop that tells a human before a bill surprises them. Created only when a
+// budget amount and at least one contact email are supplied.
+
+resource budget 'Microsoft.Consumption/budgets@2023-11-01' = if (monthlyBudget > 0 && !empty(budgetAlertEmails)) {
+  name: '${baseName}-${environmentName}-monthly'
+  properties: {
+    category: 'Cost'
+    amount: monthlyBudget
+    timeGrain: 'Monthly'
+    timePeriod: {
+      startDate: '${budgetStartMonth}-01T00:00:00Z'
+    }
+    notifications: {
+      actual_50: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 50
+        contactEmails: budgetAlertEmails
+        thresholdType: 'Actual'
+      }
+      actual_90: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 90
+        contactEmails: budgetAlertEmails
+        thresholdType: 'Actual'
+      }
+      forecast_100: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 100
+        contactEmails: budgetAlertEmails
+        thresholdType: 'Forecasted'
+      }
+    }
+  }
+}
+
 // --- Outputs consumed by the deploy workflow --------------------------------
 
 output staticWebAppName string = swa.name
 output staticWebAppHostname string = swa.properties.defaultHostname
 output storageAccountName string = storage.name
 output aiFoundryEndpoint string = deployAiAssistant ? aiFoundry.properties.endpoint : ''
+output appInsightsName string = deployMonitoring ? appInsights.name : ''

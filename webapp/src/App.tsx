@@ -19,7 +19,7 @@ import {
 import { _clearNSWCache } from './utils/nswVegetationService';
 import { readPlanFromUrl, encodePlan, SharedPlan } from './utils/planSharing';
 import { AccountControl } from './components/AccountControl';
-import { SuiteSession } from './utils/suiteAuth';
+import { SuiteSession, isSuiteAuthConfigured } from './utils/suiteAuth';
 import { createSavedPlan, SavedPlanApi } from './utils/savedPlansApi';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
 import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
@@ -79,10 +79,19 @@ const App: React.FC = () => {
   const [suiteSession, setSuiteSession] = useState<SuiteSession | null>(null);
   // Bumped after each save so the AccountControl's plan list refreshes.
   const [plansVersion, setPlansVersion] = useState(0);
+  // Bumped to open the header sign-in panel from an anonymous gate.
+  const [signInSignal, setSignInSignal] = useState(0);
 
   const handleSuiteSessionChange = useCallback((session: SuiteSession | null) => {
     setSuiteSession(session);
   }, []);
+
+  // Anonymous limiting only applies when the suite is configured. Standalone /
+  // OSS deployments (no VITE_SUITE_AUTH_URL) stay the fully anonymous public
+  // tool they always were. When suite auth is configured, a signed-out user is
+  // limited to a single, non-persisted break; persistence prompts sign-in.
+  const anonymousLimited = isSuiteAuthConfigured() && !suiteSession;
+  const requestSignIn = useCallback(() => setSignInSignal(v => v + 1), []);
 
   // Persist the current plan (identical payload to the share link) to the
   // user's account via the saved-plans API.
@@ -770,6 +779,7 @@ const App: React.FC = () => {
             onSessionChange={handleSuiteSessionChange}
             onLoadPlan={handleLoadSavedPlan}
             plansVersion={plansVersion}
+            openSignal={signInSignal}
           />
           <button
             className="config-panel-toggle"
@@ -861,6 +871,8 @@ const App: React.FC = () => {
             onLiveFeedData={setLiveFeedData}
             canSaveToCloud={!!suiteSession?.fireBreakEnabled}
             onSaveToCloud={handleSaveToCloud}
+            anonymousLimited={anonymousLimited}
+            onRequestSignIn={requestSignIn}
           />
         </div>
         <IntegratedConfigPanel 

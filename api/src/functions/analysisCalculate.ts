@@ -4,6 +4,9 @@ import { fromTableEntity, Equipment, Machinery, Aircraft, HandCrew } from '../mo
 import { EquipmentAnalysisService, AnalysisRequest, EquipmentSpec } from '../services/equipmentAnalysis';
 import { ensureStandardEquipmentSeeded } from '../data/seedStandardEquipment';
 import { TerrainLevel, VegetationType } from '../types/common';
+import { enforceRateLimit } from '../services/rateLimit';
+import { provenanceMetadata } from '../services/provenance';
+import { emitMetric } from '../services/telemetry';
 
 // Type validation helpers
 function isValidTerrainLevel(value: string): value is TerrainLevel {
@@ -24,6 +27,11 @@ function safeParseVegetationArray(value: string[]): VegetationType[] {
 
 async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   try {
+    // Cost/abuse guard: this endpoint is anonymous and fans out to seeded
+    // storage + the estimate engine. Cap per-client before doing any work.
+    const limited = await enforceRateLimit(req, ctx, 'analysis');
+    if (limited) return limited;
+
     // Parse request body
     let requestData: AnalysisRequest;
     try {
@@ -132,6 +140,22 @@ async function analysisCalculate(req: HttpRequest, ctx: InvocationContext): Prom
       calculationsCount: result.calculations.length,
       compatibleCount: result.calculations.filter(c => c.compatible).length,
       validationErrors: result.metadata.validationErrors.length
+    });
+
+    // Reproducibility: stamp the estimate-engine version and generation time so
+    // any consumer of this result can tie the numbers to a specific model.
+    const usedMockElevation = !!requestData.trackAnalysis?.usedMockElevation;
+    const usedFallbackVegetation = !!requestData.vegetationAnalysis?.usedFallbackData;
+    (result.metadata as Record<string, unknown>).provenance = provenanceMetadata();
+
+    // Safety KPI: record whether this analysis leaned on fallback/estimated
+    // data so the production fallback rate is queryable (see telemetry.ts).
+    emitMetric(ctx, 'analysis_completed', {
+      distanceM: Math.round(requestData.distance),
+      usedMockElevation,
+      usedFallbackVegetation,
+      anyFallback: usedMockElevation || usedFallbackVegetation,
+      compatibleCount: result.calculations.filter(c => c.compatible).length,
     });
 
     return {

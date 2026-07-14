@@ -7,6 +7,7 @@
  */
 
 import { logger } from './logger';
+import { authHeader } from './suiteAuth';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -28,7 +29,7 @@ export async function fetchElevationProfile(
   try {
     const resp = await fetch(`${baseUrl}/elevation/profile`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ points }),
     });
     if (!resp.ok) return null;

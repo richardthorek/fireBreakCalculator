@@ -136,5 +136,13 @@ Recommend (a) as the standard path — it's how other AFDRS-consuming apps get t
 6. Avenza GeoPDF spike → ship or fall back to KMZ guidance.
 7. ArcGIS Online push (OAuth + REST).
 
+## 6. Export provenance, datum & disclaimer — ✅ built (Step 8)
+Every export and briefing now carries three things so a plan can't be misread once it leaves the app (single source: `webapp/src/config/provenance.ts`):
+- **Reproducibility stamp** — `estimate_engine_version` (`ENGINE_VERSION`), `app_version`, `generated_utc`, `data_sources`, and `cost_basis`. The estimate model is tuned over time, so the same line produces different numbers across releases; the stamp ties an output to a specific engine. Bump `ENGINE_VERSION`/`ENGINE_UPDATED` (and the API mirror in `api/src/services/provenance.ts`) whenever the production model changes.
+- **Datum** — `coordinate_reference_system: WGS84 (EPSG:4326)` in GeoJSON/KML/GPX properties. Shapefile relies on `@mapbox/shp-write`'s default WGS84 `.prj`. This pre-empts the GDA94↔GDA2020 question from agency GIS teams (the offsets are ~1.8 m — noise for break widths, but declare it).
+- **Standing disclaimer** — `DISCLAIMER_LONG` ("planning aid, not an operational tasking; verify on the ground") in GeoJSON/KML/GPX/print/SMEACS. Present unconditionally, not just when data is estimated. DBF text fields cap at 254 chars, so the Shapefile path truncates the long strings (they survive in full in GeoJSON/KML).
+
+Where it's surfaced: `gisExport.ts` (`planProperties` spreads `provenanceProperties()`; KML description), `planSharing.ts` (GPX `<desc>`, print-briefing footer), `smeacsBriefingBuilder.ts` + `smeacsTextRenderer.ts` + `smeacsPdfBuilder.ts` (briefing `disclaimer`/`provenance` fields), and the analysis panel (`plan-disclaimer` line).
+
 ## Update policy
-Update when a format, endpoint, or feed is added/changed; record confirmed endpoint structures here (as done in `NVIS_INTEGRATION.md`).
+Update when a format, endpoint, or feed is added/changed; record confirmed endpoint structures here (as done in `NVIS_INTEGRATION.md`). When the estimate model changes, bump `ENGINE_VERSION` in both provenance files (§6).

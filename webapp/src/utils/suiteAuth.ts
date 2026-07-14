@@ -57,6 +57,17 @@ export function clearStoredToken(): void {
   }
 }
 
+/**
+ * Authorization header for the metered API endpoints (analysis, assistant,
+ * elevation). A valid token lifts the caller into the higher server-side rate
+ * limit tier; anonymous callers simply send no header and get the anon tier.
+ * Returns an empty object when signed out so callers can always spread it.
+ */
+export function authHeader(): Record<string, string> {
+  const token = getStoredToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 interface MeResponse {
   id: string;
   username: string;

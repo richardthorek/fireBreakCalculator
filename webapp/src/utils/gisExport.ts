@@ -16,6 +16,7 @@ import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { buildJoinedSegments, JoinedSegment } from './segmentJoin';
 import { buildChainageIndex, sliceByChainage, LatLng } from './chainage';
+import { provenanceProperties, provenanceStamp, DISCLAIMER_LONG } from '../config/provenance';
 
 export interface ExportPlanInput {
   /** Ordered vertices of the drawn line. */
@@ -50,8 +51,10 @@ function planProperties(input: ExportPlanInput) {
   return {
     kind: 'route',
     name: input.name || 'Fire break plan',
-    generator: 'Fire Break Calculator',
-    generated_utc: new Date().toISOString(),
+    // Reproducibility + datum + standing disclaimer travel with every feature
+    // so a plan opened in FireMapper/QGIS/Earth carries which engine produced
+    // it, when, and the caveat that it's a planning aid — not a tasking.
+    ...provenanceProperties(),
     distance_m: Math.round(input.distance),
     break_width_m: input.breakWidthMeters,
     max_slope_deg: input.trackAnalysis ? Math.round(input.trackAnalysis.maxSlope * 10) / 10 : null,
@@ -142,7 +145,8 @@ export function toKML(input: ExportPlanInput): string {
     ${plan.max_slope_deg != null ? ` · Max slope: <b>${plan.max_slope_deg}°</b>` : ''}
     ${plan.difficulty_label ? ` · Difficulty: <b>${plan.difficulty_label} (${plan.difficulty_score}/100)</b>` : ''}</p>
     ${estimatedNote}
-    <p><small>Generated ${plan.generated_utc} by Fire Break Calculator. Line colours: ${xmlEscape(legend)}</small></p>
+    <p><b>⚠️ Planning aid only.</b> ${xmlEscape(DISCLAIMER_LONG)}</p>
+    <p><small>${xmlEscape(provenanceStamp())}. Line colours: ${xmlEscape(legend)}</small></p>
   ]]>`;
 
   const segmentPlacemarks = segments
@@ -201,11 +205,14 @@ export async function toKMZ(input: ExportPlanInput): Promise<Blob> {
 export async function toShapefileZip(input: ExportPlanInput): Promise<Blob> {
   const shpwrite = (await import('@mapbox/shp-write')) as any;
   const geojson = JSON.parse(toGeoJSON(input));
-  // DBF cannot hold nulls comfortably — stringify and drop nulls.
+  // DBF cannot hold nulls comfortably — stringify and drop nulls. DBF text
+  // fields also cap at 254 chars, so truncate the long disclaimer/source
+  // strings (they survive in full in the GeoJSON/KML exports).
   for (const f of geojson.features) {
     for (const [k, v] of Object.entries(f.properties)) {
       if (v === null || v === undefined) delete f.properties[k];
       else if (typeof v === 'boolean') f.properties[k] = v ? 1 : 0;
+      else if (typeof v === 'string' && v.length > 254) f.properties[k] = v.slice(0, 251) + '…';
     }
   }
   const buffer: ArrayBuffer = await shpwrite.zip(geojson, {

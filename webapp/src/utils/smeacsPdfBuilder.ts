@@ -182,12 +182,50 @@ export async function buildSmeacsPdf(
     }
     yPos -= lineHeight;
     const caveatSize = 9;
-    page.drawText(`⚠️  ${briefing.dataHonestyCaveat}`, {
+    page.drawText(`!  ${briefing.dataHonestyCaveat}`, {
       x: margin,
       y: yPos,
       size: caveatSize,
       color: rgb(0.8, 0.4, 0),
     });
+  }
+
+  // Standing disclaimer + reproducibility stamp (word-wrapped). A SMEACS pack
+  // looks official, so the "planning aid, not a tasking" caveat and the
+  // estimate-engine version always ride at the foot of the document.
+  const footerBlocks = [
+    briefing.disclaimer ? `DISCLAIMER: ${briefing.disclaimer}` : null,
+    briefing.provenance ?? null,
+  ].filter((b): b is string => !!b);
+
+  if (footerBlocks.length > 0) {
+    yPos -= lineHeight;
+    const footSize = 7;
+    for (const block of footerBlocks) {
+      const words = block.split(' ');
+      let currentLine = '';
+      const flush = () => {
+        if (!currentLine) return;
+        if (yPos < 30) {
+          page = doc.addPage([595, 842]);
+          yPos = 800;
+        }
+        yPos -= footSize + 2;
+        page.drawText(currentLine, { x: margin, y: yPos, size: footSize, color: rgb(0.45, 0.45, 0.45) });
+        currentLine = '';
+      };
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        if (testLine.length * 1.8 > pageWidth) {
+          flush();
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      flush();
+      yPos -= 2;
+    }
   }
 
   // Convert to Blob and return

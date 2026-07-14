@@ -4,6 +4,7 @@ import { retrieveDoctrine } from '../services/knowledgeBase';
 import { buildSystemPrompt, validateGroundedResponse, extractCitationIds } from '../services/aiGrounding';
 import { callChatCompletion, isAiAssistantConfigured } from '../services/aiFoundryClient';
 import { buildTemplateBriefing } from '../services/briefingTemplate';
+import { enforceRateLimit } from '../services/rateLimit';
 
 /** Build the doctrine-retrieval query and a compact JSON rendering of the payload for the model. */
 function buildQuery(payload: AssistantPayload): string {
@@ -20,6 +21,10 @@ function buildQuery(payload: AssistantPayload): string {
  * deterministic template built straight from the payload. Never a dead end.
  */
 export async function assistantBriefing(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
+  // AI narration burns metered model tokens — cap per-client before any call.
+  const limited = await enforceRateLimit(req, ctx, 'assistant');
+  if (limited) return limited;
+
   let body: { payload?: AssistantPayload };
   try {
     body = JSON.parse(await req.text());
