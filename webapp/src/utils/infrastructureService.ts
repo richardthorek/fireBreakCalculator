@@ -66,6 +66,12 @@ const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|seconda
 // Cache per rounded bbox so repeated optimizations of the same corridor are free.
 const bboxCache = new Map<string, InfrastructureData>();
 
+// In-flight requests per bbox: the optimizer prefetches every leg's corridor
+// at the start of a run while each leg later asks for its own — without this,
+// those two callers would race past the (success-only) result cache and issue
+// the same Overpass query twice, wasting the strict per-IP slot quota.
+const bboxInFlight = new Map<string, Promise<InfrastructureData>>();
+
 const bboxKey = (s: number, w: number, n: number, e: number) =>
   [s, w, n, e].map(v => v.toFixed(3)).join(',');
 
@@ -110,7 +116,26 @@ export async function fetchCorridorInfrastructure(
   const key = bboxKey(south, west, north, east);
   const cached = bboxCache.get(key);
   if (cached) return cached;
+  const inFlight = bboxInFlight.get(key);
+  if (inFlight) return inFlight;
 
+  const promise = fetchCorridorUncached(south, west, north, east, key, signal);
+  bboxInFlight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    bboxInFlight.delete(key);
+  }
+}
+
+async function fetchCorridorUncached(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  key: string,
+  signal?: AbortSignal
+): Promise<InfrastructureData> {
   const query = `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${south},${west},${north},${east});out geom;`;
 
   const order = [

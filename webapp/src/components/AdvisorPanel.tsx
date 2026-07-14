@@ -56,11 +56,17 @@ const severityLabel: Record<PlanInsight['severity'], string> = {
 const phaseMessage = (phase?: string, progress?: number): string => {
   switch (phase) {
     case 'grid': return 'Laying out a survey grid over your corridor…';
+    // Whole-route slope + fuel sampling — the long haul on a first run. Its
+    // per-point progress drives the bar, so the % genuinely tracks the fetch.
+    case 'sampling': return 'Reading terrain and vegetation across the corridor…';
     case 'terrain': return 'Reading terrain and vegetation…';
     case 'search':
+      // Search occupies the tail of the bar (sampling owns ~0–55%); these
+      // cut-points track the wide → refine → polish pass weights on a
+      // single-leg run and are approximate on multi-leg lines.
       if (!progress) return 'Testing possible paths…';
-      if (progress < 0.34) return 'Wide scan — exploring broadly…';
-      if (progress < 0.67) return 'Refining — narrowing in on the best…';
+      if (progress < 0.76) return 'Wide scan — exploring broadly…';
+      if (progress < 0.9) return 'Refining — narrowing in on the best…';
       return 'Polishing — fine-tuning…';
     default: return 'Optimizing…';
   }
