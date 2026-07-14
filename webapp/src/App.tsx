@@ -135,9 +135,9 @@ const App: React.FC = () => {
   // best-guess path. Keyed by cell centre so repeated 'grid'/'cells' events
   // (one wide pass per leg, all drawing from the same shared grid) merge
   // into one set rather than re-adding duplicates.
-  const [scanCells, setScanCells] = useState<{ polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }[]>([]);
+  const [scanCells, setScanCells] = useState<{ polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean; revealedAt?: number }[]>([]);
   const [scanBestPath, setScanBestPath] = useState<{ lat: number; lng: number }[]>([]);
-  const scanCellsMapRef = useRef(new Map<string, { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }>());
+  const scanCellsMapRef = useRef(new Map<string, { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean; revealedAt?: number }>());
   // Heatmap colour scale: 'objective' (fixed, absolute difficulty — heavy
   // timber always at least amber, a 45°+ slope always red, regardless of what
   // else is in the scan) or 'relative' (stretched to this scan's own min/max —
@@ -224,7 +224,16 @@ const App: React.FC = () => {
           } else if (event.phase === 'cells' && event.data?.cells) {
             for (const c of event.data.cells) {
               const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
-              scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: c.costNormalized, costNormalizedObjective: c.costNormalizedObjective, revealed: true });
+              // Keep the FIRST reveal timestamp — later events refine a
+              // cell's cost values but must not re-run its fade-in.
+              const prev = scanCellsMapRef.current.get(key);
+              scanCellsMapRef.current.set(key, {
+                polygon: c.polygon,
+                costNormalized: c.costNormalized,
+                costNormalizedObjective: c.costNormalizedObjective,
+                revealed: true,
+                revealedAt: prev?.revealed ? prev.revealedAt : performance.now(),
+              });
             }
             setScanCells(Array.from(scanCellsMapRef.current.values()));
           } else if (event.phase === 'search' && event.data?.bestPath) {

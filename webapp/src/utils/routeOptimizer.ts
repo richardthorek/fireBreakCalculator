@@ -302,8 +302,9 @@ export async function sampleVegetation(
   points: LatLng[],
   signal?: AbortSignal,
   /** Called after each unique (uncached) point resolves — lets long sweeps
-   *  drive a real progress bar instead of sitting at 0% for the whole fetch. */
-  onProgress?: (done: number, total: number) => void
+   *  drive a real progress bar, and (via `sample`) stream each result to the
+   *  map as it lands instead of sitting at 0% for the whole fetch. */
+  onProgress?: (done: number, total: number, sample?: { point: LatLng; type: VegetationType; estimated: boolean }) => void
 ): Promise<{ type: VegetationType; estimated: boolean }[]> {
   const unique = new Map<string, LatLng>();
   for (const p of points) {
@@ -336,7 +337,8 @@ export async function sampleVegetation(
         logger.warn('Route optimizer vegetation sample failed', e);
         vegCache.set(key, { type: 'mediumscrub', estimated: true });
       }
-      onProgress?.(++done, entries.length);
+      const resolved = vegCache.get(key)!;
+      onProgress?.(++done, entries.length, { point: pt, type: resolved.type, estimated: resolved.estimated });
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker));
@@ -1030,19 +1032,113 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
   //    one go: a single batched elevation request plus one vegetation sweep at
   //    full concurrency, reporting per-point progress. Each leg's passes then
   //    run almost entirely on cache hits. This is where the run's minutes
-  //    actually go, so it owns the bulk of the progress bar.
+  //    actually go, so it owns the bulk of the progress bar — and it streams
+  //    what it finds: the full grid outline appears the moment the run
+  //    starts, then each cell colours in as its vegetation sample lands
+  //    (throttled 'cells' scan events), so the map itself shows the scan
+  //    happening rather than an end-of-sampling reveal.
   const SAMPLING_END = 0.55;
   if (sharedGrid) {
-    const gridPoints = [
-      ...waypoints,
-      ...sharedGrid.cellsRaw.map(c => toLatLng(sharedGrid.proj, c.center)),
-    ];
+    const { proj, size, cellsRaw } = sharedGrid;
+    const cellPoints = cellsRaw.map(c => toLatLng(proj, c.center));
+    const gridPoints = [...waypoints, ...cellPoints];
+    const cellPolygons = cellsRaw.map(c => {
+      const corners = hexCorners(c.center, size).map(p => toLatLng(proj, p));
+      return [...corners, corners[0]];
+    });
+
+    onScanEvent?.({
+      phase: 'grid',
+      progress: 0,
+      data: {
+        cells: cellsRaw.map((_, i) => ({
+          center: cellPoints[i],
+          polygon: cellPolygons[i],
+          costNormalized: 0,
+          costNormalizedObjective: 0,
+          vegetation: 'grassland' as VegetationType,
+          onTrail: false,
+          estimated: false,
+        })),
+      },
+    });
+
+    // Per-cell mean traversal slope, computable as soon as the (single,
+    // batched) elevation request resolves. Vegetation samples that land
+    // before it buffer until it does — elevation is one round trip while
+    // the vegetation sweep is hundreds, so the buffer window is brief.
+    const idxByHex = new Map<string, number>();
+    cellsRaw.forEach((c, i) => idxByHex.set(hexKey(c.hex), i));
+    let cellSlopes: number[] | null = null;
+    const elevationPromise = sampleElevationsCached(gridPoints).then(res => {
+      const cellElev = res.elevations.slice(waypoints.length);
+      cellSlopes = cellsRaw.map((c, i) => {
+        let slopeSum = 0;
+        let n = 0;
+        for (const nb of hexNeighbors(c.hex)) {
+          const j = idxByHex.get(hexKey(nb));
+          if (j === undefined) continue;
+          const dist = Math.hypot(cellsRaw[j].center.x - c.center.x, cellsRaw[j].center.y - c.center.y);
+          if (dist > 0) {
+            slopeSum += calculateSlope(cellElev[i], cellElev[j], dist);
+            n++;
+          }
+        }
+        return n > 0 ? slopeSum / n : 0;
+      });
+      return res;
+    });
+
+    // One vegetation sample can cover several hex cells (the veg cache is
+    // keyed at ~111 m, hexes can be finer) — colour all of them.
+    const cellIdxByVegKey = new Map<string, number[]>();
+    cellPoints.forEach((p, i) => {
+      const k = vegKey(p.lat, p.lng);
+      const arr = cellIdxByVegKey.get(k);
+      if (arr) arr.push(i); else cellIdxByVegKey.set(k, [i]);
+    });
+    let pendingSamples: { point: LatLng; type: VegetationType; estimated: boolean }[] = [];
+    let lastEmit = 0;
+    // The streamed preview colours on the OBJECTIVE severity for both scales:
+    // a per-scan relative stretch is literally undefined until the scan has
+    // finished (its min/max don't exist yet). Each pass's own 'cells' events
+    // later overwrite every cell with the real pair, and the final heatmap
+    // replaces the lot.
+    const flushRevealed = (force: boolean) => {
+      if (!onScanEvent || !cellSlopes || pendingSamples.length === 0) return;
+      const now = Date.now();
+      if (!force && now - lastEmit < 120) return;
+      lastEmit = now;
+      const revealed: HexHeatmapCell[] = [];
+      for (const s of pendingSamples) {
+        for (const i of cellIdxByVegKey.get(vegKey(s.point.lat, s.point.lng)) ?? []) {
+          const sev = objectiveSeverity(cellSlopes[i], s.type);
+          revealed.push({
+            center: cellPoints[i],
+            polygon: cellPolygons[i],
+            costNormalized: sev,
+            costNormalizedObjective: sev,
+            vegetation: s.type,
+            onTrail: false,
+            estimated: s.estimated,
+          });
+        }
+      }
+      pendingSamples = [];
+      if (revealed.length > 0) onScanEvent({ phase: 'cells', progress: 0, data: { cells: revealed } });
+    };
+
     await Promise.all([
-      sampleElevationsCached(gridPoints),
-      sampleVegetation(gridPoints, signal, (done, total) => {
+      elevationPromise.then(() => flushRevealed(true)),
+      sampleVegetation(gridPoints, signal, (done, total, sample) => {
         onProgress?.(0.02 + (SAMPLING_END - 0.02) * (done / Math.max(1, total)), 'sampling');
+        if (sample) {
+          pendingSamples.push(sample);
+          flushRevealed(false);
+        }
       }),
     ]);
+    flushRevealed(true);
     if (signal?.aborted) return null;
     onProgress?.(SAMPLING_END, 'sampling');
   }
