@@ -104,6 +104,13 @@ shapes below are what the code parses.
   PNG signature) because this session's sandbox could not reach the live
   service — confirm the first green canary run before relying on it.
   Per-point `identify` remains the fallback chain, unchanged.
+  **Retention:** fetched area datasets (raster + NSW polygons) are kept for
+  the session (bounded FIFO of 6 in `stateVegetationRouter.ts`) and consulted
+  by EVERY subsequent lookup — plain `fetchStateVegetation` point calls
+  included — so once one consolidated call covers a corridor, all later
+  granular processing (finer optimizer passes, per-segment analysis along the
+  applied line, re-runs) samples the locally-held data with zero further
+  upstream traffic.
 
 **Validation sweep (2026-07-11), one point per biome:**
 
