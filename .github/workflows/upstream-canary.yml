@@ -11,6 +11,10 @@ on:
     - cron: '0 20 * * *'
   workflow_dispatch: {}
 
+# Read-only: the canary only checks out the repo and hits external endpoints.
+permissions:
+  contents: read
+
 jobs:
   canary:
     runs-on: ubuntu-latest
