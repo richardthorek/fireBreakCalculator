@@ -33,7 +33,7 @@ import { VegetationType } from '../config/classification';
 import { LatLng } from './chainage';
 import { calculateDistance, calculateSlope, sampleElevationsBatch } from './slopeCalculation';
 import { fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureTrail } from './infrastructureService';
-import { fetchStateVegetation } from './stateVegetationRouter';
+import { fetchStateVegetation, fetchStateVegetationArea, AreaVegetationBounds } from './stateVegetationRouter';
 import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateCorridorHexes, polylineLengthLocal, LocalProjection,
@@ -298,28 +298,72 @@ export async function sampleElevationsCached(points: LatLng[]): Promise<{ elevat
   return { elevations: results, estimated };
 }
 
+/** Below this many uncached points a per-point sweep is cheaper than an area
+ *  export; above it, the area path saves hundreds of upstream requests. */
+const AREA_QUERY_MIN_POINTS = 24;
+
 export async function sampleVegetation(
   points: LatLng[],
   signal?: AbortSignal,
   /** Called after each unique (uncached) point resolves — lets long sweeps
    *  drive a real progress bar, and (via `sample`) stream each result to the
    *  map as it lands instead of sitting at 0% for the whole fetch. */
-  onProgress?: (done: number, total: number, sample?: { point: LatLng; type: VegetationType; estimated: boolean }) => void
+  onProgress?: (done: number, total: number, sample?: { point: LatLng; type: VegetationType; estimated: boolean }) => void,
+  /** When given (and enough points are uncached), fuel is resolved from AT
+   *  MOST TWO area requests — one NSW polygon query + one NVIS raster export,
+   *  sampled locally — instead of one upstream query per point. Per-point
+   *  identify remains only the fallback for points the area data can't
+   *  cover. Without this, a large corridor fires hundreds of point queries
+   *  at free government servers (field-confirmed as unsustainable). */
+  areaBounds?: AreaVegetationBounds
 ): Promise<{ type: VegetationType; estimated: boolean }[]> {
   const unique = new Map<string, LatLng>();
   for (const p of points) {
     const k = vegKey(p.lat, p.lng);
     if (!vegCache.has(k) && !unique.has(k)) unique.set(k, p);
   }
-  const entries = Array.from(unique.entries());
-  // Each sample is 1–2 small GET point-queries (state service, then NVIS
-  // fallback) against gov ArcGIS servers that speak HTTP/2 — 16 in flight is
-  // still polite and roughly halves-again the old concurrency-6 sweep, which
-  // was the dominant wall-clock cost of a corridor scan (hundreds of cells
-  // × per-point round trips).
-  const CONCURRENCY = 16;
-  let cursor = 0;
+  let entries = Array.from(unique.entries());
+  const total = entries.length;
   let done = 0;
+
+  // --- Area pass: bulk-resolve from locally-held area data (free per point).
+  if (areaBounds && entries.length >= AREA_QUERY_MIN_POINTS) {
+    const resolveArea = await fetchStateVegetationArea(areaBounds, signal).catch(() => null);
+    if (signal?.aborted) {
+      return points.map(p => vegCache.get(vegKey(p.lat, p.lng)) ?? { type: 'mediumscrub', estimated: true });
+    }
+    if (resolveArea) {
+      const unresolved: [string, LatLng][] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const [key, pt] = entries[i];
+        const res = resolveArea(pt.lat, pt.lng);
+        if (res === 'nodata') {
+          // The source POSITIVELY reports no data here (ocean/gap) — same
+          // conservative flagged assumption as a failed point query, minus
+          // the wasted round trip.
+          vegCache.set(key, { type: 'mediumscrub', estimated: true });
+          onProgress?.(++done, total, { point: pt, type: 'mediumscrub', estimated: true });
+        } else if (res) {
+          vegCache.set(key, { type: res.vegetationType, estimated: false });
+          onProgress?.(++done, total, { point: pt, type: res.vegetationType, estimated: false });
+        } else {
+          unresolved.push(entries[i]);
+        }
+        // Yield periodically so the streamed colour-in paints as a sweep
+        // (points arrive ordered line-outward from the caller) instead of
+        // one synchronous burst the map renders as a single frame.
+        if (i % 120 === 119) await new Promise(r => setTimeout(r, 0));
+      }
+      entries = unresolved;
+      logger.debug(`Vegetation area pass resolved ${done}/${total} points locally; ${entries.length} falling back to point queries`);
+    }
+  }
+
+  // --- Per-point fallback (also the whole path for small batches). Kept at
+  // a modest concurrency: these are individual hits on free gov servers and,
+  // with the area pass above, should be the exception, not the rule.
+  const CONCURRENCY = 6;
+  let cursor = 0;
   const worker = async () => {
     while (cursor < entries.length) {
       if (signal?.aborted) return;
@@ -338,7 +382,7 @@ export async function sampleVegetation(
         vegCache.set(key, { type: 'mediumscrub', estimated: true });
       }
       const resolved = vegCache.get(key)!;
-      onProgress?.(++done, entries.length, { point: pt, type: resolved.type, estimated: resolved.estimated });
+      onProgress?.(++done, total, { point: pt, type: resolved.type, estimated: resolved.estimated });
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker));
@@ -1128,15 +1172,45 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
       if (revealed.length > 0) onScanEvent({ phase: 'cells', progress: 0, data: { cells: revealed } });
     };
 
+    // The vegetation sweep gets a line-outward ordering and the corridor's
+    // bbox: the bbox lets sampleVegetation resolve fuel from at most two
+    // area requests (NSW polygons + one NVIS raster export) sampled locally
+    // — instead of one upstream query per hex cell, which scaled requests
+    // linearly with corridor size and would overwhelm the free government
+    // services at any real scale. The ordering means whatever per-point
+    // fallback remains (area data unavailable/offline) samples the ground
+    // nearest the drawn line FIRST — the cells that actually decide the
+    // route — and the streamed colour-in sweeps outward from the line.
+    const waypointLocals = waypoints.map(w => toLocal(proj, w));
+    const lineDist = cellsRaw.map(c => distanceToPolylineLocal(c.center, waypointLocals));
+    const orderedCellPoints = cellsRaw
+      .map((_, i) => i)
+      .sort((a, b) => lineDist[a] - lineDist[b])
+      .map(i => cellPoints[i]);
+    let bMinLat = Infinity, bMaxLat = -Infinity, bMinLng = Infinity, bMaxLng = -Infinity;
+    for (const p of cellPoints) {
+      if (p.lat < bMinLat) bMinLat = p.lat;
+      if (p.lat > bMaxLat) bMaxLat = p.lat;
+      if (p.lng < bMinLng) bMinLng = p.lng;
+      if (p.lng > bMaxLng) bMaxLng = p.lng;
+    }
+    const boundsMargin = (size * 1.5) / 111320;
+    const areaBounds: AreaVegetationBounds = {
+      minLat: bMinLat - boundsMargin,
+      minLng: bMinLng - boundsMargin,
+      maxLat: bMaxLat + boundsMargin,
+      maxLng: bMaxLng + boundsMargin,
+    };
+
     await Promise.all([
       elevationPromise.then(() => flushRevealed(true)),
-      sampleVegetation(gridPoints, signal, (done, total, sample) => {
+      sampleVegetation([...waypoints, ...orderedCellPoints], signal, (done, total, sample) => {
         onProgress?.(0.02 + (SAMPLING_END - 0.02) * (done / Math.max(1, total)), 'sampling');
         if (sample) {
           pendingSamples.push(sample);
           flushRevealed(false);
         }
-      }),
+      }, areaBounds),
     ]);
     flushRevealed(true);
     if (signal?.aborted) return null;

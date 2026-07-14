@@ -58,6 +58,40 @@ async function checkNvis() {
   return `resolved MVG code ${code}`;
 }
 
+async function checkNvisLegend() {
+  // The area-sampling path (one export image per corridor instead of one
+  // identify per point) decodes pixel colours against the service's OWN
+  // legend. Contract: legend?f=json exposes layer 0 with per-class swatch
+  // imageData for (nearly) all 33 MVG classes.
+  const json = await getJson(`${NVIS_MVG_URL}/legend?f=json`);
+  const layer = (json?.layers || []).find((l) => l?.layerId === 0) || json?.layers?.[0];
+  const items = (layer?.legend || []).filter((it) => typeof it?.imageData === 'string' && it.imageData.length > 50);
+  if (items.length < 15) {
+    throw new Error(`legend has only ${items.length} decodable swatch entries (expected ~33 MVG classes)`);
+  }
+  // Labels must still be resolvable to MVG groups (leading number or name).
+  const labelled = items.filter((it) => /\d|forest|grass|shrub|wood|mallee|heath|mangrove|rainforest/i.test(it.label || ''));
+  if (labelled.length < 10) {
+    throw new Error(`legend labels look unrecognisable (${labelled.length} matched known patterns)`);
+  }
+  return `${items.length} swatches with imageData, labels recognisable`;
+}
+
+async function checkNvisExport() {
+  // Same area-sampling path: export must render a small bbox to a real PNG.
+  const url =
+    `${NVIS_MVG_URL}/export?f=image&format=png&transparent=true` +
+    `&bbox=145.0,-16.05,145.1,-15.95&bboxSR=4326&imageSR=4326&size=100,100&layers=${encodeURIComponent('show:0')}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  const isPng = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  if (!isPng) throw new Error(`export did not return a PNG (${bytes.length} bytes, content-type ${res.headers.get('content-type')})`);
+  if (bytes.length < 200) throw new Error(`export PNG suspiciously small (${bytes.length} bytes — likely blank)`);
+  return `PNG returned (${bytes.length} bytes) for wet-tropics probe bbox`;
+}
+
 const NSW_SVTM_BASE =
   process.env.NSW_SVTM_URL ||
   'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
@@ -124,6 +158,8 @@ async function checkMapbox() {
 
 const CHECKS = [
   { name: 'NVIS Extant MVG (national vegetation)', required: true, run: checkNvis },
+  { name: 'NVIS legend (area colour-decode contract)', required: true, run: checkNvisLegend },
+  { name: 'NVIS export image (area sampling)', required: true, run: checkNvisExport },
   { name: 'NSW SVTM PCT (vegetation overlay)', required: true, run: checkNswSvtm },
   { name: 'DEA Sentinel Hotspots (WFS)', required: true, run: checkDeaHotspots },
   { name: 'Digital Atlas NRT bushfire boundaries', required: true, run: checkDigitalAtlas },

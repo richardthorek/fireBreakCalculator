@@ -89,9 +89,53 @@ export function mapNSWToInternal(vegClass?: string | null, vegForm?: string | nu
 }
 
 /**
+ * Classify a feature's attributes to the internal taxonomy: curated DB
+ * mapping first (formation > class > PCT), then the structural regex
+ * heuristic. The dynamic mapper returns null on a miss (never a flat
+ * medium-scrub default), so an unmapped formation is classified by its
+ * structure — forest → heavyforest, grassland → grassland — rather than
+ * silently collapsed. Shared by the point query and the area query.
+ */
+async function classifyNSWAttributes(
+  vegClass: string | null,
+  vegForm: string | null,
+  PCTName: string | null
+): Promise<NSWVegResultRaw | null> {
+  let vegetationType: VegetationType | undefined;
+  let confidence = 0;
+  let source = '';
+
+  try {
+    const formationName = vegForm || '';
+    const className = vegClass || undefined;
+    const typeName = PCTName || undefined;
+
+    const dynamic = await mapFormationToVegetationType(formationName, className, typeName);
+    if (dynamic) {
+      vegetationType = dynamic.vegetation;
+      confidence = dynamic.confidence;
+      source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
+      logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
+    }
+  } catch (error) {
+    logger.warn('Dynamic vegetation mapping failed, falling back to heuristic mapping', error);
+  }
+
+  if (!vegetationType) {
+    const heuristic = mapNSWToInternal(vegClass, vegForm, PCTName);
+    if (!heuristic) return null;
+    vegetationType = heuristic.vegetationType;
+    confidence = heuristic.confidence;
+    source = `Heuristic mapping: ${heuristic.source}`;
+  }
+
+  return { vegetationType, confidence, source, vegClass, vegForm, pctName: PCTName };
+}
+
+/**
  * Query the NSW ArcGIS Feature Layer for vegetation attributes at a point.
  * Returns null if outside NSW or if the service yields no match / error.
- * 
+ *
  * Uses dynamic vegetation mappings from the database if available, with hardcoded
  * mappings as fallback.
  */
@@ -118,55 +162,7 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
     const feat = json?.features?.[0];
     if (!feat || !feat.attributes) { cache[key] = null; return null; }
     const { vegClass, vegForm, PCTName } = feat.attributes as Record<string, string | null>;
-
-    // Prefer a curated DB mapping when one exists; otherwise fall through to the
-    // structural regex heuristic (mapNSWToInternal). The dynamic mapper now
-    // returns null on a miss instead of a flat `mediumscrub` default, so an
-    // unmapped formation (e.g. "…Messmate Forest") is classified by its
-    // structure — forest → heavyforest, grassland → grassland — rather than
-    // being silently collapsed to medium scrub.
-    let vegetationType: VegetationType | undefined;
-    let confidence = 0;
-    let source = '';
-
-    try {
-      // Use the hierarchical mapping system: formation > class > type (PCT)
-      const formationName = vegForm || '';
-      const className = vegClass || undefined;
-      const typeName = PCTName || undefined; // We can use PCT name as the type name
-
-      const dynamic = await mapFormationToVegetationType(formationName, className, typeName);
-      if (dynamic) {
-        vegetationType = dynamic.vegetation;
-        confidence = dynamic.confidence;
-        source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
-        logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
-      }
-    } catch (error) {
-      logger.warn('Dynamic vegetation mapping failed, falling back to heuristic mapping', error);
-    }
-
-    // No curated match (or the dynamic path errored) — classify by structure.
-    if (!vegetationType) {
-      const heuristic = mapNSWToInternal(vegClass, vegForm, PCTName);
-      if (!heuristic) {
-        cache[key] = null;
-        return null;
-      }
-      vegetationType = heuristic.vegetationType;
-      confidence = heuristic.confidence;
-      source = `Heuristic mapping: ${heuristic.source}`;
-    }
-
-    const result: NSWVegResultRaw = {
-      vegetationType,
-      confidence,
-      source,
-      vegClass,
-      vegForm,
-      pctName: PCTName
-    };
-
+    const result = await classifyNSWAttributes(vegClass, vegForm, PCTName);
     cache[key] = result;
     return result;
   } catch (e) {
@@ -175,10 +171,98 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
   }
 }
 
-/** 
- * For diagnostics - clears both NSW vegetation cache and vegetation mapping cache 
+// ---------------------------------------------------------------------------
+// Area query: ONE envelope feature-query for a whole corridor/box, resolved
+// app-side by point-in-polygon, instead of one query round trip per sampled
+// point. Same motivation as the NVIS area raster (see nvisVegetationService):
+// per-point queries scale linearly with search area and would overwhelm a
+// free government server at any real corridor size.
+// ---------------------------------------------------------------------------
+
+export interface NSWAreaFeature {
+  /** ArcGIS polygon rings (outer + holes), [lng, lat] vertex pairs. */
+  rings: number[][][];
+  result: NSWVegResultRaw;
+}
+
+/** Even-odd point-in-polygon over all rings (outer boundaries and holes both
+ *  toggle, which is exactly the even-odd rule). Pure — exported for tests. */
+export function pointInRings(lng: number, lat: number, rings: number[][][]): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
+/**
+ * Fetch every PCT polygon intersecting a bbox in one query (geometry
+ * generalised to ~20 m — plenty for ~100 m fuel sampling), classified
+ * eagerly. Null when outside NSW, on error, or when the server reports
+ * `exceededTransferLimit` (bbox too big for one page — the caller falls back
+ * rather than silently sampling from a PARTIAL polygon set, which would
+ * misclassify everything the missing features covered).
  */
-export function _clearNSWCache() { 
+export async function fetchNSWVegetationArea(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NSWAreaFeature[] | null> {
+  if (maxLat < NSW_BBOX.minLat || minLat > NSW_BBOX.maxLat || maxLng < NSW_BBOX.minLng || minLng > NSW_BBOX.maxLng) return null;
+
+  const envelope = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+  const url = `${ARC_GIS_BASE}/${FEATURE_LAYER_ID}/query` +
+    `?f=json&geometry=${encodeURIComponent(envelope)}` +
+    `&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects` +
+    `&outFields=vegClass,vegForm,PCTName&returnGeometry=true&outSR=4326` +
+    `&maxAllowableOffset=0.0002&geometryPrecision=5`;
+
+  try {
+    const resp = await fetch(url, { signal });
+    if (!resp.ok) {
+      logger.warn('NSW area query HTTP', resp.status, resp.statusText);
+      return null;
+    }
+    const json = await resp.json();
+    if (json?.error) {
+      logger.warn('NSW area query error', json.error);
+      return null;
+    }
+    if (json?.exceededTransferLimit) {
+      logger.debug('NSW area query exceeded transfer limit — falling back to point queries');
+      return null;
+    }
+    const feats: any[] = json?.features;
+    if (!Array.isArray(feats)) return null;
+
+    const out: NSWAreaFeature[] = [];
+    for (const f of feats) {
+      const rings = f?.geometry?.rings;
+      if (!Array.isArray(rings) || rings.length === 0) continue;
+      const { vegClass, vegForm, PCTName } = (f.attributes ?? {}) as Record<string, string | null>;
+      const result = await classifyNSWAttributes(vegClass ?? null, vegForm ?? null, PCTName ?? null);
+      if (result) out.push({ rings, result });
+    }
+    logger.debug(`NSW area query: ${out.length} classified PCT polygons for bbox`);
+    return out;
+  } catch (e) {
+    logger.warn('NSW area query failed', e);
+    return null;
+  }
+}
+
+/**
+ * For diagnostics - clears both NSW vegetation cache and vegetation mapping cache
+ */
+export function _clearNSWCache() {
   // Clear NSW vegetation cache
   Object.keys(cache).forEach(k => delete cache[k]); 
   // Clear vegetation mapping cache (static import used to avoid mixed dynamic/static imports)

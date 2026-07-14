@@ -14,8 +14,8 @@ import { StateVegetationResult, StateVegetationService } from './stateVegetation
 import { VegetationType } from '../config/classification';
 
 // Import existing services (NSW is implemented, others are placeholders for now)
-import { fetchNSWVegetation as fetchNSWRaw } from './nswVegetationService';
-import { fetchNVISVegetation as fetchNVISRaw } from './nvisVegetationService';
+import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, pointInRings, NSWAreaFeature } from './nswVegetationService';
+import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, rasterCodeAt, mapMVGCode, NVISAreaRaster } from './nvisVegetationService';
 
 // Service registry: will be populated with state services as they're implemented
 const stateServices: Partial<Record<AustralianState, StateVegetationService>> = {
@@ -137,6 +137,82 @@ export async function fetchStateVegetation(lat: number, lng: number): Promise<St
   // Cache the result (may be null) to avoid repeated failed queries
   queryCache[cacheKey] = result || null;
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Area mode: resolve fuel for a whole corridor/box from at most TWO upstream
+// requests (one NSW envelope feature-query + one NVIS export image), sampled
+// locally, instead of one query per point. See the WHY blocks in the two
+// service modules — per-point querying scales linearly with search area and
+// would overwhelm free government servers at any real corridor size.
+// ---------------------------------------------------------------------------
+
+export interface AreaVegetationBounds {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
+
+/** A local, synchronous fuel lookup built from area data. Returns the
+ *  resolved result, 'nodata' when the authoritative source POSITIVELY
+ *  reports no data there (ocean/gap — don't waste a point query), or null
+ *  when the area data simply doesn't cover the point (caller may fall back
+ *  to a per-point query). */
+export type AreaVegetationResolver = (lat: number, lng: number) => StateVegetationResult | 'nodata' | null;
+
+/**
+ * Fetch area vegetation for a bbox: NSW SVTM polygons (high-fidelity overlay,
+ * where the bbox touches NSW) and the NVIS national raster, fetched in
+ * parallel. Returns null when neither source could be loaded — callers then
+ * use the per-point fallback chain unchanged.
+ */
+export async function fetchStateVegetationArea(bounds: AreaVegetationBounds, signal?: AbortSignal): Promise<AreaVegetationResolver | null> {
+  const midLat = (bounds.minLat + bounds.maxLat) / 2;
+  const midLng = (bounds.minLng + bounds.maxLng) / 2;
+  if (!isInAustralia(midLat, midLng)) return null;
+
+  let nsw: NSWAreaFeature[] | null = null;
+  let nvis: NVISAreaRaster | null = null;
+  try {
+    [nsw, nvis] = await Promise.all([
+      fetchNSWVegetationArea(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+      fetchNVISAreaRaster(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+    ]);
+  } catch {
+    return null;
+  }
+  if ((!nsw || nsw.length === 0) && !nvis) return null;
+
+  return (lat: number, lng: number): StateVegetationResult | 'nodata' | null => {
+    // Same precedence as the per-point chain: state service first, NVIS after.
+    if (nsw) {
+      for (const f of nsw) {
+        if (pointInRings(lng, lat, f.rings)) {
+          const adapted = adaptNSWResult(f.result);
+          if (adapted) return adapted;
+        }
+      }
+    }
+    if (nvis) {
+      const code = rasterCodeAt(nvis, lat, lng);
+      if (code === 'nodata') return 'nodata';
+      if (code != null) {
+        const mapped = mapMVGCode(code);
+        if (mapped) {
+          return {
+            vegetationType: mapped.vegetation,
+            confidence: nvis.coarse ? mapped.confidence * 0.85 : mapped.confidence,
+            displayLabel: mapped.name,
+            source: `NVIS MVG ${code} (${mapped.name})${nvis.coarse ? ' — coarse area sample' : ''}`,
+            state: 'AU',
+            rawAttributes: { mvgCode: code, mvgName: mapped.name },
+          };
+        }
+      }
+    }
+    return null;
+  };
 }
 
 /**

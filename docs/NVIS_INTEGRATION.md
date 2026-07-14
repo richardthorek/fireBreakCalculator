@@ -84,6 +84,27 @@ shapes below are what the code parses.
   table and per-class fuel mapping/confidence live in `MVG_CLASSES` in
   `nvisVegetationService.ts` — that is the one place to tune calibration.
 
+- **Area sampling via `export` + `legend` (2026-07-14, not yet live-verified):**
+  the corridor optimizer / area recon need fuel at hundreds–thousands of hex
+  cells; per-point `identify` scales requests linearly with search area and
+  would overwhelm this free service at any real corridor size (field-confirmed).
+  `fetchNVISAreaRaster()` instead renders the WHOLE bbox in one request —
+  `export?f=image&format=png&transparent=true&bbox=…&bboxSR=4326&imageSR=4326&size=W,H&layers=show:0`
+  at the raster's native ~100 m/px (capped at 1000 px/side; coarser beyond,
+  flagged) — and decodes pixel colours app-side against the service's **own
+  legend** (`legend?f=json` → per-class swatch `imageData`, decoded once per
+  session; labels resolved to MVG codes by leading number then name). Every
+  subsequent sample is a free local pixel lookup. Safeguards: colours match
+  within a small anti-aliasing tolerance or resolve to *unknown* (falls back to
+  point-identify, never guesses); transparent pixels are **NoData** (honest gap,
+  no wasted point query); an export whose opaque pixels match NOTHING in the
+  legend is treated as contract drift and discarded, falling back to the proven
+  per-point path. **Both endpoints are probed daily by the canary**
+  (`scripts/canary/upstreamCanary.mjs`: legend swatch count + labels, export
+  PNG signature) because this session's sandbox could not reach the live
+  service — confirm the first green canary run before relying on it.
+  Per-point `identify` remains the fallback chain, unchanged.
+
 **Validation sweep (2026-07-11), one point per biome:**
 
 | Point | MVG | Result |
@@ -114,6 +135,17 @@ adequate for this tool.
   `PCTName = "Upper Blue Mountains Moist Forest"`.
 - ~25 m fidelity, 50+ formation classes. Maps to fuel via the dynamic DB mapping
   (`vegetationMappingHelper.ts`) with a hardcoded regex fallback (`mapNSWToInternal`).
+- **Area sampling via envelope `query` (2026-07-14, not yet live-verified):**
+  same motivation as the NVIS export above — `fetchNSWVegetationArea()` pulls
+  every PCT polygon intersecting a corridor bbox in ONE query
+  (`geometryType=esriGeometryEnvelope`, `returnGeometry=true`,
+  `maxAllowableOffset=0.0002` ≈ 20 m generalisation, `geometryPrecision=5`),
+  classifies each feature once (same dynamic-then-heuristic chain as the point
+  path), and resolves points app-side by even-odd point-in-polygon
+  (`pointInRings`). If the server reports `exceededTransferLimit` the whole
+  area result is discarded (sampling from a PARTIAL polygon set would
+  misclassify everything the missing features covered) and the per-point path
+  takes over.
 
 ---
 
