@@ -19,7 +19,7 @@ import {
 import { _clearNSWCache } from './utils/nswVegetationService';
 import { readPlanFromUrl, encodePlan, SharedPlan } from './utils/planSharing';
 import { AccountControl } from './components/AccountControl';
-import { SuiteSession, isSuiteAuthConfigured } from './utils/suiteAuth';
+import { SuiteSession } from './utils/suiteAuth';
 import { createSavedPlan, SavedPlanApi } from './utils/savedPlansApi';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
 import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
@@ -86,11 +86,11 @@ const App: React.FC = () => {
     setSuiteSession(session);
   }, []);
 
-  // Anonymous limiting only applies when the suite is configured. Standalone /
-  // OSS deployments (no VITE_SUITE_AUTH_URL) stay the fully anonymous public
-  // tool they always were. When suite auth is configured, a signed-out user is
-  // limited to a single, non-persisted break; persistence prompts sign-in.
-  const anonymousLimited = isSuiteAuthConfigured() && !suiteSession;
+  // Anonymous limiting applies to every signed-out user: a single,
+  // non-persisted break, with persistence (save / share link) prompting
+  // Bushie Tools sign-in. (Deployments are expected to configure
+  // VITE_SUITE_AUTH_URL so a sign-in path exists.)
+  const anonymousLimited = !suiteSession;
   const requestSignIn = useCallback(() => setSignInSignal(v => v + 1), []);
 
   // Persist the current plan (identical payload to the share link) to the
