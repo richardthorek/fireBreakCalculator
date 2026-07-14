@@ -14,9 +14,17 @@
  * (the production model derates other fuels/slopes); aircraft `dropLength` is
  * metres of line per drop at grassland coverage. See the backend file header
  * for sourcing (NWCG, DELWP Report 56, NAFC aircraft categories).
+ *
+ * COST HONESTY: the `costPerHour` figures below are indicative planning rates,
+ * not a live price feed. They carry no automatic update and will drift from
+ * real agency/contractor rates over time. The basis (currency + as-of month)
+ * is declared once in `COST_BASIS` (config/provenance.ts) and stamped into
+ * every export so a reader knows the vintage. Review the rates when COST_BASIS
+ * is bumped.
  */
 
 import { EquipmentApi } from '../types/equipmentApi';
+export { COST_BASIS } from './provenance';
 
 const STANDARD_TS = '2024-01-01T00:00:00.000Z';
 

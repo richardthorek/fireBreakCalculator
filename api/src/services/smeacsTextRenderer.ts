@@ -29,6 +29,10 @@ export function renderSmeacsAsText(briefing: SmeacsBriefing): string {
     lines.push('');
   }
 
+  lines.push('-- DISCLAIMER --');
+  lines.push(briefing.disclaimer);
+  lines.push('');
+  lines.push(briefing.provenance);
   lines.push(`Generated: ${new Date(briefing.generatedAt).toLocaleString()}`);
 
   return lines.join('\n');

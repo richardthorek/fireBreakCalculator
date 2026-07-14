@@ -79,10 +79,19 @@ const App: React.FC = () => {
   const [suiteSession, setSuiteSession] = useState<SuiteSession | null>(null);
   // Bumped after each save so the AccountControl's plan list refreshes.
   const [plansVersion, setPlansVersion] = useState(0);
+  // Bumped to open the header sign-in panel from an anonymous gate.
+  const [signInSignal, setSignInSignal] = useState(0);
 
   const handleSuiteSessionChange = useCallback((session: SuiteSession | null) => {
     setSuiteSession(session);
   }, []);
+
+  // Anonymous limiting applies to every signed-out user: a single,
+  // non-persisted break, with persistence (save / share link) prompting
+  // Bushie Tools sign-in. (Deployments are expected to configure
+  // VITE_SUITE_AUTH_URL so a sign-in path exists.)
+  const anonymousLimited = !suiteSession;
+  const requestSignIn = useCallback(() => setSignInSignal(v => v + 1), []);
 
   // Persist the current plan (identical payload to the share link) to the
   // user's account via the saved-plans API.
@@ -770,6 +779,7 @@ const App: React.FC = () => {
             onSessionChange={handleSuiteSessionChange}
             onLoadPlan={handleLoadSavedPlan}
             plansVersion={plansVersion}
+            openSignal={signInSignal}
           />
           <button
             className="config-panel-toggle"
@@ -861,6 +871,8 @@ const App: React.FC = () => {
             onLiveFeedData={setLiveFeedData}
             canSaveToCloud={!!suiteSession?.fireBreakEnabled}
             onSaveToCloud={handleSaveToCloud}
+            anonymousLimited={anonymousLimited}
+            onRequestSignIn={requestSignIn}
           />
         </div>
         <IntegratedConfigPanel 

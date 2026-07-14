@@ -3,6 +3,7 @@ import { AssistantPayload, AssistantResponse, isAssistantPayload } from '../type
 import { retrieveDoctrine } from '../services/knowledgeBase';
 import { buildSystemPrompt, validateGroundedResponse, extractCitationIds } from '../services/aiGrounding';
 import { callChatCompletion, isAiAssistantConfigured, ChatMessage } from '../services/aiFoundryClient';
+import { enforceRateLimit } from '../services/rateLimit';
 
 const MAX_QUESTION_LENGTH = 500;
 const MAX_HISTORY_TURNS = 6;
@@ -38,6 +39,10 @@ function isValidHistory(v: any): v is ChatHistoryTurn[] {
  * never a guess dressed up as an answer.
  */
 export async function assistantChat(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
+  // AI chat burns metered model tokens — cap per-client before any call.
+  const limited = await enforceRateLimit(req, ctx, 'assistant');
+  if (limited) return limited;
+
   let body: { payload?: AssistantPayload; question?: string; history?: ChatHistoryTurn[] };
   try {
     body = JSON.parse(await req.text());

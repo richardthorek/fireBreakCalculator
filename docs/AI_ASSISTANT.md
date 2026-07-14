@@ -113,5 +113,12 @@ AnalysisPanel (assessment + calculations)
       → AssistantResponse { source: 'ai'|'template'|'unavailable', text, citations }
 ```
 
+## 7. Endpoint rate limiting, anonymous gating & observability — ✅ built (Step 8)
+The assistant endpoints (`/api/assistant/briefing|chat|smeacs`) — along with `/api/analysis/calculate` and `/api/elevation/profile` — are `authLevel: 'anonymous'` and fan out to metered upstreams (AI Foundry tokens especially). They are now guarded:
+- **Per-IP rate limiting** (`api/src/services/rateLimit.ts`, `enforceRateLimit(req, ctx, tag)` called first in each handler). Fixed window keyed by `x-forwarded-for`, env-tunable (`RATE_LIMIT_ANON_PER_MIN` default 30, `RATE_LIMIT_AUTHED_PER_MIN` default 300, `RATE_LIMIT_WINDOW_SEC` default 60, `RATE_LIMIT_DISABLED`). A valid Bushie Tools token lifts the caller to the higher tier — the webapp sends the token via `authHeader()` on these calls. In-memory, so per Function instance (documented limitation; a durable store is the follow-up).
+- **Anonymous single-break gating (webapp).** Applies to every signed-out user (`anonymousLimited = !suiteSession`): one non-persisted break, with cloud save (already entitlement-gated) and share-link prompting Bushie Tools sign-in; a standing notice explains the break isn't saved and clears on reload. Deployments are expected to configure `VITE_SUITE_AUTH_URL` so a sign-in path exists.
+- **SMEACS disclaimer.** `SmeacsBriefing` now always carries `disclaimer` + `provenance` (§6 in GIS_INTEROP). The pack looks like an official tasking, so the "planning aid, not an order" caveat rides at the foot of the text and PDF regardless of data quality.
+- **Observability.** App Insights + Log Analytics in `infra/main.bicep` (on by default); the API emits `METRIC` lines (`api/src/services/telemetry.ts`) recording per-analysis fallback-data use so the **fallback rate** — a safety KPI, since the app degrades silently — is queryable/alertable (KQL in that file). Budget alerts are an optional Bicep backstop.
+
 ## Update policy
 Update when the model deployment, KB corpus, grounding contract, or endpoints change. Confirmed endpoint shapes go in `api-register.md` as usual.

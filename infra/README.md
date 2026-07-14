@@ -10,10 +10,47 @@ resources never breaks CI — re-running the workflow rebuilds the whole environ
 
 | Resource | Purpose |
 | --- | --- |
-| Storage Account (`Standard_LRS`) + tables `equipment`, `vegetation` | Equipment specs and vegetation formation mappings |
+| Storage Account (`Standard_LRS`) + tables `equipment`, `vegetation`, `savedplans` | Equipment specs, vegetation formation mappings, cloud saved plans |
 | Static Web App (Free/Standard) | React frontend + managed Azure Functions API |
+| Application Insights + Log Analytics workspace (`deployMonitoring`, on by default) | Production telemetry incl. the fallback-rate KPI — see below |
 | Azure AI Foundry account + model deployment (optional, `deployAiAssistant`) | Grounded briefings/chat for the Plan Assistant — see below |
-| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME`, `DEM_IMAGESERVER_URL`, `AI_FOUNDRY_ENDPOINT`, `AI_FOUNDRY_API_KEY`, `AI_FOUNDRY_DEPLOYMENT_NAME` |
+| Monthly cost budget + email alerts (optional, `monthlyBudget` + `budgetAlertEmails`) | Backstop against runaway anonymous/AI spend — see below |
+| SWA app settings | `TABLES_CONNECTION_STRING`, `EQUIPMENT_TABLE_NAME`, `VEGETATION_TABLE_NAME`, `SAVED_PLANS_TABLE_NAME`, `SUITE_AUTH_URL`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `DEM_IMAGESERVER_URL`, `AI_FOUNDRY_ENDPOINT`, `AI_FOUNDRY_API_KEY`, `AI_FOUNDRY_DEPLOYMENT_NAME` |
+
+### Observability (`deployMonitoring`, on by default)
+
+Provisions Application Insights (workspace-based) + a Log Analytics workspace and
+wires the managed Functions host via `APPLICATIONINSIGHTS_CONNECTION_STRING`
+(`host.json` already configures sampling). The API emits structured `METRIC`
+lines (see `api/src/services/telemetry.ts`) so the **fallback rate** — the
+fraction of analyses running on estimated/fallback data, a safety KPI because the
+app degrades silently — is queryable and alertable. The KQL to build that
+dashboard/alert is in the telemetry file's header. Turn off with
+`--parameters deployMonitoring=false` if you bring your own monitoring.
+
+### Cost guard: rate limits + budget
+
+The anonymous, un-authed endpoints (`/api/analysis/calculate`,
+`/api/assistant/*`, `/api/elevation/profile`) fan out to metered upstreams on
+consumption billing. Two layers protect against a scraped-token or scripted
+wallet-drain:
+
+1. **Per-IP rate limiting** in the API (`api/src/services/rateLimit.ts`),
+   env-tunable via app settings: `RATE_LIMIT_ANON_PER_MIN` (default 30),
+   `RATE_LIMIT_AUTHED_PER_MIN` (default 300), `RATE_LIMIT_WINDOW_SEC`
+   (default 60), `RATE_LIMIT_DISABLED` (`true` to bypass). Signed-in Bushie
+   Tools callers get the higher tier automatically.
+2. **Budget alerts** — pass `monthlyBudget` (in the billing currency) and a
+   non-empty `budgetAlertEmails` array to create a `Microsoft.Consumption`
+   budget that emails at 50%/90% actual and 100% forecast. Omit either to skip.
+
+### Mapbox token (client-side) — restrict it
+
+`VITE_MAPBOX_ACCESS_TOKEN` ships in the client bundle and can be scraped, so a
+public token drives quota/billing against your account. Use a **URL-restricted**
+Mapbox public token (allow only your deployed origin[s]) so a scraped token is
+useless off-site. This is a Mapbox account setting, not infra — set it when
+issuing the token.
 
 ### Elevation data source (`DEM_IMAGESERVER_URL`)
 

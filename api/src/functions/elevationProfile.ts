@@ -1,5 +1,6 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { getElevationProfile, LatLng } from '../services/elevationService';
+import { enforceRateLimit } from '../services/rateLimit';
 
 /**
  * POST /api/elevation/profile
@@ -12,6 +13,10 @@ import { getElevationProfile, LatLng } from '../services/elevationService';
  */
 async function elevationProfile(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   try {
+    // Anonymous endpoint that fans out to a metered DEM ImageServer — cap it.
+    const limited = await enforceRateLimit(req, ctx, 'elevation');
+    if (limited) return limited;
+
     let body: { points?: LatLng[] };
     try {
       body = JSON.parse(await req.text());

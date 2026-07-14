@@ -9,6 +9,7 @@
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { PlanAssessment } from './planInsights';
+import { authHeader } from './suiteAuth';
 import { logger } from './logger';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -82,7 +83,7 @@ async function postAssistant(path: string, body: unknown): Promise<AssistantResp
   try {
     const resp = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(body),
     });
     if (!resp.ok) return null;

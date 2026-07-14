@@ -6,6 +6,7 @@
 
 import { AssistantPayload, SmeacsBriefing, SmeacsBriefingSection, AssistantCitation } from '../types/assistant';
 import { retrieveDoctrine, getDoctrineChunk } from './knowledgeBase';
+import { DISCLAIMER_LONG, ENGINE_VERSION, ENGINE_UPDATED } from './provenance';
 
 function fmtDistance(m: number): string {
   const km = m / 1000;
@@ -217,9 +218,15 @@ export function buildSmeacsBriefing(payload: AssistantPayload): SmeacsBriefing {
     ? '⚠️ This briefing uses estimated/fallback data. Verify all information on the ground before commencing work.'
     : undefined;
 
+  const now = new Date();
   return {
     sections,
-    generatedAt: new Date().toISOString(),
+    generatedAt: now.toISOString(),
     dataHonestyCaveat,
+    // Standing disclaimer — a SMEACS pack looks like an official tasking, so it
+    // must always carry the "planning aid, not an order" caveat, estimated data
+    // or not.
+    disclaimer: DISCLAIMER_LONG,
+    provenance: `Fire Break Calculator estimate engine v${ENGINE_VERSION} (${ENGINE_UPDATED}) · generated ${now.toISOString()}`,
   };
 }

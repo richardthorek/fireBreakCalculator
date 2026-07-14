@@ -36,6 +36,8 @@ export interface TrackAnalysis {
   maxSlope: number;
   totalDistance: number;
   slopeDistribution: Record<string, number>;
+  /** True when elevation came from mock/fallback data rather than a real DEM. */
+  usedMockElevation?: boolean;
 }
 
 export interface VegetationAnalysis {
@@ -43,6 +45,8 @@ export interface VegetationAnalysis {
   coverage?: Record<VegetationType, number>;
   vegetationDistribution?: Record<VegetationType, number>;
   overallConfidence?: number;
+  /** True when vegetation fell back to non-authoritative/estimated data. */
+  usedFallbackData?: boolean;
 }
 
 /** A resolved slice of the planned line with (approximately) uniform conditions. */

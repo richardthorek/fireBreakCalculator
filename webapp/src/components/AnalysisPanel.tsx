@@ -21,6 +21,7 @@ import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../uti
 import { calculateEquipmentAnalysis, BackendCalculationResult, testBackendAnalysis } from '../utils/backendAnalysis';
 import { buildRouteProfile } from '../utils/routeProfile';
 import { buildShareUrl, printBriefing, SharedPlan } from '../utils/planSharing';
+import { DISCLAIMER_SHORT } from '../config/provenance';
 import { buildPlanAssessment } from '../utils/planInsights';
 import { OptimizedRouteResult } from '../utils/routeOptimizer';
 import { formatChainage, LatLng } from '../utils/chainage';
@@ -95,6 +96,12 @@ interface AnalysisPanelProps {
   canSaveToCloud?: boolean;
   /** Persist the current plan to the user's account (App owns auth + API). */
   onSaveToCloud?: (name: string, plan: SharedPlan) => Promise<void>;
+  /** True when suite sign-in is available but the user is anonymous: the
+   *  session is limited to a single, non-persisted break, so persistence
+   *  actions (share link, save) prompt sign-in instead. */
+  anonymousLimited?: boolean;
+  /** Open the sign-in flow (App owns the AccountControl). */
+  onRequestSignIn?: () => void;
 }
 
 /** Analysis panel tabs. */
@@ -341,7 +348,9 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   viewBounds = null,
   onLiveFeedData,
   canSaveToCloud = false,
-  onSaveToCloud
+  onSaveToCloud,
+  anonymousLimited = false,
+  onRequestSignIn
 }: AnalysisPanelProps) => {
   // Vegetation state: allow manual override of auto-detected vegetation.
   // A shared plan may seed an explicit override.
@@ -803,6 +812,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   const handleCopyShareLink = async () => {
     if (!canExport) return;
+    // A share link persists the plan beyond this session, which is the one
+    // thing anonymous use is limited from. Prompt sign-in instead.
+    if (anonymousLimited) {
+      setShareStatus('Sign in to share');
+      onRequestSignIn?.();
+      setTimeout(() => setShareStatus(null), 2500);
+      return;
+    }
     const url = buildShareUrl({
       coords: lineCoords!,
       breakWidthMeters,
@@ -1170,6 +1187,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               🖨️ Briefing
             </button>
           </div>
+        )}
+        {distance && activeTab === 'overview' && anonymousLimited && (
+          <div className="anonymous-notice" role="note">
+            You're planning anonymously — a single break that isn't saved and
+            clears when you reload.{' '}
+            <button type="button" className="anonymous-notice-link" onClick={() => onRequestSignIn?.()}>
+              Sign in with Bushie Tools
+            </button>{' '}
+            to save plans, share links and sync across devices.
+          </div>
+        )}
+        {distance && activeTab === 'overview' && (
+          <p className="plan-disclaimer" role="note">⚠️ {DISCLAIMER_SHORT}</p>
         )}
         {distance && activeTab === 'terrain' && !trackAnalysis && (
           <div className="vegetation-loading">Terrain analysis pending…</div>

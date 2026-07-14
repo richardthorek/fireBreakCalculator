@@ -8,8 +8,12 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { AssistantPayload, SmeacsBriefing, isAssistantPayload } from '../types/assistant';
 import { buildSmeacsBriefing } from '../services/smeacsBriefingBuilder';
+import { enforceRateLimit } from '../services/rateLimit';
 
 export async function assistantSmeacsBriefing(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
+  const limited = await enforceRateLimit(req, ctx, 'assistant');
+  if (limited) return limited;
+
   let body: { payload?: AssistantPayload };
   try {
     body = JSON.parse(await req.text());

@@ -7,6 +7,7 @@
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { RouteSegment } from './routeProfile';
+import { authHeader } from './suiteAuth';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -92,7 +93,8 @@ export async function calculateEquipmentAnalysis(
   const response = await fetch(`${baseUrl}/analysis/calculate`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...authHeader()
     },
     body: JSON.stringify(request)
   });
@@ -104,6 +106,10 @@ export async function calculateEquipmentAnalysis(
       statusText: response.statusText,
       error: errorData
     });
+    // Surface the rate-limit case distinctly so the UI can prompt sign-in.
+    if (response.status === 429) {
+      throw new Error(errorData.error || 'Rate limit reached. Sign in or wait a moment and try again.');
+    }
     throw new Error(errorData.error || `Analysis request failed: ${response.statusText}`);
   }
 

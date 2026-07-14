@@ -19,6 +19,8 @@ interface AccountControlProps {
   onLoadPlan: (plan: SavedPlanApi) => void;
   /** Bump to refresh the plan list after an external save. */
   plansVersion?: number;
+  /** Bump to open the sign-in panel from elsewhere (e.g. an anonymous gate). */
+  openSignal?: number;
 }
 
 /**
@@ -33,6 +35,7 @@ export const AccountControl: React.FC<AccountControlProps> = ({
   onSessionChange,
   onLoadPlan,
   plansVersion = 0,
+  openSignal = 0,
 }) => {
   const [session, setSession] = useState<SuiteSession | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -65,6 +68,11 @@ export const AccountControl: React.FC<AccountControlProps> = ({
       cancelled = true;
     };
   }, [updateSession]);
+
+  // Open the panel when an external gate asks for sign-in (openSignal bumps).
+  useEffect(() => {
+    if (openSignal > 0 && !session) setIsOpen(true);
+  }, [openSignal, session]);
 
   // Close the panel on outside click / Escape.
   useEffect(() => {
