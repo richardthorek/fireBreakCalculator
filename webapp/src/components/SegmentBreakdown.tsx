@@ -78,6 +78,7 @@ export const SegmentBreakdown: React.FC<SegmentBreakdownProps> = ({
                 <span className="segment-swatch" style={{ background: vegSwatchColor(seg.vegetation) }} aria-hidden />
                 {seg.vegetation ? getVegetationTypeDisplayName(seg.vegetation) : '—'}
                 {seg.estimated && <span className="segment-estimated-flag" title="Estimated/fallback data">≈</span>}
+                {seg.isModifiedOrLowFidelity && <span className="segment-modified-flag" title="Modified or low-fidelity land — verify locally">⚠</span>}
                 {seg.confidence !== undefined && !seg.estimated && (
                   <span className="segment-confidence">{Math.round(seg.confidence * 100)}%</span>
                 )}
@@ -98,9 +99,6 @@ export const SegmentBreakdown: React.FC<SegmentBreakdownProps> = ({
             </div>
           );
         })}
-      </div>
-      <div className="segment-breakdown-hint">
-        Segments merge stretches with uniform grade and fuel. “≈” marks estimated (non-authoritative) data.
       </div>
     </div>
   );

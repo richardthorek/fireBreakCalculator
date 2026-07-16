@@ -12,6 +12,7 @@
 import { logger } from './logger';
 import { mapFormationToVegetationType, _clearVegetationMappingCache } from './vegetationMappingHelper';
 import { VegetationType } from '../config/classification';
+import { tilesCovering, tileUrl, NSW_TILE_DEG, MAX_NSW_TILES } from './vegetationTiles';
 
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
 const FEATURE_LAYER_ID = 3;
@@ -89,9 +90,53 @@ export function mapNSWToInternal(vegClass?: string | null, vegForm?: string | nu
 }
 
 /**
+ * Classify a feature's attributes to the internal taxonomy: curated DB
+ * mapping first (formation > class > PCT), then the structural regex
+ * heuristic. The dynamic mapper returns null on a miss (never a flat
+ * medium-scrub default), so an unmapped formation is classified by its
+ * structure — forest → heavyforest, grassland → grassland — rather than
+ * silently collapsed. Shared by the point query and the area query.
+ */
+async function classifyNSWAttributes(
+  vegClass: string | null,
+  vegForm: string | null,
+  PCTName: string | null
+): Promise<NSWVegResultRaw | null> {
+  let vegetationType: VegetationType | undefined;
+  let confidence = 0;
+  let source = '';
+
+  try {
+    const formationName = vegForm || '';
+    const className = vegClass || undefined;
+    const typeName = PCTName || undefined;
+
+    const dynamic = await mapFormationToVegetationType(formationName, className, typeName);
+    if (dynamic) {
+      vegetationType = dynamic.vegetation;
+      confidence = dynamic.confidence;
+      source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
+      logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
+    }
+  } catch (error) {
+    logger.warn('Dynamic vegetation mapping failed, falling back to heuristic mapping', error);
+  }
+
+  if (!vegetationType) {
+    const heuristic = mapNSWToInternal(vegClass, vegForm, PCTName);
+    if (!heuristic) return null;
+    vegetationType = heuristic.vegetationType;
+    confidence = heuristic.confidence;
+    source = `Heuristic mapping: ${heuristic.source}`;
+  }
+
+  return { vegetationType, confidence, source, vegClass, vegForm, pctName: PCTName };
+}
+
+/**
  * Query the NSW ArcGIS Feature Layer for vegetation attributes at a point.
  * Returns null if outside NSW or if the service yields no match / error.
- * 
+ *
  * Uses dynamic vegetation mappings from the database if available, with hardcoded
  * mappings as fallback.
  */
@@ -118,55 +163,7 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
     const feat = json?.features?.[0];
     if (!feat || !feat.attributes) { cache[key] = null; return null; }
     const { vegClass, vegForm, PCTName } = feat.attributes as Record<string, string | null>;
-
-    // Prefer a curated DB mapping when one exists; otherwise fall through to the
-    // structural regex heuristic (mapNSWToInternal). The dynamic mapper now
-    // returns null on a miss instead of a flat `mediumscrub` default, so an
-    // unmapped formation (e.g. "…Messmate Forest") is classified by its
-    // structure — forest → heavyforest, grassland → grassland — rather than
-    // being silently collapsed to medium scrub.
-    let vegetationType: VegetationType | undefined;
-    let confidence = 0;
-    let source = '';
-
-    try {
-      // Use the hierarchical mapping system: formation > class > type (PCT)
-      const formationName = vegForm || '';
-      const className = vegClass || undefined;
-      const typeName = PCTName || undefined; // We can use PCT name as the type name
-
-      const dynamic = await mapFormationToVegetationType(formationName, className, typeName);
-      if (dynamic) {
-        vegetationType = dynamic.vegetation;
-        confidence = dynamic.confidence;
-        source = `Dynamic mapping: ${formationName}${className ? ` > ${className}` : ''}${typeName ? ` > ${typeName}` : ''}`;
-        logger.debug(`Dynamic vegetation mapping used: ${source} -> ${vegetationType}`);
-      }
-    } catch (error) {
-      logger.warn('Dynamic vegetation mapping failed, falling back to heuristic mapping', error);
-    }
-
-    // No curated match (or the dynamic path errored) — classify by structure.
-    if (!vegetationType) {
-      const heuristic = mapNSWToInternal(vegClass, vegForm, PCTName);
-      if (!heuristic) {
-        cache[key] = null;
-        return null;
-      }
-      vegetationType = heuristic.vegetationType;
-      confidence = heuristic.confidence;
-      source = `Heuristic mapping: ${heuristic.source}`;
-    }
-
-    const result: NSWVegResultRaw = {
-      vegetationType,
-      confidence,
-      source,
-      vegClass,
-      vegForm,
-      pctName: PCTName
-    };
-
+    const result = await classifyNSWAttributes(vegClass, vegForm, PCTName);
     cache[key] = result;
     return result;
   } catch (e) {
@@ -175,10 +172,182 @@ export async function fetchNSWVegetation(lat: number, lng: number): Promise<NSWV
   }
 }
 
-/** 
- * For diagnostics - clears both NSW vegetation cache and vegetation mapping cache 
+// ---------------------------------------------------------------------------
+// Area query: ONE envelope feature-query for a whole corridor/box, resolved
+// app-side by point-in-polygon, instead of one query round trip per sampled
+// point. Same motivation as the NVIS area raster (see nvisVegetationService):
+// per-point queries scale linearly with search area and would overwhelm a
+// free government server at any real corridor size.
+// ---------------------------------------------------------------------------
+
+export interface NSWAreaFeature {
+  /** ArcGIS polygon rings (outer + holes), [lng, lat] vertex pairs. */
+  rings: number[][][];
+  result: NSWVegResultRaw;
+  /** Upstream OBJECTID when known — used to dedupe polygons straddling tiles. */
+  objectId?: number;
+}
+
+/** Even-odd point-in-polygon over all rings (outer boundaries and holes both
+ *  toggle, which is exactly the even-odd rule). Pure — exported for tests. */
+export function pointInRings(lng: number, lat: number, rings: number[][][]): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
+/**
+ * Fetch every PCT polygon intersecting a bbox in one query (geometry
+ * generalised to ~20 m — plenty for ~100 m fuel sampling), classified
+ * eagerly. Null when outside NSW, on error, or when the server reports
+ * `exceededTransferLimit` (bbox too big for one page — the caller falls back
+ * rather than silently sampling from a PARTIAL polygon set, which would
+ * misclassify everything the missing features covered).
  */
-export function _clearNSWCache() { 
+export async function fetchNSWVegetationArea(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NSWAreaFeature[] | null> {
+  if (maxLat < NSW_BBOX.minLat || minLat > NSW_BBOX.maxLat || maxLng < NSW_BBOX.minLng || minLng > NSW_BBOX.maxLng) return null;
+
+  const envelope = JSON.stringify({ xmin: minLng, ymin: minLat, xmax: maxLng, ymax: maxLat, spatialReference: { wkid: 4326 } });
+  const url = `${ARC_GIS_BASE}/${FEATURE_LAYER_ID}/query` +
+    `?f=json&geometry=${encodeURIComponent(envelope)}` +
+    `&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects` +
+    `&outFields=vegClass,vegForm,PCTName&returnGeometry=true&outSR=4326` +
+    `&maxAllowableOffset=0.0002&geometryPrecision=5`;
+
+  try {
+    const resp = await fetch(url, { signal });
+    if (!resp.ok) {
+      logger.warn('NSW area query HTTP', resp.status, resp.statusText);
+      return null;
+    }
+    const json = await resp.json();
+    if (json?.error) {
+      logger.warn('NSW area query error', json.error);
+      return null;
+    }
+    if (json?.exceededTransferLimit) {
+      logger.debug('NSW area query exceeded transfer limit — falling back to point queries');
+      return null;
+    }
+    const feats: any[] = json?.features;
+    if (!Array.isArray(feats)) return null;
+
+    const out: NSWAreaFeature[] = [];
+    for (const f of feats) {
+      const rings = f?.geometry?.rings;
+      if (!Array.isArray(rings) || rings.length === 0) continue;
+      const { vegClass, vegForm, PCTName } = (f.attributes ?? {}) as Record<string, string | null>;
+      const result = await classifyNSWAttributes(vegClass ?? null, vegForm ?? null, PCTName ?? null);
+      if (result) out.push({ rings, result });
+    }
+    logger.debug(`NSW area query: ${out.length} classified PCT polygons for bbox`);
+    return out;
+  } catch (e) {
+    logger.warn('NSW area query failed', e);
+    return null;
+  }
+}
+
+// Classified tile feature sets, memoised for the session (same rationale as
+// the NVIS tile raster cache — repeat/nudged corridors re-use the work).
+const nswTileCache = new Map<string, NSWAreaFeature[]>();
+
+/**
+ * Fetch PCT polygons for a bbox as CACHED TILES via the shared cross-user
+ * tile API (`/api/vegetation/tile/nsw/{tx}/{ty}` — blob-backed, paginated
+ * server-side). A tile the server reports as `exceeded` is simply skipped:
+ * absent coverage falls through to the NVIS raster (an authoritative,
+ * lower-fidelity answer), which cannot MISclassify the way a partial
+ * polygon set would. Returns null when outside NSW, the API is
+ * unreachable, or the bbox needs more than MAX_NSW_TILES — callers fall
+ * back to the direct single-envelope path.
+ */
+export async function fetchNSWVegetationAreaTiled(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NSWAreaFeature[] | null> {
+  if (maxLat < NSW_BBOX.minLat || minLat > NSW_BBOX.maxLat || maxLng < NSW_BBOX.minLng || minLng > NSW_BBOX.maxLng) return null;
+  const tiles = tilesCovering({ minLat, minLng, maxLat, maxLng }, NSW_TILE_DEG, MAX_NSW_TILES);
+  if (!tiles || tiles.length === 0) return null;
+
+  const out: NSWAreaFeature[] = [];
+  const seenObjectIds = new Set<number>();
+  const pushUnique = (feats: NSWAreaFeature[]) => {
+    for (const f of feats) {
+      // A polygon straddling tile borders arrives from several tiles —
+      // dedupe by OBJECTID (kept on the tile payloads for exactly this).
+      if (f.objectId != null) {
+        if (seenObjectIds.has(f.objectId)) continue;
+        seenObjectIds.add(f.objectId);
+      }
+      out.push(f);
+    }
+  };
+
+  try {
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    let failed = false;
+    const worker = async () => {
+      while (cursor < tiles.length && !failed) {
+        if (signal?.aborted) { failed = true; return; }
+        const t = tiles[cursor++];
+        const key = `${t.tx},${t.ty}`;
+        const cached = nswTileCache.get(key);
+        if (cached) { pushUnique(cached); continue; }
+        const resp = await fetch(tileUrl('nsw', t), { signal });
+        if (!resp.ok) { failed = true; return; }
+        const json = await resp.json();
+        if (json?.exceeded) { nswTileCache.set(key, []); continue; }
+        if (!Array.isArray(json?.features)) {
+          // Unexpected payload is a failure, not "no polygons here" —
+          // reading it as empty would silently drop SVTM fidelity.
+          failed = true;
+          return;
+        }
+        const feats: any[] = json.features;
+        const classified: NSWAreaFeature[] = [];
+        for (const f of feats) {
+          const rings = f?.geometry?.rings;
+          if (!Array.isArray(rings) || rings.length === 0) continue;
+          const { OBJECTID, vegClass, vegForm, PCTName } = (f.attributes ?? {}) as Record<string, any>;
+          const result = await classifyNSWAttributes(vegClass ?? null, vegForm ?? null, PCTName ?? null);
+          if (result) classified.push({ rings, result, objectId: typeof OBJECTID === 'number' ? OBJECTID : undefined });
+        }
+        nswTileCache.set(key, classified);
+        pushUnique(classified);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tiles.length) }, worker));
+    if (failed) return null;
+    return out;
+  } catch (e) {
+    logger.debug('NSW tile API unavailable, falling back to direct envelope query', e);
+    return null;
+  }
+}
+
+/**
+ * For diagnostics - clears both NSW vegetation cache and vegetation mapping cache
+ */
+export function _clearNSWCache() {
   // Clear NSW vegetation cache
   Object.keys(cache).forEach(k => delete cache[k]); 
   // Clear vegetation mapping cache (static import used to avoid mixed dynamic/static imports)

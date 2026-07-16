@@ -9,8 +9,11 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
 import { SearchControl } from './SearchControl';
+import { phaseMessage } from './AdvisorPanel';
 import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
+import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
+import { setLocalTrailProvider } from '../utils/infrastructureService';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -89,10 +92,12 @@ interface MapboxMapViewProps {
    *  leading edge tracks how far the search has actually gotten instead of
    *  a fixed-period ping-pong. */
   optimizerProgress?: number;
+  /** Optimizer phase name — drives the on-map progress pill's copy. */
+  optimizerPhase?: string;
   /** WP2 — streamed scan cells: grid outlines build out, then colour in as
    *  each cell is sampled. Distinct from `optimizerHeatmap`, which only
    *  appears once the search is fully done. */
-  scanCells?: { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean }[] | null;
+  scanCells?: { polygon: { lat: number; lng: number }[]; costNormalized: number; costNormalizedObjective: number; revealed: boolean; revealedAt?: number }[] | null;
   /** Which heatmap scale to render: 'objective' (fixed, absolute difficulty —
    *  heavy timber is always at least amber, a 45°+ slope always red,
    *  regardless of what else is in the scan) or 'relative' (stretched to the
@@ -144,6 +149,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   optimizerScanning = false,
   optimizerHeatmap = null,
   optimizerProgress = 0,
+  optimizerPhase,
   heatmapColorMode = 'objective',
   scanCells = null,
   scanBestPath = null,
@@ -608,6 +614,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     map.on('style.load', () => {
       const style = map.getStyle();
       logger.info(`Hosted style loaded (${(style.layers || []).length} layers)`);
+      // Add the Mapbox Streets vector road source (invisible query layer) so the
+      // optimizer can read corridor trails straight from the vector tiles the
+      // map already loads — zero extra network, no CORS, works offline once the
+      // area is cached. Registered as the infrastructure service's primary
+      // trail source; it falls back to the backend Overpass proxy whenever this
+      // returns nothing (tiles not loaded for the corridor).
+      ensureStreetsSource(map);
+      setLocalTrailProvider((s, w, n, e) => extractCorridorTrails(map, s, w, n, e));
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
@@ -639,7 +653,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       });
     });
 
-    return () => { map.remove(); };
+    return () => {
+      // Drop the map-backed trail provider so a stale map instance is never
+      // queried after unmount (the optimizer would then use the network path).
+      setLocalTrailProvider(null);
+      map.remove();
+    };
     })();
   }, []);
 
@@ -974,9 +993,44 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       type: 'FeatureCollection' as const,
       features: cells.map(c => ({
         type: 'Feature' as const,
-        properties: { cost: heatmapColorMode === 'relative' ? c.costNormalized : c.costNormalizedObjective, revealed: c.revealed ? 1 : 0 },
+        properties: { cost: heatmapColorMode === 'relative' ? c.costNormalized : c.costNormalizedObjective, revealed: c.revealed ? 1 : 0, revealedAt: c.revealedAt ?? 0 },
         geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
       })),
+    };
+
+    // Per-cell fade-in: data-driven paint properties can't use Mapbox's
+    // layer-level transitions, so newly revealed cells ease from the grid's
+    // neutral opacity to full over REVEAL_FADE_MS by re-setting the opacity
+    // expression each frame with the current clock (the standard trick for
+    // per-feature time-based animation — the GPU evaluates it per feature).
+    // The loop self-terminates once the youngest reveal has finished fading,
+    // and is skipped entirely under prefers-reduced-motion.
+    const REVEAL_FADE_MS = 450;
+    const reducedMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const newestReveal = cells.reduce((m, c) => Math.max(m, c.revealedAt ?? 0), 0);
+    let raf = 0;
+
+    const opacityExpression = (now: number) => [
+      'case', ['==', ['get', 'revealed'], 0], 0.12,
+      ['+', 0.12, ['*', 0.2,
+        ['min', 1, ['max', 0, ['/', ['-', now, ['get', 'revealedAt']], REVEAL_FADE_MS]]]]],
+    ];
+
+    const animate = () => {
+      try {
+        if (!map.getLayer('hex-scan')) return;
+        const now = performance.now();
+        if (reducedMotion || now > newestReveal + REVEAL_FADE_MS) {
+          // Everything has finished fading — pin the static values and stop.
+          map.setPaintProperty('hex-scan', 'fill-opacity',
+            ['case', ['==', ['get', 'revealed'], 0], 0.12, 0.32] as any);
+          return;
+        }
+        map.setPaintProperty('hex-scan', 'fill-opacity', opacityExpression(now) as any);
+        raf = requestAnimationFrame(animate);
+      } catch (e) { /* style may be mid-teardown */ }
     };
 
     const apply = () => {
@@ -984,6 +1038,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         const existing = map.getSource('hex-scan');
         if (existing) {
           existing.setData(data);
+          animate();
           return;
         }
         map.addSource('hex-scan', { type: 'geojson', data } as any);
@@ -1008,6 +1063,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           source: 'hex-scan',
           paint: { 'line-color': 'rgba(255,255,255,0.10)', 'line-width': 0.5 },
         });
+        animate();
       } catch (e) {
         logger.warn('Failed to render scan cells', e);
       }
@@ -1018,8 +1074,28 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       apply();
     }
 
-    return () => remove();
+    // Cleanup cancels only the animation frame — the source/layers persist
+    // across updates (updated in place via setData above). Tearing them down
+    // on every streamed event made the whole corridor visibly blink during
+    // the search (field-reported: "comes up at once then vanishes briefly").
+    // Removal happens in the cells-empty branch above and on unmount below.
+    return () => {
+      cancelAnimationFrame(raf);
+    };
   }, [scanCells, heatmapColorMode]);
+
+  // Unmount-only teardown for the persistent hex-scan source/layers.
+  useEffect(() => {
+    return () => {
+      const map = mapRef.current;
+      if (!map) return;
+      try {
+        if (map.getLayer('hex-scan-outline')) map.removeLayer('hex-scan-outline');
+        if (map.getLayer('hex-scan')) map.removeLayer('hex-scan');
+        if (map.getSource('hex-scan')) map.removeSource('hex-scan');
+      } catch (e) { /* style may already be gone */ }
+    };
+  }, []);
 
   // WP2 — the live Dijkstra frontier's current best-guess path, so
   // pathfinding is visibly crawling the grid rather than appearing only
@@ -1338,6 +1414,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       )}
       {isAnalyzing && (
         <div className="analyzing-badge">Analyzing…</div>
+      )}
+      {/* Optimizer progress ON the map: on phones the analysis panel is
+          usually collapsed and its % counter hidden below the expansion
+          handle, so the map carries the phase + % itself. */}
+      {optimizerScanning && (
+        <div className="map-progress-pill" role="status">
+          <span className="map-progress-pill-spinner" aria-hidden />
+          <span>{phaseMessage(optimizerPhase, optimizerProgress)}</span>
+          <strong>{Math.round(optimizerProgress * 100)}%</strong>
+        </div>
       )}
       {/* transient locating UI */}
       {isLocating && (

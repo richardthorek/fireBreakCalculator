@@ -26,6 +26,10 @@ export interface StateVegetationResult {
   /** State code (e.g., 'NSW', 'VIC') */
   state: string;
 
+  /** True for NVIS classes 24/25/26/27/28/99 (aquatic, cleared, unclassified, bare, sea, unknown) —
+   *  indicates modified or low-fidelity land; confidence is lower and local verification is advised. */
+  isModifiedOrLowFidelity?: boolean;
+
   /** Optional: raw attributes from state service for debugging/rollup */
   rawAttributes?: Record<string, unknown>;
 }

@@ -20,6 +20,8 @@ export interface JoinedSegment {
   confidence?: number;
   /** True when the vegetation class came from mock/fallback data. */
   estimated: boolean;
+  /** True for NVIS classes 24/25/26/27/28/99 — modified or low-fidelity land; local verification advised. */
+  isModifiedOrLowFidelity?: boolean;
 }
 
 /** Join the two analyses into uniform chainage slices, merging identical neighbours. */
@@ -36,7 +38,7 @@ export function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysi
   }
 
   // Vegetation intervals scaled onto the same axis.
-  const vegIvs: { start: number; end: number; type: VegetationType; label?: string; confidence: number; estimated: boolean }[] = [];
+  const vegIvs: { start: number; end: number; type: VegetationType; label?: string; confidence: number; estimated: boolean; isModifiedOrLowFidelity?: boolean }[] = [];
   if (veg && veg.totalDistance > 0) {
     const scale = total / veg.totalDistance;
     let vc = 0;
@@ -49,6 +51,7 @@ export function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysi
         label: s.displayLabel,
         confidence: s.confidence,
         estimated: !!s.estimated,
+        isModifiedOrLowFidelity: s.isModifiedOrLowFidelity,
       });
       vc += len;
     }
@@ -77,6 +80,7 @@ export function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysi
       vegLabel: vIv?.label,
       confidence: vIv?.confidence,
       estimated: !!vIv?.estimated,
+      isModifiedOrLowFidelity: vIv?.isModifiedOrLowFidelity,
     });
   }
 
@@ -84,7 +88,7 @@ export function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysi
   const merged: JoinedSegment[] = [];
   for (const seg of raw) {
     const last = merged[merged.length - 1];
-    if (last && last.slopeCategory === seg.slopeCategory && last.vegetation === seg.vegetation && last.estimated === seg.estimated) {
+    if (last && last.slopeCategory === seg.slopeCategory && last.vegetation === seg.vegetation && last.estimated === seg.estimated && last.isModifiedOrLowFidelity === seg.isModifiedOrLowFidelity) {
       const lenA = last.endM - last.startM;
       const lenB = seg.endM - seg.startM;
       last.slope = (last.slope * lenA + seg.slope * lenB) / (lenA + lenB);

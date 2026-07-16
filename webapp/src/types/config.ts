@@ -183,6 +183,9 @@ export interface VegetationSegment {
   distance: number;
   /** True when the class came from a mock/fallback rather than real data. */
   estimated?: boolean;
+  /** True for NVIS classes 24/25/26/27/28/99 (aquatic, cleared, unclassified, bare, sea, unknown) —
+   *  indicates modified or low-fidelity land; confidence is lower and local verification is advised. */
+  isModifiedOrLowFidelity?: boolean;
 }
 
 /** Vegetation analysis data from Mapbox Terrain v2 */

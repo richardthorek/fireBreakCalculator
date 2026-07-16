@@ -82,6 +82,47 @@ interface VegetationMapping {
 }
 ```
 
+## Vegetation Tile Cache Endpoints (shared cross-user cache)
+
+Blob-backed read-through cache of the external vegetation area data, keyed by
+quantised tiles so different users' overlapping corridors hit identical cache
+keys (first user at an incident pays the upstream fetch; everyone after reads
+the blob — container `vegtiles`, 365-day lifecycle expiry, so one fetch caches a
+tile for a whole fire season). Tile grids MUST
+match `webapp/src/utils/vegetationTiles.ts`: NVIS 0.5°/tile (500×500 px
+native-resolution export PNG), NSW 0.05°/tile (paginated PCT polygon JSON).
+Rate-limited (`vegtile` tag); responses carry `Cache-Control: public,
+max-age=604800` and an `X-Tile-Cache: hit|miss` diagnostic header. On
+upstream failure returns `502` and the client falls back to its
+direct-to-government path.
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/vegetation/tile/{source}/{tx}/{ty}` | GET | One cached tile. `source` = `nvis` (export PNG) or `nsw` (`{ features: [...] }` merged pages, `{ exceeded: true }` when the tile is denser than the pagination cap — uncached, client skips the tile) | None | `image/png` or JSON | No |
+| `/api/vegetation/legend` | GET | Cached NVIS `legend?f=json` passthrough (colour→MVG decode contract) | None | JSON | No |
+
+## Infrastructure (Overpass proxy)
+
+Server-side proxy for the OSM/Overpass corridor trail lookup the optimizer uses
+(reusable trails/roads as discounted edges + the snap-to-trail path
+refinement). **Note the client tries the Mapbox vector tiles already on the map
+FIRST** (`mapboxTrails.ts` — same OSM lineage, zero-network, offline-capable)
+and only calls this proxy when those tiles don't cover the corridor. The browser
+calls this same-origin endpoint instead of the public Overpass instances
+directly: those instances omit `Access-Control-Allow-Origin`
+on their rate-limited/error responses, so a direct browser call that hits a
+429/504/timeout is surfaced as an opaque CORS failure and the whole trail lookup
+dies. The server→Overpass hop has no CORS, and one server IP with a short
+in-process cache (10 min, rounded-bbox key) spends the public 2-slot-per-IP
+quota once per corridor rather than once per user. Rate-limited (`infra` tag).
+On upstream failure returns `502` and the client falls back to calling Overpass
+directly; a `404` (endpoint not deployed) makes the client stop probing the
+proxy for the session and use the direct path.
+
+| Endpoint | Method | Purpose | Request | Response | Auth Required |
+|----------|--------|---------|---------|----------|---------------|
+| `/api/infrastructure` | GET | Reusable trails/roads within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°) | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
+
 ## AI Assistant Endpoints
 
 | Endpoint | Method | Purpose | Request Body | Response | Auth Required |

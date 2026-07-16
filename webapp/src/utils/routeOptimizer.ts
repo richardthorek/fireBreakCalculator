@@ -33,7 +33,8 @@ import { VegetationType } from '../config/classification';
 import { LatLng } from './chainage';
 import { calculateDistance, calculateSlope, sampleElevationsBatch } from './slopeCalculation';
 import { fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureTrail } from './infrastructureService';
-import { fetchStateVegetation } from './stateVegetationRouter';
+import { fetchStateVegetation, fetchStateVegetationArea, resolveFromCachedAreas, AreaVegetationBounds } from './stateVegetationRouter';
+import { refinePath } from './pathRefinement';
 import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateCorridorHexes, polylineLengthLocal, LocalProjection,
@@ -257,6 +258,28 @@ export interface RawHeatmapCell {
   estimated: boolean;
 }
 
+/**
+ * Post-search refinement parameters (see pathRefinement.ts). The hex search
+ * routes at grid resolution; these turn its coarse centre-to-centre line into a
+ * realistic one using data already held locally, so refinement adds no network
+ * cost. Kept deliberately conservative — refinement smooths and snaps WITHIN
+ * the corridor the search already priced, it does not re-route.
+ */
+const REFINE_RESAMPLE_M = 20;      // densify to ~20 m before snapping/nudging
+const REFINE_SNAP_M = 35;          // snap onto a trail within 35 m …
+const REFINE_SNAP_ANGLE_DEG = 40;  // … only when running roughly parallel to it
+const REFINE_FUEL_NUDGE_M = 8;     // free vertices may shift ≤8 m toward lower fuel
+
+/** Zero-network local fuel weight for a point, from the session-retained area
+ *  vegetation data — the refinement's fuel-aware smoothing samples this between
+ *  hex centres. Returns null when no retained dataset covers/resolves the point
+ *  (refinement then leaves that vertex where the search put it). */
+function localFuelCostAt(lat: number, lng: number): number | null {
+  const r = resolveFromCachedAreas(lat, lng);
+  if (!r || r === 'nodata') return null;
+  return VEGETATION_COST[r.vegetationType] ?? null;
+}
+
 /** Vegetation cache keyed at ~100 m — matches the NVIS raster resolution.
  *  Exported (via sampleVegetation) so the area-recon scan (WP6) can share it:
  *  points sampled while scanning a box are cache hits when later pathfinding
@@ -298,13 +321,70 @@ export async function sampleElevationsCached(points: LatLng[]): Promise<{ elevat
   return { elevations: results, estimated };
 }
 
-export async function sampleVegetation(points: LatLng[], signal?: AbortSignal): Promise<{ type: VegetationType; estimated: boolean }[]> {
+/** Below this many uncached points a per-point sweep is cheaper than an area
+ *  export; above it, the area path saves hundreds of upstream requests. */
+const AREA_QUERY_MIN_POINTS = 24;
+
+export async function sampleVegetation(
+  points: LatLng[],
+  signal?: AbortSignal,
+  /** Called after each unique (uncached) point resolves — lets long sweeps
+   *  drive a real progress bar, and (via `sample`) stream each result to the
+   *  map as it lands instead of sitting at 0% for the whole fetch. */
+  onProgress?: (done: number, total: number, sample?: { point: LatLng; type: VegetationType; estimated: boolean }) => void,
+  /** When given (and enough points are uncached), fuel is resolved from AT
+   *  MOST TWO area requests — one NSW polygon query + one NVIS raster export,
+   *  sampled locally — instead of one upstream query per point. Per-point
+   *  identify remains only the fallback for points the area data can't
+   *  cover. Without this, a large corridor fires hundreds of point queries
+   *  at free government servers (field-confirmed as unsustainable). */
+  areaBounds?: AreaVegetationBounds
+): Promise<{ type: VegetationType; estimated: boolean }[]> {
   const unique = new Map<string, LatLng>();
   for (const p of points) {
     const k = vegKey(p.lat, p.lng);
     if (!vegCache.has(k) && !unique.has(k)) unique.set(k, p);
   }
-  const entries = Array.from(unique.entries());
+  let entries = Array.from(unique.entries());
+  const total = entries.length;
+  let done = 0;
+
+  // --- Area pass: bulk-resolve from locally-held area data (free per point).
+  if (areaBounds && entries.length >= AREA_QUERY_MIN_POINTS) {
+    const resolveArea = await fetchStateVegetationArea(areaBounds, signal).catch(() => null);
+    if (signal?.aborted) {
+      return points.map(p => vegCache.get(vegKey(p.lat, p.lng)) ?? { type: 'mediumscrub', estimated: true });
+    }
+    if (resolveArea) {
+      const unresolved: [string, LatLng][] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const [key, pt] = entries[i];
+        const res = resolveArea(pt.lat, pt.lng);
+        if (res === 'nodata') {
+          // The source POSITIVELY reports no data here (ocean/gap) — same
+          // conservative flagged assumption as a failed point query, minus
+          // the wasted round trip.
+          vegCache.set(key, { type: 'mediumscrub', estimated: true });
+          onProgress?.(++done, total, { point: pt, type: 'mediumscrub', estimated: true });
+        } else if (res) {
+          vegCache.set(key, { type: res.vegetationType, estimated: false });
+          onProgress?.(++done, total, { point: pt, type: res.vegetationType, estimated: false });
+        } else {
+          unresolved.push(entries[i]);
+        }
+        // Yield periodically so the streamed colour-in paints as a sweep
+        // (points arrive ordered line-outward from the caller) instead of
+        // one synchronous burst the map renders as a single frame.
+        if (i % 120 === 119) await new Promise(r => setTimeout(r, 0));
+      }
+      entries = unresolved;
+      logger.debug(`Vegetation area pass resolved ${done}/${total} points locally; ${entries.length} falling back to point queries`);
+    }
+  }
+
+  // --- Per-point fallback (also the whole path for small batches). Kept at
+  // a modest concurrency: these are individual hits on free gov servers and,
+  // with the area pass above, should be the exception, not the rule.
   const CONCURRENCY = 6;
   let cursor = 0;
   const worker = async () => {
@@ -324,6 +404,8 @@ export async function sampleVegetation(points: LatLng[], signal?: AbortSignal): 
         logger.warn('Route optimizer vegetation sample failed', e);
         vegCache.set(key, { type: 'mediumscrub', estimated: true });
       }
+      const resolved = vegCache.get(key)!;
+      onProgress?.(++done, total, { point: pt, type: resolved.type, estimated: resolved.estimated });
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker));
@@ -721,6 +803,12 @@ const PASS_CONFIGS: { widthFactor: number; targetCount: number }[] = [
   { widthFactor: 0.14, targetCount: 320 },
 ];
 
+/** Cumulative leg-progress at the end of each pass. Weighted by real cost —
+ *  the wide pass covers the most ground (and, on a cold cache, all the
+ *  sampling) — rather than the old equal thirds, which left the bar parked
+ *  while the expensive pass ran and then sprinted through the cheap ones. */
+const PASS_PROGRESS_END = [0.45, 0.75, 1.0];
+
 function interpolateLine(A: LatLng, B: LatLng, intervalM: number): LatLng[] {
   const total = calculateDistance(A.lat, A.lng, B.lat, B.lng);
   const n = Math.max(1, Math.round(total / intervalM));
@@ -739,6 +827,35 @@ interface LegHexResult {
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
   nodesEvaluated: number;
+  /** OSM trails fetched for this leg's corridor — reused by the post-search
+   *  path refinement to snap the line onto roads it chose to follow. */
+  trails: InfrastructureTrail[];
+}
+
+/** Wide-pass half-width for a leg — aggressive spread so a single run finds
+ *  what a few manual re-runs used to stumble into. Shared by the leg search,
+ *  the route-wide grid sizing and the infrastructure prefetch so all three
+ *  describe the same corridor. */
+function legHalfWidth(legLen: number, maxOffsetM?: number): number {
+  return Math.min(
+    900,
+    Math.max(60, Math.min(maxOffsetM ?? Math.min(700, Math.max(150, legLen * 0.45)), legLen * 1.3))
+  );
+}
+
+/** Bounding box (south, west, north, east) of a leg's infrastructure lookup —
+ *  the widest corridor plus margin. Must stay byte-identical between the
+ *  prefetch in optimizeRoute and the per-leg fetch so the two share one
+ *  cached Overpass query. */
+function legInfraBbox(A: LatLng, B: LatLng, maxOffsetM?: number): [number, number, number, number] {
+  const legLen = calculateDistance(A.lat, A.lng, B.lat, B.lng);
+  const marginDeg = (legHalfWidth(legLen, maxOffsetM) + 200) / 111320;
+  return [
+    Math.min(A.lat, B.lat) - marginDeg,
+    Math.min(A.lng, B.lng) - marginDeg,
+    Math.max(A.lat, B.lat) + marginDeg,
+    Math.max(A.lng, B.lng) + marginDeg,
+  ];
 }
 
 async function optimizeLegHex(
@@ -756,12 +873,7 @@ async function optimizeLegHex(
 ): Promise<LegHexResult> {
   const { onScanEvent } = options;
   const legLen = calculateDistance(A.lat, A.lng, B.lat, B.lng);
-  // Wide by default — aggressive spread so a single run finds what a few
-  // manual re-runs used to stumble into.
-  const baseHalfWidth = Math.min(
-    900,
-    Math.max(60, Math.min(options.maxOffsetM ?? Math.min(700, Math.max(150, legLen * 0.45)), legLen * 1.3))
-  );
+  const baseHalfWidth = legHalfWidth(legLen, options.maxOffsetM);
 
   if (signal?.aborted) {
     // The caller checks signal.aborted immediately after this call and
@@ -769,24 +881,18 @@ async function optimizeLegHex(
     // than spend more data on a result nobody will use. Matters in the
     // field: this app is built for poor/no-reception use, so a cancelled
     // optimize shouldn't keep making requests.
-    return { optimizedNodes: [], originalNodes: [], heatmapCells: [], usedEstimatedData: false, infrastructureAvailable: true, nodesEvaluated: 0 };
+    return { optimizedNodes: [], originalNodes: [], heatmapCells: [], usedEstimatedData: false, infrastructureAvailable: true, nodesEvaluated: 0, trails: [] };
   }
 
   // One infrastructure fetch per leg (widest corridor bbox), reused by every
   // pass — NOT awaited here. It's handed to runHexPass as a promise so pass
   // 0's own elevation/vegetation sampling runs concurrently with it instead
   // of waiting for it first; every later pass reuses the same (by then
-  // already-resolved) promise for free.
-  const marginDeg = (baseHalfWidth + 200) / 111320;
-  const lats = [A.lat, B.lat];
-  const lngs = [A.lng, B.lng];
-  const infraPromise = fetchCorridorInfrastructure(
-    Math.min(...lats) - marginDeg,
-    Math.min(...lngs) - marginDeg,
-    Math.max(...lats) + marginDeg,
-    Math.max(...lngs) + marginDeg,
-    signal
-  );
+  // already-resolved) promise for free. When optimizeRoute prefetched this
+  // leg's corridor at run start, this call resolves from that request's
+  // in-flight/result cache instead of issuing a second Overpass query.
+  const [s, w, n, e] = legInfraBbox(A, B, options.maxOffsetM);
+  const infraPromise = fetchCorridorInfrastructure(s, w, n, e, signal);
   const trailsPromise = infraPromise.then(infra => infra.trails);
 
   // Independent of the hex search itself (only needs A/B/trails, both already
@@ -825,12 +931,24 @@ async function optimizeLegHex(
     // only the corridor shape softens, not which ground is reachable as a
     // "shortcut". Refine/polish (i > 0) keep the tight, leg-only guide since
     // they narrow toward this leg's own found path and are never rendered.
+    // The wide pass's scan events double as sub-pass progress: their 0..1
+    // in-pass fraction (cells coloured, Dijkstra frontier) is mapped into
+    // this pass's slice of the leg bar, so the bar crawls WITH the search
+    // instead of jumping only at pass boundaries.
+    const passStart = i === 0 ? 0 : PASS_PROGRESS_END[i - 1];
+    const passSpan = PASS_PROGRESS_END[i] - passStart;
+    const scanEventTap = i === 0
+      ? (event: ScanEvent) => {
+          onScanEvent?.(event);
+          onLegProgress(passStart + passSpan * Math.max(0, Math.min(1, event.progress)));
+        }
+      : undefined;
     const pass = await runHexPass(
       A, B, i === 0 ? wideGuideWaypoints : guidePath, halfWidth, cfg.targetCount, trailsPromise, signal,
       i === 0 && sharedGrid ? sharedGrid : undefined,
-      i === 0 ? onScanEvent : undefined
+      scanEventTap
     );
-    onLegProgress((i + 1) / PASS_CONFIGS.length);
+    onLegProgress(PASS_PROGRESS_END[i]);
     if (!pass) continue;
     usedEstimatedData = usedEstimatedData || pass.estimated;
     nodesEvaluated += pass.nodesEvaluated;
@@ -867,6 +985,7 @@ async function optimizeLegHex(
       usedEstimatedData,
       infrastructureAvailable: infra.available,
       nodesEvaluated,
+      trails: infra.trails,
     };
   }
 
@@ -877,6 +996,7 @@ async function optimizeLegHex(
     usedEstimatedData,
     infrastructureAvailable: infra.available,
     nodesEvaluated,
+    trails: infra.trails,
   };
 }
 
@@ -950,6 +1070,182 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
   const { signal, onProgress, onScanEvent } = options;
 
   const sharedGrid = buildSharedWideGrid(waypoints, options.maxOffsetM);
+  onProgress?.(0.02, 'grid');
+
+  // ---- Route-wide prefetch: split the run's network work up front ----
+  //
+  // The old flow serialised everything per leg: leg 0 sampled its corridor
+  // (hundreds of vegetation point-queries), searched, THEN leg 1 started its
+  // own sampling, and the progress bar sat on 0% until leg 0's whole wide
+  // pass finished. Instead:
+  //
+  // 1. Every leg's Overpass corridor fetch is kicked off NOW (capped at 2 in
+  //    flight — the public instances enforce a 2-slot-per-IP quota), so their
+  //    latency hides behind the sampling sweep below instead of being paid
+  //    serially per leg. The in-flight dedupe in infrastructureService means
+  //    each leg's own later call joins these requests rather than repeating
+  //    them.
+  const legCount = waypoints.length - 1;
+  const infraBoxes: [number, number, number, number][] = [];
+  for (let leg = 0; leg < legCount; leg++) {
+    if (calculateDistance(waypoints[leg].lat, waypoints[leg].lng, waypoints[leg + 1].lat, waypoints[leg + 1].lng) >= 120) {
+      infraBoxes.push(legInfraBbox(waypoints[leg], waypoints[leg + 1], options.maxOffsetM));
+    }
+  }
+  const infraWorker = async () => {
+    while (infraBoxes.length > 0 && !signal?.aborted) {
+      const [s, w, n, e] = infraBoxes.shift()!;
+      await fetchCorridorInfrastructure(s, w, n, e, signal);
+    }
+  };
+  void Promise.all([infraWorker(), infraWorker()]);
+
+  // 2. The whole shared wide grid (every leg's wide-pass cells) is sampled in
+  //    one go: a single batched elevation request plus one vegetation sweep at
+  //    full concurrency, reporting per-point progress. Each leg's passes then
+  //    run almost entirely on cache hits. This is where the run's minutes
+  //    actually go, so it owns the bulk of the progress bar — and it streams
+  //    what it finds: the full grid outline appears the moment the run
+  //    starts, then each cell colours in as its vegetation sample lands
+  //    (throttled 'cells' scan events), so the map itself shows the scan
+  //    happening rather than an end-of-sampling reveal.
+  const SAMPLING_END = 0.55;
+  if (sharedGrid) {
+    const { proj, size, cellsRaw } = sharedGrid;
+    const cellPoints = cellsRaw.map(c => toLatLng(proj, c.center));
+    const gridPoints = [...waypoints, ...cellPoints];
+    const cellPolygons = cellsRaw.map(c => {
+      const corners = hexCorners(c.center, size).map(p => toLatLng(proj, p));
+      return [...corners, corners[0]];
+    });
+
+    onScanEvent?.({
+      phase: 'grid',
+      progress: 0,
+      data: {
+        cells: cellsRaw.map((_, i) => ({
+          center: cellPoints[i],
+          polygon: cellPolygons[i],
+          costNormalized: 0,
+          costNormalizedObjective: 0,
+          vegetation: 'grassland' as VegetationType,
+          onTrail: false,
+          estimated: false,
+        })),
+      },
+    });
+
+    // Per-cell mean traversal slope, computable as soon as the (single,
+    // batched) elevation request resolves. Vegetation samples that land
+    // before it buffer until it does — elevation is one round trip while
+    // the vegetation sweep is hundreds, so the buffer window is brief.
+    const idxByHex = new Map<string, number>();
+    cellsRaw.forEach((c, i) => idxByHex.set(hexKey(c.hex), i));
+    let cellSlopes: number[] | null = null;
+    const elevationPromise = sampleElevationsCached(gridPoints).then(res => {
+      const cellElev = res.elevations.slice(waypoints.length);
+      cellSlopes = cellsRaw.map((c, i) => {
+        let slopeSum = 0;
+        let n = 0;
+        for (const nb of hexNeighbors(c.hex)) {
+          const j = idxByHex.get(hexKey(nb));
+          if (j === undefined) continue;
+          const dist = Math.hypot(cellsRaw[j].center.x - c.center.x, cellsRaw[j].center.y - c.center.y);
+          if (dist > 0) {
+            slopeSum += calculateSlope(cellElev[i], cellElev[j], dist);
+            n++;
+          }
+        }
+        return n > 0 ? slopeSum / n : 0;
+      });
+      return res;
+    });
+
+    // One vegetation sample can cover several hex cells (the veg cache is
+    // keyed at ~111 m, hexes can be finer) — colour all of them.
+    const cellIdxByVegKey = new Map<string, number[]>();
+    cellPoints.forEach((p, i) => {
+      const k = vegKey(p.lat, p.lng);
+      const arr = cellIdxByVegKey.get(k);
+      if (arr) arr.push(i); else cellIdxByVegKey.set(k, [i]);
+    });
+    let pendingSamples: { point: LatLng; type: VegetationType; estimated: boolean }[] = [];
+    let lastEmit = 0;
+    // The streamed preview colours on the OBJECTIVE severity for both scales:
+    // a per-scan relative stretch is literally undefined until the scan has
+    // finished (its min/max don't exist yet). Each pass's own 'cells' events
+    // later overwrite every cell with the real pair, and the final heatmap
+    // replaces the lot.
+    const flushRevealed = (force: boolean) => {
+      if (!onScanEvent || !cellSlopes || pendingSamples.length === 0) return;
+      const now = Date.now();
+      if (!force && now - lastEmit < 120) return;
+      lastEmit = now;
+      const revealed: HexHeatmapCell[] = [];
+      for (const s of pendingSamples) {
+        for (const i of cellIdxByVegKey.get(vegKey(s.point.lat, s.point.lng)) ?? []) {
+          const sev = objectiveSeverity(cellSlopes[i], s.type);
+          revealed.push({
+            center: cellPoints[i],
+            polygon: cellPolygons[i],
+            costNormalized: sev,
+            costNormalizedObjective: sev,
+            vegetation: s.type,
+            onTrail: false,
+            estimated: s.estimated,
+          });
+        }
+      }
+      pendingSamples = [];
+      if (revealed.length > 0) onScanEvent({ phase: 'cells', progress: 0, data: { cells: revealed } });
+    };
+
+    // The vegetation sweep gets a line-outward ordering and the corridor's
+    // bbox: the bbox lets sampleVegetation resolve fuel from at most two
+    // area requests (NSW polygons + one NVIS raster export) sampled locally
+    // — instead of one upstream query per hex cell, which scaled requests
+    // linearly with corridor size and would overwhelm the free government
+    // services at any real scale. The ordering means whatever per-point
+    // fallback remains (area data unavailable/offline) samples the ground
+    // nearest the drawn line FIRST — the cells that actually decide the
+    // route — and the streamed colour-in sweeps outward from the line.
+    const waypointLocals = waypoints.map(w => toLocal(proj, w));
+    const lineDist = cellsRaw.map(c => distanceToPolylineLocal(c.center, waypointLocals));
+    const orderedCellPoints = cellsRaw
+      .map((_, i) => i)
+      .sort((a, b) => lineDist[a] - lineDist[b])
+      .map(i => cellPoints[i]);
+    let bMinLat = Infinity, bMaxLat = -Infinity, bMinLng = Infinity, bMaxLng = -Infinity;
+    for (const p of cellPoints) {
+      if (p.lat < bMinLat) bMinLat = p.lat;
+      if (p.lat > bMaxLat) bMaxLat = p.lat;
+      if (p.lng < bMinLng) bMinLng = p.lng;
+      if (p.lng > bMaxLng) bMaxLng = p.lng;
+    }
+    const boundsMargin = (size * 1.5) / 111320;
+    const areaBounds: AreaVegetationBounds = {
+      minLat: bMinLat - boundsMargin,
+      minLng: bMinLng - boundsMargin,
+      maxLat: bMaxLat + boundsMargin,
+      maxLng: bMaxLng + boundsMargin,
+    };
+
+    await Promise.all([
+      elevationPromise.then(() => flushRevealed(true)),
+      sampleVegetation([...waypoints, ...orderedCellPoints], signal, (done, total, sample) => {
+        onProgress?.(0.02 + (SAMPLING_END - 0.02) * (done / Math.max(1, total)), 'sampling');
+        if (sample) {
+          pendingSamples.push(sample);
+          flushRevealed(false);
+        }
+      }, areaBounds),
+    ]);
+    flushRevealed(true);
+    if (signal?.aborted) return null;
+    onProgress?.(SAMPLING_END, 'sampling');
+  }
+  const searchBase = sharedGrid ? SAMPLING_END : 0.02;
+  const searchSpan = 1 - searchBase;
 
   const optimizedCoords: LatLng[] = [waypoints[0]];
   const optimizedNodeSeqs: SampledNode[][] = [];
@@ -975,7 +1271,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
       optimizedNodeSeqs.push(sampled.nodes);
       originalNodeSeqs.push(sampled.nodes);
       optimizedCoords.push(B);
-      onProgress?.((leg + 1) / (waypoints.length - 1), 'terrain');
+      onProgress?.(searchBase + searchSpan * ((leg + 1) / legCount), 'terrain');
       continue;
     }
 
@@ -991,7 +1287,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     ].filter((p): p is LatLng => !!p);
 
     const legResult = await optimizeLegHex(A, B, options, signal, sharedGrid, frac => {
-      onProgress?.((leg + frac) / (waypoints.length - 1), 'search');
+      onProgress?.(searchBase + searchSpan * ((leg + frac) / legCount), 'search');
     }, wideGuideWaypoints);
     if (signal?.aborted) return null;
 
@@ -1004,16 +1300,40 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     }
     optimizedNodeSeqs.push(legResult.optimizedNodes);
     originalNodeSeqs.push(legResult.originalNodes);
-    for (const n of legResult.optimizedNodes.slice(1)) optimizedCoords.push({ lat: n.lat, lng: n.lng });
 
-    onProgress?.((leg + 1) / (waypoints.length - 1), 'search');
+    // Refine this leg's coarse (hex-centre) line into a realistic one: densify,
+    // snap onto any road it chose to follow, and nudge free vertices toward
+    // lower fuel using the locally-retained vegetation data — all zero-network.
+    // Per-leg (not whole-route) so each leg's endpoints, which ARE the user's
+    // drawn waypoints, stay exactly where they were drawn. The effort/length
+    // stats stay on the search nodes above: refinement is a geometric
+    // presentation pass within the corridor the search already priced, not a
+    // re-route, so it must not restate the costed result.
+    const legCoords = legResult.optimizedNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    const refinedLeg = legCoords.length >= 2
+      ? refinePath(legCoords, legResult.trails, {
+          resampleM: REFINE_RESAMPLE_M,
+          snapThresholdM: REFINE_SNAP_M,
+          maxSnapAngleDeg: REFINE_SNAP_ANGLE_DEG,
+          snapToTrails: true,
+          maxFuelNudgeM: REFINE_FUEL_NUDGE_M,
+          fuelCostAt: localFuelCostAt,
+        })
+      : legCoords;
+    for (const p of refinedLeg.slice(1)) optimizedCoords.push(p);
+
+    onProgress?.(searchBase + searchSpan * ((leg + 1) / legCount), 'search');
   }
 
   const optimized = pathStats(optimizedNodeSeqs.flat());
   const original = pathStats(originalNodeSeqs.flat());
   const improvement = original.effortScore > 0 ? (original.effortScore - optimized.effortScore) / original.effortScore : 0;
 
-  const simplified = simplifyPath(optimizedCoords, 15);
+  // Tighter tolerance than the old coarse-path default (was 15): the coords are
+  // now refined (trail-snapped, fuel-nudged) at ~20 m spacing, so a lighter
+  // Douglas-Peucker preserves the road-following curves instead of flattening
+  // them back toward the hex-centre zig-zag.
+  const simplified = simplifyPath(optimizedCoords, 8);
 
   onScanEvent?.({ phase: 'done', progress: 1 });
 

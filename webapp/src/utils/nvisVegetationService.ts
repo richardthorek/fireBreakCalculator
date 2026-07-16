@@ -27,6 +27,7 @@
 
 import { logger } from './logger';
 import { VegetationType } from '../config/classification';
+import { tilesCovering, tileBounds, tileUrl, legendUrl, NVIS_TILE_DEG, MAX_NVIS_TILES } from './vegetationTiles';
 
 const NVIS_MVG_URL =
   (import.meta.env.VITE_NVIS_MVG_URL as string | undefined) ||
@@ -100,6 +101,14 @@ export const MVG_CLASSES: Record<number, { name: string; vegetation: VegetationT
   32: { name: 'Mallee Open Woodlands and Sparse Mallee Shrublands', vegetation: 'mediumscrub', confidence: 0.7 },
   99: { name: 'Unknown / no data', vegetation: 'lightshrub', confidence: 0.3 },
 };
+
+/** NVIS classes that represent modified, cleared, aquatic, or low-fidelity land. */
+const MODIFIED_OR_LOW_FIDELITY_CODES = new Set([24, 25, 26, 27, 28, 99]);
+
+/** Check if an NVIS MVG code represents modified or low-fidelity land. */
+export function isModifiedOrLowFidelityMVG(code: number): boolean {
+  return MODIFIED_OR_LOW_FIDELITY_CODES.has(code);
+}
 
 /** Map an NVIS Major Vegetation Group number to the app's fuel taxonomy. */
 export function mapMVGCode(code: number): { vegetation: VegetationType; confidence: number; name: string } | null {
@@ -281,4 +290,340 @@ export async function fetchNVISVegetation(lat: number, lng: number): Promise<NVI
 
 export function _clearNVISCache() {
   Object.keys(cache).forEach((k) => delete cache[k]);
+  legendPromise = null;
+  tileRasterCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Area raster: ONE `export` image request for a whole corridor/box, decoded
+// app-side, instead of one `identify` round trip per sampled point.
+//
+// WHY: the corridor optimizer needs fuel at hundreds–thousands of hex cells.
+// Point-identify per cell scales requests linearly with search area and, at
+// any real scale, hammers a free government server that owes us nothing
+// (field-confirmed 2026-07-14: "at any sort of scale we will overwhelm the
+// upstream API"). NVIS is a ~100 m colormapped raster, so the whole area of
+// interest fits in one small PNG: `export` renders the bbox, the legend
+// endpoint tells us which colour is which Major Vegetation Group, and every
+// local sample after that is a free pixel lookup.
+//
+// HONESTY: colours are matched against the service's OWN legend (fetched
+// once per session, never hardcoded — a re-symbolised release changes both
+// together). A pixel that matches no legend colour resolves to null (caller
+// falls back to point-identify); transparent pixels are NoData, reported as
+// such rather than invented; and an export whose opaque pixels match NOTHING
+// is treated as contract drift and discarded entirely so the caller falls
+// back to the proven per-point path.
+// ---------------------------------------------------------------------------
+
+export interface NVISLegendColor {
+  r: number;
+  g: number;
+  b: number;
+  label: string;
+  /** MVG code resolved from the label; null when the label maps to no known group. */
+  code: number | null;
+}
+
+/** Resolve a legend label to an MVG code: leading number first (e.g. "3 -
+ *  Eucalypt Open Forests"), then exact/substring name match, longest names
+ *  first so "Eucalypt Open Forests" can't swallow "Eucalypt Low Open
+ *  Forests". Exported for tests and the canary. */
+export function resolveLegendLabelToMVG(label: string): number | null {
+  const trimmed = (label || '').trim();
+  if (!trimmed) return null;
+  const lead = trimmed.match(/^(\d{1,2})\b/);
+  if (lead) {
+    const n = parseInt(lead[1], 10);
+    if (MVG_CLASSES[n]) return n;
+  }
+  const norm = trimmed.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  const byLengthDesc = Object.entries(MVG_CLASSES)
+    .map(([codeStr, e]) => ({ code: parseInt(codeStr, 10), name: e.name.toLowerCase().replace(/[^a-z]+/g, ' ').trim() }))
+    .sort((a, b) => b.name.length - a.name.length);
+  for (const e of byLengthDesc) {
+    if (norm === e.name) return e.code;
+  }
+  for (const e of byLengthDesc) {
+    if (norm.includes(e.name)) return e.code;
+  }
+  return null;
+}
+
+/** Nearest legend colour within a small anti-aliasing tolerance; null beyond it. */
+export function matchColorToLegend(r: number, g: number, b: number, entries: NVISLegendColor[]): NVISLegendColor | null {
+  let best: NVISLegendColor | null = null;
+  let bestD = Infinity;
+  for (const e of entries) {
+    const d = (r - e.r) ** 2 + (g - e.g) ** 2 + (b - e.b) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = e;
+    }
+  }
+  return bestD <= 300 ? best : null;
+}
+
+export interface NVISAreaRaster {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+  width: number;
+  height: number;
+  /** Per pixel (row-major, top-left origin): MVG code, -1 = NoData
+   *  (transparent), 0 = opaque but unmatched (unknown — caller should fall
+   *  back to a point query). */
+  codes: Int16Array;
+  /** True when pixels are coarser than NVIS's native ~100 m (very large bbox
+   *  clamped to the export size cap) — samples are still authoritative NVIS,
+   *  just lower resolution. */
+  coarse: boolean;
+}
+
+/** Sample the raster at a point: MVG code, 'nodata', or null (outside bbox /
+ *  unmatched pixel). Pure — exported for tests. */
+export function rasterCodeAt(raster: NVISAreaRaster, lat: number, lng: number): number | 'nodata' | null {
+  if (lat < raster.minLat || lat > raster.maxLat || lng < raster.minLng || lng > raster.maxLng) return null;
+  const px = Math.min(raster.width - 1, Math.max(0, Math.floor(((lng - raster.minLng) / (raster.maxLng - raster.minLng)) * raster.width)));
+  const py = Math.min(raster.height - 1, Math.max(0, Math.floor(((raster.maxLat - lat) / (raster.maxLat - raster.minLat)) * raster.height)));
+  const code = raster.codes[py * raster.width + px];
+  if (code === -1) return 'nodata';
+  return code > 0 ? code : null;
+}
+
+/** Decode an image blob to raw RGBA via canvas. Browser-only; returns null in
+ *  environments without canvas (tests) so callers fall back gracefully. */
+async function decodeImageBytes(blob: Blob): Promise<{ width: number; height: number; data: Uint8ClampedArray } | null> {
+  try {
+    if (typeof createImageBitmap !== 'function') return null;
+    const bmp = await createImageBitmap(blob);
+    let ctx: { drawImage: (b: ImageBitmap, x: number, y: number) => void; getImageData: (x: number, y: number, w: number, h: number) => ImageData } | null = null;
+    if (typeof OffscreenCanvas !== 'undefined') {
+      ctx = new OffscreenCanvas(bmp.width, bmp.height).getContext('2d') as any;
+    } else if (typeof document !== 'undefined') {
+      const c = document.createElement('canvas');
+      c.width = bmp.width;
+      c.height = bmp.height;
+      ctx = c.getContext('2d') as any;
+    }
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0);
+    const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    return { width: bmp.width, height: bmp.height, data: img.data };
+  } catch (e) {
+    logger.warn('NVIS image decode failed', e);
+    return null;
+  }
+}
+
+let legendPromise: Promise<NVISLegendColor[] | null> | null = null;
+
+/** The service's own colour→MVG legend, fetched once per session — via the
+ *  shared tile-cache API when reachable (blob-cached across users), falling
+ *  back to the government service directly. A failed fetch is not cached,
+ *  so a later run retries. */
+export function fetchNVISLegend(): Promise<NVISLegendColor[] | null> {
+  if (legendPromise) return legendPromise;
+  legendPromise = (async (): Promise<NVISLegendColor[] | null> => {
+    try {
+      let json: any = null;
+      try {
+        const viaApi = await fetch(legendUrl());
+        if (viaApi.ok) json = await viaApi.json();
+      } catch { /* API unreachable — direct below */ }
+      if (!json) {
+        const resp = await fetch(`${NVIS_MVG_URL}/legend?f=json`);
+        if (!resp.ok) return null;
+        json = await resp.json();
+      }
+      const layer = (json?.layers ?? []).find((l: any) => l?.layerId === NVIS_LAYER_ID) ?? json?.layers?.[0];
+      const items: any[] = layer?.legend ?? [];
+      const entries: NVISLegendColor[] = [];
+      for (const item of items) {
+        if (!item?.imageData) continue;
+        const bytes = Uint8Array.from(atob(item.imageData), (c) => c.charCodeAt(0));
+        const decoded = await decodeImageBytes(new Blob([bytes], { type: item.contentType || 'image/png' }));
+        if (!decoded) continue;
+        const o = (Math.floor(decoded.height / 2) * decoded.width + Math.floor(decoded.width / 2)) * 4;
+        if (decoded.data[o + 3] < 128) continue;
+        entries.push({
+          r: decoded.data[o],
+          g: decoded.data[o + 1],
+          b: decoded.data[o + 2],
+          label: item.label ?? '',
+          code: resolveLegendLabelToMVG(item.label ?? ''),
+        });
+      }
+      // NVIS has 33 classes; far fewer decodable swatches means we hit the
+      // wrong layer or the legend shape drifted — don't colour-match against it.
+      if (entries.filter((e) => e.code != null).length < 15) return null;
+      return entries;
+    } catch (e) {
+      logger.warn('NVIS legend fetch failed', e);
+      return null;
+    }
+  })().then((result) => {
+    if (result === null) legendPromise = null;
+    return result;
+  });
+  return legendPromise;
+}
+
+/** NVIS's native grid is ~100 m ≈ 0.001°. */
+const NATIVE_PIXEL_DEG = 0.001;
+const MAX_EXPORT_PX = 1000;
+
+/**
+ * Fetch the MVG raster for a bbox as ONE export image and decode it to per-
+ * pixel codes. Null on any failure (legend unavailable, export error, decode
+ * unsupported, or zero opaque pixels matching the legend — contract drift),
+ * signalling the caller to fall back to per-point identify.
+ */
+export async function fetchNVISAreaRaster(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NVISAreaRaster | null> {
+  if (maxLat <= minLat || maxLng <= minLng) return null;
+  if (maxLat < AUS_BBOX.minLat || minLat > AUS_BBOX.maxLat || maxLng < AUS_BBOX.minLng || minLng > AUS_BBOX.maxLng) return null;
+
+  const legend = await fetchNVISLegend();
+  if (!legend || signal?.aborted) return null;
+
+  let width = Math.ceil((maxLng - minLng) / NATIVE_PIXEL_DEG);
+  let height = Math.ceil((maxLat - minLat) / NATIVE_PIXEL_DEG);
+  let coarse = false;
+  const maxSide = Math.max(width, height);
+  if (maxSide > MAX_EXPORT_PX) {
+    const scale = MAX_EXPORT_PX / maxSide;
+    width = Math.max(2, Math.round(width * scale));
+    height = Math.max(2, Math.round(height * scale));
+    coarse = true;
+  }
+  width = Math.max(2, width);
+  height = Math.max(2, height);
+
+  const url =
+    `${NVIS_MVG_URL}/export?f=image&format=png&transparent=true` +
+    `&bbox=${minLng},${minLat},${maxLng},${maxLat}&bboxSR=4326&imageSR=4326` +
+    `&size=${width},${height}&layers=${encodeURIComponent('show:' + NVIS_LAYER_ID)}`;
+  try {
+    const resp = await fetch(url, { signal });
+    if (!resp.ok) {
+      logger.warn('NVIS export HTTP', resp.status, resp.statusText);
+      return null;
+    }
+    return await decodeExportBlobToRaster(await resp.blob(), { minLat, minLng, maxLat, maxLng }, legend, coarse);
+  } catch (e) {
+    logger.warn('NVIS area export failed', e);
+    return null;
+  }
+}
+
+/** Decode an export PNG blob into a code raster. Shared by the direct-bbox
+ *  path above and the tiled path below. Null on decode failure or when no
+ *  opaque pixel matches the legend (contract drift — a silent all-estimated
+ *  area would be worse than slow point queries). */
+async function decodeExportBlobToRaster(
+  blob: Blob,
+  bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  legend: NVISLegendColor[],
+  coarse: boolean
+): Promise<NVISAreaRaster | null> {
+  const decoded = await decodeImageBytes(blob);
+  if (!decoded) return null;
+
+  const codes = new Int16Array(decoded.width * decoded.height);
+  // The raster has ≤34 distinct colours; memoise colour→code so the match
+  // loop is a map hit per pixel, not 33 distance computations.
+  const colourMemo = new Map<number, number>();
+  let matched = 0;
+  let opaque = 0;
+  for (let i = 0; i < codes.length; i++) {
+    const o = i * 4;
+    if (decoded.data[o + 3] < 128) {
+      codes[i] = -1; // NoData — honest gap, never a fuel class
+      continue;
+    }
+    opaque++;
+    const packed = (decoded.data[o] << 16) | (decoded.data[o + 1] << 8) | decoded.data[o + 2];
+    let code = colourMemo.get(packed);
+    if (code === undefined) {
+      code = matchColorToLegend(decoded.data[o], decoded.data[o + 1], decoded.data[o + 2], legend)?.code ?? 0;
+      colourMemo.set(packed, code);
+    }
+    codes[i] = code;
+    if (code > 0) matched++;
+  }
+  if (opaque > 0 && matched === 0) {
+    logger.warn('NVIS export decoded but no pixel matched the legend — falling back');
+    return null;
+  }
+  logger.debug(`NVIS raster ${decoded.width}×${decoded.height}, ${matched}/${opaque} opaque pixels matched${coarse ? ' (coarse)' : ''}`);
+  return { ...bounds, width: decoded.width, height: decoded.height, codes, coarse };
+}
+
+// Decoded tile rasters, memoised for the session: repeat corridors (or a
+// nudged line) re-use the decode, not just the browser's HTTP cache.
+const tileRasterCache = new Map<string, NVISAreaRaster>();
+
+/**
+ * Fetch the MVG raster for a bbox as CACHED TILES via the shared cross-user
+ * tile API (`/api/vegetation/tile/nvis/{tx}/{ty}` — blob-backed, so during
+ * an incident the government server is hit once per tile per 90 days, not
+ * once per user). Tiles are large (0.5° ≈ 55 km at native resolution) so
+ * coverage builds out and minor line adjustments are free. Returns one
+ * raster per tile, or null when the API/decode is unavailable or the bbox
+ * needs more than MAX_NVIS_TILES — callers fall back to the direct
+ * single-export path.
+ */
+export async function fetchNVISAreaRastersTiled(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NVISAreaRaster[] | null> {
+  if (maxLat <= minLat || maxLng <= minLng) return null;
+  if (maxLat < AUS_BBOX.minLat || minLat > AUS_BBOX.maxLat || maxLng < AUS_BBOX.minLng || minLng > AUS_BBOX.maxLng) return null;
+  const tiles = tilesCovering({ minLat, minLng, maxLat, maxLng }, NVIS_TILE_DEG, MAX_NVIS_TILES);
+  if (!tiles || tiles.length === 0) return null;
+
+  const legend = await fetchNVISLegend();
+  if (!legend || signal?.aborted) return null;
+
+  const rasters: NVISAreaRaster[] = [];
+  const misses: typeof tiles = [];
+  for (const t of tiles) {
+    const cached = tileRasterCache.get(`${t.tx},${t.ty}`);
+    if (cached) rasters.push(cached);
+    else misses.push(t);
+  }
+
+  try {
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    let failed = false;
+    const worker = async () => {
+      while (cursor < misses.length && !failed) {
+        if (signal?.aborted) { failed = true; return; }
+        const t = misses[cursor++];
+        const resp = await fetch(tileUrl('nvis', t), { signal });
+        if (!resp.ok) { failed = true; return; }
+        const raster = await decodeExportBlobToRaster(await resp.blob(), tileBounds(t.tx, t.ty, NVIS_TILE_DEG), legend, false);
+        if (!raster) { failed = true; return; }
+        tileRasterCache.set(`${t.tx},${t.ty}`, raster);
+        rasters.push(raster);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, misses.length) }, worker));
+    if (failed) return null;
+    return rasters;
+  } catch (e) {
+    logger.debug('NVIS tile API unavailable, falling back to direct export', e);
+    return null;
+  }
 }

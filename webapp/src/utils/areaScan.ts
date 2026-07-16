@@ -74,7 +74,13 @@ export async function scanArea(sw: LatLng, ne: LatLng, options: AreaScanOptions 
   const points = cellsRaw.map(c => toLatLng(proj, c.center));
   const [elevRes, vegRes] = await Promise.all([
     sampleElevationsCached(points),
-    sampleVegetation(points, signal),
+    // The vegetation sweep is the long haul of a scan — its per-point
+    // progress drives the bar through the 0.1 → 0.7 span instead of the
+    // old single end-of-fetch jump. The box's own bbox rides along so fuel
+    // resolves from at most two area requests sampled locally, not one
+    // upstream query per hex cell.
+    sampleVegetation(points, signal, (done, total) => onProgress?.(0.1 + 0.6 * (done / Math.max(1, total))),
+      { minLat, minLng, maxLat, maxLng }),
   ]);
   if (signal?.aborted) return null;
   onProgress?.(0.7);

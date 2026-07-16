@@ -76,9 +76,9 @@ const TEST_REGIONS = [
   {
     name: 'Mallee Shrubland (Victoria)',
     points: [
-      { lat: -36.0, lng: 141.0 },
-      { lat: -36.1, lng: 141.1 },
-      { lat: -35.9, lng: 140.9 },
+      { lat: -34.7, lng: 141.2 },
+      { lat: -34.8, lng: 141.3 },
+      { lat: -34.6, lng: 141.1 },
     ],
     expectedDiversity: 'low',
   },

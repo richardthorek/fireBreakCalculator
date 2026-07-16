@@ -792,9 +792,14 @@ html, body {
   }
 
   .analysis-section.collapsed {
-    max-height: 22vh;
-    max-height: 22dvh;
+    /* A little more headroom than the old 22dvh, and the hard clip is gone:
+       the summary strip itself scrolls (below), so the cap lands on a scroll
+       edge instead of slicing a row of text in half (field-reported as
+       "cutting off at the wrong line"). */
+    max-height: 26vh;
+    max-height: 26dvh;
     min-height: 0;
+    overflow: hidden;
   }
 
   .analysis-section.collapsed .header-info {
@@ -819,6 +824,11 @@ html, body {
 
   .analysis-section.collapsed .mobile-compact-summary {
     display: flex;
+    /* Scroll inside the capped strip rather than clipping mid-row. */
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Support/feature-suggestion buttons aren't data — keep them out of the
@@ -844,8 +854,10 @@ html, body {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 0.72rem;
-  line-height: 1.2;
+  /* Bumped from 0.72rem + brighter secondary text — the strip was reported
+     hard to read outdoors on a phone. */
+  font-size: 0.8rem;
+  line-height: 1.3;
 }
 
 .mcs-distance {
@@ -854,7 +866,7 @@ html, body {
 }
 
 .mcs-slope-text {
-  color: #94a3b8;
+  color: #b8c4d4;
 }
 
 .mcs-slope-bar {
@@ -879,10 +891,10 @@ html, body {
   gap: 4px;
   flex: 0 0 auto;
   background: rgba(30,36,51,0.85);
-  border: 1px solid #2a3442;
+  border: 1px solid #364356;
   border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 0.68rem;
+  padding: 4px 9px;
+  font-size: 0.76rem;
   line-height: 1.3;
   color: #f5f7fa;
   white-space: nowrap;
@@ -2617,6 +2629,62 @@ button:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Optimizer progress ON the map — phones usually have the analysis panel
+   collapsed, hiding its % counter, so the map carries phase + % itself.
+   Top-centred, clear of the search control (left) and zoom controls
+   (right), safe-area aware. */
+.map-progress-pill {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 995;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(86vw, 420px);
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  color: #f5f7fa;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.map-progress-pill > span:not(.map-progress-pill-spinner) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-progress-pill strong {
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-progress-pill-spinner {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(125, 211, 252, 0.3);
+  border-top-color: #7dd3fc;
+  animation: map-pill-spin 0.9s linear infinite;
+}
+
+@keyframes map-pill-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-progress-pill-spinner { animation: none; }
 }
 
 .analyzing-badge {
@@ -4840,6 +4908,7 @@ button:focus {
 
 .segment-confidence { color: #64748b; font-size: 0.68rem; }
 .segment-estimated-flag { color: #F6A609; font-weight: 700; margin-left: 0.15rem; cursor: help; }
+.segment-modified-flag { color: #EF4444; font-weight: 700; margin-left: 0.15rem; cursor: help; }
 
 .segment-locate-col { text-align: right; }
 

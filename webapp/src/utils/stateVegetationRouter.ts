@@ -14,8 +14,8 @@ import { StateVegetationResult, StateVegetationService } from './stateVegetation
 import { VegetationType } from '../config/classification';
 
 // Import existing services (NSW is implemented, others are placeholders for now)
-import { fetchNSWVegetation as fetchNSWRaw } from './nswVegetationService';
-import { fetchNVISVegetation as fetchNVISRaw } from './nvisVegetationService';
+import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, fetchNSWVegetationAreaTiled, pointInRings, NSWAreaFeature } from './nswVegetationService';
+import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, fetchNVISAreaRastersTiled, rasterCodeAt, mapMVGCode, isModifiedOrLowFidelityMVG, NVISAreaRaster } from './nvisVegetationService';
 
 // Service registry: will be populated with state services as they're implemented
 const stateServices: Partial<Record<AustralianState, StateVegetationService>> = {
@@ -65,6 +65,7 @@ function adaptNVISResult(rawResult: Awaited<ReturnType<typeof fetchNVISRaw>>): S
     displayLabel: rawResult.mvgName || 'NVIS vegetation',
     source: `NVIS MVG ${rawResult.mvgCode || '?'} (${rawResult.mvgName})`,
     state: 'AU', // National dataset, not state-specific
+    isModifiedOrLowFidelity: rawResult.mvgCode ? isModifiedOrLowFidelityMVG(rawResult.mvgCode) : undefined,
     rawAttributes: { mvgCode: rawResult.mvgCode, mvgName: rawResult.mvgName },
   };
 }
@@ -104,6 +105,19 @@ export async function fetchStateVegetation(lat: number, lng: number): Promise<St
     return null;
   }
 
+  // Area data fetched earlier this session already covers this point —
+  // resolve locally, no network. 'nodata' is an authoritative empty answer
+  // (ocean/gap), cached as null exactly like a failed point query would be.
+  const fromArea = resolveFromCachedAreas(lat, lng);
+  if (fromArea === 'nodata') {
+    queryCache[cacheKey] = null;
+    return null;
+  }
+  if (fromArea) {
+    queryCache[cacheKey] = fromArea;
+    return fromArea;
+  }
+
   const state = determineState(lat, lng);
   let result: StateVegetationResult | null = null;
 
@@ -137,6 +151,139 @@ export async function fetchStateVegetation(lat: number, lng: number): Promise<St
   // Cache the result (may be null) to avoid repeated failed queries
   queryCache[cacheKey] = result || null;
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Area mode: resolve fuel for a whole corridor/box from at most TWO upstream
+// requests (one NSW envelope feature-query + one NVIS export image), sampled
+// locally, instead of one query per point. See the WHY blocks in the two
+// service modules — per-point querying scales linearly with search area and
+// would overwhelm free government servers at any real corridor size.
+// ---------------------------------------------------------------------------
+
+export interface AreaVegetationBounds {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
+
+/** A local, synchronous fuel lookup built from area data. Returns the
+ *  resolved result, 'nodata' when the authoritative source POSITIVELY
+ *  reports no data there (ocean/gap — don't waste a point query), or null
+ *  when the area data simply doesn't cover the point (caller may fall back
+ *  to a per-point query). */
+export type AreaVegetationResolver = (lat: number, lng: number) => StateVegetationResult | 'nodata' | null;
+
+// Fetched area data is RETAINED for the session (bounded FIFO) and consulted
+// by every subsequent lookup — including plain fetchStateVegetation point
+// calls. Once one consolidated call has pulled the corridor's data, all the
+// granular processing that follows (the optimizer's finer refine/polish
+// passes, per-segment analysis along the applied line, re-runs) samples that
+// locally-held data for free instead of going back upstream.
+const areaCache: { key: string; bounds: AreaVegetationBounds; resolve: AreaVegetationResolver }[] = [];
+const AREA_CACHE_MAX = 6;
+
+const areaKey = (b: AreaVegetationBounds) =>
+  [b.minLat, b.minLng, b.maxLat, b.maxLng].map(v => v.toFixed(3)).join(',');
+
+/** Resolve a point from any retained area dataset. Newest first (later
+ *  fetches are likelier to reflect what the user is working on now). A
+ *  dataset that covers the bbox but can't resolve the point (unmatched
+ *  pixel / PIP miss) falls through to older datasets, then to null. */
+export function resolveFromCachedAreas(lat: number, lng: number): StateVegetationResult | 'nodata' | null {
+  for (let i = areaCache.length - 1; i >= 0; i--) {
+    const { bounds, resolve } = areaCache[i];
+    if (lat >= bounds.minLat && lat <= bounds.maxLat && lng >= bounds.minLng && lng <= bounds.maxLng) {
+      const r = resolve(lat, lng);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+/** Clear retained area datasets (tests / config changes). @internal */
+export function _clearAreaVegetationCache() {
+  areaCache.length = 0;
+}
+
+/**
+ * Fetch area vegetation for a bbox: NSW SVTM polygons (high-fidelity overlay,
+ * where the bbox touches NSW) and the NVIS national raster, fetched in
+ * parallel. Returns null when neither source could be loaded — callers then
+ * use the per-point fallback chain unchanged.
+ */
+export async function fetchStateVegetationArea(bounds: AreaVegetationBounds, signal?: AbortSignal): Promise<AreaVegetationResolver | null> {
+  const midLat = (bounds.minLat + bounds.maxLat) / 2;
+  const midLng = (bounds.minLng + bounds.maxLng) / 2;
+  if (!isInAustralia(midLat, midLng)) return null;
+
+  // Same bounds already fetched this session — the data is local, reuse it.
+  const key = areaKey(bounds);
+  const cached = areaCache.find(e => e.key === key);
+  if (cached) return cached.resolve;
+
+  // Tiled path first: quantised tiles via the shared cross-user blob cache
+  // (`/api/vegetation/tile`), so during an incident the government servers
+  // are hit once per tile — not once per user. Direct-to-service single-bbox
+  // queries remain the fallback when the API is unreachable (offline-capable
+  // deployments, local dev) or the bbox exceeds the tile fan-out caps.
+  let nsw: NSWAreaFeature[] | null = null;
+  let rasters: NVISAreaRaster[] = [];
+  try {
+    let nvisTiled: NVISAreaRaster[] | null = null;
+    [nsw, nvisTiled] = await Promise.all([
+      fetchNSWVegetationAreaTiled(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+      fetchNVISAreaRastersTiled(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+    ]);
+    if (nvisTiled) rasters = nvisTiled;
+
+    const [nswDirect, nvisDirect] = await Promise.all([
+      nsw ? Promise.resolve(null) : fetchNSWVegetationArea(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+      rasters.length > 0 ? Promise.resolve(null) : fetchNVISAreaRaster(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+    ]);
+    if (!nsw && nswDirect) nsw = nswDirect;
+    if (rasters.length === 0 && nvisDirect) rasters = [nvisDirect];
+  } catch {
+    return null;
+  }
+  if ((!nsw || nsw.length === 0) && rasters.length === 0) return null;
+
+  const resolve = (lat: number, lng: number): StateVegetationResult | 'nodata' | null => {
+    // Same precedence as the per-point chain: state service first, NVIS after.
+    if (nsw) {
+      for (const f of nsw) {
+        if (pointInRings(lng, lat, f.rings)) {
+          const adapted = adaptNSWResult(f.result);
+          if (adapted) return adapted;
+        }
+      }
+    }
+    for (const nvis of rasters) {
+      const code = rasterCodeAt(nvis, lat, lng);
+      if (code === 'nodata') return 'nodata';
+      if (code != null) {
+        const mapped = mapMVGCode(code);
+        if (mapped) {
+          return {
+            vegetationType: mapped.vegetation,
+            confidence: nvis.coarse ? mapped.confidence * 0.85 : mapped.confidence,
+            displayLabel: mapped.name,
+            source: `NVIS MVG ${code} (${mapped.name})${nvis.coarse ? ' — coarse area sample' : ''}`,
+            state: 'AU',
+            rawAttributes: { mvgCode: code, mvgName: mapped.name },
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  // Retain for the session so all later granular lookups — finer optimizer
+  // passes, per-segment analysis, re-runs — sample this data locally.
+  areaCache.push({ key, bounds, resolve });
+  if (areaCache.length > AREA_CACHE_MAX) areaCache.shift();
+  return resolve;
 }
 
 /**
