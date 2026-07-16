@@ -99,7 +99,7 @@ async function fetchSession(token: string): Promise<SuiteSession | null> {
 export async function signIn(username: string, password: string): Promise<SuiteSession> {
   let res: Response;
   try {
-    res = await fetch(`${SUITE_AUTH_URL}/api/auth/login`, {
+    res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),

@@ -138,7 +138,7 @@ const fetchTerrainTile = (z: number, x: number, y: number, token: string, tileSi
         const canvas = document.createElement('canvas');
         canvas.width = tileSize;
         canvas.height = tileSize;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) return reject(new Error('Canvas 2D context unavailable'));
         ctx.drawImage(img, 0, 0);
         const entry = { canvas, ctx };
