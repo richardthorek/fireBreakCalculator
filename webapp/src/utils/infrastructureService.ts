@@ -49,6 +49,24 @@ export interface InfrastructureData {
   available: boolean;
 }
 
+/**
+ * A synchronous, zero-network trail source — the Mapbox vector tiles already
+ * loaded on the map (see mapboxTrails.ts). Registered by the map layer and
+ * consulted BEFORE any network call, so a corridor whose road tiles are already
+ * loaded resolves instantly and offline. Returns null when it can't answer for
+ * this bbox (source/tiles not loaded), so we fall through to the proxy/direct
+ * path to disambiguate "no roads" from "not loaded". Defaults to unset →
+ * behaviour is exactly the network path (used by tests and non-map callers).
+ */
+export type LocalTrailProvider = (
+  south: number, west: number, north: number, east: number
+) => InfrastructureTrail[] | null;
+
+let localTrailProvider: LocalTrailProvider | null = null;
+export function setLocalTrailProvider(provider: LocalTrailProvider | null): void {
+  localTrailProvider = provider;
+}
+
 const env = (import.meta as any).env ?? {};
 
 /** Our own backend Overpass proxy — same-origin, so no CORS, with a shared
@@ -131,6 +149,24 @@ export async function fetchCorridorInfrastructure(
   east: number,
   signal?: AbortSignal
 ): Promise<InfrastructureData> {
+  // Zero-network first: the Mapbox road tiles already on the map (same OSM
+  // lineage as Overpass, CORS-clean, available offline once cached). Only a
+  // NON-EMPTY result is trusted — an empty set can't tell "no roads" from
+  // "tiles not loaded", so that case falls through to the network below. Not
+  // cached here: it's synchronous and free to recompute, and caching a partial
+  // (few-tiles-loaded) answer would lock it in for the session.
+  if (localTrailProvider) {
+    try {
+      const local = localTrailProvider(south, west, north, east);
+      if (local && local.length > 0) {
+        logger.debug(`Corridor trails from Mapbox tiles: ${local.length} ways`);
+        return { trails: local, available: true };
+      }
+    } catch (e) {
+      logger.warn('Local (Mapbox) trail provider failed, falling back to network', e);
+    }
+  }
+
   const key = bboxKey(south, west, north, east);
   const cached = bboxCache.get(key);
   if (cached) return cached;

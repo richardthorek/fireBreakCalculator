@@ -105,8 +105,11 @@ direct-to-government path.
 
 Server-side proxy for the OSM/Overpass corridor trail lookup the optimizer uses
 (reusable trails/roads as discounted edges + the snap-to-trail path
-refinement). The browser calls this same-origin endpoint instead of the public
-Overpass instances directly: those instances omit `Access-Control-Allow-Origin`
+refinement). **Note the client tries the Mapbox vector tiles already on the map
+FIRST** (`mapboxTrails.ts` — same OSM lineage, zero-network, offline-capable)
+and only calls this proxy when those tiles don't cover the corridor. The browser
+calls this same-origin endpoint instead of the public Overpass instances
+directly: those instances omit `Access-Control-Allow-Origin`
 on their rate-limited/error responses, so a direct browser call that hits a
 429/504/timeout is surfaced as an opaque CORS failure and the whole trail lookup
 dies. The server→Overpass hop has no CORS, and one server IP with a short

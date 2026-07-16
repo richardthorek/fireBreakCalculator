@@ -12,6 +12,8 @@ import { SearchControl } from './SearchControl';
 import { phaseMessage } from './AdvisorPanel';
 import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
+import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
+import { setLocalTrailProvider } from '../utils/infrastructureService';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -612,6 +614,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     map.on('style.load', () => {
       const style = map.getStyle();
       logger.info(`Hosted style loaded (${(style.layers || []).length} layers)`);
+      // Add the Mapbox Streets vector road source (invisible query layer) so the
+      // optimizer can read corridor trails straight from the vector tiles the
+      // map already loads — zero extra network, no CORS, works offline once the
+      // area is cached. Registered as the infrastructure service's primary
+      // trail source; it falls back to the backend Overpass proxy whenever this
+      // returns nothing (tiles not loaded for the corridor).
+      ensureStreetsSource(map);
+      setLocalTrailProvider((s, w, n, e) => extractCorridorTrails(map, s, w, n, e));
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
@@ -643,7 +653,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       });
     });
 
-    return () => { map.remove(); };
+    return () => {
+      // Drop the map-backed trail provider so a stale map instance is never
+      // queried after unmount (the optimizer would then use the network path).
+      setLocalTrailProvider(null);
+      map.remove();
+    };
     })();
   }, []);
 
