@@ -33,7 +33,8 @@ import { VegetationType } from '../config/classification';
 import { LatLng } from './chainage';
 import { calculateDistance, calculateSlope, sampleElevationsBatch } from './slopeCalculation';
 import { fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureTrail } from './infrastructureService';
-import { fetchStateVegetation, fetchStateVegetationArea, AreaVegetationBounds } from './stateVegetationRouter';
+import { fetchStateVegetation, fetchStateVegetationArea, resolveFromCachedAreas, AreaVegetationBounds } from './stateVegetationRouter';
+import { refinePath } from './pathRefinement';
 import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateCorridorHexes, polylineLengthLocal, LocalProjection,
@@ -255,6 +256,28 @@ export interface RawHeatmapCell {
   vegetation: VegetationType;
   onTrail: boolean;
   estimated: boolean;
+}
+
+/**
+ * Post-search refinement parameters (see pathRefinement.ts). The hex search
+ * routes at grid resolution; these turn its coarse centre-to-centre line into a
+ * realistic one using data already held locally, so refinement adds no network
+ * cost. Kept deliberately conservative — refinement smooths and snaps WITHIN
+ * the corridor the search already priced, it does not re-route.
+ */
+const REFINE_RESAMPLE_M = 20;      // densify to ~20 m before snapping/nudging
+const REFINE_SNAP_M = 35;          // snap onto a trail within 35 m …
+const REFINE_SNAP_ANGLE_DEG = 40;  // … only when running roughly parallel to it
+const REFINE_FUEL_NUDGE_M = 8;     // free vertices may shift ≤8 m toward lower fuel
+
+/** Zero-network local fuel weight for a point, from the session-retained area
+ *  vegetation data — the refinement's fuel-aware smoothing samples this between
+ *  hex centres. Returns null when no retained dataset covers/resolves the point
+ *  (refinement then leaves that vertex where the search put it). */
+function localFuelCostAt(lat: number, lng: number): number | null {
+  const r = resolveFromCachedAreas(lat, lng);
+  if (!r || r === 'nodata') return null;
+  return VEGETATION_COST[r.vegetationType] ?? null;
 }
 
 /** Vegetation cache keyed at ~100 m — matches the NVIS raster resolution.
@@ -804,6 +827,9 @@ interface LegHexResult {
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
   nodesEvaluated: number;
+  /** OSM trails fetched for this leg's corridor — reused by the post-search
+   *  path refinement to snap the line onto roads it chose to follow. */
+  trails: InfrastructureTrail[];
 }
 
 /** Wide-pass half-width for a leg — aggressive spread so a single run finds
@@ -855,7 +881,7 @@ async function optimizeLegHex(
     // than spend more data on a result nobody will use. Matters in the
     // field: this app is built for poor/no-reception use, so a cancelled
     // optimize shouldn't keep making requests.
-    return { optimizedNodes: [], originalNodes: [], heatmapCells: [], usedEstimatedData: false, infrastructureAvailable: true, nodesEvaluated: 0 };
+    return { optimizedNodes: [], originalNodes: [], heatmapCells: [], usedEstimatedData: false, infrastructureAvailable: true, nodesEvaluated: 0, trails: [] };
   }
 
   // One infrastructure fetch per leg (widest corridor bbox), reused by every
@@ -959,6 +985,7 @@ async function optimizeLegHex(
       usedEstimatedData,
       infrastructureAvailable: infra.available,
       nodesEvaluated,
+      trails: infra.trails,
     };
   }
 
@@ -969,6 +996,7 @@ async function optimizeLegHex(
     usedEstimatedData,
     infrastructureAvailable: infra.available,
     nodesEvaluated,
+    trails: infra.trails,
   };
 }
 
@@ -1272,7 +1300,27 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
     }
     optimizedNodeSeqs.push(legResult.optimizedNodes);
     originalNodeSeqs.push(legResult.originalNodes);
-    for (const n of legResult.optimizedNodes.slice(1)) optimizedCoords.push({ lat: n.lat, lng: n.lng });
+
+    // Refine this leg's coarse (hex-centre) line into a realistic one: densify,
+    // snap onto any road it chose to follow, and nudge free vertices toward
+    // lower fuel using the locally-retained vegetation data — all zero-network.
+    // Per-leg (not whole-route) so each leg's endpoints, which ARE the user's
+    // drawn waypoints, stay exactly where they were drawn. The effort/length
+    // stats stay on the search nodes above: refinement is a geometric
+    // presentation pass within the corridor the search already priced, not a
+    // re-route, so it must not restate the costed result.
+    const legCoords = legResult.optimizedNodes.map(n => ({ lat: n.lat, lng: n.lng }));
+    const refinedLeg = legCoords.length >= 2
+      ? refinePath(legCoords, legResult.trails, {
+          resampleM: REFINE_RESAMPLE_M,
+          snapThresholdM: REFINE_SNAP_M,
+          maxSnapAngleDeg: REFINE_SNAP_ANGLE_DEG,
+          snapToTrails: true,
+          maxFuelNudgeM: REFINE_FUEL_NUDGE_M,
+          fuelCostAt: localFuelCostAt,
+        })
+      : legCoords;
+    for (const p of refinedLeg.slice(1)) optimizedCoords.push(p);
 
     onProgress?.(searchBase + searchSpan * ((leg + 1) / legCount), 'search');
   }
@@ -1281,7 +1329,11 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
   const original = pathStats(originalNodeSeqs.flat());
   const improvement = original.effortScore > 0 ? (original.effortScore - optimized.effortScore) / original.effortScore : 0;
 
-  const simplified = simplifyPath(optimizedCoords, 15);
+  // Tighter tolerance than the old coarse-path default (was 15): the coords are
+  // now refined (trail-snapped, fuel-nudged) at ~20 m spacing, so a lighter
+  // Douglas-Peucker preserves the road-following curves instead of flattening
+  // them back toward the hex-centre zig-zag.
+  const simplified = simplifyPath(optimizedCoords, 8);
 
   onScanEvent?.({ phase: 'done', progress: 1 });
 

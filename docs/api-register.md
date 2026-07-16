@@ -87,7 +87,8 @@ interface VegetationMapping {
 Blob-backed read-through cache of the external vegetation area data, keyed by
 quantised tiles so different users' overlapping corridors hit identical cache
 keys (first user at an incident pays the upstream fetch; everyone after reads
-the blob — container `vegtiles`, 90-day lifecycle expiry). Tile grids MUST
+the blob — container `vegtiles`, 365-day lifecycle expiry, so one fetch caches a
+tile for a whole fire season). Tile grids MUST
 match `webapp/src/utils/vegetationTiles.ts`: NVIS 0.5°/tile (500×500 px
 native-resolution export PNG), NSW 0.05°/tile (paginated PCT polygon JSON).
 Rate-limited (`vegtile` tag); responses carry `Cache-Control: public,
