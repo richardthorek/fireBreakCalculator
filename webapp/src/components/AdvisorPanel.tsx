@@ -52,8 +52,10 @@ const severityLabel: Record<PlanInsight['severity'], string> = {
   info: 'Note',
 };
 
-/** Phase-aware progress messages: plain language instead of algorithm jargon. */
-const phaseMessage = (phase?: string, progress?: number): string => {
+/** Phase-aware progress messages: plain language instead of algorithm jargon.
+ *  Exported for the on-map progress pill (MapboxMapView), which shows the
+ *  same copy where the panel may be collapsed (mobile). */
+export const phaseMessage = (phase?: string, progress?: number): string => {
   switch (phase) {
     case 'grid': return 'Laying out a survey grid over your corridor…';
     // Whole-route slope + fuel sampling — the long haul on a first run. Its

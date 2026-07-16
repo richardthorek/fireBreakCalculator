@@ -15,6 +15,7 @@ import './functions/planDelete';
 import './functions/planList';
 import './functions/planUpdate';
 import './functions/vegetationMappingCreate';
+import './functions/vegetationTile';
 import './functions/vegetationMappingDelete';
 import './functions/vegetationMappingList';
 import './functions/vegetationMappingUpdate';

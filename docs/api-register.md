@@ -82,6 +82,24 @@ interface VegetationMapping {
 }
 ```
 
+## Vegetation Tile Cache Endpoints (shared cross-user cache)
+
+Blob-backed read-through cache of the external vegetation area data, keyed by
+quantised tiles so different users' overlapping corridors hit identical cache
+keys (first user at an incident pays the upstream fetch; everyone after reads
+the blob — container `vegtiles`, 90-day lifecycle expiry). Tile grids MUST
+match `webapp/src/utils/vegetationTiles.ts`: NVIS 0.5°/tile (500×500 px
+native-resolution export PNG), NSW 0.05°/tile (paginated PCT polygon JSON).
+Rate-limited (`vegtile` tag); responses carry `Cache-Control: public,
+max-age=604800` and an `X-Tile-Cache: hit|miss` diagnostic header. On
+upstream failure returns `502` and the client falls back to its
+direct-to-government path.
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/vegetation/tile/{source}/{tx}/{ty}` | GET | One cached tile. `source` = `nvis` (export PNG) or `nsw` (`{ features: [...] }` merged pages, `{ exceeded: true }` when the tile is denser than the pagination cap — uncached, client skips the tile) | None | `image/png` or JSON | No |
+| `/api/vegetation/legend` | GET | Cached NVIS `legend?f=json` passthrough (colour→MVG decode contract) | None | JSON | No |
+
 ## AI Assistant Endpoints
 
 | Endpoint | Method | Purpose | Request Body | Response | Auth Required |

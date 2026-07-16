@@ -12,6 +12,7 @@
 import { logger } from './logger';
 import { mapFormationToVegetationType, _clearVegetationMappingCache } from './vegetationMappingHelper';
 import { VegetationType } from '../config/classification';
+import { tilesCovering, tileUrl, NSW_TILE_DEG, MAX_NSW_TILES } from './vegetationTiles';
 
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';
 const FEATURE_LAYER_ID = 3;
@@ -183,6 +184,8 @@ export interface NSWAreaFeature {
   /** ArcGIS polygon rings (outer + holes), [lng, lat] vertex pairs. */
   rings: number[][][];
   result: NSWVegResultRaw;
+  /** Upstream OBJECTID when known — used to dedupe polygons straddling tiles. */
+  objectId?: number;
 }
 
 /** Even-odd point-in-polygon over all rings (outer boundaries and holes both
@@ -255,6 +258,88 @@ export async function fetchNSWVegetationArea(
     return out;
   } catch (e) {
     logger.warn('NSW area query failed', e);
+    return null;
+  }
+}
+
+// Classified tile feature sets, memoised for the session (same rationale as
+// the NVIS tile raster cache — repeat/nudged corridors re-use the work).
+const nswTileCache = new Map<string, NSWAreaFeature[]>();
+
+/**
+ * Fetch PCT polygons for a bbox as CACHED TILES via the shared cross-user
+ * tile API (`/api/vegetation/tile/nsw/{tx}/{ty}` — blob-backed, paginated
+ * server-side). A tile the server reports as `exceeded` is simply skipped:
+ * absent coverage falls through to the NVIS raster (an authoritative,
+ * lower-fidelity answer), which cannot MISclassify the way a partial
+ * polygon set would. Returns null when outside NSW, the API is
+ * unreachable, or the bbox needs more than MAX_NSW_TILES — callers fall
+ * back to the direct single-envelope path.
+ */
+export async function fetchNSWVegetationAreaTiled(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NSWAreaFeature[] | null> {
+  if (maxLat < NSW_BBOX.minLat || minLat > NSW_BBOX.maxLat || maxLng < NSW_BBOX.minLng || minLng > NSW_BBOX.maxLng) return null;
+  const tiles = tilesCovering({ minLat, minLng, maxLat, maxLng }, NSW_TILE_DEG, MAX_NSW_TILES);
+  if (!tiles || tiles.length === 0) return null;
+
+  const out: NSWAreaFeature[] = [];
+  const seenObjectIds = new Set<number>();
+  const pushUnique = (feats: NSWAreaFeature[]) => {
+    for (const f of feats) {
+      // A polygon straddling tile borders arrives from several tiles —
+      // dedupe by OBJECTID (kept on the tile payloads for exactly this).
+      if (f.objectId != null) {
+        if (seenObjectIds.has(f.objectId)) continue;
+        seenObjectIds.add(f.objectId);
+      }
+      out.push(f);
+    }
+  };
+
+  try {
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    let failed = false;
+    const worker = async () => {
+      while (cursor < tiles.length && !failed) {
+        if (signal?.aborted) { failed = true; return; }
+        const t = tiles[cursor++];
+        const key = `${t.tx},${t.ty}`;
+        const cached = nswTileCache.get(key);
+        if (cached) { pushUnique(cached); continue; }
+        const resp = await fetch(tileUrl('nsw', t), { signal });
+        if (!resp.ok) { failed = true; return; }
+        const json = await resp.json();
+        if (json?.exceeded) { nswTileCache.set(key, []); continue; }
+        if (!Array.isArray(json?.features)) {
+          // Unexpected payload is a failure, not "no polygons here" —
+          // reading it as empty would silently drop SVTM fidelity.
+          failed = true;
+          return;
+        }
+        const feats: any[] = json.features;
+        const classified: NSWAreaFeature[] = [];
+        for (const f of feats) {
+          const rings = f?.geometry?.rings;
+          if (!Array.isArray(rings) || rings.length === 0) continue;
+          const { OBJECTID, vegClass, vegForm, PCTName } = (f.attributes ?? {}) as Record<string, any>;
+          const result = await classifyNSWAttributes(vegClass ?? null, vegForm ?? null, PCTName ?? null);
+          if (result) classified.push({ rings, result, objectId: typeof OBJECTID === 'number' ? OBJECTID : undefined });
+        }
+        nswTileCache.set(key, classified);
+        pushUnique(classified);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tiles.length) }, worker));
+    if (failed) return null;
+    return out;
+  } catch (e) {
+    logger.debug('NSW tile API unavailable, falling back to direct envelope query', e);
     return null;
   }
 }

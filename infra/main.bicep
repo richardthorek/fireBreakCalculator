@@ -117,6 +117,55 @@ resource savedPlansTable 'Microsoft.Storage/storageAccounts/tableServices/tables
   name: 'savedplans'
 }
 
+// Shared cross-user vegetation tile cache (see api/src/services/
+// vegetationTileService.ts): raw NVIS export PNGs / NSW SVTM polygon JSON,
+// keyed by quantised tile. First user at an incident pays the upstream
+// fetch; everyone after reads the blob.
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource vegTilesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'vegtiles'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// Vegetation changes on a timescale of years — a 365-day expiry means one
+// upstream fetch effectively caches a tile for a whole fire season and
+// beyond (the upstream canary watches for contract drift in between).
+resource storageLifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          name: 'vegtiles-expiry'
+          enabled: true
+          type: 'Lifecycle'
+          definition: {
+            filters: {
+              blobTypes: ['blockBlob']
+              prefixMatch: ['vegtiles/']
+            }
+            actions: {
+              baseBlob: {
+                delete: {
+                  daysAfterModificationGreaterThan: 365
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
 // --- Static Web App (frontend + managed Functions API) ----------------------
 
 resource swa 'Microsoft.Web/staticSites@2023-12-01' = {

@@ -14,8 +14,8 @@ import { StateVegetationResult, StateVegetationService } from './stateVegetation
 import { VegetationType } from '../config/classification';
 
 // Import existing services (NSW is implemented, others are placeholders for now)
-import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, pointInRings, NSWAreaFeature } from './nswVegetationService';
-import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, rasterCodeAt, mapMVGCode, NVISAreaRaster } from './nvisVegetationService';
+import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, fetchNSWVegetationAreaTiled, pointInRings, NSWAreaFeature } from './nswVegetationService';
+import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, fetchNVISAreaRastersTiled, rasterCodeAt, mapMVGCode, NVISAreaRaster } from './nvisVegetationService';
 
 // Service registry: will be populated with state services as they're implemented
 const stateServices: Partial<Record<AustralianState, StateVegetationService>> = {
@@ -222,17 +222,31 @@ export async function fetchStateVegetationArea(bounds: AreaVegetationBounds, sig
   const cached = areaCache.find(e => e.key === key);
   if (cached) return cached.resolve;
 
+  // Tiled path first: quantised tiles via the shared cross-user blob cache
+  // (`/api/vegetation/tile`), so during an incident the government servers
+  // are hit once per tile — not once per user. Direct-to-service single-bbox
+  // queries remain the fallback when the API is unreachable (offline-capable
+  // deployments, local dev) or the bbox exceeds the tile fan-out caps.
   let nsw: NSWAreaFeature[] | null = null;
-  let nvis: NVISAreaRaster | null = null;
+  let rasters: NVISAreaRaster[] = [];
   try {
-    [nsw, nvis] = await Promise.all([
-      fetchNSWVegetationArea(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
-      fetchNVISAreaRaster(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+    let nvisTiled: NVISAreaRaster[] | null = null;
+    [nsw, nvisTiled] = await Promise.all([
+      fetchNSWVegetationAreaTiled(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+      fetchNVISAreaRastersTiled(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
     ]);
+    if (nvisTiled) rasters = nvisTiled;
+
+    const [nswDirect, nvisDirect] = await Promise.all([
+      nsw ? Promise.resolve(null) : fetchNSWVegetationArea(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+      rasters.length > 0 ? Promise.resolve(null) : fetchNVISAreaRaster(bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng, signal).catch(() => null),
+    ]);
+    if (!nsw && nswDirect) nsw = nswDirect;
+    if (rasters.length === 0 && nvisDirect) rasters = [nvisDirect];
   } catch {
     return null;
   }
-  if ((!nsw || nsw.length === 0) && !nvis) return null;
+  if ((!nsw || nsw.length === 0) && rasters.length === 0) return null;
 
   const resolve = (lat: number, lng: number): StateVegetationResult | 'nodata' | null => {
     // Same precedence as the per-point chain: state service first, NVIS after.
@@ -244,7 +258,7 @@ export async function fetchStateVegetationArea(bounds: AreaVegetationBounds, sig
         }
       }
     }
-    if (nvis) {
+    for (const nvis of rasters) {
       const code = rasterCodeAt(nvis, lat, lng);
       if (code === 'nodata') return 'nodata';
       if (code != null) {

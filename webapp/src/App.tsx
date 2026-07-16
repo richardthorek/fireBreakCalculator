@@ -214,13 +214,18 @@ const App: React.FC = () => {
         },
         onScanEvent: (event) => {
           if (event.phase === 'grid' && event.data?.cells) {
+            let added = false;
             for (const c of event.data.cells) {
               const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
               if (!scanCellsMapRef.current.has(key)) {
                 scanCellsMapRef.current.set(key, { polygon: c.polygon, costNormalized: 0, costNormalizedObjective: 0, revealed: false });
+                added = true;
               }
             }
-            setScanCells(Array.from(scanCellsMapRef.current.values()));
+            // Per-leg wide passes re-announce their slice of the shared grid;
+            // when nothing is new, skip the state churn (it used to make the
+            // rendered corridor blink at each leg boundary).
+            if (added) setScanCells(Array.from(scanCellsMapRef.current.values()));
           } else if (event.phase === 'cells' && event.data?.cells) {
             for (const c of event.data.cells) {
               const key = `${c.center.lat.toFixed(6)},${c.center.lng.toFixed(6)}`;
@@ -239,8 +244,11 @@ const App: React.FC = () => {
           } else if (event.phase === 'search' && event.data?.bestPath) {
             setScanBestPath(event.data.bestPath);
           } else if (event.phase === 'done') {
-            scanCellsMapRef.current.clear();
-            setScanCells([]);
+            // Clear only the frontier line. The coloured scan cells stay up
+            // so the final heatmap crossfades OVER them — clearing here made
+            // the whole corridor vanish for the ~1s until the result
+            // rendered (field-reported). A delayed effect below clears them
+            // once the heatmap's fade-in has finished.
             setScanBestPath([]);
           }
         },
@@ -269,6 +277,19 @@ const App: React.FC = () => {
     // The map will emit onLineChange for the new geometry, which resets the
     // optimizer state (handleLineCoordsChange) and re-runs all analyses.
   }, [optimizerResult]);
+
+  // Once the final heatmap has faded in (900 ms) over the still-rendered
+  // scan cells, retire the scan layer quietly — the two show identical
+  // colours by then, so this swap is invisible. Clearing at the moment of
+  // completion instead made the whole corridor vanish and fade back.
+  useEffect(() => {
+    if (optimizerStatus !== 'done') return;
+    const timer = window.setTimeout(() => {
+      scanCellsMapRef.current.clear();
+      setScanCells([]);
+    }, 1100);
+    return () => window.clearTimeout(timer);
+  }, [optimizerStatus]);
 
   const handleDismissOptimized = useCallback(() => {
     optimizeAbortRef.current?.abort();
@@ -824,8 +845,12 @@ const App: React.FC = () => {
             optimizerScanning={optimizerStatus === 'running'}
             optimizerHeatmap={optimizerStatus === 'done' && optimizerResult ? optimizerResult.heatmap : null}
             optimizerProgress={optimizerProgress}
+            optimizerPhase={optimizerPhase}
             heatmapColorMode={heatmapColorMode}
-            scanCells={optimizerStatus === 'running' ? scanCells : null}
+            // Scan cells stay up through 'done' so the final heatmap fades
+            // in over them (a delayed effect clears them after the fade);
+            // clearing at 'running'→'done' blanked the corridor for ~1s.
+            scanCells={optimizerStatus === 'running' || optimizerStatus === 'done' ? scanCells : null}
             scanBestPath={optimizerStatus === 'running' ? scanBestPath : null}
             areaReconActive={areaReconActive}
             onAreaReconActiveChange={setAreaReconActive}

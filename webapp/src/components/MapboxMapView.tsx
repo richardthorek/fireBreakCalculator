@@ -9,6 +9,7 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
 import { logger } from '../utils/logger';
 import { SearchControl } from './SearchControl';
+import { phaseMessage } from './AdvisorPanel';
 import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 
@@ -89,6 +90,8 @@ interface MapboxMapViewProps {
    *  leading edge tracks how far the search has actually gotten instead of
    *  a fixed-period ping-pong. */
   optimizerProgress?: number;
+  /** Optimizer phase name — drives the on-map progress pill's copy. */
+  optimizerPhase?: string;
   /** WP2 — streamed scan cells: grid outlines build out, then colour in as
    *  each cell is sampled. Distinct from `optimizerHeatmap`, which only
    *  appears once the search is fully done. */
@@ -144,6 +147,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   optimizerScanning = false,
   optimizerHeatmap = null,
   optimizerProgress = 0,
+  optimizerPhase,
   heatmapColorMode = 'objective',
   scanCells = null,
   scanBestPath = null,
@@ -1055,11 +1059,28 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       apply();
     }
 
+    // Cleanup cancels only the animation frame — the source/layers persist
+    // across updates (updated in place via setData above). Tearing them down
+    // on every streamed event made the whole corridor visibly blink during
+    // the search (field-reported: "comes up at once then vanishes briefly").
+    // Removal happens in the cells-empty branch above and on unmount below.
     return () => {
       cancelAnimationFrame(raf);
-      remove();
     };
   }, [scanCells, heatmapColorMode]);
+
+  // Unmount-only teardown for the persistent hex-scan source/layers.
+  useEffect(() => {
+    return () => {
+      const map = mapRef.current;
+      if (!map) return;
+      try {
+        if (map.getLayer('hex-scan-outline')) map.removeLayer('hex-scan-outline');
+        if (map.getLayer('hex-scan')) map.removeLayer('hex-scan');
+        if (map.getSource('hex-scan')) map.removeSource('hex-scan');
+      } catch (e) { /* style may already be gone */ }
+    };
+  }, []);
 
   // WP2 — the live Dijkstra frontier's current best-guess path, so
   // pathfinding is visibly crawling the grid rather than appearing only
@@ -1378,6 +1399,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       )}
       {isAnalyzing && (
         <div className="analyzing-badge">Analyzing…</div>
+      )}
+      {/* Optimizer progress ON the map: on phones the analysis panel is
+          usually collapsed and its % counter hidden below the expansion
+          handle, so the map carries the phase + % itself. */}
+      {optimizerScanning && (
+        <div className="map-progress-pill" role="status">
+          <span className="map-progress-pill-spinner" aria-hidden />
+          <span>{phaseMessage(optimizerPhase, optimizerProgress)}</span>
+          <strong>{Math.round(optimizerProgress * 100)}%</strong>
+        </div>
       )}
       {/* transient locating UI */}
       {isLocating && (

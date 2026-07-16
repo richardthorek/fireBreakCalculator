@@ -27,6 +27,7 @@
 
 import { logger } from './logger';
 import { VegetationType } from '../config/classification';
+import { tilesCovering, tileBounds, tileUrl, legendUrl, NVIS_TILE_DEG, MAX_NVIS_TILES } from './vegetationTiles';
 
 const NVIS_MVG_URL =
   (import.meta.env.VITE_NVIS_MVG_URL as string | undefined) ||
@@ -282,6 +283,7 @@ export async function fetchNVISVegetation(lat: number, lng: number): Promise<NVI
 export function _clearNVISCache() {
   Object.keys(cache).forEach((k) => delete cache[k]);
   legendPromise = null;
+  tileRasterCache.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -409,15 +411,24 @@ async function decodeImageBytes(blob: Blob): Promise<{ width: number; height: nu
 
 let legendPromise: Promise<NVISLegendColor[] | null> | null = null;
 
-/** The service's own colour→MVG legend, fetched once per session. A failed
- *  fetch is not cached, so a later run retries. */
+/** The service's own colour→MVG legend, fetched once per session — via the
+ *  shared tile-cache API when reachable (blob-cached across users), falling
+ *  back to the government service directly. A failed fetch is not cached,
+ *  so a later run retries. */
 export function fetchNVISLegend(): Promise<NVISLegendColor[] | null> {
   if (legendPromise) return legendPromise;
   legendPromise = (async (): Promise<NVISLegendColor[] | null> => {
     try {
-      const resp = await fetch(`${NVIS_MVG_URL}/legend?f=json`);
-      if (!resp.ok) return null;
-      const json = await resp.json();
+      let json: any = null;
+      try {
+        const viaApi = await fetch(legendUrl());
+        if (viaApi.ok) json = await viaApi.json();
+      } catch { /* API unreachable — direct below */ }
+      if (!json) {
+        const resp = await fetch(`${NVIS_MVG_URL}/legend?f=json`);
+        if (!resp.ok) return null;
+        json = await resp.json();
+      }
       const layer = (json?.layers ?? []).find((l: any) => l?.layerId === NVIS_LAYER_ID) ?? json?.layers?.[0];
       const items: any[] = layer?.legend ?? [];
       const entries: NVISLegendColor[] = [];
@@ -497,42 +508,114 @@ export async function fetchNVISAreaRaster(
       logger.warn('NVIS export HTTP', resp.status, resp.statusText);
       return null;
     }
-    const decoded = await decodeImageBytes(await resp.blob());
-    if (!decoded) return null;
-
-    const codes = new Int16Array(decoded.width * decoded.height);
-    // The raster has ≤34 distinct colours; memoise colour→code so the match
-    // loop is a map hit per pixel, not 33 distance computations.
-    const colourMemo = new Map<number, number>();
-    let matched = 0;
-    let opaque = 0;
-    for (let i = 0; i < codes.length; i++) {
-      const o = i * 4;
-      if (decoded.data[o + 3] < 128) {
-        codes[i] = -1; // NoData — honest gap, never a fuel class
-        continue;
-      }
-      opaque++;
-      const packed = (decoded.data[o] << 16) | (decoded.data[o + 1] << 8) | decoded.data[o + 2];
-      let code = colourMemo.get(packed);
-      if (code === undefined) {
-        code = matchColorToLegend(decoded.data[o], decoded.data[o + 1], decoded.data[o + 2], legend)?.code ?? 0;
-        colourMemo.set(packed, code);
-      }
-      codes[i] = code;
-      if (code > 0) matched++;
-    }
-    // Opaque pixels that match nothing at all = the render/legend contract
-    // drifted (or the wrong layer rendered). A silent all-estimated corridor
-    // would be worse than slow point queries — discard.
-    if (opaque > 0 && matched === 0) {
-      logger.warn('NVIS export decoded but no pixel matched the legend — falling back to point queries');
-      return null;
-    }
-    logger.debug(`NVIS area raster ${decoded.width}×${decoded.height}, ${matched}/${opaque} opaque pixels matched${coarse ? ' (coarse)' : ''}`);
-    return { minLat, minLng, maxLat, maxLng, width: decoded.width, height: decoded.height, codes, coarse };
+    return await decodeExportBlobToRaster(await resp.blob(), { minLat, minLng, maxLat, maxLng }, legend, coarse);
   } catch (e) {
     logger.warn('NVIS area export failed', e);
+    return null;
+  }
+}
+
+/** Decode an export PNG blob into a code raster. Shared by the direct-bbox
+ *  path above and the tiled path below. Null on decode failure or when no
+ *  opaque pixel matches the legend (contract drift — a silent all-estimated
+ *  area would be worse than slow point queries). */
+async function decodeExportBlobToRaster(
+  blob: Blob,
+  bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  legend: NVISLegendColor[],
+  coarse: boolean
+): Promise<NVISAreaRaster | null> {
+  const decoded = await decodeImageBytes(blob);
+  if (!decoded) return null;
+
+  const codes = new Int16Array(decoded.width * decoded.height);
+  // The raster has ≤34 distinct colours; memoise colour→code so the match
+  // loop is a map hit per pixel, not 33 distance computations.
+  const colourMemo = new Map<number, number>();
+  let matched = 0;
+  let opaque = 0;
+  for (let i = 0; i < codes.length; i++) {
+    const o = i * 4;
+    if (decoded.data[o + 3] < 128) {
+      codes[i] = -1; // NoData — honest gap, never a fuel class
+      continue;
+    }
+    opaque++;
+    const packed = (decoded.data[o] << 16) | (decoded.data[o + 1] << 8) | decoded.data[o + 2];
+    let code = colourMemo.get(packed);
+    if (code === undefined) {
+      code = matchColorToLegend(decoded.data[o], decoded.data[o + 1], decoded.data[o + 2], legend)?.code ?? 0;
+      colourMemo.set(packed, code);
+    }
+    codes[i] = code;
+    if (code > 0) matched++;
+  }
+  if (opaque > 0 && matched === 0) {
+    logger.warn('NVIS export decoded but no pixel matched the legend — falling back');
+    return null;
+  }
+  logger.debug(`NVIS raster ${decoded.width}×${decoded.height}, ${matched}/${opaque} opaque pixels matched${coarse ? ' (coarse)' : ''}`);
+  return { ...bounds, width: decoded.width, height: decoded.height, codes, coarse };
+}
+
+// Decoded tile rasters, memoised for the session: repeat corridors (or a
+// nudged line) re-use the decode, not just the browser's HTTP cache.
+const tileRasterCache = new Map<string, NVISAreaRaster>();
+
+/**
+ * Fetch the MVG raster for a bbox as CACHED TILES via the shared cross-user
+ * tile API (`/api/vegetation/tile/nvis/{tx}/{ty}` — blob-backed, so during
+ * an incident the government server is hit once per tile per 90 days, not
+ * once per user). Tiles are large (0.5° ≈ 55 km at native resolution) so
+ * coverage builds out and minor line adjustments are free. Returns one
+ * raster per tile, or null when the API/decode is unavailable or the bbox
+ * needs more than MAX_NVIS_TILES — callers fall back to the direct
+ * single-export path.
+ */
+export async function fetchNVISAreaRastersTiled(
+  minLat: number,
+  minLng: number,
+  maxLat: number,
+  maxLng: number,
+  signal?: AbortSignal
+): Promise<NVISAreaRaster[] | null> {
+  if (maxLat <= minLat || maxLng <= minLng) return null;
+  if (maxLat < AUS_BBOX.minLat || minLat > AUS_BBOX.maxLat || maxLng < AUS_BBOX.minLng || minLng > AUS_BBOX.maxLng) return null;
+  const tiles = tilesCovering({ minLat, minLng, maxLat, maxLng }, NVIS_TILE_DEG, MAX_NVIS_TILES);
+  if (!tiles || tiles.length === 0) return null;
+
+  const legend = await fetchNVISLegend();
+  if (!legend || signal?.aborted) return null;
+
+  const rasters: NVISAreaRaster[] = [];
+  const misses: typeof tiles = [];
+  for (const t of tiles) {
+    const cached = tileRasterCache.get(`${t.tx},${t.ty}`);
+    if (cached) rasters.push(cached);
+    else misses.push(t);
+  }
+
+  try {
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    let failed = false;
+    const worker = async () => {
+      while (cursor < misses.length && !failed) {
+        if (signal?.aborted) { failed = true; return; }
+        const t = misses[cursor++];
+        const resp = await fetch(tileUrl('nvis', t), { signal });
+        if (!resp.ok) { failed = true; return; }
+        const raster = await decodeExportBlobToRaster(await resp.blob(), tileBounds(t.tx, t.ty, NVIS_TILE_DEG), legend, false);
+        if (!raster) { failed = true; return; }
+        tileRasterCache.set(`${t.tx},${t.ty}`, raster);
+        rasters.push(raster);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, misses.length) }, worker));
+    if (failed) return null;
+    return rasters;
+  } catch (e) {
+    logger.debug('NVIS tile API unavailable, falling back to direct export', e);
     return null;
   }
 }
