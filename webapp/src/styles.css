@@ -4908,6 +4908,7 @@ button:focus {
 
 .segment-confidence { color: #64748b; font-size: 0.68rem; }
 .segment-estimated-flag { color: #F6A609; font-weight: 700; margin-left: 0.15rem; cursor: help; }
+.segment-modified-flag { color: #EF4444; font-weight: 700; margin-left: 0.15rem; cursor: help; }
 
 .segment-locate-col { text-align: right; }
 

@@ -15,7 +15,7 @@ import { VegetationType } from '../config/classification';
 
 // Import existing services (NSW is implemented, others are placeholders for now)
 import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, fetchNSWVegetationAreaTiled, pointInRings, NSWAreaFeature } from './nswVegetationService';
-import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, fetchNVISAreaRastersTiled, rasterCodeAt, mapMVGCode, NVISAreaRaster } from './nvisVegetationService';
+import { fetchNVISVegetation as fetchNVISRaw, fetchNVISAreaRaster, fetchNVISAreaRastersTiled, rasterCodeAt, mapMVGCode, isModifiedOrLowFidelityMVG, NVISAreaRaster } from './nvisVegetationService';
 
 // Service registry: will be populated with state services as they're implemented
 const stateServices: Partial<Record<AustralianState, StateVegetationService>> = {
@@ -65,6 +65,7 @@ function adaptNVISResult(rawResult: Awaited<ReturnType<typeof fetchNVISRaw>>): S
     displayLabel: rawResult.mvgName || 'NVIS vegetation',
     source: `NVIS MVG ${rawResult.mvgCode || '?'} (${rawResult.mvgName})`,
     state: 'AU', // National dataset, not state-specific
+    isModifiedOrLowFidelity: rawResult.mvgCode ? isModifiedOrLowFidelityMVG(rawResult.mvgCode) : undefined,
     rawAttributes: { mvgCode: rawResult.mvgCode, mvgName: rawResult.mvgName },
   };
 }

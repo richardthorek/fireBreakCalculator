@@ -102,6 +102,14 @@ export const MVG_CLASSES: Record<number, { name: string; vegetation: VegetationT
   99: { name: 'Unknown / no data', vegetation: 'lightshrub', confidence: 0.3 },
 };
 
+/** NVIS classes that represent modified, cleared, aquatic, or low-fidelity land. */
+const MODIFIED_OR_LOW_FIDELITY_CODES = new Set([24, 25, 26, 27, 28, 99]);
+
+/** Check if an NVIS MVG code represents modified or low-fidelity land. */
+export function isModifiedOrLowFidelityMVG(code: number): boolean {
+  return MODIFIED_OR_LOW_FIDELITY_CODES.has(code);
+}
+
 /** Map an NVIS Major Vegetation Group number to the app's fuel taxonomy. */
 export function mapMVGCode(code: number): { vegetation: VegetationType; confidence: number; name: string } | null {
   const entry = MVG_CLASSES[code];

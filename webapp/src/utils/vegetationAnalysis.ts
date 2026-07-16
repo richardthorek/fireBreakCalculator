@@ -366,6 +366,7 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
           confidence: stateVeg.confidence,
           landcoverClass: stateVeg.displayLabel,
           displayLabel: stateVeg.displayLabel || 'Unknown vegetation',
+          isModifiedOrLowFidelity: stateVeg.isModifiedOrLowFidelity,
         };
       }
       // Fall back to coarse landcover (may be mock — flagged as estimated)
@@ -406,6 +407,7 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       landcoverClass: r.landcoverClass,
       displayLabel: r.displayLabel,
       distance: spec.distance,
+      isModifiedOrLowFidelity: r.isModifiedOrLowFidelity,
     });
     totalDistance += spec.distance;
     totalConfidence += r.confidence;
@@ -431,6 +433,7 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       last.confidence = (last.confidence * last.distance + seg.confidence * seg.distance) / combinedDistance;
       last.distance = combinedDistance;
       if (seg.estimated) last.estimated = true;
+      if (seg.isModifiedOrLowFidelity) last.isModifiedOrLowFidelity = true;
     }
   }
 
