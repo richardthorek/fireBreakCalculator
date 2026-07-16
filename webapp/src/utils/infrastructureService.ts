@@ -11,18 +11,26 @@
  * OSM completeness varies in remote areas; consumers must label reused trails
  * as "mapped trail — verify trafficability" (see docs/ROUTE_INTELLIGENCE.md).
  *
- * Resilience: the public `overpass-api.de` instance enforces a strict 2
- * concurrent-slot-per-IP quota (`GET /api/status`) and is intermittently
- * flaky under load (observed transient `406`s with no rate-limit signal —
- * a known quirk of its multi-backend load balancer). A single 429/406/5xx
- * used to permanently sink that leg's trail lookup for the whole optimize
- * run. We now fail over through a short list of public mirrors and remember
- * whichever one last worked so subsequent legs in the same run skip
- * straight past a struggling primary instead of re-discovering the same
- * rate limit on every leg (confirmed live 2026-07-12: `maps.mail.ru`
- * returns byte-identical results to the primary and is a valid fallback;
- * `overpass.kumi.systems` is the community-standard fallback but only
- * resolves over IPv6 — kept in the list for browsers with IPv6 egress).
+ * Resilience: FIRST we try our own backend proxy (`GET /api/infrastructure`),
+ * which runs the Overpass query server-side. This is the primary path in a
+ * real deployment because the public Overpass instances do NOT send
+ * `Access-Control-Allow-Origin` on their error/rate-limited responses, so a
+ * browser call that hits a 429/504/timeout is surfaced as an opaque CORS
+ * failure and the whole trail lookup dies (field-reported 2026-07-16) — which
+ * silently disables both the trail-reuse discount and the snap-to-trail path
+ * refinement. The server→Overpass hop has no CORS, and one server IP with a
+ * shared cache spends the public 2-slot-per-IP quota once per corridor rather
+ * than once per user.
+ *
+ * If the proxy is unreachable (offline/local-dev deployments without the API),
+ * we fall back to calling the public Overpass instances DIRECTLY: the
+ * `overpass-api.de` primary enforces a strict 2 concurrent-slot-per-IP quota
+ * and is intermittently flaky (transient `406`s with no rate-limit signal), so
+ * the direct path fails over through a short list of public mirrors and
+ * remembers whichever last worked so subsequent legs skip a struggling primary
+ * (confirmed live 2026-07-12: `maps.mail.ru` returns byte-identical results;
+ * `overpass.kumi.systems` is IPv6-only). Either way, absence of data is never
+ * presented as absence of trails.
  */
 
 import { LatLng } from './chainage';
@@ -42,6 +50,16 @@ export interface InfrastructureData {
 }
 
 const env = (import.meta as any).env ?? {};
+
+/** Our own backend Overpass proxy — same-origin, so no CORS, with a shared
+ *  server-side cache. Primary path; the direct endpoints below are the
+ *  fallback when this isn't deployed. */
+const apiBase = (env.VITE_API_BASE_URL as string | undefined) || '/api';
+const infraProxyUrl = (s: number, w: number, n: number, e: number) =>
+  `${apiBase}/infrastructure?s=${s}&w=${w}&n=${n}&e=${e}`;
+/** Set false after the proxy 404s once (endpoint not deployed) so we don't
+ *  re-probe it on every leg of a run — go straight to the direct endpoints. */
+let proxyAvailable = true;
 
 /** Endpoints tried in order; a working one is remembered across calls this
  *  session so later legs don't re-pay the cost of a rate-limited primary. */
@@ -136,6 +154,33 @@ async function fetchCorridorUncached(
   key: string,
   signal?: AbortSignal
 ): Promise<InfrastructureData> {
+  // Primary: our own backend proxy (same-origin → no CORS, shared cache). Only
+  // a genuine "not deployed" signal (404) disables it for the rest of the
+  // session; a 502 means the proxy reached Overpass and Overpass failed, so we
+  // fall through to the direct endpoints for this call but keep using the proxy
+  // next time (its cache/quota-pooling is still the better primary).
+  if (proxyAvailable) {
+    try {
+      const resp = await fetch(infraProxyUrl(south, west, north, east), { signal });
+      if (resp.status === 404) {
+        proxyAvailable = false; // endpoint not present in this deployment
+      } else if (resp.ok) {
+        const json = await resp.json();
+        const data: InfrastructureData = {
+          trails: Array.isArray(json?.trails) ? json.trails : [],
+          available: true,
+        };
+        bboxCache.set(key, data);
+        logger.debug(`Overpass corridor via API proxy: ${data.trails.length} reusable ways`);
+        return data;
+      }
+      // Other non-OK (e.g. 502 upstream, 429 rate limit) → try direct below.
+    } catch (e) {
+      // Network error reaching our own origin — unusual; fall through.
+      logger.warn('Infrastructure API proxy unreachable, trying Overpass directly', e);
+    }
+  }
+
   const query = `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${south},${west},${north},${east});out geom;`;
 
   const order = [
@@ -214,4 +259,5 @@ export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrai
 /** Clear the bbox cache (tests). */
 export function _clearInfrastructureCache() {
   bboxCache.clear();
+  proxyAvailable = true;
 }

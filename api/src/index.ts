@@ -5,6 +5,7 @@ import './functions/analysisCalculate';
 import './functions/assistantBriefing';
 import './functions/assistantChat';
 import './functions/elevationProfile';
+import './functions/infrastructure';
 import './functions/equipmentCreate';
 import './functions/equipmentDelete';
 import './functions/equipmentList';

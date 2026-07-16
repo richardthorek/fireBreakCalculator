@@ -101,6 +101,25 @@ direct-to-government path.
 | `/api/vegetation/tile/{source}/{tx}/{ty}` | GET | One cached tile. `source` = `nvis` (export PNG) or `nsw` (`{ features: [...] }` merged pages, `{ exceeded: true }` when the tile is denser than the pagination cap — uncached, client skips the tile) | None | `image/png` or JSON | No |
 | `/api/vegetation/legend` | GET | Cached NVIS `legend?f=json` passthrough (colour→MVG decode contract) | None | JSON | No |
 
+## Infrastructure (Overpass proxy)
+
+Server-side proxy for the OSM/Overpass corridor trail lookup the optimizer uses
+(reusable trails/roads as discounted edges + the snap-to-trail path
+refinement). The browser calls this same-origin endpoint instead of the public
+Overpass instances directly: those instances omit `Access-Control-Allow-Origin`
+on their rate-limited/error responses, so a direct browser call that hits a
+429/504/timeout is surfaced as an opaque CORS failure and the whole trail lookup
+dies. The server→Overpass hop has no CORS, and one server IP with a short
+in-process cache (10 min, rounded-bbox key) spends the public 2-slot-per-IP
+quota once per corridor rather than once per user. Rate-limited (`infra` tag).
+On upstream failure returns `502` and the client falls back to calling Overpass
+directly; a `404` (endpoint not deployed) makes the client stop probing the
+proxy for the session and use the direct path.
+
+| Endpoint | Method | Purpose | Request | Response | Auth Required |
+|----------|--------|---------|---------|----------|---------------|
+| `/api/infrastructure` | GET | Reusable trails/roads within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°) | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
+
 ## AI Assistant Endpoints
 
 | Endpoint | Method | Purpose | Request Body | Response | Auth Required |
