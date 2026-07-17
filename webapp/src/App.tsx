@@ -30,9 +30,8 @@ import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
 
-// Import site logo/favicon as a module so the bundler rewrites the path
-// and the image is available regardless of deployment prefix or asset fingerprinting.
-import logo96 from '../favicon-96x96.png';
+// Site logo/favicon is in the public directory and served at /favicon-96x96.png.
+const logo96 = '/favicon-96x96.png';
 
 /**
  * Root application component for the Fire Break Calculator.

@@ -400,12 +400,12 @@ async function decodeImageBytes(blob: Blob): Promise<{ width: number; height: nu
     const bmp = await createImageBitmap(blob);
     let ctx: { drawImage: (b: ImageBitmap, x: number, y: number) => void; getImageData: (x: number, y: number, w: number, h: number) => ImageData } | null = null;
     if (typeof OffscreenCanvas !== 'undefined') {
-      ctx = new OffscreenCanvas(bmp.width, bmp.height).getContext('2d') as any;
+      ctx = new OffscreenCanvas(bmp.width, bmp.height).getContext('2d', { willReadFrequently: true }) as any;
     } else if (typeof document !== 'undefined') {
       const c = document.createElement('canvas');
       c.width = bmp.width;
       c.height = bmp.height;
-      ctx = c.getContext('2d') as any;
+      ctx = c.getContext('2d', { willReadFrequently: true }) as any;
     }
     if (!ctx) return null;
     ctx.drawImage(bmp, 0, 0);

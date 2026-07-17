@@ -40,7 +40,7 @@ const SRC = {
 const drawTriangleIcon = (color: string, size = 44): ImageData => {
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.beginPath();
   ctx.moveTo(size / 2, 2);
   ctx.lineTo(size - 2, size - 4);
@@ -65,7 +65,7 @@ const drawTriangleIcon = (color: string, size = 44): ImageData => {
 const drawIncidentIcon = (size = 30): ImageData => {
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.beginPath();
   ctx.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
   ctx.fillStyle = '#3d6b9e';
