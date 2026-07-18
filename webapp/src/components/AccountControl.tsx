@@ -24,7 +24,7 @@ interface AccountControlProps {
 }
 
 /**
- * Header account control for the Bushie Tools suite sign-in.
+ * Header account control for the StationKit suite sign-in.
  *
  * Signed-out: a "Sign in" button opening a Station Manager credentials form.
  * Signed-in: the username opens a panel with the user's saved plans
@@ -165,7 +165,7 @@ export const AccountControl: React.FC<AccountControlProps> = ({
             <form className="account-signin" onSubmit={handleSignIn}>
               <h4>Sign in</h4>
               <p className="account-hint">
-                Use your Station Manager (Bushie Tools) account to save and restore plans across
+                Use your Station Manager (StationKit) account to save and restore plans across
                 devices.
               </p>
               <label>

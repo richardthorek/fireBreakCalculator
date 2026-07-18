@@ -16,11 +16,11 @@
 #   Variables (optional, defaults shown):
 #     AZURE_RESOURCE_GROUP     — default: rg-firebreakcalc
 #     AZURE_LOCATION           — default: australiaeast
-#     SUITE_AUTH_URL           — Station Manager (Bushie Tools) base URL used
+#     SUITE_AUTH_URL           — Station Manager (StationKit) base URL used
 #                                for suite sign-in + entitlements. Baked into
 #                                the webapp as VITE_SUITE_AUTH_URL and set as
 #                                the SUITE_AUTH_URL app setting on the SWA API.
-#                                Default: https://bungrfs-linux.azurewebsites.net
+#                                Default: https://stationkit.com.au
 #                                (set to '' to disable account features).
 #                                NOTE: this app's origin must also be present in
 #                                Station Manager's FRONTEND_URLS for CORS.
@@ -48,7 +48,7 @@ on:
 env:
   RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-firebreakcalc' }}
   LOCATION: ${{ vars.AZURE_LOCATION || 'australiaeast' }}
-  SUITE_AUTH_URL: ${{ vars.SUITE_AUTH_URL || 'https://bungrfs-linux.azurewebsites.net' }}
+  SUITE_AUTH_URL: ${{ vars.SUITE_AUTH_URL || 'https://stationkit.com.au' }}
 
 jobs:
   build_and_test:
