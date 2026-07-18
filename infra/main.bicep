@@ -34,7 +34,7 @@ param environmentName string = 'prod'
 @description('ArcGIS ImageServer URL for the bare-earth DEM used by the elevation-profile API. Leave empty to fall back to client-side Mapbox Terrain-RGB. Verify the endpoint before production.')
 param demImageServerUrl string = ''
 
-@description('Station Manager (Bushie Tools) base URL used to validate suite sign-in tokens and read the fireBreakEnabled entitlement. Leave empty to disable account features (saved-plan endpoints return 503). This app\'s origin must also be present in Station Manager\'s FRONTEND_URLS for CORS.')
+@description('Station Manager (StationKit) base URL used to validate suite sign-in tokens and read the fireBreakEnabled entitlement. Leave empty to disable account features (saved-plan endpoints return 503). This app\'s origin must also be present in Station Manager\'s FRONTEND_URLS for CORS.')
 param suiteAuthUrl string = ''
 
 @description('Provision the Azure AI Foundry account + model deployment for the AI assistant (grounded briefings/chat). Off by default so existing environments do not pick up new cost on redeploy; the app works with the deterministic rule engine either way.')

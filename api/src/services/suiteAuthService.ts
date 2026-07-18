@@ -1,5 +1,5 @@
 /**
- * Bushie Tools suite authentication (Phase 1 federation).
+ * StationKit suite authentication (Phase 1 federation).
  *
  * Station Manager is the suite identity provider: a single sign-in there mints
  * a JWT, and sibling apps validate that same token by calling back into the
@@ -13,7 +13,7 @@
  *
  * Configuration:
  *   SUITE_AUTH_URL — base URL of the Station Manager deployment
- *                    (e.g. https://bungrfsstation.azurewebsites.net).
+ *                    (e.g. https://stationkit.com.au).
  *                    When unset, saved-plan endpoints return 503.
  */
 

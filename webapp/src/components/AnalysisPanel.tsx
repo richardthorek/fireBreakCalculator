@@ -1193,7 +1193,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             You're planning anonymously — a single break that isn't saved and
             clears when you reload.{' '}
             <button type="button" className="anonymous-notice-link" onClick={() => onRequestSignIn?.()}>
-              Sign in with Bushie Tools
+              Sign in with StationKit
             </button>{' '}
             to save plans, share links and sync across devices.
           </div>

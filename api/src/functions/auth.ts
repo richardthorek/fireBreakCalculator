@@ -3,7 +3,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 /**
  * POST /api/auth/login
  *
- * Browser-side proxy for Bushie Tools (Station Manager) authentication.
+ * Browser-side proxy for StationKit (Station Manager) authentication.
  * The browser calls this same-origin endpoint instead of Station Manager
  * directly, avoiding CORS failures. The backend forwards the request to
  * Station Manager server-side where CORS doesn't apply.

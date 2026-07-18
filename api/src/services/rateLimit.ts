@@ -135,7 +135,7 @@ export async function enforceRateLimit(
       jsonBody: {
         error:
           tier === 'anon'
-            ? 'Rate limit reached for anonymous use. Sign in with your Bushie Tools account for a higher limit, or wait a moment and try again.'
+            ? 'Rate limit reached for anonymous use. Sign in with your StationKit account for a higher limit, or wait a moment and try again.'
             : 'Rate limit reached. Wait a moment and try again.',
         retryAfterSec: decision.retryAfterSec,
       },

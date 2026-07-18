@@ -87,7 +87,7 @@ const App: React.FC = () => {
 
   // Anonymous limiting applies to every signed-out user: a single,
   // non-persisted break, with persistence (save / share link) prompting
-  // Bushie Tools sign-in. (Deployments are expected to configure
+  // StationKit sign-in. (Deployments are expected to configure
   // VITE_SUITE_AUTH_URL so a sign-in path exists.)
   const anonymousLimited = !suiteSession;
   const requestSignIn = useCallback(() => setSignInSignal(v => v + 1), []);

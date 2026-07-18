@@ -1,5 +1,5 @@
 /**
- * Bushie Tools suite authentication client (Phase 1 federation).
+ * StationKit suite authentication client (Phase 1 federation).
  *
  * Station Manager is the suite identity provider: users sign in with their
  * Station Manager account and this app validates that token and reads the
