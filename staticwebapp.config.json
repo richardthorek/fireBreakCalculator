@@ -5,11 +5,12 @@
   "routes": [
     {
       "route": "/api/*",
-      "statusCode": 404
+      "allowedRoles": []
     }
   ],
   "navigationFallback": {
-    "rewrite": "/index.html"
+    "rewrite": "/index.html",
+    "exclude": ["/api/*"]
   },
   "responseOverrides": {
     "404": {
