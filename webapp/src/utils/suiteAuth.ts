@@ -175,22 +175,19 @@ export async function signIn(username: string, password: string): Promise<SuiteS
  * Sign in with a passkey. No username is collected — the request carries no
  * allowCredentials, so the browser's own picker shows every passkey it holds
  * for the shared StationKit relying party (a "usernameless"/discoverable
- * flow). Calls Station Manager directly (cross-origin), not the same-origin
- * `/api/auth/login` proxy `signIn()` uses — the WebAuthn ceremony itself must
- * run on this page, so there's no CORS-avoidance benefit to proxying, and the
- * cross-origin `verify` call already relies on the same CORS+credentials
- * setup the SSO cookie uses. Throws with a friendly message on failure; a
- * cancelled OS prompt throws a DOMException named 'NotAllowedError' — callers
+ * flow). Calls the same-origin proxy endpoints, which forward to Station Manager
+ * server-side to avoid CORS failures. Throws with a friendly message on failure;
+ * a cancelled OS prompt throws a DOMException named 'NotAllowedError' — callers
  * should treat that as a silent no-op, not an error to display.
  */
 export async function signInWithPasskey(): Promise<SuiteSession> {
-  const optionsRes = await fetch(`${SUITE_AUTH_URL}/api/auth/passkey/login/options`, { method: 'POST' });
+  const optionsRes = await fetch('/api/auth/passkey/login/options', { method: 'POST' });
   if (!optionsRes.ok) throw new Error('Could not start passkey sign-in');
   const { flowId, options } = await optionsRes.json();
 
   const response = await startAuthentication({ optionsJSON: options });
 
-  const verifyRes = await fetch(`${SUITE_AUTH_URL}/api/auth/passkey/login/verify`, {
+  const verifyRes = await fetch('/api/auth/passkey/login/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ flowId, response }),
