@@ -109,6 +109,28 @@
   cursor: default;
 }
 
+.account-secondary {
+  width: 100%;
+  background: transparent;
+  color: #E5281B;
+  border: 1px solid #E5281B;
+  border-radius: 8px;
+  padding: 0.55rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.account-secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .account-error {
   background: rgba(229, 40, 27, 0.15);
   border: 1px solid rgba(229, 40, 27, 0.5);
