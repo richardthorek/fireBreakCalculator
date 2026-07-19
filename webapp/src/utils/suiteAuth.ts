@@ -1,10 +1,19 @@
 /**
- * StationKit suite authentication client (Phase 1 federation).
+ * StationKit suite authentication client.
  *
  * Station Manager is the suite identity provider: users sign in with their
  * Station Manager account and this app validates that token and reads the
  * org's entitlements (`fireBreakEnabled` gates cloud saved plans). The token
  * is stored under the suite-wide localStorage key `auth_token`.
+ *
+ * Phase 2 — silent cross-subdomain SSO: `restoreSession()` first tries
+ * Station Manager's `GET /api/auth/session` with `credentials: 'include'`,
+ * which reads the shared `sk_session` httpOnly cookie (set on login/signup,
+ * scoped to the `.stationkit.com.au` parent domain) and returns a fresh
+ * bearer token if the visitor is already signed in elsewhere in the suite —
+ * no redirect, no separate Fire Break Calculator login. Falls back to a
+ * locally stored token (Phase 1 behaviour) when there's no cookie session
+ * (different domain, signed out suite-wide, or cookies blocked).
  *
  * Configuration: VITE_SUITE_AUTH_URL — base URL of the Station Manager
  * deployment. When unset, account features are hidden entirely and the
@@ -76,14 +85,12 @@ interface MeResponse {
   entitlements?: { fireBreakEnabled?: boolean } | null;
 }
 
-/** Resolve a token into a full session via GET /api/auth/me. Returns null on 401. */
-async function fetchSession(token: string): Promise<SuiteSession | null> {
-  const res = await fetch(`${SUITE_AUTH_URL}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (res.status === 401 || res.status === 403 || res.status === 404) return null;
-  if (!res.ok) throw new Error('Account service unavailable');
-  const me = (await res.json()) as MeResponse;
+/** GET /api/auth/session response: the same identity shape as /me, plus a fresh token. */
+interface SessionResponse extends MeResponse {
+  token: string;
+}
+
+function toSuiteSession(token: string, me: MeResponse): SuiteSession {
   return {
     token,
     userId: me.id,
@@ -93,6 +100,41 @@ async function fetchSession(token: string): Promise<SuiteSession | null> {
     planCode: me.organization?.planCode ?? null,
     fireBreakEnabled: me.entitlements?.fireBreakEnabled === true,
   };
+}
+
+/** Resolve a token into a full session via GET /api/auth/me. Returns null on 401. */
+async function fetchSession(token: string): Promise<SuiteSession | null> {
+  const res = await fetch(`${SUITE_AUTH_URL}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401 || res.status === 403 || res.status === 404) return null;
+  if (!res.ok) throw new Error('Account service unavailable');
+  const me = (await res.json()) as MeResponse;
+  return toSuiteSession(token, me);
+}
+
+/**
+ * Try to bootstrap a session from Station Manager's shared SSO cookie —
+ * `credentials: 'include'` sends the httpOnly `sk_session` cookie (scoped to
+ * the `.stationkit.com.au` parent domain) if the browser has one. Returns
+ * null (never throws) when there's no cookie session, the request is
+ * cross-origin without one, or Station Manager is unreachable — callers fall
+ * back to the stored-token flow in that case.
+ */
+async function fetchSilentSession(): Promise<SuiteSession | null> {
+  try {
+    const res = await fetch(`${SUITE_AUTH_URL}/api/auth/session`, {
+      credentials: 'include',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as SessionResponse;
+    if (!body.token) return null;
+    const session = toSuiteSession(body.token, body);
+    storeToken(body.token);
+    return session;
+  } catch {
+    return null;
+  }
 }
 
 /** Sign in with Station Manager credentials. Throws with a friendly message on failure. */
@@ -120,9 +162,17 @@ export async function signIn(username: string, password: string): Promise<SuiteS
   return session;
 }
 
-/** Restore a session from a stored token; clears the token if it has expired. */
+/**
+ * Restore a session, preferring silent cross-subdomain SSO (Station
+ * Manager's shared cookie) over a locally stored token so a visitor already
+ * signed into another suite app lands here already authenticated too.
+ */
 export async function restoreSession(): Promise<SuiteSession | null> {
   if (!isSuiteAuthConfigured()) return null;
+
+  const silent = await fetchSilentSession();
+  if (silent) return silent;
+
   const token = getStoredToken();
   if (!token) return null;
   try {
@@ -135,6 +185,23 @@ export async function restoreSession(): Promise<SuiteSession | null> {
   }
 }
 
-export function signOut(): void {
+/**
+ * Sign out locally and, best-effort, clear the shared suite SSO cookie so
+ * other *.stationkit.com.au apps also see the sign-out on their next silent
+ * restore — otherwise a page reload here would immediately sign back in via
+ * that cookie.
+ */
+export async function signOut(): Promise<void> {
+  const token = getStoredToken();
   clearStoredToken();
+  if (!isSuiteAuthConfigured()) return;
+  try {
+    await fetch(`${SUITE_AUTH_URL}/api/auth/logout`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    });
+  } catch {
+    // Best-effort — the local token is already cleared.
+  }
 }

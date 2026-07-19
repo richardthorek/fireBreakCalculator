@@ -128,7 +128,7 @@ export const AccountControl: React.FC<AccountControlProps> = ({
   };
 
   const handleSignOut = () => {
-    signOut();
+    void signOut();
     updateSession(null);
     setPlans(null);
     setIsOpen(false);
