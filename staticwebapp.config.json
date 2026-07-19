@@ -3,11 +3,14 @@
     "apiRuntime": "node:22"
   },
   "routes": [
-    // Custom routing rules can be added here if needed
-    // See: https://learn.microsoft.com/en-us/azure/static-web-apps/configuration
+    {
+      "route": "/api/*",
+      "allowedRoles": []
+    }
   ],
   "navigationFallback": {
-    "rewrite": "/index.html"
+    "rewrite": "/index.html",
+    "exclude": ["/api/*"]
   },
   "responseOverrides": {
     "404": {

@@ -4,6 +4,7 @@ import { app } from '@azure/functions';
 import './functions/analysisCalculate';
 import './functions/assistantBriefing';
 import './functions/assistantChat';
+import './functions/auth';
 import './functions/elevationProfile';
 import './functions/infrastructure';
 import './functions/equipmentCreate';
