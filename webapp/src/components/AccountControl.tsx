@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { CircleUserRound, LogOut, FolderOpen, Trash2, RefreshCw } from 'lucide-react';
+import { CircleUserRound, LogOut, FolderOpen, Trash2, RefreshCw, KeyRound } from 'lucide-react';
+import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import {
   SUITE_AUTH_URL,
   SuiteSession,
   isSuiteAuthConfigured,
   restoreSession,
   signIn,
+  signInWithPasskey,
   signOut,
 } from '../utils/suiteAuth';
 import { SavedPlanApi, deleteSavedPlan, listSavedPlans } from '../utils/savedPlansApi';
@@ -42,10 +44,12 @@ export const AccountControl: React.FC<AccountControlProps> = ({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plans, setPlans] = useState<SavedPlanApi[] | null>(null);
   const [plansError, setPlansError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const passkeySupported = browserSupportsWebAuthn();
 
   const updateSession = useCallback(
     (next: SuiteSession | null) => {
@@ -127,6 +131,24 @@ export const AccountControl: React.FC<AccountControlProps> = ({
     }
   };
 
+  const handlePasskeySignIn = async () => {
+    setPasskeyBusy(true);
+    setError(null);
+    try {
+      const next = await signInWithPasskey();
+      updateSession(next);
+    } catch (err) {
+      // A cancelled OS prompt throws NotAllowedError — not a real failure.
+      if (err instanceof Error && err.name === 'NotAllowedError') {
+        setPasskeyBusy(false);
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Passkey sign-in failed');
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
   const handleSignOut = () => {
     void signOut();
     updateSession(null);
@@ -189,9 +211,20 @@ export const AccountControl: React.FC<AccountControlProps> = ({
                 />
               </label>
               {error && <div className="account-error" role="alert">{error}</div>}
-              <button type="submit" className="account-primary" disabled={busy}>
+              <button type="submit" className="account-primary" disabled={busy || passkeyBusy}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
+              {passkeySupported && (
+                <button
+                  type="button"
+                  className="account-secondary"
+                  onClick={() => void handlePasskeySignIn()}
+                  disabled={busy || passkeyBusy}
+                >
+                  <KeyRound size={16} aria-hidden />
+                  {passkeyBusy ? 'Waiting for passkey…' : 'Sign in with a passkey'}
+                </button>
+              )}
               <p className="account-hint">
                 No account?{' '}
                 <a href={`${SUITE_AUTH_URL}/signup`} target="_blank" rel="noopener noreferrer">

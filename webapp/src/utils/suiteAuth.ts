@@ -15,10 +15,19 @@
  * locally stored token (Phase 1 behaviour) when there's no cookie session
  * (different domain, signed out suite-wide, or cookies blocked).
  *
+ * Passkey sign-in (signInWithPasskey): registration only happens in Station
+ * Manager's own account settings, but sign-in works directly from this app's
+ * own sign-in form — the WebAuthn Relying Party ID is the shared
+ * `.stationkit.com.au` parent domain, so this page can run the ceremony
+ * itself and just POST the resulting assertion to Station Manager
+ * cross-origin. See suite-token-validation.md §1b in the Station-Manager repo.
+ *
  * Configuration: VITE_SUITE_AUTH_URL — base URL of the Station Manager
  * deployment. When unset, account features are hidden entirely and the
  * calculator remains the fully anonymous public tool it always was.
  */
+
+import { startAuthentication } from '@simplewebauthn/browser';
 
 const RAW_URL = (import.meta.env.VITE_SUITE_AUTH_URL as string | undefined) || '';
 export const SUITE_AUTH_URL = RAW_URL.trim().replace(/\/+$/, '');
@@ -158,6 +167,44 @@ export async function signIn(username: string, password: string): Promise<SuiteS
 
   const session = await fetchSession(body.token);
   if (!session) throw new Error('Sign-in failed. Try again shortly.');
+  storeToken(body.token);
+  return session;
+}
+
+/**
+ * Sign in with a passkey. No username is collected — the request carries no
+ * allowCredentials, so the browser's own picker shows every passkey it holds
+ * for the shared StationKit relying party (a "usernameless"/discoverable
+ * flow). Calls Station Manager directly (cross-origin), not the same-origin
+ * `/api/auth/login` proxy `signIn()` uses — the WebAuthn ceremony itself must
+ * run on this page, so there's no CORS-avoidance benefit to proxying, and the
+ * cross-origin `verify` call already relies on the same CORS+credentials
+ * setup the SSO cookie uses. Throws with a friendly message on failure; a
+ * cancelled OS prompt throws a DOMException named 'NotAllowedError' — callers
+ * should treat that as a silent no-op, not an error to display.
+ */
+export async function signInWithPasskey(): Promise<SuiteSession> {
+  const optionsRes = await fetch(`${SUITE_AUTH_URL}/api/auth/passkey/login/options`, { method: 'POST' });
+  if (!optionsRes.ok) throw new Error('Could not start passkey sign-in');
+  const { flowId, options } = await optionsRes.json();
+
+  const response = await startAuthentication({ optionsJSON: options });
+
+  const verifyRes = await fetch(`${SUITE_AUTH_URL}/api/auth/passkey/login/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowId, response }),
+  });
+  if (!verifyRes.ok) {
+    const body = await verifyRes.json().catch(() => ({}) as { error?: string });
+    throw new Error(body.error || 'Passkey sign-in failed');
+  }
+
+  const body = (await verifyRes.json()) as { token?: string };
+  if (!body.token) throw new Error('Passkey sign-in failed');
+
+  const session = await fetchSession(body.token);
+  if (!session) throw new Error('Passkey sign-in failed');
   storeToken(body.token);
   return session;
 }
