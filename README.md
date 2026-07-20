@@ -21,7 +21,10 @@ A modern geospatial planning tool designed to help rural firefighters and emerge
 ## 🚀 Getting Started
 
 ### For Users
-**👉 [Complete User Guide](webapp/Documentation/USER_GUIDE.md)** - Everything you need to know to plan effective fire breaks
+
+There's no standalone user guide yet (tracked in `master_plan.md`) — the tool
+is designed to be usable from the in-app UI alone. Quick Start below covers
+the whole workflow.
 
 **Quick Start:**
 1. Open the application in your web browser
@@ -33,7 +36,8 @@ A modern geospatial planning tool designed to help rural firefighters and emerge
 
 ### For Administrators & Developers
 - **📋 [System Requirements & Setup](README-local-dev.md)** - Installation and configuration
-- **🏗️ [Architecture Documentation](webapp/Documentation/ARCHITECTURE.md)** - Technical system design
+- **📘 [Master Plan](master_plan.md)** - Vision, current state, roadmap, decisions (the single source of truth — start here)
+- **🏗️ [Technical docs](docs/README.md)** - Architecture, calculation model, vegetation data, route intelligence, GIS interop, AI assistant
 - **🤝 [Contributing Guidelines](CONTRIBUTING.md)** - How to contribute to the project
 
 ## 🎯 Key Features
@@ -85,23 +89,22 @@ This application integrates with several authoritative data sources:
   - *Backup*: Automated Azure backup policies
 
 ### Elevation Data
-- **Current**: Mock elevation service for demonstration
-- **Planned**: Integration with real Digital Elevation Models (DEM)
-  - *Target Sources*: Google Elevation API, SRTM data, or Australian Geoscience data
+- **Primary**: A bare-earth Digital Elevation Model (DEM), sampled server-side
+  via an ArcGIS ImageServer
+- **Fallback**: When the DEM endpoint is unavailable, elevation is flagged
+  `usedMockElevation`/`estimated` end to end (including exports) rather than
+  presented as real — see the "Data honesty" principle in `master_plan.md`
 
 ## 🗂️ Project Structure
 
 ```
-📁 rfsFireBreakCalculator/
+📁 fireBreakCalculator/
 ├── 📁 webapp/              # React frontend application
-│   ├── 📁 src/            # Source code and components  
-│   └── 📁 Documentation/  # User guides and technical docs
+│   └── 📁 src/            # Source code and components
 ├── 📁 api/                # Azure Functions backend API
 │   └── 📁 src/           # API functions and data access
 ├── 📁 scripts/           # Utility and seed scripts
-└── 📁 Documentation/     # Main documentation hub
-    ├── 📁 Archive/       # Legacy development documents
-    └── README.md         # Documentation index
+└── 📁 docs/              # As-built technical docs (see docs/README.md)
 ```
 
 ## 🛠️ Technology Stack
@@ -109,7 +112,7 @@ This application integrates with several authoritative data sources:
 ### Frontend
 - **React 18** with TypeScript for robust UI development
 - **Vite** for fast development and optimized builds
-- **Leaflet** with Mapbox tiles for interactive mapping
+- **Mapbox GL JS** for interactive mapping
 - **Modern CSS** with responsive design patterns
 
 ### Backend  
@@ -181,7 +184,7 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 - **💡 Feature Suggestions**: Click the "💡 Suggest Feature" button in the analysis panel to submit feature requests directly
 - **🆘 Issues**: Report bugs or request features via [GitHub Issues](../../issues)
-- **📚 Documentation**: Browse our [Documentation Hub](Documentation/README.md)
+- **📚 Documentation**: Browse [`docs/`](docs/README.md) and [`master_plan.md`](master_plan.md)
 - **👥 Community**: Contact your local Rural Fire Service IT support team
 
 ### Feature Suggestion Button
@@ -195,20 +198,11 @@ The Fire Break Calculator includes a convenient "💡 Suggest Feature" button lo
 
 ## 📈 Roadmap
 
-### Upcoming Features
-- 🌐 **Real elevation data integration** (Google Elevation API, DEM)
-- 🎯 **Route optimization suggestions** based on efficiency analysis  
-- 📱 **Offline capability** for field use without internet
-- 📄 **PDF report generation** for planning documentation
-- 🔐 **Authentication system** for user management and custom equipment
+The roadmap lives in one place — **[`master_plan.md`](master_plan.md)** (status
+board + prioritised steps) — to avoid this README drifting out of sync with it.
+Don't duplicate roadmap items here; update the master plan instead.
 
-### Long-term Vision
-- 🤖 **AI-powered recommendations** based on historical fire data
-- 🌡️ **Weather integration** for condition-based planning
-- 📊 **Advanced analytics dashboard** for fleet management
-- 🔄 **Integration APIs** for external fire management systems
-
-*For detailed technical information, see our [Architecture Documentation](webapp/Documentation/ARCHITECTURE.md).*
+*For technical detail on any feature, see [`docs/`](docs/README.md).*
 
 ---
-**Last Updated**: January 2025 | **Version**: 1.0 Release Candidate
+**Last Updated**: 2026-07-19

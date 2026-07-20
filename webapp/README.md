@@ -1,6 +1,6 @@
 # Fire Break Calculator
 
-Modern React web application to assist emergency responders in estimating the time and resources required to construct fire breaks and trails using machinery, aircraft, and hand crews. Built with React + Vite + TypeScript and featuring an interactive Leaflet map for geospatial analysis.
+Modern React web application to assist emergency responders in estimating the time and resources required to construct fire breaks and trails using machinery, aircraft, and hand crews. Built with React + Vite + TypeScript and featuring an interactive Mapbox GL JS map for geospatial analysis.
 
 ## Features
 
@@ -64,7 +64,7 @@ Never commit real tokens. The `.gitignore` excludes `.env` files.
 |------|---------|
 | `src/main.tsx` | App entry point with CSS imports |
 | `src/App.tsx` | Root component managing state between map and analysis panel |
-| `src/components/MapView.tsx` | Leaflet map with drawing tools and distance calculation |
+| `src/components/MapboxMapView.tsx` | Mapbox GL JS map with drawing tools and distance calculation |
 | `src/components/AnalysisPanel.tsx` | Resource selection and calculation display |
 | `src/types/config.ts` | TypeScript interfaces for resource configurations |
 | `src/config/defaultConfig.ts` | Default calculation rules (resource specifications come from API) |
