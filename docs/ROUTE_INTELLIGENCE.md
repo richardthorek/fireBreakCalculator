@@ -1906,6 +1906,102 @@ phantom shape), and a *partial* erase removes only its own bite while the
 opposite edge of the original painted circle stays intact (a real boolean
 subtraction, not an all-or-nothing clear).
 
+## 25. Mode-switch audit and control scheme (2026-07-26)
+
+Owner: "there are still fire-break UI tools like getting started and the
+draw line button appearing when in this new mode, ensure everything
+switches from A to B and back again... instead of the buttons for the new
+mode sitting on top of the map controls like zoom in and out on the left,
+we should use roughly the same control scheme as the fire break so we have
+the general map controls in the top left and special controls in the top
+right." Two real, distinct bugs plus a genuine control-scheme
+inconsistency, all found by actually auditing every mode-conditional
+element rather than patching the one symptom reported.
+
+**The pencil/trash hide from §22 never actually worked.** It added a
+wrapper class to the draw control's container by querying
+`.mapboxgl-ctrl-top-right .mapbox-gl-draw_ctrl` — a class that does not
+exist in this MapboxDraw version's real DOM output at all (checked against
+its bundled source: the actual constant is `mapboxgl-ctrl-group`, not
+`mapbox-gl-draw_ctrl`). The query silently matched nothing, the wrapper
+class was never applied, and the CSS rule built on it never fired — the
+pencil/trash controls kept showing (and, if clicked, kept re-arming
+`draw_line_string` mode, undoing §22's `changeMode` fix). Replaced with a
+positional selector that can't have that failure mode:
+`.tactical-mode .mapboxgl-ctrl-top-right { display: none !important; }` —
+targeting Mapbox's own top-right control-position container directly.
+Nothing else in this app is ever added to `top-right`, so this can't
+over-hide anything else either.
+
+**"Getting Started" was completely unconditional.** `MapEmptyState.tsx`
+(a "Get Started" card overlaid on the map, telling the user to "use the
+drawing tool above") never checked which mode was active — it showed in
+Terrain mode too, with fire-break-only instructions that make no sense
+there. Given a `tacticalMode`/`mobilityStarted` prop pair and now branches
+to Terrain-appropriate copy ("Use the Paint origin / Paint objective
+buttons") with its own "started" signal (at least one area painted, rather
+than fire-break's own "a line has been drawn").
+
+**Armed-tool state survives a mode switch and keeps intercepting clicks.**
+Hiding a mode's *controls* isn't the same as disarming its *tool state* —
+the paint tool's touch/mouse handlers and the area-recon (Scan area) box
+tool's click handlers are both registered unconditionally and only check
+their own armed-state ref, never which mode is active. Left armed across a
+switch, either would keep hijacking clicks meant for the other mode's own
+tool. New cleanup effect in `App.tsx`, keyed on `mobilityModeActive`:
+entering Terrain mode disarms `areaReconActive`; leaving it disarms
+`mobilityBoxRole`. The Configuration panel has the same shape of bug for a
+different reason (`isConfigOpen` is a plain boolean with no mode
+awareness at all, so leaving it open before switching to Terrain mode left
+it rendering on top of the Terrain UI) — fixed by gating its `isOpen` prop
+with `&& !mobilityModeActive` rather than adding another effect, since
+render-gating is sufficient there (no click-handler state to leak).
+
+**Control scheme, made consistent and explicit as a rule, not per-button
+judgement calls:** general map navigation (zoom, compass, fullscreen,
+geolocate) stays top-left in every mode — unchanged, was already correct.
+Every app-specific TOOL now lives top-right instead: fire-break's own
+"Scan area" button/badges (which, on inspection, had exactly the same
+top-left-overlapping-zoom-controls problem the owner flagged for Terrain
+mode, just never reported) moved from top-left to top-right, stacked below
+the draw/trash control that already lived there; Terrain mode's paint/
+erase/run overlay moved from top-left to top-right to match — and no
+longer needs to dodge the draw control at all, since that's now hidden
+outright in Terrain mode (previous bug above). `MapEmptyState`'s own
+position was pushed down (`top: 230px`) to clear this now-taller top-right
+tool stack in both modes rather than overlapping it.
+
+**Verification:** `npm run tsc --noEmit` / `npm run build` clean. A
+Playwright screenshot of the live dev server confirmed, end to end: the
+mode toggle correctly swaps header/title/controls in both directions; the
+Terrain-mode overlay renders at the top-right of the map area (not
+overlapping where zoom controls sit); no fire-break "Welcome"/"Get
+Started" card bleeds into a Terrain-mode screenshot. The map canvas itself
+(and therefore the actual pencil/trash controls and the Mapbox-native zoom
+controls) still can't render pixel-for-pixel in this sandbox — no Mapbox
+token available here — so the CSS-hide fix and the real control-scheme
+spacing are verified by code inspection against the real MapboxDraw source
+and by the screenshot evidence above, not a full live render. **Confirm on
+the live preview.**
+
+## 26. `?ops=1` now defaults straight into Terrain mode (2026-07-26)
+
+Owner: "make the ops equals one URL modifier default to the new mode... if
+that is not present or set to anything else we get fire break, and if it
+is set then we go straight into the new mode." Previously `?ops=1` only
+made the header toggle button *available*; the app still landed in
+fire-break mode either way, requiring an extra click to actually reach
+Terrain mode. `mobilityModeActive`'s initial state is now a lazy
+`useState(() => mobilityModeAvailable)` — `mobilityModeAvailable` is the
+exact same `ops === '1'` check §14/§16 already used to gate the toggle
+button's visibility, so this is a one-line change reusing an existing,
+already-correct check rather than a new URL-parsing path. The toggle
+button still works normally after the initial load — this only changes
+which mode the app lands in, not whether the user can switch afterward.
+Verified live: `?ops=1` alone (no click) now shows "Terrain Mobility" in
+the header on first load; no `ops` param, and `?ops=2` (anything other
+than exactly `"1"`), both still correctly land in "Fire Break Calculator".
+
 ---
 
 ## Update policy

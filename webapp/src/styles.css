@@ -2782,10 +2782,16 @@ button:focus {
   display: inline-block;
 }
 
+/* Control scheme (2026-07-26 UI review): general map navigation (zoom,
+ * compass, fullscreen, geolocate) stays top-left in every mode; app-specific
+ * TOOLS live top-right, stacked below the line-draw control this mode also
+ * puts there — so a special-purpose button never sits on top of the general
+ * navigation controls a user reaches for constantly. Terrain mode's own
+ * equivalent overlay (.mobility-overlay-controls) follows the same rule. */
 .area-recon-toggle-btn {
   position: absolute;
-  top: 20px;
-  left: 20px;
+  top: 130px;
+  right: 20px;
   z-index: 990;
   background: rgba(15, 23, 42, 0.85);
   color: #e2e8f0;
@@ -2806,8 +2812,8 @@ button:focus {
 
 .area-recon-badge {
   position: absolute;
-  top: 68px;
-  left: 20px;
+  top: 178px;
+  right: 20px;
   z-index: 990;
   background: rgba(56, 189, 248, 0.85);
   color: #04121c;
@@ -2820,8 +2826,8 @@ button:focus {
 
 .area-recon-clear-btn {
   position: absolute;
-  top: 68px;
-  left: 20px;
+  top: 178px;
+  right: 20px;
   z-index: 990;
   background: rgba(15, 23, 42, 0.85);
   color: #7dd3fc;
@@ -4537,10 +4543,16 @@ button:focus {
    Map Empty State - Sidebar Notification
    ==================================================================== */
 
-/* Map empty state - compact sidebar notification near drawing tools */
+/* Map empty state - compact sidebar notification near drawing tools.
+ * top pushed down (2026-07-26 UI review) to clear the app-specific tool
+ * stack now anchored top-right in every mode (draw/trash + Scan area in
+ * fire-break mode, the paint/erase/run overlay in Terrain mode) — this card
+ * used to sit right underneath the old top-left Scan-area button with room
+ * to spare; now that both modes' tools live top-right too, it needs to sit
+ * below them instead of overlapping. */
 .map-empty-state {
   position: absolute;
-  top: 80px; /* Below map controls */
+  top: 230px;
   right: 16px;
   z-index: 500; /* Above map tiles, below map controls (typically 1000+) */
   pointer-events: none; /* Don't block map interactions */

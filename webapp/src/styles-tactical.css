@@ -36,9 +36,14 @@
  * MapboxMapView.tsx, kept swallowing taps) whenever tacticalMode became
  * true after the map had already mounted in fire-break mode. Hidden here
  * via CSS instead, which works regardless of which mode the map happened
- * to construct in. The wrapper class is added unconditionally at
- * construction (see MapboxMapView.tsx), so this always finds it. */
-.tactical-mode .mapboxgl-ctrl-group-draw {
+ * to construct in. Targets Mapbox's OWN top-right control-position
+ * container directly (nothing else in this app is ever added to
+ * top-right — see MapboxMapView.tsx) rather than a wrapper class: an
+ * earlier version tried adding one via a `.mapbox-gl-draw_ctrl` selector
+ * that doesn't exist in this MapboxDraw version's real DOM output, so it
+ * silently never matched anything and the controls kept showing
+ * (field-reported). This selector can't have that failure mode. */
+.tactical-mode .mapboxgl-ctrl-top-right {
   display: none !important;
 }
 
@@ -376,12 +381,18 @@
 /* ---------- Floating map overlay controls (primary actions, mobile-first) ----------
  * Owner feedback (2026-07-26): the AOI/run controls must be reachable without
  * expanding or scrolling the side panel — the panel is for options/detail
- * only. Positioned like the fire-break mode's own "Scan area" button
- * (top-left, absolute) so the two modes share one map-overlay language. */
+ * only. Owner follow-up, same day: general map navigation (zoom, compass,
+ * fullscreen, geolocate) must stay top-left in every mode, unobstructed —
+ * app-specific tools belong top-right instead, matching where fire-break
+ * mode's own draw/trash tool already lives (and where its "Scan area" tool
+ * was moved to, in the same pass, for the same reason — see styles.css).
+ * MapboxDraw's pencil/trash control is hidden entirely in Terrain mode (see
+ * the `.mapboxgl-ctrl-top-right` rule above), so this doesn't need to dodge
+ * it the way fire-break mode's Scan-area button dodges the draw control. */
 .mobility-overlay-controls {
   position: absolute;
   top: 20px;
-  left: 20px;
+  right: 20px;
   z-index: 990;
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback rounds — bug fixes, mobile UX, painted-area AOI, two-finger gestures, continuous painted shape, erase function — all shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback rounds — bug fixes, mobile UX, painted-area AOI, two-finger gestures, continuous painted shape, erase function, mode-switch audit + control scheme, `?ops=1` default — all shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -60,6 +60,40 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility: mode-switch audit, control scheme,
+  `?ops=1` default**: owner reported fire-break UI (Getting Started card,
+  the pencil/trash draw control) still showing in Terrain mode, and asked
+  for a full audit ("ensure everything switches... and back again") plus a
+  consistent control scheme (general nav top-left, app-specific tools
+  top-right, matching fire-break's own layout). Root-caused three real
+  bugs, not just the one reported: **(1)** the §22 pencil/trash hide never
+  actually worked — it targeted a wrapper class added via a
+  `.mapbox-gl-draw_ctrl` selector that doesn't exist in this MapboxDraw
+  version's real DOM (checked against its bundled source), so the class was
+  silently never applied; replaced with a positional selector
+  (`.tactical-mode .mapboxgl-ctrl-top-right { display:none }`) that can't
+  have that failure mode. **(2)** `MapEmptyState` ("Get Started") was
+  completely unconditional — now mode-aware, with Terrain-appropriate copy
+  and its own "started" signal. **(3)** Armed-tool state (the paint role,
+  the area-recon box tool) survived a mode switch and kept intercepting
+  clicks meant for the other mode — new cleanup effect disarms the other
+  mode's tool on every switch, in both directions; the Configuration panel
+  had the same bug for a different reason, fixed by gating its `isOpen`
+  with the current mode. **Control scheme**: fire-break's own "Scan area"
+  button turned out to have the identical top-left-over-zoom-controls
+  problem the owner flagged for Terrain mode, just never reported — moved
+  both it and Terrain mode's overlay to top-right, stacked below each
+  mode's own draw-style tool, so top-left is general navigation only, in
+  either mode. Separately, owner asked `?ops=1` default straight into
+  Terrain mode instead of just unlocking the toggle button — one-line fix
+  reusing the existing `ops === '1'` check as the initial state. Verified:
+  `tsc --noEmit`/`npm run build` clean; a live Playwright screenshot
+  confirmed the mode toggle correctly swaps everything in both directions,
+  the Terrain overlay sits top-right without overlapping where zoom
+  controls belong, and `?ops=1`/no-param/`?ops=2` land in the right mode
+  respectively. The map canvas itself still can't render pixel-for-pixel in
+  this sandbox (no Mapbox token) — **confirm on the live preview**. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §25–§26.
 - **2026-07-26 — Terrain Mobility: two-finger map gestures, continuous
   painted shape, erase function**: owner asked for three refinements on the
   painted-area AOI tool in one round. **(1)** Two-finger pinch/pan was being

@@ -387,7 +387,12 @@ const App: React.FC = () => {
     () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ops') === '1',
     []
   );
-  const [mobilityModeActive, setMobilityModeActive] = useState(false);
+  // Owner, 2026-07-26: "?ops=1 should default to the new mode" — start
+  // directly in Terrain mode when the URL flag is present, fire-break mode
+  // otherwise (absent, or set to anything other than "1"). The toggle
+  // button still works normally after that initial choice — this only
+  // changes which mode the app lands in on load.
+  const [mobilityModeActive, setMobilityModeActive] = useState(() => mobilityModeAvailable);
 
   // Full identity swap (owner, 2026-07-26): the app must not read as "Fire
   // Break Calculator" anywhere while Terrain mode is active — browser tab
@@ -419,6 +424,21 @@ const App: React.FC = () => {
   const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
   const [mobilityNightMode, setMobilityNightMode] = useState(false);
   const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
+  // Cross-mode cleanup (2026-07-26 UI review: "ensure everything switches...
+  // and back again"). Hiding a mode's controls isn't enough on its own — an
+  // "armed" tool's state can outlive the switch and keep intercepting clicks
+  // meant for the OTHER mode's tool, since the click handlers for both tools
+  // are registered unconditionally and only check their own armed-state ref,
+  // not which mode is active. Disarm the other mode's tool on every switch,
+  // in both directions.
+  useEffect(() => {
+    if (mobilityModeActive) {
+      setAreaReconActive(false); // fire-break's own box-scan tool
+    } else {
+      setMobilityBoxRole(null); // Terrain mode's paint/erase tool
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobilityModeActive]);
   // Painted areas (owner feedback 2026-07-26): a union of circular dabs laid
   // down by dragging over the map, not a drawn rectangle — see
   // terrain/paintedArea.ts. Brush size is a fixed on-screen radius, so it
@@ -1141,9 +1161,11 @@ const App: React.FC = () => {
             onCancelAppreciation={handleCancelMobilityAppreciation}
             mobilityRunning={mobilityRunning}
           />
-          <MapEmptyState 
+          <MapEmptyState
             initialLocationSettled={initialLocationSettled}
             distance={fireBreakDistance}
+            tacticalMode={mobilityModeActive}
+            mobilityStarted={mobilityOriginPaint.length > 0 || mobilityObjectivePaint.length > 0}
           />
         </div>
         <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>
@@ -1250,9 +1272,15 @@ const App: React.FC = () => {
           )}
         </div>
         <IntegratedConfigPanel
-          isOpen={isConfigOpen}
+          // Fire-break-only panel — its own open button is already hidden in
+          // Terrain mode (header, above), but `isConfigOpen` itself survives
+          // a mode switch, so if it was left open before switching it would
+          // otherwise still render on top of the Terrain UI (2026-07-26 UI
+          // review: "ensure everything switches... instead of sitting on
+          // top" applies here too, not just the map overlay controls).
+          isOpen={isConfigOpen && !mobilityModeActive}
           onToggle={() => setIsConfigOpen(v => !v)}
-          
+
           // Equipment props
           equipment={equipment}
           loadingEquipment={loadingEquip}

@@ -639,13 +639,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // Position the drawing tools in the top right with spacing for better visibility
     map.addControl(draw, 'top-right');
 
-    // Add custom class to draw control container for enhanced styling and add labels
+    // Add labels to the draw control buttons for clarity. Hiding the whole
+    // control in Terrain mode is done in CSS against `.mapboxgl-ctrl-top-right`
+    // directly (see styles-tactical.css) — an earlier attempt added a wrapper
+    // class here via `.mapbox-gl-draw_ctrl`, a selector that doesn't exist in
+    // this MapboxDraw version's actual DOM output (its real classes are
+    // `mapboxgl-ctrl-group`/`mapbox-gl-draw_line`/`mapbox-gl-draw_trash` —
+    // see its bundled source), so that class was silently never applied and
+    // the pencil/trash controls kept showing in Terrain mode (field-reported).
     setTimeout(() => {
-      const drawContainer = document.querySelector('.mapboxgl-ctrl-top-right .mapbox-gl-draw_ctrl');
-      if (drawContainer && drawContainer.parentElement) {
-        drawContainer.parentElement.classList.add('mapboxgl-ctrl-group-draw');
-      }
-      
       // Apply custom styling to the draw buttons to make them more visible
       const lineStringBtn = document.querySelector('.mapbox-gl-draw_line');
       if (lineStringBtn) {
@@ -1930,13 +1932,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           {error}
         </div>
       )}
-      {showTouchHint && (
+      {!tacticalMode && showTouchHint && (
         <div className="touch-hint-overlay">
           Tap to add points, double‑tap to finish.
           <button onClick={() => setShowTouchHint(false)}>×</button>
         </div>
       )}
-      {isAnalyzing && (
+      {!tacticalMode && isAnalyzing && (
         <div className="analyzing-badge">Analyzing…</div>
       )}
       {/* Optimizer progress ON the map: on phones the analysis panel is
@@ -1956,7 +1958,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       {locationError && (
         <div className="location-error-badge">{locationError}</div>
       )}
-      {fireBreakDistance!=null && (
+      {!tacticalMode && fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
       )}
       {!tacticalMode && onAreaReconActiveChange && (
