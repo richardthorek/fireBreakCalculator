@@ -1417,7 +1417,9 @@ simulation with a genuine mid-course replan.
 `MobilityPanel.tsx` (profile picker grouped by family with confidence badge +
 source citation, origin/objective AOI draw buttons, run/cancel, assessment log,
 result stats, GO/SLOW-GO/NO-GO ↔ isochrone toggle, unit-simulation controls, a
-standing POC-limitations disclaimer) plus three small tactical-skin components
+standing POC-limitations disclaimer — **the draw/run/cancel controls were later
+moved to floating map-overlay buttons, §21, so the scroll panel is options/detail
+only**) plus three small tactical-skin components
 (`TacticalCoordinateReadout`, `AssessmentLog`, `DataConfidenceBadge`) and
 `styles-tactical.css`, built in parallel by a background agent against a fully
 specified prop contract while the algorithm core was written — zero merge conflicts,
@@ -1431,7 +1433,8 @@ hides the fire-break-specific Configuration button. Nothing in the active UI rea
 (`?ops=1` URL query) — entitlement/backend split is explicitly deferred to Pass 4.
 
 `MapboxMapView.tsx` gained: an origin/objective AOI box-draw tool (clone of the
-existing area-recon two-click pattern), a `mobility-heatmap` layer switchable between
+existing area-recon two-click pattern — **superseded by the painted-area brush
+tool, §21**), a `mobility-heatmap` layer switchable between
 trafficability colouring and isochrone-band colouring (same cells, two paint
 expressions — mirrors the existing `heatmapColorMode` pattern), a persistent
 unit-simulation path line, and a pulsing unit marker moved via direct
@@ -1537,6 +1540,209 @@ rather than editing that shared file here), and `StructureAnalysisEngine`
 (the interface a real engine would implement, plus the only engine actually
 shipped: `NotYetImplementedEngine`, which reports its own absence — imagery
 CV stays gated on the lidar calibration set §10.3(b) requires).
+
+## 19. Pass 3 — trafficability data layers, as-built (2026-07-26)
+
+"Tier 0 done properly" (§10.7 M3a) plus the free Tier 1 national layers
+(M3c) and the DEM derivatives M3a also called for. Built by a background
+agent against a fully specified module contract, verified and wired into
+the cost model in this pass.
+
+- **`dataLayers/structureTable.ts`** — replaces `mobilityCost.ts`'s
+  hand-picked Tier-0 numbers with a small, per-row-cited table, still keyed
+  by the 4-class `VegetationType` (not NVIS MVG code — see the file's own
+  header for why an MVG-keyed table wasn't attempted this pass: the
+  DCCEEW/agriculture.gov.au MVG fact sheets returned HTTP 503 from every
+  host tried this sandbox all session, and no citable source resolves to a
+  single MVG code anyway). `heavyforest`'s `stemsPerHectare`/`basalAreaM2PerHa`
+  are the Wood, Prior, Stephens & Bowman (2015, PLOS ONE) AusPlots Forest
+  Monitoring Network's own reported network means (48 one-ha plots,
+  confidence `published`); `stemDiameterMedianMm` (610mm) is *derived* from
+  those two figures via the standard quadratic-mean-diameter back-calculation
+  (`d = sqrt(4·BA/(π·N))`), cross-checked against the paper's own "50–100cm
+  DBH" prose description. `mediumscrub` uses a real NSW Government minimum
+  stem-retention regulatory floor (150 stems/ha) as an order-of-magnitude
+  anchor only (confidence `estimated` — it's a legal floor for an adjacent
+  vegetation formation, not a natural mean density for this exact class).
+  `lightshrub`/`grassland` are unchanged from the Tier-0 placeholder
+  (confidence `generic-fallback`) — no citable figure was found in the time
+  available, stated plainly rather than padded. `gapWidthEstimateM` is
+  unchanged for every row: deriving it analytically from density+diameter is
+  its own bounded research task (§10.4), out of scope for this pass.
+  **Wired into `mobilityCost.ts`'s `estimateStructureFromVegetation`** in
+  this pass (was previously a standalone module someone else had to swap
+  in) — `edgeMobilityCost` now gates wheeled/tracked passability against
+  these real cited numbers instead of an uncited guess, and continues
+  reporting `estimated: true`/`dataTier: 0` (applying a class-level figure
+  to one cell is still an estimate regardless of how well the class-level
+  figure is cited — the tier does not bump; only M3d's measured lidar
+  understorey fraction is the actual tier bump).
+- **`dataLayers/demDerivatives.ts`** — local least-squares plane fit per
+  cell for cross-slope/roughness/topographic position, plus a real
+  multiple-flow-direction topographic wetness index (TWI) accumulation —
+  not yet wired into the search (cross-slope gating for the search itself
+  remains a stated Pass 1 scope cut, §16), available for a future pass.
+- **`dataLayers/nafiFireHistoryService.ts`** — North Australia & Rangelands
+  Fire Information time-since-fire, queried live against
+  `firenorth.org.au`'s GeoServer WMS (confirmed reachable this session,
+  unlike the .gov.au hosts). Two precomputed rasters
+  (`tslb_last10_250m`/`tslb_longterm_250m`) queried via `GetFeatureInfo`,
+  cross-checked against six annual fire-scar layers at a live test point.
+  Confidence is `published` inside a coarse single-latitude approximation of
+  §11.7's ground-validated coverage band, `estimated` south of it but still
+  inside the layer's technical extent. The no-fire/NoData sentinel encoding
+  was **not** observed live this session (only a positive hit was tested) —
+  stated as an open item, not guessed at: any implausible value is treated
+  as "no answer", never silently as "never burnt".
+- **`dataLayers/deaOwsClient.ts`** (shared client) +
+  **`deaWaterObservationsService.ts`** / **`deaFractionalCoverService.ts`** —
+  Digital Earth Australia's `datacube-ows` WMS instance, live-verified this
+  session: current Collection-3 products only (`ga_ls_wo_fq_myear_3`,
+  `ga_ls_fc_pc_cyear_3`), deliberately excluding several older layers on the
+  same server explicitly titled "...(Landsat, DEPRECATED)" in their own
+  capabilities document. `EPSG:4326` in WMS 1.3.0's (lat, lon) axis order
+  (this instance rejects `CRS:84`, confirmed live via a real
+  `ServiceException`). Masked/invalid pixels return the literal string
+  `"n/a"` for every band (observed live over open water) — every band read
+  is type-guarded rather than assumed numeric.
+- **Not yet wired into `mobilityGrid.ts`'s per-cell sampling** — these three
+  Tier 1 layers are built and verified standalone but the grid builder does
+  not yet call them per sampled point (a real next step, not silently
+  dropped: NAFI's point-query form would need an area/tile variant — see
+  its own file header — before per-cell calls at grid scale are practical
+  without overwhelming the upstream API, the same "one area request, not one
+  per point" discipline `mobilityGrid.ts` already follows for vegetation).
+
+**Verification:** `npm run tsc --noEmit` and `npm run build` clean across
+the whole module set including the four new data-layer files. The
+structure-table wiring was additionally checked with a standalone Node
+smoke test against the real (not reimplemented) modules: confirms
+`estimateStructureFromVegetation('heavyforest')` now returns the derived
+610mm figure (not the old 350mm placeholder) and that a heavy dozer is
+correctly still NO-GO off-trail through heavyforest under the new number
+(610mm exceeds the dozer's 300mm override capability) — the same
+genuinely-impassable result as Pass 1, now resting on a cited figure
+instead of a guess.
+
+## 20. Pass 4 — counter-mobility catalogue, delay ledger and UI wired in (2026-07-26)
+
+Completes the Pass 4 counter-mobility work §18 left partial (imagery
+interfaces only). Built by a background agent against a fully specified
+prop/module contract, wired into `App.tsx` in this pass.
+
+- **`counterMeasures.ts`** — 12-entry catalogue (abatis, anti-vehicle ditch,
+  road crater, log crib/tank trap, concrete barriers, immobilised-vehicle
+  hulk, culvert/bridge/cattle-grid removal, terrain ripping, locked
+  gate+signage, sensor/observation post), each with an `ObstacleEffect`
+  (`disrupt`/`turn`/`fix`/`block`), a relative emplacement-effort figure,
+  reversibility, legal prerequisites and a `DataConfidenceBadge` tier.
+  **Zero entries are rated `block`** — deliberate doctrinal restraint per
+  §11.5's own caveat that obstacle effects arise from obstacles *and*
+  observation/fires together, never an unobserved obstacle alone.
+- **`delayLedger.ts`** — `computeDelayLedger` scores a set of proposed
+  placements against the same `runAccumulatedCostSearch` engine the rest of
+  the mode uses: T0 (baseline best time) vs T1 (best time with the measure's
+  own large edge-penalty applied), **the bypass rule** (a separately
+  computed, smaller-penalty alternate-route search — the mandatory
+  "never show a measure's delay in isolation" rule from §5), and **the
+  egress-safety gate** (reuses the exhaustive reachability field already
+  computed for T1 to check the origin AOI can still reach ground outside
+  the measure's own footprint — a real computed refusal, never a hardcoded
+  `true`).
+- **`CounterMobilityPanel.tsx`** — candidate segment picker (seeded from
+  `MinCutResult.segments`, the same min-cut siting hint §17 already
+  computes — this panel does not resite anything itself), the full measure
+  catalogue with effect/confidence/effort/legal-prerequisite detail, a
+  delay-ledger table ranked by delay-per-effort-unit, and **the egress
+  refusal rendered as a hard UI refusal banner replacing the "add to plan"
+  action entirely** — not a warning icon, per §5/§15.4's unconditional
+  framing.
+- **Wired into `App.tsx` in this pass**: a two-tab switcher ("Terrain
+  appreciation" / "Counter-mobility planner") inside the Terrain-mode
+  analysis panel. The planner reuses the **exact sampled grid** the last
+  appreciation run produced (`MobilityAppreciationResult` was extended to
+  carry `cells`/`originKeys`/`objectiveKeys` alongside its existing
+  `barrier` result) rather than resampling — the min-cut segments'
+  cell keys must refer to the same grid the ledger searches over. A fresh
+  appreciation run clears any pending segment selection/placements/ledger,
+  since they'd otherwise silently reference cells from a stale grid.
+
+**Verification:** `npm run tsc --noEmit` and `npm run build` clean. A
+standalone Node smoke test against the real modules builds a synthetic
+corridor grid, sites one measure across it, and confirms
+`computeDelayLedger` returns a real (non-fabricated) delay/bypass/egress
+result — `egressSafe` a genuine computed boolean, `bypassDelaySeconds`
+never a fabricated negative.
+
+## 21. Field feedback round — bug fixes, mobile UX, painted-area AOI selection (2026-07-26)
+
+Three issues reported from real device testing of the live PR preview,
+addressed in this pass.
+
+**Bug 1 — drawing an AOI triggered the fire-break line analysis.**
+Root cause: `MapboxDraw` was initialised with `defaultMode: 'draw_line_string'`
+unconditionally, so it was *always* armed to interpret map clicks as
+fire-break line vertices regardless of which other tool (the AOI tool) was
+supposedly active. Fix: `MapboxMapView.tsx` now initialises MapboxDraw with
+`defaultMode: 'simple_select'` and hides its pencil/trash controls whenever
+`tacticalMode` is on — Terrain mode and fire-break mode no longer compete
+for the same click stream.
+
+**Bug 2 — the objective-area tool stopped accepting clicks after the
+origin tool had been used.** Root cause: the (now superseded) two-click
+box tool's "first corner" ref was never reset when the armed role changed,
+so switching from origin to objective left a stale first-corner from the
+*previous* attempt, corrupting the next click. Fix (carried forward into
+the paint tool below): the relevant ref is explicitly reset in the
+role-change effect, not left to accumulate stale state across role
+switches.
+
+**Mobile UX — primary controls moved off the scroll panel.** Owner
+feedback: "on mobile I had to scroll to find buttons... the scroll panel
+should only need to be expanded to change options or find detail."
+`MapboxMapView.tsx` gained a `.mobility-overlay-controls` floating button
+stack (top-left, absolute-positioned, matching the existing fire-break
+mode's own "Scan area" button placement so both modes share one map-overlay
+language): paint-origin/paint-objective toggle buttons showing live dab
+counts, a brush-size row, and run/cancel — all reachable without touching
+the panel. `MobilityPanel.tsx`/`CounterMobilityPanel.tsx` now hold options
+and result detail only.
+
+**Painted-area AOI selection, replacing the two-click box tool.** Owner
+feedback: "selecting the origin and destination areas should be like
+colouring in cells on the map rather than drawing a line, with options for
+size of brush that remain consistent as I zoom in and out." New module
+**`paintedArea.ts`**: a painted area is the union of circular "dabs" laid
+down while dragging over the map. Each dab's *on-screen* radius is one of
+three fixed pixel sizes (`BRUSH_PIXEL_RADIUS`: 18/34/60px), but its *ground*
+radius is computed from the map's zoom/latitude at the instant it's
+painted via the standard Web Mercator metres-per-pixel relationship
+(`metersPerPixel`/`brushRadiusMeters`) — so the same brush paints a bigger
+real area zoomed out and a more precise one zoomed in, exactly as asked,
+and a painted dab's ground size stays fixed once laid down rather than
+resizing as the user continues zooming. `mobilityGrid.ts`, `mobilityAppreciation.ts`
+and `unitSimulation.ts` (its mid-course replan AOI) were all rewired from
+the old `MobilityAoi {sw, ne}` box type to `PaintedArea`, with cell
+membership now a real union-of-circles test (`isInsidePaintedArea`) rather
+than a bbox check. `MapboxMapView.tsx`'s click handling was replaced
+end-to-end: `mousedown` arms painting and lays the first dab,
+throttled-by-pixel-distance `mousemove` lays further dabs while dragging,
+`mouseup`/`mouseleave` end the stroke (without disarming the role, so a
+user can paint several strokes before running the appreciation); rendered
+as `mobility-origin-paint`/`mobility-objective-paint` MultiPolygon sources
+(cyan/amber, matching the mode's existing colour convention), each dab
+approximated as a closed N-gon in real lat/lng via `dabToPolygon`.
+
+**Verification:** `npm run tsc --noEmit` and `npm run build` clean. A
+standalone Node smoke test against the real `paintedArea.ts` (13 checks)
+confirms the zoom-consistency property directly: the same brush painted at
+zoom 10 covers exactly 2⁶=64× the ground radius of zoom 16 (the expected
+Web Mercator doubling-per-zoom-level relationship), brush sizes order
+correctly at a fixed zoom, union-of-circles membership works across
+multiple dabs, and `dabToPolygon` produces a closed ring. Live map-canvas
+interaction remains subject to the same sandbox proxy limitation recorded
+in §16 — **confirm live** before demoing the brush/paint gesture itself,
+though the underlying geometry it depends on is verified above.
 
 ---
 

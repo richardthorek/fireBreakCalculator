@@ -201,6 +201,22 @@
   color: var(--tac-text-dim);
 }
 
+/* ---------- Terrain mode tab switcher (appreciation / counter-mobility) ---------- */
+.mobility-mode-tabs { display: flex; gap: 6px; padding: 8px 8px 0; flex-shrink: 0; }
+.mobility-mode-tabs button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text-dim);
+  border-radius: 3px;
+  padding: 8px 6px;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-mode-tabs button.active { border-color: var(--tac-accent); color: var(--tac-accent); }
+
 /* ---------- MobilityPanel layout ---------- */
 .mobility-panel {
   display: flex;
@@ -221,6 +237,9 @@
 .mobility-profile-source, .mobility-profile-notes { color: var(--tac-text-dim); font-size: 0.75em; line-height: 1.4; }
 .mobility-night-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85em; color: var(--tac-text-dim); }
 .mobility-aoi-row { display: flex; gap: 8px; }
+.mobility-aoi-detail { display: flex; flex-direction: column; gap: 2px; font-size: 0.8em; color: var(--tac-text-dim); }
+.tac-hint { font-size: 0.78em; color: var(--tac-text-dim); line-height: 1.5; }
+.tac-hint .mobility-clear-button { display: inline; padding: 2px 6px; margin-left: 4px; }
 .mobility-aoi-button, .mobility-run-button, .mobility-clear-button, .mobility-sim-button {
   flex: 1;
   background: transparent;
@@ -340,3 +359,75 @@
 .cm-ledger-row--refused { opacity: 0.6; }
 .cm-ledger-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.78em; }
 .cm-refused-banner { color: var(--tac-nogo); font-size: 0.78em; font-weight: 600; line-height: 1.5; }
+
+/* ---------- Floating map overlay controls (primary actions, mobile-first) ----------
+ * Owner feedback (2026-07-26): the AOI/run controls must be reachable without
+ * expanding or scrolling the side panel — the panel is for options/detail
+ * only. Positioned like the fire-break mode's own "Scan area" button
+ * (top-left, absolute) so the two modes share one map-overlay language. */
+.mobility-overlay-controls {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 990;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 200px;
+}
+.mobility-overlay-btn {
+  background: rgba(12, 17, 24, 0.92);
+  color: var(--tac-text, #d7e4ee);
+  border: 1px solid var(--tac-border, #1c2733);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--tac-mono-font, monospace);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.mobility-overlay-btn--origin.active,
+.mobility-overlay-btn--origin:hover {
+  border-color: var(--tac-accent, #38bdf8);
+  color: var(--tac-accent, #38bdf8);
+}
+.mobility-overlay-btn--objective.active,
+.mobility-overlay-btn--objective:hover {
+  border-color: var(--tac-slowgo, #F6A609);
+  color: var(--tac-slowgo, #F6A609);
+}
+.mobility-overlay-btn--run {
+  background: var(--tac-accent, #38bdf8);
+  color: #04212f;
+  border-color: var(--tac-accent, #38bdf8);
+}
+.mobility-overlay-btn--run:disabled {
+  background: var(--tac-border, #1c2733);
+  color: var(--tac-text-dim, #6b7f8f);
+  cursor: not-allowed;
+}
+.mobility-overlay-btn--cancel {
+  background: var(--tac-nogo, #D8232A);
+  color: #2a0505;
+  border-color: var(--tac-nogo, #D8232A);
+}
+.mobility-brush-row { display: flex; gap: 6px; }
+.mobility-brush-btn {
+  flex: 1;
+  background: rgba(12, 17, 24, 0.92);
+  color: var(--tac-text-dim, #6b7f8f);
+  border: 1px solid var(--tac-border, #1c2733);
+  border-radius: 6px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--tac-mono-font, monospace);
+  cursor: pointer;
+}
+.mobility-brush-btn.active {
+  border-color: var(--tac-accent, #38bdf8);
+  color: var(--tac-accent, #38bdf8);
+}

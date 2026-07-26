@@ -23,6 +23,7 @@
 
 import { VegetationType } from '../config/classification';
 import { MoverProfile } from './moverProfiles';
+import { lookupStructure } from './dataLayers/structureTable';
 
 // ---------------------------------------------------------------------------
 // Directional slope
@@ -81,26 +82,23 @@ export interface StructureEstimate {
 }
 
 /**
- * TIER 0 PLACEHOLDER ONLY. Infers structure from NVIS formation alone, which
- * docs §10.1 establishes is unreliable in both directions (a widely-spaced
- * woodland can be as open as grassland; a multi-stemmed thicket can read as
- * low cover while being a wall of stems). Pass 3 (M3b/M3c) replaces this with
- * the AusPlots-derived stem-density/diameter table with variance, and Pass 3/4
- * (M3d) with measured lidar understorey return fraction where available.
+ * Infers structure from NVIS formation alone, which docs §10.1 establishes is
+ * unreliable in both directions (a widely-spaced woodland can be as open as
+ * grassland; a multi-stemmed thicket can read as low cover while being a wall
+ * of stems) — still Tier 0 (per §10.7, "Tier 0 done properly" is M3a, not a
+ * tier bump), but now backed by `dataLayers/structureTable.ts`'s cited,
+ * per-row-confidence table (AusPlots-derived figures for heavyforest, a
+ * named NSW regulatory benchmark for mediumscrub) instead of an uncited
+ * guess. Applying a class-level figure to an individual cell is still an
+ * estimate regardless of how well the class-level figure is cited, so this
+ * module keeps reporting `estimated: true` / `dataTier: 0` throughout — see
+ * `lookupStructure`'s own per-row `confidence`/`source` for the real
+ * provenance. Pass 3/4 (M3d) lands measured lidar understorey return
+ * fraction where available, which is the actual tier bump.
  */
 export function estimateStructureFromVegetation(vegetation: VegetationType): StructureEstimate {
-  switch (vegetation) {
-    case 'grassland':
-      return { stemDiameterMedianMm: 20, gapWidthEstimateM: 50 };
-    case 'lightshrub':
-      return { stemDiameterMedianMm: 60, gapWidthEstimateM: 8 };
-    case 'mediumscrub':
-      return { stemDiameterMedianMm: 150, gapWidthEstimateM: 4 };
-    case 'heavyforest':
-      return { stemDiameterMedianMm: 350, gapWidthEstimateM: 2 };
-    default:
-      return { stemDiameterMedianMm: 150, gapWidthEstimateM: 4 };
-  }
+  const { stemDiameterMedianMm, gapWidthEstimateM } = lookupStructure(vegetation);
+  return { stemDiameterMedianMm, gapWidthEstimateM };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Passes 1–2 shipped; Pass 3/4 in progress)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback round — bug fixes, mobile UX, painted-area AOI — also shipped)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -46,7 +46,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
 | 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
-| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §16 = Pass 1 as-built) | 🚧 Pass 1 shipped (mobility core + tactical UI + unit-sim bonus); Passes 2–4 still 📋 |
+| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–21 = as-built) | ✅ Passes 1–4 shipped + integrated (mobility core, k-routes/min-cut, trafficability data layers, counter-mobility catalogue/ledger — all wired end to end), plus a field-feedback round (painted-area AOI selection, mobile-overlay controls, two critical bug fixes). Remaining 📋: DEM-derivative/Tier-1-layer wiring into per-cell sampling, VCI/RCI-weighted min-cut capacity, real entitlement/backend gating (currently a client-side `?ops=1` URL gate) |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -58,6 +58,45 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility: Pass 3/4 integrated + field-feedback round**
+  (same branch/PR, following the Pass 1/2 entry below): two parts of work.
+  **(1) Integration** of the two background agents' Pass 3/4 output, which had
+  landed as new files not yet wired up: `dataLayers/structureTable.ts` (a
+  cited, per-row-confidence vegetation structure table — Wood et al. 2015
+  AusPlots figures for heavyforest, an NSW regulatory stem-retention floor for
+  mediumscrub) now backs `mobilityCost.ts`'s `estimateStructureFromVegetation`
+  in place of the hand-picked Tier 0 numbers (still Tier 0 per the doc's own
+  tiering — a better-cited class-level figure applied to one cell is still an
+  estimate, not a measurement); `counterMeasures.ts`/`delayLedger.ts`/
+  `CounterMobilityPanel.tsx` (12-measure catalogue, the bypass rule, the
+  egress-safety refusal gate) are now wired into `App.tsx` as a second tab
+  alongside the terrain-appreciation panel, reusing the appreciation run's own
+  sampled grid rather than resampling. The other four Pass 3 data-layer files
+  (DEM derivatives, NAFI time-since-fire, DEA water/fractional-cover) were
+  reviewed and committed but are **not yet** called from `mobilityGrid.ts`'s
+  per-cell sampling — stated as a real next step, not silently dropped.
+  **(2) Field feedback**, from the owner actually using the live preview on a
+  phone: two critical bugs fixed (drawing an AOI was triggering the fire-break
+  line tool, because `MapboxDraw` was unconditionally armed to draw lines; the
+  objective-area tool stopped accepting clicks after the origin tool had been
+  used, from a stale ref not reset on role change) and a full mobile-UX/
+  interaction rework requested in the same round: primary controls (paint
+  origin/objective, run/cancel) moved off the scrollable panel onto floating
+  map-overlay buttons ("the scroll panel should only need to be expanded to
+  change options or find detail"), and the AOI-selection gesture itself was
+  replaced end to end — from a two-click rectangle to painting circular
+  brush dabs whose on-screen size stays fixed across zoom while their real
+  ground size scales with it ("zooming out effectively paints a larger area,
+  zooming in gets more specific"), a new `paintedArea.ts` module. Verified:
+  `npm run build`/`tsc --noEmit` clean; three rounds of standalone Node smoke
+  tests against the real (not reimplemented) modules — 13 checks proving the
+  brush's zoom-consistency property directly (same brush at zoom 10 covers
+  exactly 64× the ground radius of zoom 16, the expected Mercator relationship)
+  plus integration checks that the new structure table and delay ledger
+  produce real, non-fabricated numbers. Live map-canvas interaction remains
+  subject to the same sandbox proxy limitation recorded below — flagged for
+  the owner to confirm outside this sandbox. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §19–§21.
 - **2026-07-26 — Terrain Mobility Pass 2 shipped + Pass 3/4 in progress** (same
   branch/PR, same day as Pass 1 below): owner asked to run all four passes as
   parallel as possible, testing against the PR's live Azure Static Web Apps

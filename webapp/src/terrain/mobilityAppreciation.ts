@@ -5,9 +5,10 @@
  * actual number from this run, never decorative theatre (docs §13.2).
  */
 
-import { MobilityAoi, buildMobilityGrid } from './mobilityGrid';
+import { buildMobilityGrid } from './mobilityGrid';
+import { PaintedArea } from './paintedArea';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
-import { MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES } from './accumulatedCost';
+import { MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { SimPathNode } from './mobilityWorker';
 import { findKDissimilarPaths, computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
@@ -34,6 +35,14 @@ export interface MobilityAppreciationResult {
   /** Pass 2 — cheapest severing cut for this profile (null if the objective
    *  was already unreachable, since there is nothing left to sever). */
   barrier: MinCutResult | null;
+  /** The exact sampled grid this run searched over — kept so a later
+   *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
+   *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
+   *  resampling (which risks a different hex layout for a near-identical
+   *  bounds calculation). */
+  cells: MobilityGridCell[];
+  originKeys: string[];
+  objectiveKeys: string[];
 }
 
 export interface MobilityAppreciationOptions {
@@ -45,8 +54,8 @@ export interface MobilityAppreciationOptions {
 }
 
 export async function runMobilityAppreciation(
-  origin: MobilityAoi,
-  objective: MobilityAoi,
+  origin: PaintedArea,
+  objective: PaintedArea,
   options: MobilityAppreciationOptions
 ): Promise<MobilityAppreciationResult | null> {
   const { profileId, nightMode = false, signal, onProgress, onLog } = options;
@@ -140,5 +149,8 @@ export async function runMobilityAppreciation(
     dissimilarRoutes,
     chokepoints,
     barrier,
+    cells: grid.cells,
+    originKeys: grid.originKeys,
+    objectiveKeys: grid.objectiveKeys,
   };
 }

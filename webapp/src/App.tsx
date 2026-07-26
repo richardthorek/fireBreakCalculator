@@ -29,11 +29,14 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
-import { MobilityAoi } from './terrain/mobilityGrid';
+import { PaintDab, PaintedArea, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
 import { MobilityPanel } from './components/MobilityPanel';
+import { CounterMobilityPanel } from './components/CounterMobilityPanel';
+import { COUNTER_MEASURES } from './terrain/counterMeasures';
+import { computeDelayLedger, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
 import { UnitSimulationController } from './terrain/unitSimulation';
 import './styles-tactical.css';
 
@@ -416,8 +419,14 @@ const App: React.FC = () => {
   const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
   const [mobilityNightMode, setMobilityNightMode] = useState(false);
   const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
-  const [mobilityOriginBox, setMobilityOriginBox] = useState<MobilityAoi | null>(null);
-  const [mobilityObjectiveBox, setMobilityObjectiveBox] = useState<MobilityAoi | null>(null);
+  // Painted areas (owner feedback 2026-07-26): a union of circular dabs laid
+  // down by dragging over the map, not a drawn rectangle — see
+  // terrain/paintedArea.ts. Brush size is a fixed on-screen radius, so it
+  // paints a bigger ground area when zoomed out and a more precise one
+  // zoomed in.
+  const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
+  const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
+  const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
   const [mobilityRunning, setMobilityRunning] = useState(false);
   const [mobilityLogLines, setMobilityLogLines] = useState<string[]>([]);
   const [mobilityResult, setMobilityResult] = useState<MobilityAppreciationResult | null>(null);
@@ -425,32 +434,49 @@ const App: React.FC = () => {
   const [mobilityCursor, setMobilityCursor] = useState<{ lat: number; lng: number } | null>(null);
   const mobilityAbortRef = useRef<AbortController | null>(null);
 
-  const handleMobilityBoxDrawn = useCallback((role: 'origin' | 'objective', sw: { lat: number; lng: number }, ne: { lat: number; lng: number }) => {
-    const box = { sw, ne };
-    if (role === 'origin') setMobilityOriginBox(box);
-    else setMobilityObjectiveBox(box);
+  // Counter-mobility planner — Pass 4 (docs/ROUTE_INTELLIGENCE.md §5, §15.4).
+  // Shares the appreciation run's own sampled grid/min-cut segments rather
+  // than resampling — see mobilityAppreciation.ts's `cells`/`originKeys`/
+  // `objectiveKeys` note.
+  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility'>('appreciation');
+  const [cmPendingSegmentIndex, setCmPendingSegmentIndex] = useState<number | null>(null);
+  const [cmPlacements, setCmPlacements] = useState<CounterMeasurePlacement[]>([]);
+  const [cmLedger, setCmLedger] = useState<DelayLedgerEntry[] | null>(null);
+  const [cmRunning, setCmRunning] = useState(false);
+  const [cmAddedMeasureIds, setCmAddedMeasureIds] = useState<string[]>([]);
+
+  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
+    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, dab]);
+    else setMobilityObjectivePaint(prev => [...prev, dab]);
     setMobilityResult(null); // a stale result over a changed AOI would mislead
   }, []);
 
-  const handleClearMobilityBoxes = useCallback(() => {
+  const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
     mobilityAbortRef.current?.abort();
-    setMobilityOriginBox(null);
-    setMobilityObjectiveBox(null);
+    if (!role || role === 'origin') setMobilityOriginPaint([]);
+    if (!role || role === 'objective') setMobilityObjectivePaint([]);
     setMobilityResult(null);
     setMobilityLogLines([]);
     setMobilityRunning(false);
   }, []);
 
   const handleRunMobilityAppreciation = useCallback(async () => {
-    if (!mobilityOriginBox || !mobilityObjectiveBox) return;
+    if (mobilityOriginPaint.length === 0 || mobilityObjectivePaint.length === 0) return;
     mobilityAbortRef.current?.abort();
     const controller = new AbortController();
     mobilityAbortRef.current = controller;
     setMobilityRunning(true);
     setMobilityLogLines([]);
     setMobilityResult(null);
+    // A fresh run resamples the grid, so any prior min-cut segment indices/
+    // placements/ledger no longer refer to real cells — clear rather than
+    // let them silently go stale.
+    setCmPendingSegmentIndex(null);
+    setCmPlacements([]);
+    setCmLedger(null);
+    setCmAddedMeasureIds([]);
     try {
-      const result = await runMobilityAppreciation(mobilityOriginBox, mobilityObjectiveBox, {
+      const result = await runMobilityAppreciation(mobilityOriginPaint, mobilityObjectivePaint, {
         profileId: mobilityProfileId,
         nightMode: mobilityNightMode,
         signal: controller.signal,
@@ -469,11 +495,36 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginBox, mobilityObjectiveBox, mobilityProfileId, mobilityNightMode]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
     setMobilityRunning(false);
+  }, []);
+
+  const handleRunCounterMobilityLedger = useCallback(() => {
+    if (!mobilityResult || cmPlacements.length === 0) return;
+    setCmRunning(true);
+    try {
+      const entries = computeDelayLedger(
+        mobilityResult.cells,
+        mobilityResult.originKeys,
+        mobilityResult.objectiveKeys,
+        mobilityResult.profile,
+        mobilityNightMode,
+        COUNTER_MEASURES,
+        cmPlacements
+      );
+      setCmLedger(entries);
+    } catch (error) {
+      logger.error('Delay ledger computation failed', error);
+    } finally {
+      setCmRunning(false);
+    }
+  }, [mobilityResult, mobilityNightMode, cmPlacements]);
+
+  const handleAddCounterMeasureToPlan = useCallback((measureId: string) => {
+    setCmAddedMeasureIds(prev => (prev.includes(measureId) ? prev : [...prev, measureId]));
   }, []);
 
   const mobilityHeatmapForMap = useMemo(() => {
@@ -507,12 +558,12 @@ const App: React.FC = () => {
   }, []);
 
   const handleStartSimulation = useCallback(() => {
-    if (!mobilityResult?.path || !mobilityObjectiveBox) return;
+    if (!mobilityResult?.path || mobilityObjectivePaint.length === 0) return;
     unitSimControllerRef.current?.stop();
     setSimElapsedSeconds(0);
     const controller = new UnitSimulationController(
       mobilityResult.path,
-      mobilityObjectiveBox,
+      mobilityObjectivePaint,
       mobilityProfileId,
       mobilityNightMode,
       {
@@ -526,7 +577,7 @@ const App: React.FC = () => {
     unitSimControllerRef.current = controller;
     controller.start();
     setSimRunning(true);
-  }, [mobilityResult, mobilityObjectiveBox, mobilityProfileId, mobilityNightMode, simSpeedMultiplier]);
+  }, [mobilityResult, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, simSpeedMultiplier]);
 
   const handleSpeedMultiplierChange = useCallback((x: number) => {
     setSimSpeedMultiplier(x);
@@ -541,7 +592,7 @@ const App: React.FC = () => {
     setUnitSimPath(null);
     setSimElapsedSeconds(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobilityOriginBox, mobilityObjectiveBox, mobilityRunning]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityRunning]);
 
   useEffect(() => () => unitSimControllerRef.current?.stop(), []);
 
@@ -1066,9 +1117,11 @@ const App: React.FC = () => {
             tacticalMode={mobilityModeActive}
             mobilityBoxRole={mobilityBoxRole}
             onMobilityBoxRoleChange={setMobilityBoxRole}
-            onMobilityBoxDrawn={handleMobilityBoxDrawn}
-            mobilityOriginBox={mobilityOriginBox}
-            mobilityObjectiveBox={mobilityObjectiveBox}
+            onMobilityPaintDab={handleMobilityPaintDab}
+            mobilityOriginPaint={mobilityOriginPaint}
+            mobilityObjectivePaint={mobilityObjectivePaint}
+            mobilityBrushSize={mobilityBrushSize}
+            onMobilityBrushSizeChange={setMobilityBrushSize}
             mobilityHeatmap={mobilityHeatmapForMap}
             mobilityDisplayMode={mobilityDisplayMode}
             onCursorMove={setMobilityCursor}
@@ -1076,6 +1129,9 @@ const App: React.FC = () => {
             unitSimPath={unitSimPath}
             chokepoints={mobilityResult?.chokepoints ?? null}
             barrierSegments={mobilityResult?.barrier?.segments ?? null}
+            onRunAppreciation={handleRunMobilityAppreciation}
+            onCancelAppreciation={handleCancelMobilityAppreciation}
+            mobilityRunning={mobilityRunning}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -1084,6 +1140,22 @@ const App: React.FC = () => {
         </div>
         <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>
           {mobilityModeActive ? (
+            <>
+            <div className="mobility-mode-tabs">
+              <button
+                className={mobilityActiveTab === 'appreciation' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('appreciation')}
+              >
+                Terrain appreciation
+              </button>
+              <button
+                className={mobilityActiveTab === 'counterMobility' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('counterMobility')}
+              >
+                Counter-mobility planner
+              </button>
+            </div>
+            {mobilityActiveTab === 'appreciation' ? (
             <MobilityPanel
               profileId={mobilityProfileId}
               onProfileChange={setMobilityProfileId}
@@ -1091,11 +1163,11 @@ const App: React.FC = () => {
               onNightModeChange={setMobilityNightMode}
               boxRole={mobilityBoxRole}
               onBoxRoleChange={setMobilityBoxRole}
-              originBox={mobilityOriginBox}
-              objectiveBox={mobilityObjectiveBox}
-              onClearBoxes={handleClearMobilityBoxes}
-              onRun={handleRunMobilityAppreciation}
-              onCancel={handleCancelMobilityAppreciation}
+              originPaint={mobilityOriginPaint}
+              objectivePaint={mobilityObjectivePaint}
+              brushSize={mobilityBrushSize}
+              onBrushSizeChange={setMobilityBrushSize}
+              onClearPaint={handleClearMobilityPaint}
               running={mobilityRunning}
               logLines={mobilityLogLines}
               result={mobilityResult}
@@ -1110,6 +1182,21 @@ const App: React.FC = () => {
               onSpeedMultiplierChange={handleSpeedMultiplierChange}
               simElapsedSeconds={simElapsedSeconds}
             />
+            ) : (
+              <CounterMobilityPanel
+                barrierSegments={mobilityResult?.barrier?.segments ?? []}
+                pendingSegmentIndex={cmPendingSegmentIndex}
+                onPendingSegmentIndexChange={setCmPendingSegmentIndex}
+                placements={cmPlacements}
+                onPlacementsChange={setCmPlacements}
+                onRunLedger={handleRunCounterMobilityLedger}
+                running={cmRunning}
+                ledger={cmLedger}
+                addedMeasureIds={cmAddedMeasureIds}
+                onAddToPlan={handleAddCounterMeasureToPlan}
+              />
+            )}
+            </>
           ) : (
           <AnalysisPanel
             distance={fireBreakDistance}

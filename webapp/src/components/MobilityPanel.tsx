@@ -1,23 +1,25 @@
 /**
  * Terrain Mobility mode panel — Pass 1 (docs/ROUTE_INTELLIGENCE.md "Terrain
- * Mobility & Counter-Mobility"). Area-to-area movement appreciation: draw an
+ * Mobility & Counter-Mobility"). Area-to-area movement appreciation: paint an
  * origin area, an objective area, pick a mover profile, run a multi-source
- * search. State (boxes, profile, results, log) lives in App.tsx and is
+ * search. State (paint, profile, results, log) lives in App.tsx and is
  * passed in as props/callbacks, mirroring how AnalysisPanel/AdvisorPanel are
  * already wired — this panel renders, App.tsx orchestrates.
+ *
+ * Primary actions (paint origin/objective, run/cancel) live as floating
+ * overlay buttons on the map itself (MapboxMapView) — owner feedback
+ * 2026-07-26: "on mobile I had to scroll to find buttons... the scroll panel
+ * should only need to be expanded to change options or find detail." This
+ * panel shows profile/options and results detail only.
  */
 
 import React from 'react';
 import { MOVER_PROFILES, MoverProfile, MoverFamily } from '../terrain/moverProfiles';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
+import { PaintedArea, BrushSize } from '../terrain/paintedArea';
 import { TacticalCoordinateReadout } from './TacticalCoordinateReadout';
 import { AssessmentLog } from './AssessmentLog';
 import { DataConfidenceBadge, ConfidenceTier } from './DataConfidenceBadge';
-
-export interface MobilityAoiBox {
-  sw: { lat: number; lng: number };
-  ne: { lat: number; lng: number };
-}
 
 export interface MobilityPanelProps {
   profileId: string;
@@ -26,11 +28,11 @@ export interface MobilityPanelProps {
   onNightModeChange: (v: boolean) => void;
   boxRole: 'origin' | 'objective' | null;
   onBoxRoleChange: (role: 'origin' | 'objective' | null) => void;
-  originBox: MobilityAoiBox | null;
-  objectiveBox: MobilityAoiBox | null;
-  onClearBoxes: () => void;
-  onRun: () => void;
-  onCancel: () => void;
+  originPaint: PaintedArea;
+  objectivePaint: PaintedArea;
+  brushSize: BrushSize;
+  onBrushSizeChange: (size: BrushSize) => void;
+  onClearPaint: (role?: 'origin' | 'objective') => void;
   running: boolean;
   logLines: string[];
   result: MobilityAppreciationResult | null;
@@ -64,14 +66,14 @@ function groupByFamily(profiles: MoverProfile[]): [MoverFamily, MoverProfile[]][
 
 export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   profileId, onProfileChange, nightMode, onNightModeChange,
-  boxRole, onBoxRoleChange, originBox, objectiveBox, onClearBoxes,
-  onRun, onCancel, running, logLines, result,
+  boxRole, onBoxRoleChange, originPaint, objectivePaint,
+  brushSize, onBrushSizeChange, onClearPaint,
+  running, logLines, result,
   displayMode, onDisplayModeChange, cursor,
   hasPath, simRunning, onStartSimulation, onStopSimulation,
   speedMultiplier, onSpeedMultiplierChange, simElapsedSeconds,
 }) => {
   const profile = MOVER_PROFILES.find(p => p.id === profileId);
-  const canRun = !!originBox && !!objectiveBox && !running;
 
   return (
     <div className="tac-panel mobility-panel">
@@ -109,34 +111,37 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
 
       <div className="tac-panel mobility-section">
         <div className="tac-label">AREAS OF INTEREST</div>
-        <div className="mobility-aoi-row">
-          <button
-            className={`mobility-aoi-button mobility-aoi-button--origin${boxRole === 'origin' ? ' active' : ''}`}
-            onClick={() => onBoxRoleChange(boxRole === 'origin' ? null : 'origin')}
-          >
-            {boxRole === 'origin' ? 'Click two corners…' : originBox ? 'Redraw origin area' : 'Draw origin area'}
-          </button>
-          <button
-            className={`mobility-aoi-button mobility-aoi-button--objective${boxRole === 'objective' ? ' active' : ''}`}
-            onClick={() => onBoxRoleChange(boxRole === 'objective' ? null : 'objective')}
-          >
-            {boxRole === 'objective' ? 'Click two corners…' : objectiveBox ? 'Redraw objective area' : 'Draw objective area'}
-          </button>
+        <div className="mobility-aoi-detail tac-mono">
+          <span>Origin: {originPaint.length} dab{originPaint.length === 1 ? '' : 's'} painted</span>
+          <span>Objective: {objectivePaint.length} dab{objectivePaint.length === 1 ? '' : 's'} painted</span>
         </div>
-        {(originBox || objectiveBox) && (
-          <button className="mobility-clear-button tac-mono" onClick={onClearBoxes}>Clear areas</button>
-        )}
-      </div>
-
-      <div className="mobility-run-row">
-        {!running ? (
-          <button className="mobility-run-button" disabled={!canRun} onClick={onRun}>
-            Run terrain appreciation
-          </button>
+        {boxRole ? (
+          <div className="tac-hint">
+            Painting {boxRole} area — drag on the map. <button className="mobility-clear-button tac-mono" onClick={() => onBoxRoleChange(null)}>Stop painting</button>
+          </div>
         ) : (
-          <button className="mobility-run-button mobility-run-button--cancel" onClick={onCancel}>
-            Cancel
-          </button>
+          <div className="tac-hint">Use the paint-origin / paint-objective buttons on the map to draw areas.</div>
+        )}
+        <div className="mobility-brush-row">
+          {(['small', 'medium', 'large'] as BrushSize[]).map(size => (
+            <button
+              key={size}
+              className={`mobility-brush-btn${brushSize === size ? ' active' : ''}`}
+              onClick={() => onBrushSizeChange(size)}
+            >
+              {size === 'small' ? 'S' : size === 'medium' ? 'M' : 'L'}
+            </button>
+          ))}
+        </div>
+        {(originPaint.length > 0 || objectivePaint.length > 0) && (
+          <div className="mobility-aoi-row">
+            {originPaint.length > 0 && (
+              <button className="mobility-clear-button tac-mono" onClick={() => onClearPaint('origin')}>Clear origin</button>
+            )}
+            {objectivePaint.length > 0 && (
+              <button className="mobility-clear-button tac-mono" onClick={() => onClearPaint('objective')}>Clear objective</button>
+            )}
+          </div>
         )}
       </div>
 

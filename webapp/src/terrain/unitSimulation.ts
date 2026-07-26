@@ -15,7 +15,8 @@
  * wide→refine→polish idiom (routeOptimizer.ts) applied to this mode.
  */
 
-import { MobilityAoi, buildMobilityGrid } from './mobilityGrid';
+import { buildMobilityGrid } from './mobilityGrid';
+import { PaintedArea, singleDabArea } from './paintedArea';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
 
@@ -62,7 +63,7 @@ export interface UnitSimulationCallbacks {
 export class UnitSimulationController {
   private path: SimPathNode[];
   private readonly originalTotalSeconds: number;
-  private readonly objective: MobilityAoi;
+  private readonly objective: PaintedArea;
   private readonly profileId: string;
   private readonly nightMode: boolean;
   private readonly replanAtFraction: number;
@@ -78,7 +79,7 @@ export class UnitSimulationController {
 
   constructor(
     initialPath: SimPathNode[],
-    objective: MobilityAoi,
+    objective: PaintedArea,
     profileId: string,
     nightMode: boolean,
     callbacks: UnitSimulationCallbacks,
@@ -141,12 +142,7 @@ export class UnitSimulationController {
     this.replanInFlight = true;
     this.callbacks.onLog?.('LOCAL FIDELITY CHECKPOINT — RESAMPLING GROUND FROM CURRENT POSITION…');
     try {
-      const dLat = REPLAN_BOX_HALF_WIDTH_M / 111320;
-      const dLng = REPLAN_BOX_HALF_WIDTH_M / (111320 * Math.cos((pos.lat * Math.PI) / 180));
-      const localOrigin: MobilityAoi = {
-        sw: { lat: pos.lat - dLat, lng: pos.lng - dLng },
-        ne: { lat: pos.lat + dLat, lng: pos.lng + dLng },
-      };
+      const localOrigin: PaintedArea = singleDabArea({ lat: pos.lat, lng: pos.lng }, REPLAN_BOX_HALF_WIDTH_M);
       const grid = await buildMobilityGrid(localOrigin, this.objective);
       if (!grid) {
         this.callbacks.onLog?.('REPLAN SKIPPED — LOCAL AREA TOO SMALL, HOLDING ORIGINAL PLAN');

@@ -7,6 +7,11 @@
  * pathfinding claim). Trail-on cells matter here because they change both
  * speed (road vs cross-country factor) and vegetation passability (already
  * broken ground).
+ *
+ * Origin/objective areas are PAINTED (docs owner feedback 2026-07-26) — a
+ * union of circular dabs (paintedArea.ts), not a drawn rectangle — so a cell
+ * counts as "in" an area when its centre falls within ANY dab, tested via
+ * `isInsidePaintedArea` rather than a simple bbox containment check.
  */
 
 import { LatLng } from '../utils/chainage';
@@ -17,41 +22,24 @@ import {
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import { fetchCorridorInfrastructure, distanceToNearestTrail } from '../utils/infrastructureService';
 import { MobilityGridCell } from './accumulatedCost';
+import { PaintedArea, paintedAreaBounds, isInsidePaintedArea } from './paintedArea';
 
 const TARGET_CELL_COUNT = 1400;
 const MAX_HEX_CELLS = 1800;
 const TRAIL_SNAP_M = 30;
 
-export interface MobilityAoi {
-  sw: LatLng;
-  ne: LatLng;
-}
-
 export interface MobilityGridResult {
   cells: MobilityGridCell[];
   hexSize: number;
   proj: LocalProjection;
-  /** Cell keys whose centre falls inside the origin AOI box — the
+  /** Cell keys whose centre falls inside the painted origin area — the
    *  multi-source search's super-source seed set. */
   originKeys: string[];
-  /** Cell keys whose centre falls inside the objective AOI box — the target
-   *  set `extractPath` picks the cheapest-reached cell from. */
+  /** Cell keys whose centre falls inside the painted objective area — the
+   *  target set `extractPath` picks the cheapest-reached cell from. */
   objectiveKeys: string[];
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
-}
-
-function boxLocal(proj: LocalProjection, aoi: MobilityAoi): { min: LocalPoint; max: LocalPoint } {
-  const a = toLocal(proj, aoi.sw);
-  const b = toLocal(proj, aoi.ne);
-  return {
-    min: { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) },
-    max: { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) },
-  };
-}
-
-function containsLocal(min: LocalPoint, max: LocalPoint, p: LocalPoint): boolean {
-  return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
 }
 
 /**
@@ -60,16 +48,20 @@ function containsLocal(min: LocalPoint, max: LocalPoint, p: LocalPoint): boolean
  * between them.
  */
 export async function buildMobilityGrid(
-  origin: MobilityAoi,
-  objective: MobilityAoi,
+  origin: PaintedArea,
+  objective: PaintedArea,
   options: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {}
 ): Promise<MobilityGridResult | null> {
   const { signal, onProgress } = options;
 
-  const minLat = Math.min(origin.sw.lat, origin.ne.lat, objective.sw.lat, objective.ne.lat);
-  const maxLat = Math.max(origin.sw.lat, origin.ne.lat, objective.sw.lat, objective.ne.lat);
-  const minLng = Math.min(origin.sw.lng, origin.ne.lng, objective.sw.lng, objective.ne.lng);
-  const maxLng = Math.max(origin.sw.lng, origin.ne.lng, objective.sw.lng, objective.ne.lng);
+  const originBounds = paintedAreaBounds(origin);
+  const objectiveBounds = paintedAreaBounds(objective);
+  if (!originBounds || !objectiveBounds) return null;
+
+  const minLat = Math.min(originBounds.minLat, objectiveBounds.minLat);
+  const maxLat = Math.max(originBounds.maxLat, objectiveBounds.maxLat);
+  const minLng = Math.min(originBounds.minLng, objectiveBounds.minLng);
+  const maxLng = Math.max(originBounds.maxLng, objectiveBounds.maxLng);
   if (maxLat - minLat < 1e-6 || maxLng - minLng < 1e-6) return null;
 
   // Pad ~20% either side so the search has room to route around obstacles
@@ -112,9 +104,6 @@ export async function buildMobilityGrid(
   if (signal?.aborted) return null;
   onProgress?.(0.65);
 
-  const originLocal = boxLocal(proj, origin);
-  const objectiveLocal = boxLocal(proj, objective);
-
   const cells: MobilityGridCell[] = cellsRaw.map((c, i) => ({
     key: hexKey(c.hex),
     hex: c.hex,
@@ -125,12 +114,8 @@ export async function buildMobilityGrid(
     onTrail: infra.trails.length > 0 && distanceToNearestTrail(points[i], infra.trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
   }));
 
-  const originKeys = cellsRaw
-    .filter(c => containsLocal(originLocal.min, originLocal.max, c.center))
-    .map(c => hexKey(c.hex));
-  const objectiveKeys = cellsRaw
-    .filter(c => containsLocal(objectiveLocal.min, objectiveLocal.max, c.center))
-    .map(c => hexKey(c.hex));
+  const originKeys = cells.filter(c => isInsidePaintedArea(c.center, origin)).map(c => c.key);
+  const objectiveKeys = cells.filter(c => isInsidePaintedArea(c.center, objective)).map(c => c.key);
 
   onProgress?.(0.7);
 
