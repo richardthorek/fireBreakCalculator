@@ -400,9 +400,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       return;
     }
   mapboxgl.accessToken = token;
+  // Owner, 2026-07-26: "bring back the satellite as the default map, seeing
+  // the terrain is the key." §13.1's original tactical-mode design called
+  // for a dark vector basemap (a restrained "ops HUD" look) — reasonable for
+  // a chrome aesthetic, wrong for a tool whose whole analytical premise is
+  // reading real ground (vegetation density, tracks, gaps) off the map.
+  // Terrain mode now defaults to the SAME satellite imagery fire-break mode
+  // already uses, not a separate basemap — one real view of the ground in
+  // both modes. VITE_MAPBOX_TACTICAL_STYLE remains available as an explicit
+  // override for anyone who wants a different tactical-specific style later.
+  const satelliteStyleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
   const styleURL = tacticalMode
-    ? ((import.meta as any).env?.VITE_MAPBOX_TACTICAL_STYLE || 'mapbox://styles/mapbox/dark-v11')
-    : ((import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t');
+    ? ((import.meta as any).env?.VITE_MAPBOX_TACTICAL_STYLE || satelliteStyleURL)
+    : satelliteStyleURL;
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;

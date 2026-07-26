@@ -1128,8 +1128,17 @@ because it determines everything else:
 
 ### 13.1 Map surface
 
-- **Dark tactical basemap**, restrained palette, high-contrast data-ink. Reuse the
-  existing theme system rather than a parallel one.
+- ~~Dark tactical basemap~~ **Superseded 2026-07-26** (owner: "bring back the
+  satellite as the default map, seeing the terrain is the key.") The original
+  plan below traded real ground imagery for a restrained dark-chrome look —
+  the wrong trade for a product whose entire analytical premise is reading
+  actual vegetation density, tracks and gaps off the map. Terrain mode now
+  defaults to the SAME satellite basemap fire-break mode uses (as-built §27
+  area). The panel/badge/log dark theme (everything else in this section) is
+  UNAFFECTED — those are separate overlaid DOM elements with their own
+  background, not dependent on the basemap being dark. `VITE_MAPBOX_TACTICAL_STYLE`
+  remains available as an explicit env override for anyone who wants a
+  different tactical-specific basemap later; it is no longer the default.
 - **Military map furniture, because its absence is conspicuous:** MGRS grid overlay
   (`gridReference.ts` already exists), grid-square labels, scale bar, north arrow,
   and a live coordinate readout in **MGRS + lat/long + decimal degrees** under the

@@ -60,6 +60,20 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain mode default basemap: satellite, not dark vector**:
+  owner: "bring back the satellite as the default map, seeing the terrain is
+  the key." §13.1's original tactical-mode design called for a dark vector
+  basemap for a restrained "ops HUD" look — the wrong trade for a tool whose
+  whole analytical premise is reading real vegetation density, tracks and
+  gaps off the ground. `MapboxMapView.tsx` now defaults Terrain mode to the
+  SAME satellite imagery fire-break mode already uses, rather than a
+  separate dark style — one real view of the ground in both modes. The dark
+  panel/badge/log tactical theme is unaffected (separate overlaid DOM
+  elements, not dependent on the basemap). `VITE_MAPBOX_TACTICAL_STYLE`
+  remains available as an explicit override, just no longer the default.
+  Verified: `tsc --noEmit`/`npm run build` clean; live rendering
+  unverifiable in this sandbox (no Mapbox token) — confirm on the live
+  preview.
 - **2026-07-26 — Terrain Mobility: movement CORRIDORS (closes Pass 2's
   unfinished half)**: owner asked for the potential paths to be smoothed and
   presented as **corridors of possible movement** rather than a single optimal
