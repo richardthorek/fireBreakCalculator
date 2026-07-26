@@ -100,14 +100,16 @@ Extend the optimizer smoke-suite pattern: synthetic road grid → nearest-entry 
 
 ## Terrain Mobility & Counter-Mobility — 🚧 Pass 1 shipped (secondary use case)
 
-**Status:** Pass 1 of the §15 build plan is built and merged — mover profile
+**Status:** Passes 1 and 2 of the §15 build plan are built and merged (§16, §17), plus
+provider-agnostic imagery interfaces from Pass 4 (§18). Shipped: mover profile
 catalogue, directional profile-parameterised cost model, multi-source area-to-area
-search (Web Worker), GO/SLOW-GO/NO-GO + isochrone rendering, tactical UI skin with a
-full app-identity swap, and the bonus unit-movement simulation with a real
-mid-course replan (§16). Passes 2–4 (corridors/MCOO/min-cut, trafficability data
-uplift, counter-mobility planner + imagery) remain 📋 design only. Recorded here
-rather than in a new doc because it is the same cost surface this doc already owns,
-read with a different objective. Roadmap entry: `master_plan.md` Step 10.
+search (Web Worker), GO/SLOW-GO/NO-GO + isochrone rendering, k-dissimilar routes,
+betweenness chokepoints, min-cut barrier siting, tactical UI skin with a full
+app-identity swap, and the bonus unit-movement simulation with a real mid-course
+replan. In progress (background agents): the rest of Pass 3 (trafficability data
+layers) and the rest of Pass 4 (counter-mobility catalogue + delay ledger + UI).
+Recorded here rather than in a new doc because it is the same cost surface this doc
+already owns, read with a different objective. Roadmap entry: `master_plan.md` Step 10.
 **Primary audience:** defence, secure-facility operators, land managers (§7).
 **Start with §10 if you only read one part** — vegetation structure/trafficability
 fidelity is the constraint everything else depends on.
@@ -1461,7 +1463,80 @@ this specific relay even when explicitly configured with the same proxy (confirm
 both the Mapbox token and the custom style resolve fine over plain `curl` through the
 identical proxy). This is the same class of gap this doc has flagged before when the
 sandbox couldn't reach Mapbox — **confirm live** before relying on the map-interaction
-UI, same as those earlier entries.
+UI, same as those earlier entries. **Confirmed NOT host-specific**: the identical
+`ERR_CONNECTION_RESET` also hit the real deployed Azure Static Web Apps PR-preview
+URL (a genuine public HTTPS site, not localhost) across multiple proxy
+configurations, while `curl` against that exact URL succeeded every time — this is a
+Chromium-vs-policy-proxy incompatibility in this specific sandbox, not anything
+host- or code-specific, and not something further proxy-flag iteration inside this
+sandbox is expected to fix.
+
+## 17. Pass 2 — as-built (2026-07-26)
+
+Shipped on top of Pass 1: k-dissimilar routes, betweenness chokepoints, and
+min-cut counter-mobility barrier siting — the "hero" analytic from §4 (a fire
+break and a movement barrier are the same object).
+
+- **`corridorAnalysis.ts`** — `findKDissimilarPaths` gets up to 3 genuinely
+  distinct origin→objective routes via iterative-penalty re-search: extract the
+  best path, penalise its edges (accumulating multiplicatively across
+  iterations), re-run. `computeChokepoints` is betweenness over that route
+  set — cheap, and it's the ground "everything funnels through" per §4.
+- **`minCutBarrier.ts`** — the cheapest set of cells severing the origin AOI
+  from the objective AOI for a given profile. **Implementation choice,
+  documented rather than silently substituted:** this ships via the standard
+  max-flow/min-cut equivalence (Edmonds-Karp augmenting paths) rather than
+  the elegant planar-dual-shortest-path construction this doc's §4 originally
+  described. Implementing that construction correctly for a HEX grid (whose
+  dual is a triangular tiling, not the square-grid case most references cover)
+  under time pressure was judged a real risk of a subtly wrong answer — exactly
+  the "confident but incorrect" failure this project's data-honesty principle
+  exists to prevent. Max-flow/min-cut is standard, well-understood, and its
+  correctness is checked by construction in the smoke test below. The
+  dual-graph form remains a valid future performance optimisation.
+  **Capacity model, also stated plainly:** unit capacity per passable edge
+  (GO/SLOW-GO only — NO-GO edges carry no traffic and are excluded), tripled
+  when both ends are on a mapped trail (real sampled data, not invented).
+  This is **not yet** weighted by real vehicle capacity (VCI/RCI, §6a) — that
+  needs the soil layers a later pass brings in. Today's min-cut answers "the
+  fewest, most trail-favouring chokepoints that fully sever this corridor",
+  not yet "the cheapest to physically build".
+- `accumulatedCost.ts`'s search gained an `edgePenalties` option (a
+  multiplier per directed edge) — the single mechanism both the k-route
+  search and the min-cut correctness check are built on.
+- UI: chokepoints render as sized/coloured map markers; the barrier plan
+  renders as a map line layer; `MobilityPanel.tsx` shows route/chokepoint
+  counts and the min-cut result with its capacity-model caveat surfaced, not
+  buried, via `DataConfidenceBadge`.
+
+**Verification:** `npm run build` clean. An 8-check standalone Node smoke test
+against the real modules, using a synthetic single-cell-gap bottleneck grid:
+every found route converges on the gap; the gap is identified as the top
+chokepoint; and — the rigorous check — penalising the min-cut's own edges to
+near-infinity and re-running the search confirms the objective genuinely
+becomes unreachable, proving the returned cut is a real separator, not merely
+plausible-looking.
+
+**Not yet done:** the VCI₁/VCI₅₀ corridor-capacity card and full MCOO GIS
+export/symbology are deferred, not built with placeholder numbers — the
+former needs real soil data (Pass 3), and fabricating a capacity figure
+without it would be exactly the kind of invented-precision this project
+forbids.
+
+## 18. Pass 4 (partial) — provider-agnostic imagery, as-built (2026-07-26)
+
+`webapp/src/terrain/imagery/`: `ImageryProvider` (bbox+zoom → pixels, with a
+mandatory `describeCoverage` step gating resolution/vintage/licence class
+before any analysis runs — the §12 "decline rather than produce shapes" rule
+enforced by the interface, not by remembering to check), `MapboxImageryProvider`
+(reads tiles already loaded on the map, mirroring `mapboxTrails.ts`'s
+zero-extra-network pattern; honestly detects a blank canvas capture rather
+than claim success — flags that `MapboxMapView.tsx` doesn't yet set
+`preserveDrawingBuffer: true`, needed for real pixel capture, as a follow-up
+rather than editing that shared file here), and `StructureAnalysisEngine`
+(the interface a real engine would implement, plus the only engine actually
+shipped: `NotYetImplementedEngine`, which reports its own absence — imagery
+CV stays gated on the lidar calibration set §10.3(b) requires).
 
 ---
 

@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Pass 1 shipped: mobility core, tactical UI, unit-sim bonus)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–2 shipped; Pass 3/4 in progress)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -58,6 +58,44 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility Pass 2 shipped + Pass 3/4 in progress** (same
+  branch/PR, same day as Pass 1 below): owner asked to run all four passes as
+  parallel as possible, testing against the PR's live Azure Static Web Apps
+  preview deployment. Pass 2 built solo (tightly coupled to Pass 1's search
+  internals, kept centralized to avoid conflicting edits): `corridorAnalysis.ts`
+  (k-dissimilar routes via iterative-penalty re-search — blocking the best route
+  just pushes traffic to the second-best; betweenness chokepoints fall out of
+  that route set) and `minCutBarrier.ts` (the cheapest cell set severing origin
+  from objective — **the doc's own "hero" claim that a fire break and a movement
+  barrier are the same object**). Implementation note recorded plainly: shipped
+  via standard max-flow/min-cut (Edmonds-Karp) rather than the doc's original
+  planar-dual-shortest-path framing, since getting that construction right for a
+  HEX grid (whose dual is triangular, not square) under time pressure risked a
+  subtly wrong answer — worse than a plainer, verifiably-correct algorithm.
+  Verified with an 8-check smoke test on a synthetic single-cell-gap bottleneck,
+  including the rigorous proof: penalising the returned cut's own edges to
+  near-infinity and re-running the search confirms the objective genuinely
+  becomes unreachable. Also shipped: provider-agnostic imagery interfaces
+  (§12) — `ImageryProvider`/`MapboxImageryProvider`/`StructureAnalysisEngine`,
+  the latter an honest `NotYetImplementedEngine` that reports its own absence
+  rather than fabricate crown-detection output, since that's gated on a lidar
+  calibration set no later pass has built yet. **In progress via two parallel
+  background agents** on entirely new files (zero overlap with each other or
+  with the above, to avoid merge conflicts): Pass 3's trafficability data layers
+  (DEM derivatives, an AusPlots-cited structure table to replace the Tier 0
+  vegetation placeholder, NAFI/fractional-cover/surface-water service modules)
+  and Pass 4's counter-mobility catalogue + delay ledger + UI (doctrinal
+  disrupt/turn/fix/block effects, the bypass rule, the egress-safety gate, all
+  built against the real min-cut/search primitives above). **Live-preview
+  testing attempted per the owner's request, conclusively blocked, root-caused
+  precisely**: the identical sandbox proxy limitation already flagged for
+  Mapbox also hit the PR's real deployed Azure Static Web Apps preview URL —
+  confirmed NOT host-specific (same `ERR_CONNECTION_RESET` in headless
+  Chromium against a genuine public HTTPS site, across multiple proxy
+  configurations, while `curl` against the identical URL succeeded every
+  time) — a Chromium-vs-policy-proxy incompatibility in this sandbox, not
+  something further flag iteration was going to fix. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §17–§18.
 - **2026-07-26 — Terrain Mobility Pass 1 shipped** (same branch, first code on top of
   the design work below): owner said "go, implement it all" and asked for a bonus
   RTS-style unit-movement simulation along the way. Built the Pass 1 vertical slice
