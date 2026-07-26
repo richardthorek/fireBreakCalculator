@@ -174,6 +174,26 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
         </div>
       )}
 
+      {result && result.dissimilarRoutes.length > 0 && (
+        <div className="tac-panel mobility-section">
+          <div className="tac-label">CORRIDORS &amp; CHOKEPOINTS</div>
+          <div className="mobility-result-stats tac-mono">
+            <div>{result.dissimilarRoutes.length} DISTINCT ROUTE(S)</div>
+            <div>{result.chokepoints.length} CHOKEPOINT(S)</div>
+          </div>
+          {result.barrier ? (
+            <>
+              <div className="mobility-caveat tac-mono">
+                MIN-CUT: {result.barrier.segments.length} SEGMENT(S), CUT VALUE {result.barrier.cutValue.toFixed(0)}
+              </div>
+              <DataConfidenceBadge tier="estimated" label="UNIT/TRAIL-WEIGHTED, NOT REAL VEHICLE CAPACITY" />
+            </>
+          ) : (
+            <div className="mobility-caveat tac-mono">NO SEPARATING CUT FOUND FOR THIS PROFILE</div>
+          )}
+        </div>
+      )}
+
       {hasPath && (
         <div className="tac-panel mobility-section">
           <div className="tac-label">UNIT SIMULATION</div>

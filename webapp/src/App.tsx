@@ -1074,6 +1074,8 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
+            chokepoints={mobilityResult?.chokepoints ?? null}
+            barrierSegments={mobilityResult?.barrier?.segments ?? null}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}

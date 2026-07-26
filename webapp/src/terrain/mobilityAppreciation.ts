@@ -10,6 +10,8 @@ import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { SimPathNode } from './mobilityWorker';
+import { findKDissimilarPaths, computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
+import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -25,6 +27,13 @@ export interface MobilityAppreciationResult {
    *  unit-simulation animation follows (docs "Terrain Mobility &
    *  Counter-Mobility": null only if no objective cell was reachable). */
   path: SimPathNode[] | null;
+  /** Pass 2 — up to 3 genuinely distinct origin→objective routes. */
+  dissimilarRoutes: DissimilarRoute[];
+  /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
+  chokepoints: ChokepointCell[];
+  /** Pass 2 — cheapest severing cut for this profile (null if the objective
+   *  was already unreachable, since there is nothing left to sever). */
+  barrier: MinCutResult | null;
 }
 
 export interface MobilityAppreciationOptions {
@@ -81,13 +90,40 @@ export async function runMobilityAppreciation(
   if (fastestBand) {
     onLog?.(`FIRST ARRIVALS WITHIN ${fastestBand.thresholdMinutes} MIN — ${fastestBand.cells.length} CELLS`);
   }
-  onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
   if (path) {
     const etaMin = path[path.length - 1].cumulativeSeconds / 60;
     onLog?.(`ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN`);
   } else {
     onLog?.('NO ROUTE FOUND — OBJECTIVE UNREACHABLE FOR THIS PROFILE');
   }
+
+  // --- Pass 2: corridors, chokepoints, min-cut barrier (main-thread — cheap
+  // at this grid size relative to the sampling+search already done). ------
+  let dissimilarRoutes: DissimilarRoute[] = [];
+  let chokepoints: ChokepointCell[] = [];
+  let barrier: MinCutResult | null = null;
+  if (path) {
+    onProgress?.(0.96);
+    onLog?.('FINDING DISTINCT ROUTES (BLOCKING THE BEST ONE JUST MOVES TRAFFIC)…');
+    dissimilarRoutes = findKDissimilarPaths(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, 3);
+    onLog?.(`${dissimilarRoutes.length} DISTINCT ROUTE(S) FOUND`);
+
+    chokepoints = computeChokepoints(grid.cells, grid.hexSize, grid.proj, dissimilarRoutes).slice(0, 12);
+    if (chokepoints.length > 0) {
+      onLog?.(`TOP CHOKEPOINT CROSSED BY ${chokepoints[0].passCount}/${dissimilarRoutes.length} ROUTES`);
+    }
+
+    onProgress?.(0.98);
+    onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
+    barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
+    if (barrier) {
+      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/TRAIL-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
+    } else {
+      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
+    }
+  }
+
+  onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
   onProgress?.(1);
 
   return {
@@ -101,5 +137,8 @@ export async function runMobilityAppreciation(
     noGoCount,
     slowGoCount,
     path,
+    dissimilarRoutes,
+    chokepoints,
+    barrier,
   };
 }

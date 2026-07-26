@@ -173,12 +173,23 @@ export interface AccumulatedCostSearchResult {
   prev: Map<string, string>;
 }
 
+export interface AccumulatedCostSearchOptions {
+  /** Multiplicative penalty per DIRECTED edge (keyed `${fromKey}|${toKey}`),
+   *  applied to that edge's time cost before relaxation. Used by
+   *  corridorAnalysis.ts's k-dissimilar-route search: after extracting the
+   *  cheapest path, its edges are penalised and the search re-run, so the
+   *  next route is genuinely different rather than a trivial variant. */
+  edgePenalties?: Map<string, number>;
+}
+
 export function runAccumulatedCostSearch(
   cells: MobilityGridCell[],
   originKeys: string[],
   profile: MoverProfile,
-  nightMode: boolean
+  nightMode: boolean,
+  options: AccumulatedCostSearchOptions = {}
 ): AccumulatedCostSearchResult {
+  const { edgePenalties } = options;
   const byKey = new Map<string, MobilityGridCell>();
   for (const c of cells) byKey.set(c.key, c);
 
@@ -207,7 +218,8 @@ export function runAccumulatedCostSearch(
       const sampleB: MobilitySample = { lat: neighbor.center.lat, lng: neighbor.center.lng, elevation: neighbor.elevation, vegetation: neighbor.vegetation, vegEstimated: neighbor.vegEstimated, onTrail: neighbor.onTrail };
       const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO edge — never relax through it
-      const candidateTime = known.timeSeconds + result.timeSeconds;
+      const penalty = edgePenalties?.get(`${cur.key}|${nKey}`) ?? 1;
+      const candidateTime = known.timeSeconds + result.timeSeconds * penalty;
       const existing = best.get(nKey);
       if (!existing || candidateTime < existing.timeSeconds) {
         const estimated = known.estimated || result.estimated;

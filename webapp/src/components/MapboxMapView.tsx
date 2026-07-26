@@ -157,6 +157,10 @@ interface MapboxMapViewProps {
   /** Unit simulation — the intended path currently being followed (redrawn
    *  whenever a mid-course replan splices a new remainder onto it). */
   unitSimPath?: { lat: number; lng: number }[] | null;
+  /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
+  chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
+  /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
+  barrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -205,7 +209,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   mobilityDisplayMode = 'trafficability',
   onCursorMove,
   unitSimPosition = null,
-  unitSimPath = null
+  unitSimPath = null,
+  chokepoints = null,
+  barrierSegments = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -1439,6 +1445,93 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       unitSimMarkerRef.current.setLngLat([unitSimPosition.lng, unitSimPosition.lat]);
     }
   }, [unitSimPosition]);
+
+  // Pass 2 — chokepoint markers, sized/coloured by how many of the
+  // dissimilar routes cross each cell (docs §4: "the ground everything
+  // funnels through").
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-chokepoints')) map.removeLayer('mobility-chokepoints');
+        if (map.getSource('mobility-chokepoints')) map.removeSource('mobility-chokepoints');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!chokepoints || chokepoints.length === 0) { remove(); return; }
+    const maxCount = Math.max(1, ...chokepoints.map(c => c.passCount));
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: chokepoints.map(c => ({
+        type: 'Feature' as const,
+        properties: { passCount: c.passCount, weight: c.passCount / maxCount },
+        geometry: { type: 'Point' as const, coordinates: [c.center.lng, c.center.lat] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-chokepoints');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-chokepoints', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-chokepoints',
+          type: 'circle',
+          source: 'mobility-chokepoints',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'weight'], 0, 5, 1, 14],
+            'circle-color': '#D8232A',
+            'circle-opacity': 0.55,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
+          },
+        });
+      } catch (e) {
+        logger.warn('Failed to render chokepoints', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [chokepoints]);
+
+  // Pass 2 — min-cut barrier plan: the cheapest set of segments severing the
+  // origin AOI from the objective AOI for the selected profile.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-barrier')) map.removeLayer('mobility-barrier');
+        if (map.getSource('mobility-barrier')) map.removeSource('mobility-barrier');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!barrierSegments || barrierSegments.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: barrierSegments.map(s => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates: [[s.from.lng, s.from.lat], [s.to.lng, s.to.lat]] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-barrier');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-barrier', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-barrier',
+          type: 'line',
+          source: 'mobility-barrier',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#D8232A', 'line-width': 5, 'line-opacity': 0.85 },
+        });
+      } catch (e) {
+        logger.warn('Failed to render barrier plan', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [barrierSegments]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
