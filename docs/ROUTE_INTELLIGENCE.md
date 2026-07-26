@@ -700,12 +700,12 @@ computer vision.** They are in three free national layers nobody has wired up ye
   cases in §10.1 — the widely-spaced woodland that behaves as grassland, and the
   regrowth thicket that reads as open. Free, national, well-maintained, and the app
   already consumes fire products from the same publishers.
-- **Fractional cover (bare / green vegetation / dry vegetation, ~30 m, seasonal
-  time series).** Separates green grass from dry grass from bare ground —
+- **Fractional cover (bare / green vegetation / dry vegetation, 25 m Landsat,
+  seasonal time series).** Separates green grass from dry grass from bare ground —
   operationally the difference between a highway, a fire risk, and a bog. The
   **seasonal series answers "drivable in February vs August"**, which is a real
   planning question this product currently cannot touch.
-- **Surface-water observation frequency (~25 m, full satellite archive).** How often
+- **Surface-water observation frequency (25 m, full Landsat archive).** How often
   each pixel has been *observed as water* over decades. A pixel wet 40% of the time
   is a seasonal trap, and this needs no modelling at all — it is measurement.
   Extremely high value for the wet/dry toggle, and the publisher (Digital Earth
@@ -873,6 +873,336 @@ order matters — cheapest and most defensible first:
 - **M3f — Tier 4 customer data ingest**, which for the secure-facility audience may
   well be worth pulling *earlier* than M3c–M3e, since it makes them unnecessary
   for that customer.
+
+---
+
+## 11. Research basis — every movement assumption, sourced
+
+Nothing in §§2–6 may ship on an invented constant. This section is the register of
+what the literature and doctrine actually support, **including the published
+limitations of each source** — the limitations matter as much as the values, because
+a defence audience will probe them and a stated caveat is what makes the rest
+credible.
+
+### 11.1 Movement on foot — the individual
+
+| Model | Form / values | Source | Stated limitation |
+|---|---|---|---|
+| **Tobler's hiking function** | `v (km/h) = 6 · exp(−3.5 · |s + 0.05|)`, where `s` = dh/dx. Peak ~5.04 km/h at **−2.86°** (−5% grade), i.e. genuinely asymmetric — gentle downhill is faster than flat | Tobler 1993 | On-path, unladen, empirically fitted rather than experimentally derived; **no vegetation term at all**. Use as the slope-anisotropy shape, not as an absolute speed |
+| **Irmischer & Clarke terrain-adjusted speed** | `v (m/s) = 0.11 + exp(−(100s + 2)² / 1800)`. Published as **four functions** — male/female × **on-path/off-path** | Irmischer & Clarke 2018, measured from US Military Academy cadets navigating hilly, wooded terrain on foot | Young, fit, single-cohort, specific terrain. **But it is the only widely-used slope-speed function calibrated off-path with a military cohort** — which is precisely our case, so it should be the primary individual-movement model, with Tobler as the cross-check |
+| **Márquez-Pérez modified Tobler** | Double-exponential, same three parameters (max speed, rate of change with slope, slope of max speed); the most slope-selective of the common functions | Márquez-Pérez, Vallejo-Villalta & Álvarez-Francoso 2017 | Favours gentler routes, producing longer-but-easier paths. Useful as a selectable "prefers easy ground" variant rather than a default |
+| **Load-carriage energetics** | Pandolf equation (1977) with Soule & Goldman (1972) terrain coefficients — body mass, load mass, velocity, grade, terrain factor | US Army ARIEM | **Published error 12–33%**, best (12–17%) at 4.5–5.5 km/h, and it **under-predicts contemporary military load carriage**. Therefore: use for *endurance limits and relative comparison between routes*, never as an absolute energy or fatigue claim, and label it as such |
+
+### 11.2 Movement on foot — the unit (different model, deliberately)
+
+Doctrinal march rates are not individual speeds; they include column effects, halts,
+and planning conservatism. **They are the correct basis for "a unit on foot", where
+Tobler/Irmischer are correct for one person** — so the product must carry both and
+say which it is using.
+
+| Condition | Rate | Source |
+|---|---|---|
+| Roads, day | **4.0 km/h** | US Army foot-march doctrine (FM 21-18, superseded by ATP 3-21.18) |
+| Roads, limited visibility | **3.2 km/h** | " |
+| Cross-country, day | **2.4–2.6 km/h** | " |
+| Cross-country, night | **1.6 km/h** | " |
+| Sustained daily distance | **20–32 km per 24 h**, on 5–8 h of marching | " |
+
+Two derived factors fall straight out of these and are therefore **doctrinally
+anchored rather than invented** — which is exactly what §2 needed: a **cross-country
+factor of ~0.6** relative to roads, and a **night factor of ~0.67**. Use these as the
+defaults for the profile catalogue's `nightFactor` and cross-country penalty.
+
+### 11.3 Vehicles — terrain classification and soil
+
+- **The doctrinal classification is three-valued and qualitative:** UNRESTRICTED
+  (no characteristic significantly impedes movement — may be moderately sloping with
+  *widely spaced* trees, and note the doctrine explicitly allows widely-spaced trees
+  in the *unrestricted* class, which is the direct doctrinal confirmation of the
+  "spaced trees behave as grassland" point in §10.1), RESTRICTED (hinders movement;
+  formations cannot move at preferred speed or change formation; for mounted forces,
+  steep slopes or *moderate to densely spaced* trees/rocks/buildings), SEVERELY
+  RESTRICTED (steep slopes, densely spaced trees or rocks, little or no supporting
+  roads). This is the GO/SLOW-GO/NO-GO mapping in §4, and adopting the doctrinal
+  three-class vocabulary is free credibility.
+- **Slope anchors from the same doctrine:** most vehicles negotiating **≥7%** for any
+  significant distance will be slowed, and 7% is treated as an *obstruction*;
+  **≥45%** impedes cross-terrain movement. Note how much stricter the 7% figure is
+  than the existing fire-oriented model's first breakpoint — the current
+  `slopeCost` ramp is calibrated for *machinery working a break*, not for *movement
+  at pace*, which is direct evidence for the profile-parameterised cost strategy in §2.
+- **Soil strength is the VCI/RCI comparison, and the decision rule is explicit:**
+  *if the vehicle cone index exceeds the (rating) cone index for the critical layer,
+  the soil is not trafficable for that number of passes.* The worked doctrinal
+  example is exactly the demonstration this product needs — a 105 mm howitzer with
+  **VCI₁ = 21** and **VCI₅₀ = 49** on fine-grained soil at **RCI 43** is *trafficable
+  for one pass* (43 > 21) and, at **RCI 48**, **not trafficable for fifty passes**
+  (48 < 49). One vehicle yes, the column no, on the same ground. **That single
+  example should be in the demo**, because it makes "drivable ≠ drivable at scale"
+  concrete in one slide.
+- Published tables also band VCI values against probability of traversing an area.
+  **The exact banding must be read off the source table rather than a secondary
+  summary** before it is coded — flagged as a verification item, not treated as known.
+- Framework lineage: NATO Reference Mobility Model and its NG-NRMM successor. We are
+  not rebuilding NRMM; we are using its *indices and vocabulary* so outputs are
+  legible to people who already use them.
+
+### 11.4 Vegetation as a vehicle obstacle — two different mechanisms
+
+This is the most important research finding for §10, because it changes the model
+shape rather than just supplying a constant:
+
+- **Override force is a real, published model.** The force required to push over a
+  vertically embedded obstacle is a function of **stem diameter** and the vehicle's
+  **pushbar height**, plus root/soil stability governing mechanical tree stability
+  (Mason et al. 2012, developed to support movement-capability determination for
+  ground vehicles; validated against a large test programme with tracked and wheeled
+  vehicles). Recent robotic off-road work demonstrates controlled override of stems
+  up to ~**82 mm** diameter, which is a useful concrete anchor for the small-vehicle
+  push-through threshold.
+- **And the two vehicle classes are limited by different variables.** The literature
+  states it plainly: *small trees can be pushed over by large tracked vehicles
+  depending on diameter, while trees large enough to stop wheeled vehicles are
+  usually too closely spaced to allow passage.* So:
+  - **Wheeled profiles are gap-width-limited** → the binding computation is the
+    percolation/widest-channel analysis in §10.2.
+  - **Tracked profiles are override-force-limited** → the binding computation is a
+    stem-diameter-distribution threshold.
+  
+  **These are two different queries against the same structure data**, and the model
+  must implement both rather than applying one blended "vegetation factor". This is a
+  concrete design consequence that would have been missed without the research.
+
+### 11.5 Counter-mobility — use the doctrinal taxonomy, and its caveat
+
+- **Obstacle effects are a closed four-value set: disrupt, turn, fix, block**, and
+  **obstacle intent = target + effect + location** (FM 90-7 lineage, current
+  ATP 3-90.8 / MCWP 3-17.5). This replaces the ad-hoc vocabulary in §5 — "channel,
+  don't seal" is doctrinally **turn**, and every measure in the catalogue should
+  declare which of the four effects it is intended to achieve. Standard obstacle
+  symbology exists for all four, which the UI should use (§13).
+- **The caveat that keeps us honest:** doctrine is explicit that obstacle effects
+  arise from **obstacles *and* fires together**, not obstacles alone. This product
+  models only the obstacle contribution. Therefore an unobserved, unanswered barrier
+  must never be reported as **block** — absent an observation-and-response plan it is
+  at best **disrupt**. Encoding that rule prevents the single largest overclaim
+  available to this tool, and it is the sort of restraint a professional audience
+  reads as competence.
+- **Published obstacle geometry** (to be used as *defaults with citation*, and
+  overridable): anti-vehicle ditch approximately **4 m wide × 1.5 m deep** for a
+  triangular profile, or **4.5–6 m wide × 1.8 m deep** rectangular; hasty crater on
+  the order of **1.5 m wide × 2.4 m deep × 6 m long**. Abatis: trees felled with tops
+  crisscrossed toward the expected approach, most effective in forest or on narrow
+  routes. Road craters are only effective where the flanks tie into steep slopes or
+  are otherwise covered — which is precisely the non-bypassability test in §5, and
+  the doctrine says so independently.
+- **Breach/delay values remain the gap.** The geometry above is sourced; the
+  *delay imposed on a given mover with given breaching equipment* is not, in any
+  open source we have found. So §5's gating stands: user-entered planning assumptions,
+  visibly flagged, until a citable basis exists.
+
+### 11.6 Vegetation structure — the Australian data actually exists
+
+The §10.4 research task is more tractable than it looked:
+
+- **TERN AusPlots** — a standardised continental plot network: **442 one-hectare
+  plots** across 22 major vegetation types (savanna, eucalypt woodland, chenopod
+  shrubland, grassland), with a 1,010-point point-intercept survey per plot recording
+  substrate, species, growth form and height, plus **stand basal area measured by
+  basal wedge sweep at nine points per plot**. The data is programmatically
+  accessible (the `ausplotsR` package exposes a `basal_area` function). This is
+  exactly the citable, variance-bearing basis §10.4 requires.
+- **AusPlots Forest Monitoring Network** — **48 one-hectare permanent plots** in
+  mature tall eucalypt forest across cool temperate, Mediterranean, subtropical and
+  tropical climates.
+- **And it quantifies the understorey claim.** In those tall-forest plots, eucalypts
+  hold ~90% of above-ground carbon, while **non-eucalypt understorey accounts for
+  ~84% of species and ~60% of stems**. A canopy-derived structure estimate is
+  therefore missing the majority of the stems — which is the numerical case for why
+  imagery crown detection (§10.3b) cannot stand alone, stated in someone else's
+  measured data rather than as our assertion.
+
+### 11.7 Confirmed Australian data sources for the trafficability stack
+
+| Source | Confirmed specifics | Tier |
+|---|---|---|
+| **ELVIS** (Elevation and Depth, ICSM/Geoscience Australia, `elevation.fsdf.org.au`) | Free lidar point clouds + **1 m DEM/DSM**, ~**15 cm vertical / 45 cm horizontal** accuracy, 15 GB per request; coverage concentrated on coastal Australia | 2 |
+| **NSW state-forest lidar 2022–23** (via ELVIS/SEED) | Point cloud **and** 1 m DEM over ~**250,000 ha across 27 state forests** in 7 regions (Eden, Batemans Bay, Bulahdelah, Wauchope, Coffs Harbour, Styx River, Casino) | 2 — **and the natural POC area of interest: real, free, current, forested, Australian** |
+| **DEA Water Observations from Space** | Per-pixel wet/dry classification at **25 m** (Landsat); annual and all-time **summaries give frequency of wet observations** as clear-wet ÷ clear-total | 1 |
+| **DEA Fractional Cover** | Per-pixel **bare soil / photosynthetic vegetation / non-photosynthetic vegetation** percentages at **25 m** | 1 |
+| **DEA Land Cover** | Annual national land cover | 1 |
+
+Every one of these still needs the standard endpoint/CORS/licensing assessment this
+repo applies to any new source before it is wired in.
+
+---
+
+## 12. Imagery: provider-agnostic by construction
+
+**Decision (owner, 2026-07-26): assume imagery licensing is in hand for the POC, and
+architect so the provider is swappable.** The licensing analysis in §10.3(b) is not
+withdrawn — it becomes a *deployment-time* concern rather than a design blocker, and
+the architecture is what makes that switch cheap.
+
+Two interfaces, deliberately narrow:
+
+```
+ImageryProvider          →  supplies georeferenced raster tiles for a bbox+zoom
+  .describeCoverage(bbox) →  native resolution, acquisition date(s), attribution,
+                             licence class, whether derivative analysis is permitted
+  .fetchTiles(bbox, zoom) →  tiles, or a "not available at this fidelity" refusal
+
+StructureAnalysisEngine  →  consumes tiles, returns structure observations
+  .analyse(tiles, aoi)    →  crown polygons | gap network | row structure |
+                             linear features | texture class, each with confidence
+                             and the tier/provenance stamp from §10.5
+```
+
+Consequences worth stating:
+
+- **`describeCoverage` is a first-class capability, not metadata.** It is what
+  implements the §10.3(b) resolution probe and the *"decline rather than produce
+  shapes"* rule — an AOI served at 10 m returns a refusal, and the UI says so.
+  It also carries the **licence class**, so a provider that forbids derivative
+  analysis can be used for *display only* and the analysis engine simply won't run
+  against it. The honesty property is enforced by the interface rather than by
+  remembering to check.
+- **Provider implementations are small and independent:** Mapbox (POC — reads tiles
+  already loaded on the map, mirroring `mapboxTrails.ts`, so zero extra network and
+  offline-capable), and thereafter any WMTS/XYZ/COG source, a state imagery service,
+  a commercial provider with explicit derivative rights, or a customer's own
+  offline tile pack. Defence deployments will use the last two.
+- **The analysis engine is separately swappable** — classical CV (WebGL/WebGPU
+  shaders for local maxima, texture, Radon), a small ONNX model in-browser, or a
+  licensed/server-side engine for customers who require it. The "licenced engine
+  layer" is therefore a second implementation of one interface, not a rewrite.
+- **Nothing persists by default.** Analysis output is session-scoped and lands in
+  the existing retention cache; persisting derived structure data is a per-deployment
+  switch that a licence review has to turn on. This keeps the POC defensible under
+  the most restrictive plausible reading of any imagery licence.
+
+---
+
+## 13. Tactical UI — what actually impresses this audience
+
+Target: an interface that reads as a **professional geospatial intelligence product**
+with a genuinely intelligent assistant on top. The blunt version of the advice first,
+because it determines everything else:
+
+> **Credibility comes from doctrinal correctness; the visual polish amplifies it.**
+> A defence or secure-facility audience recognises MCOO layout, obstacle symbology,
+> MGRS and GO/SLOW-GO vocabulary instantly, and recognises their absence just as
+> fast. Sci-fi chrome over wrong doctrine reads as amateur; correct doctrine with
+> restrained, dense, fast visuals reads as a real capability. Build the doctrine
+> layer first, then make it beautiful.
+
+### 13.1 Map surface
+
+- **Dark tactical basemap**, restrained palette, high-contrast data-ink. Reuse the
+  existing theme system rather than a parallel one.
+- **Military map furniture, because its absence is conspicuous:** MGRS grid overlay
+  (`gridReference.ts` already exists), grid-square labels, scale bar, north arrow,
+  and a live coordinate readout in **MGRS + lat/long + decimal degrees** under the
+  cursor.
+- **MCOO as the hero artifact.** GO / SLOW-GO / NO-GO fills per selected profile;
+  **mobility corridors as bands**, not lines; **avenues of approach as arrows sized
+  by the echelon they support**; numbered chokepoint symbols; the obstacle plan drawn
+  in **standard disrupt/turn/fix/block symbology** (§11.5). This one view is the
+  screenshot that gets the second meeting.
+- **Isochrone rings** with time labels, blooming outward from the origin area on
+  first render.
+- **Baseline vs after-measures comparison** as a draggable swipe divider on the same
+  map, with the **consensus corridor** (§6) as a hatched overlay — agreement across
+  scenarios is the most persuasive single graphic in the whole product, because it
+  visibly distinguishes "we know" from "we assume".
+
+### 13.2 The analysis feels like reasoning, because it is
+
+The app already streams a staged scan (grid build-out → live colouring → live
+pathfinding → progress-synced sweep). That machinery is most of the "Jarvis" effect
+already built; it needs an operator-grade re-skin rather than new invention:
+
+- **A running assessment log** in terse operator register, one line per real event:
+  `SAMPLING 1,284 CELLS · NVIS MVS 14 · TSF 3 YR · RCI EST 41 (TIER 1) · 2 CHOKEPOINTS RESOLVED`.
+  Every line corresponds to a genuine computation — no theatre lines.
+- **Phase captions in the same register**, replacing the current plain-English fire
+  copy in this mode only.
+- **Profile switching recolours the whole surface instantly** from cached samples
+  (the retention cache makes this free), which demonstrates the profile-parameterised
+  cost model viscerally in about one second of demo time.
+
+### 13.3 The assistant layer — "Cortana", honestly
+
+The existing AI architecture is already the right shape and its constraint is the
+feature, not the limitation: **the engine computes, the assistant narrates and
+cites, and the grounding gate rejects any numeric claim not traceable to the
+payload.** For this mode:
+
+- A persistent **assessment narrative** panel that reads the deterministic outputs
+  back as a written appreciation, streamed token-by-token (which is what actually
+  sells "intelligence" in a live demo) with **every number click-through to its
+  source cell, tier, vintage and citation.**
+- Answers questions over the computed surface — *"why does the corridor favour the
+  eastern spur?"*, *"what changes if it's been raining for a week?"* — where the
+  reply is a re-run plus narration, never a guess.
+- **A deliberate "what we don't know" panel.** Counter-intuitive but true: with this
+  audience, an explicit uncertainty statement is the strongest credibility move
+  available, and it is what earns the next conversation. Show the tier mix, the data
+  vintages, the assumed values, and the named blind spots (understorey under canopy,
+  fences, breach times).
+
+### 13.4 Data-rich panels
+
+- **Delay ledger** as a dense, sortable table: measure · doctrinal effect · resources ·
+  emplacement time · delay imposed · cost · **delay per machine-hour** · residual best
+  route · **bypass warning**. Sparklines per row.
+- **Corridor capacity card** per approach: profile class, lane width, single-file vs
+  two-abreast, veh/h, **VCI₁/VCI₅₀ pass verdict**, wet/dry variance.
+- **Data confidence gauge**, always visible: which tier answered what fraction of the
+  AOI, and the oldest vintage in the mix.
+- **Profile "loadout" rail** — icons plus the handful of specs that drive the model.
+
+### 13.5 Demo discipline
+
+Three rules, learned from how these demos fail: no fabricated numbers anywhere, even
+in screenshots (a probed fake number ends the conversation); every headline claim
+traceable in two clicks; and one deliberate limitation slide. Everything in §§11–12
+exists to make those three rules survivable.
+
+---
+
+## 14. Product gating and pricing
+
+**Assessment: neither raw nor merely hidden. Split the mode in two and gate the
+halves differently.**
+
+- **The mobility half ships plainly to the existing StationKit fire audience.**
+  Access and egress, "can plant reach that ridge and how long", isochrones from a
+  staging area, and where trail has to be cut are *directly* useful fire-agency
+  capability and strengthen the core product. No gate, no defence vocabulary — the
+  copy stays "access and egress".
+- **The counter-mobility half is a separately licensed product and must be
+  server-gated.** A hidden client toggle is **not a control**: a flag in a shipped
+  bundle is discoverable, and discovering barrier-planning tools inside a volunteer
+  firefighting app is a reputational problem at best. So:
+  - **Server-side entitlement, enforced at the endpoint** — the existing pattern is
+    already proven here (`suiteAuthService` validating a bearer token against
+    Station Manager, the `fireBreakEnabled` org entitlement, the saved-plans
+    entitlement gate returning 401/403). A new `terrainDenialEnabled` entitlement is
+    a known quantity, not new architecture.
+  - **And route-level code-splitting so the licensed deployment is the only build
+    that contains the bundle at all.** Server gating protects the compute; not
+    shipping the code protects the framing.
+  - Doctrinal vocabulary, obstacle symbology and the tactical skin live **only** in
+    that build.
+- **Pricing separation follows the architecture**, which is what makes it credible:
+  mobility as an uplift on the existing StationKit tier; counter-mobility licensed
+  per site or per seat with support, positioned against the geospatial-intelligence
+  tooling this audience already buys rather than against a fire app; and the **data
+  uplift as a services line** — commissioned lidar, imagery with derivative rights,
+  and a field validation survey. For a fixed facility that services line is both the
+  highest-value attach and the thing that converts the whole model from inference to
+  measurement (§7), so it is a genuine deliverable rather than a markup.
 
 ---
 

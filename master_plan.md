@@ -135,6 +135,55 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
   abatis siting; soil type determines whether a trench survives; and fences are an
   acknowledged blind spot invisible in every dataset. M3 re-staged as M3a–M3f,
   cheapest-and-most-defensible first.
+  **Third pass same day** (owner: back every assumption with research; assume imagery
+  licensing for the POC but architect for any provider; add tactical/defence UI for a
+  funding demo; assess gating and pricing against the StationKit fire audience) —
+  added **§11 research basis**, **§12 provider-agnostic imagery**, **§13 tactical UI**,
+  **§14 gating and pricing**. Research findings that changed the design rather than
+  just citing it: (1) **individual and unit foot movement are two different models** —
+  Tobler (`6·exp(−3.5·|s+0.05|)`, peak 5.04 km/h at −2.86°, on-path/unladen/no
+  vegetation term) and Irmischer & Clarke 2018 (`0.11 + exp(−(100s+2)²/1800)`, four
+  functions by sex × on/off-path, measured on USMA cadets off-path in wooded terrain —
+  the only military off-path-calibrated function found, so it becomes primary) cover
+  the individual, while US Army foot-march doctrine covers a *unit* (roads 4.0 km/h
+  day / 3.2 night; cross-country 2.4–2.6 day / 1.6 night; 20–32 km per 24 h) — and
+  those doctrinal rates yield a **cross-country factor ~0.6 and night factor ~0.67**,
+  so the profile catalogue's defaults are now doctrinally anchored instead of invented;
+  (2) **wheeled and tracked vehicles are limited by different variables** — the
+  literature states that trees large enough to stop wheeled vehicles are usually too
+  closely spaced to pass, so **wheeled is gap-width-limited (percolation)** while
+  **tracked is override-force-limited (stem-diameter threshold, per Mason et al. 2012:
+  stem diameter × pushbar height × root stability; recent robotic work demonstrates
+  override to ~82 mm)** — two queries against the same structure data, not one blended
+  vegetation factor; (3) doctrine's **UNRESTRICTED class explicitly permits widely
+  spaced trees**, independently confirming the "spaced trees behave as grassland"
+  point, and its slope anchors (**≥7% slows most vehicles and counts as an
+  obstruction**, ≥45% impedes) are far stricter than the current fire-calibrated
+  `slopeCost` ramp — direct evidence for the profile-parameterised cost strategy;
+  (4) adopt the closed doctrinal obstacle-effect set **disrupt / turn / fix / block**
+  with intent = target + effect + location ("channel, don't seal" is doctrinally
+  *turn*), **plus its caveat** — doctrine is explicit that obstacle effects come from
+  obstacles *and fires* together, so an unobserved barrier must never be reported as
+  **block**, at best *disrupt*, which closes the largest overclaim available to this
+  tool; (5) **the AU structure data exists** — TERN AusPlots (442 × 1 ha plots, 22
+  vegetation types, basal area by wedge sweep, programmatic access) plus 48 tall-forest
+  plots, and those plots measure that **non-eucalypt understorey is ~60% of stems**,
+  which is someone else's measured proof that canopy-only imagery analysis cannot
+  stand alone; (6) confirmed free sources: **ELVIS** 1 m DEM/DSM + point clouds
+  (15 cm vertical accuracy) and specifically **NSW state-forest lidar 2022–23 over
+  ~250,000 ha / 27 state forests — the natural POC area of interest**, plus DEA WOfS
+  and Fractional Cover at 25 m. Also carried: the VCI/RCI worked example (105 mm
+  howitzer VCI₁ 21 / VCI₅₀ 49, trafficable at RCI 43 for one pass, **not** at RCI 48
+  for fifty) is the one-slide demo of "drivable ≠ drivable at scale"; and Pandolf load
+  carriage is retained only for endurance/relative comparison because it is published
+  as 12–33% in error and under-predicting modern military loads. **Gating decision
+  recorded:** the mobility half ships plainly to the fire audience as access/egress
+  (genuinely useful, no defence vocabulary); the counter-mobility half is
+  **server-gated on a new entitlement AND route-level code-split so the licensed build
+  is the only bundle containing it** — a hidden client toggle is not a control, and
+  discovering barrier planning inside a volunteer firefighting app is a reputational
+  problem. Pricing follows that split, with the data uplift (commissioned lidar,
+  licensed imagery, field validation) as a services line.
 - **2026-07-19 — Docs audit: fixed a badly stale root README** (cross-repo docs
   coverage pass, alongside Station Manager's in-app wiki work and Fire Santa
   Run's docs cleanup): `README.md` was dated January 2025 and pointed "For
