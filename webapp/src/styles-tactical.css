@@ -292,3 +292,51 @@
   0%, 100% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 10px rgba(56, 189, 248, 0.8); }
   50% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0.12), 0 0 14px rgba(56, 189, 248, 1); }
 }
+
+/* ---------- CounterMobilityPanel (Pass 2) ---------- */
+.cm-placement-select {
+  background: var(--tac-bg);
+  color: var(--tac-text);
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+}
+.cm-measure-card {
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cm-measure-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.cm-effect-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-family: var(--tac-mono-font);
+}
+.cm-effect-disrupt { border: 1px solid var(--tac-text-dim); color: var(--tac-text-dim); }
+.cm-effect-turn { border: 1px solid var(--tac-accent); color: var(--tac-accent); }
+.cm-effect-fix { border: 1px solid var(--tac-slowgo); color: var(--tac-slowgo); }
+.cm-effect-block { border: 1px solid var(--tac-nogo); color: var(--tac-nogo); background: rgba(216, 35, 42, 0.12); }
+.cm-legal-list { margin: 0; padding-left: 1.1em; font-size: 0.72em; color: var(--tac-text-dim); line-height: 1.5; }
+.cm-placement-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.8em; }
+.cm-ledger-row {
+  border-top: 1px dashed var(--tac-border);
+  padding-top: 8px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-ledger-row--refused { opacity: 0.6; }
+.cm-ledger-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.78em; }
+.cm-refused-banner { color: var(--tac-nogo); font-size: 0.78em; font-weight: 600; line-height: 1.5; }
