@@ -47,10 +47,16 @@ export function findKDissimilarPaths(
   objectiveKeys: string[],
   profile: MoverProfile,
   nightMode: boolean,
-  k = 3
+  k = 3,
+  /** Penalties already in force before the first iteration — e.g. emplaced
+   *  counter-measures (delayLedger.ts builds these). Copied, never mutated,
+   *  so the caller's map is untouched and the SAME baseline route search can
+   *  be re-run against a different obstacle picture without either run
+   *  contaminating the other (docs §5's iterative counter-mobility loop). */
+  initialEdgePenalties?: Map<string, number>
 ): DissimilarRoute[] {
   const byKey = new Map(cells.map(c => [c.key, c]));
-  const edgePenalties = new Map<string, number>();
+  const edgePenalties = new Map<string, number>(initialEdgePenalties ?? []);
   const routes: DissimilarRoute[] = [];
 
   for (let i = 0; i < k; i++) {

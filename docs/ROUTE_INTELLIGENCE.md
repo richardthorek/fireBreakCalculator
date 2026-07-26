@@ -2098,6 +2098,152 @@ cells read NO-GO once real values exceed the limit), and in min-cut (a
 flow graph with every edge blocked correctly returns no barrier to site,
 rather than silently ignoring the block).
 
+## 28. Movement corridors — Pass 2's unfinished half (2026-07-26)
+
+Owner: "smooth out the potential paths that someone might move through the
+terrain, noting there will be several, across a large area, and present them
+as sensibly displayed **corridors** of possible movement rather than the
+single optimal path. Use the individual pathways to analyse, corridors for
+likely results / ease of movement. Once countermeasures are in place, show
+how that affects the corridor and the relative difficulty it adds at those
+points... this analysis may need to be iterative." Framed by the intended
+user: *"As a ground commander I will use this tool to get a rapid
+appreciation of the broad area to propose a course of action to deter and
+deny access. This will then be scouted and planned in more detail."*
+
+**This request was already on the roadmap.** Checked against §15.2 before
+building: Pass 2 scoped *"route-preference surface … avenues of approach
+sized by echelon … baseline-vs-scenario swipe"* and only the k-route /
+chokepoint / min-cut half was ever built. So the roadmap items that serve
+this ask **are** this ask, and this section closes them rather than adding a
+parallel feature.
+
+### Why corridors are an HONESTY improvement, not decoration
+
+A single cheapest-path polyline implies survey precision this product does
+not have and never claims — §10 establishes that Tier 0/1 data cannot
+resolve a 30 m drivable lane. A **band** is the honest spatial statement:
+"movement will happen somewhere in here, most probably along its spine."
+Doctrine agrees (a mobility corridor and an avenue of approach are both
+bands; a line is a route order — a later, scouted product). So: **analysis on
+individual routes, where the maths is exact; presentation as corridors, where
+the uncertainty is visible.** This directly answers the owner's constraint
+that "the UI isn't communicating too high a level of fidelity but the
+fidelity of ANALYSIS is inherently visible".
+
+### `corridorField.ts` — the pipeline
+
+1. **k routes** (raised 3 → 14, `DEFAULT_CORRIDOR_ROUTE_COUNT`) from the
+   existing `findKDissimilarPaths`, which gained an `initialEdgePenalties`
+   parameter so a scenario can start from an already-obstructed picture.
+2. **Weighted density** per cell — each route contributes to every cell it
+   crosses, weighted by `bestTime / thisRouteTime`, so a route twice as slow
+   as the best counts half. A real computed ratio, not a rank decay.
+3. **Smoothing** — discrete Laplacian diffusion over hex adjacency
+   (3 passes, weight 0.5). This is literally the "smooth out the potential
+   paths" step, and its fuzzy output edges are the uncertainty statement.
+   Adjacency is precomputed over cells that actually exist, so a boundary
+   cell is never dragged toward zero by phantom off-grid neighbours (that bug
+   would have carved a false low-density rim around every AOI).
+4. **Segmentation** — connected components over hex adjacency above 12% of
+   the field's own peak; components under 4 cells dropped as noise.
+5. **Per-corridor metrics** — width and bottleneck from **iso-arrival-time
+   slices**: arrival time rises monotonically along travel, so cells sharing
+   an arrival-time band form a cross-section. That is the same principle the
+   isochrone display already uses, reused as a measurement.
+
+Each corridor reports: route count and share of the analysed set, median and
+fastest travel time, bottleneck/widest width (cells and metres),
+`bottleneckAbreast`, `frontage`, real GO/SLOW-GO/NO-GO fractions, an
+`easeClass`, and its own `usedEstimatedData` flag so a Tier-0 caveat lands on
+the specific corridor it applies to.
+
+### "Avenues sized by echelon", delivered only as far as the data allows
+
+`bottleneckAbreast` is `floor(bottleneckWidthM / profile.widthM)` —
+arithmetic over two real numbers. **Deliberately NOT claimed**: a doctrinal
+echelon label (platoon/company/battalion frontage), column throughput per
+hour, or a VCI₁/VCI₅₀ pass verdict. The first two need sourced doctrinal
+frontage and march-spacing figures (§11.2 sources march *rates*, not
+frontages); the third needs the soil data Pass 3 has not sampled. Printing
+"company-sized avenue" off unsourced arithmetic would be exactly the
+invented precision this project forbids, so the UI states the caveat inline
+rather than omitting it.
+
+### The unconstrained-terrain finding (caught by testing, kept as a feature)
+
+Testing this module against a featureless plain exposed a genuine weakness:
+14 distinct routes covered 304 of 305 cells, and segmentation duly reported
+"one corridor" containing the entire AOI — arithmetically correct,
+operationally useless. Rather than tune it away, this is now a **reported
+finding**: `CorridorField.unconstrained`, surfaced as a prominent panel
+callout and a log line. It matters because terrain that does not canalise
+movement *cannot be denied by siting obstacles at chokepoints* — there are
+none. Denial there needs observation and fires, or a continuous barrier: a
+materially different and more expensive course of action, which is precisely
+what a commander needs told early.
+
+The test is deliberately **two conditions**, and testing only the first was a
+real bug the smoke test caught: the synthetic ridge-with-one-gap case still
+covered 80% of the area (routes fan out across open ground either side before
+funnelling), so a coverage-only rule called it "unconstrained" while it held
+the most important chokepoint on the map. Unconstrained now requires high
+coverage **and** `pinchRatio > 0.35` — i.e. the busiest corridor never
+actually narrows. "Wide everywhere" is unconstrained; "wide but with a
+throat" is the ground you want.
+
+### Iterative counter-mobility: the effect ON the corridors
+
+`buildScenarioEdgePenalties` (in `delayLedger.ts`) builds one combined
+penalty map for an entire placement set — compounding multiplicatively where
+placements share an edge, matching the convention `findKDissimilarPaths`
+already uses. `compareCorridorFields` then diffs baseline against scenario,
+matching corridors by cell overlap (≥25% — they are the same *ground*, not
+the same object; a measure can shrink, split or shift a corridor) and
+classifying each: **collapsed / degraded / unchanged / displaced-into**.
+
+`displaced-into` is the bypass rule (§5) asked **spatially** rather than as a
+single number — a corridor that now carries *more* of the route set is where
+the measures pushed traffic, and `newCorridors` are bands that appeared on
+ground carrying no movement at baseline. Colour semantics in the panel are
+deliberately from the **planner's** point of view, not the mover's: a
+collapsed corridor is green (good outcome for whoever sited the obstacle), a
+displaced-into corridor is red (the warning — expect to be flanked there).
+
+Critically, the scenario is **the same computation with a different edge-cost
+view**, never a separate estimate that could disagree with the baseline; and
+because the whole set is applied together, it captures what per-measure
+ledger rows cannot — blocking two of three corridors pushes everything onto
+the third. A map-level Baseline / With-measures toggle closes the
+propose → assess → revise loop.
+
+### Verification
+
+`npm run tsc --noEmit` / `npm run build` clean. A 40-check standalone Node
+smoke test against the real modules, over **two deliberately different
+terrains**: an open plain (degenerate case) and an impassable ridge with one
+gap (the constrained case corridors exist for). It asserts smoothing genuinely
+widens routes into bands (band cells > routed cells) rather than redrawing
+them; that the band keeps routed and smoothing-only fringe cells
+distinguishable; rank ordering by movement carried; internal consistency of
+every metric (bottleneck ≤ widest, fractions summing to 1, fastest ≤ median,
+`abreast` agreeing with the width it came from, densities normalised);
+that the ridge yields a genuinely narrower bottleneck and harder pinch than
+the plain; that the plain **is** flagged unconstrained and the ridge **is
+not**; and that measures emplaced in a real bottleneck produce a non-empty
+corridor effect while an empty placement set, an unknown measure id, and a
+null after-field are all handled without fabricating an effect. Map rendering
+itself remains unverifiable in this sandbox (no Mapbox token) — **confirm on
+the live preview**.
+
+### Still open after this pass
+
+Deliberately not built, and not silently dropped: **MCOO overlay + GIS
+export** (the "then scouted and planned in more detail" handoff — corridors
+are now the right shape to export, so this is genuinely next), **assistant
+narrative through the grounding gate**, **VCI/RCI capacity** (blocked on soil
+sampling), and the Tier-1 NAFI/DEA per-cell wiring from §27.
+
 ---
 
 ## Update policy

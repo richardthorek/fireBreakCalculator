@@ -179,9 +179,63 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
         </div>
       )}
 
+      {result?.corridorField && result.corridorField.corridors.length > 0 && (
+        <div className="tac-panel mobility-section">
+          <div className="tac-label">MOVEMENT CORRIDORS</div>
+          <div className="tac-hint">
+            Bands are smoothed from {result.corridorField.routes.length} analysed routes.
+            Width shows where movement is <em>likely</em>, not a surveyed lane —
+            {result.corridorField.routedCellCount} cells were actually routed through,
+            {result.corridorField.cellCount} fall in the bands after smoothing.
+          </div>
+          {result.corridorField.unconstrained && (
+            <div className="corridor-unconstrained">
+              <div className="corridor-unconstrained-head tac-mono">MOVEMENT UNCONSTRAINED</div>
+              <p>
+                Routes spread across {Math.round(result.corridorField.coverageFraction * 100)}% of this
+                area — it does not canalise movement, so the corridors below are a weak
+                description of it and the chokepoints are not real chokepoints.
+              </p>
+              <p>
+                <strong>What this means for denial:</strong> obstacles sited at points will be
+                walked around. Denying this ground needs observation and fires, or a continuous
+                barrier — a materially different and more expensive course of action. Consider
+                a tighter objective area, or a mover profile the terrain actually restricts.
+              </p>
+            </div>
+          )}
+          {result.corridorField.corridors.map(c => (
+            <div key={c.id} className={`corridor-card corridor-card--rank${Math.min(c.rank, 4)}`}>
+              <div className="corridor-card-head">
+                <span className="corridor-rank tac-mono">CORRIDOR {c.rank}</span>
+                <span className={`corridor-ease corridor-ease--${c.easeClass}`}>
+                  {c.easeClass.replace('-', ' ').toUpperCase()}
+                </span>
+              </div>
+              <div className="corridor-figures tac-mono">
+                <div>{c.routeCount}/{result.corridorField!.routes.length} ROUTES ({Math.round(c.shareOfRoutes * 100)}%)</div>
+                <div>MEDIAN {(c.medianTravelSeconds / 60).toFixed(0)} MIN · BEST {(c.fastestTravelSeconds / 60).toFixed(0)} MIN</div>
+                <div>BOTTLENECK ~{c.bottleneckWidthM.toFixed(0)} M</div>
+                <div>{c.bottleneckAbreast} ABREAST · {c.frontage.replace('-', ' ').toUpperCase()}</div>
+                <div>{Math.round(c.goFraction * 100)}% GO · {Math.round(c.slowGoFraction * 100)}% SLOW</div>
+                <div>{c.cells.length} CELLS</div>
+              </div>
+              {c.usedEstimatedData && (
+                <DataConfidenceBadge tier="estimated" label="CONTAINS TIER 0 SAMPLES" />
+              )}
+            </div>
+          ))}
+          <div className="mobility-caveat tac-mono">
+            BOTTLENECK WIDTHS ARE GRID-RESOLUTION-LIMITED ESTIMATES, NOT SURVEYED GAPS.
+            ECHELON/COLUMN THROUGHPUT AND VCI PASS VERDICTS ARE NOT CLAIMED — THEY NEED
+            SOURCED MARCH-SPACING AND SOIL DATA THIS BUILD DOES NOT HAVE.
+          </div>
+        </div>
+      )}
+
       {result && result.dissimilarRoutes.length > 0 && (
         <div className="tac-panel mobility-section">
-          <div className="tac-label">CORRIDORS &amp; CHOKEPOINTS</div>
+          <div className="tac-label">CHOKEPOINTS &amp; SEVERING CUT</div>
           <div className="mobility-result-stats tac-mono">
             <div>{result.dissimilarRoutes.length} DISTINCT ROUTE(S)</div>
             <div>{result.chokepoints.length} CHOKEPOINT(S)</div>

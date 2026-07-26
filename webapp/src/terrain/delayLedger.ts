@@ -115,6 +115,40 @@ function minObjectiveTime(
   return min;
 }
 
+/**
+ * Combined penalty map for an ENTIRE placement set — every measure's own
+ * `edgePenaltyMultiplier` applied at its own segments, all at once. This is
+ * the "scenario" view the corridor comparison needs (docs §15.2's
+ * baseline-vs-scenario item): the per-measure ledger below scores measures
+ * one at a time to rank them, but a commander's actual course of action
+ * emplaces several together, and their combined effect on the movement
+ * picture is not the sum of their individual effects — blocking two of three
+ * corridors pushes everything onto the third.
+ *
+ * Where two placements land on the same edge, multipliers COMPOUND
+ * (multiplicatively), matching how `findKDissimilarPaths` already
+ * accumulates its own iterative penalties — one consistent convention for
+ * "this edge is discouraged by more than one thing".
+ */
+export function buildScenarioEdgePenalties(
+  measures: CounterMeasure[],
+  placements: CounterMeasurePlacement[]
+): Map<string, number> {
+  const byId = new Map(measures.map(m => [m.id, m]));
+  const penalties = new Map<string, number>();
+  for (const p of placements) {
+    const measure = byId.get(p.measureId);
+    if (!measure) continue; // unknown id — never invent a penalty for it
+    for (const key of [
+      `${p.segmentFromKey}|${p.segmentToKey}`,
+      `${p.segmentToKey}|${p.segmentFromKey}`,
+    ]) {
+      penalties.set(key, (penalties.get(key) ?? 1) * measure.edgePenaltyMultiplier);
+    }
+  }
+  return penalties;
+}
+
 /** Directed-edge penalty map covering a placement's segment, BOTH
  *  directions — a physical obstacle blocks travel either way. */
 function buildEdgePenalties(segs: GroupedPlacement[], multiplier: number): Map<string, number> {

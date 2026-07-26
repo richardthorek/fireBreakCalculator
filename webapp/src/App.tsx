@@ -36,7 +36,8 @@ import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
-import { computeDelayLedger, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
+import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
+import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from './terrain/corridorField';
 import { UnitSimulationController } from './terrain/unitSimulation';
 import './styles-tactical.css';
 
@@ -469,6 +470,13 @@ const App: React.FC = () => {
   const [cmLedger, setCmLedger] = useState<DelayLedgerEntry[] | null>(null);
   const [cmRunning, setCmRunning] = useState(false);
   const [cmAddedMeasureIds, setCmAddedMeasureIds] = useState<string[]>([]);
+  // The iterative scenario: corridors re-derived with every emplaced measure
+  // applied together, and the diff against the baseline picture.
+  const [cmCorridorComparison, setCmCorridorComparison] = useState<CorridorComparison | null>(null);
+  const [cmAfterField, setCmAfterField] = useState<CorridorField | null>(null);
+  /** Which corridor picture the map draws: the baseline appreciation, or the
+   *  scenario with counter-measures emplaced. */
+  const [corridorView, setCorridorView] = useState<'baseline' | 'scenario'>('baseline');
 
   const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
     const stroke = { mode: mobilityPaintMode, dab };
@@ -501,6 +509,9 @@ const App: React.FC = () => {
     setCmPlacements([]);
     setCmLedger(null);
     setCmAddedMeasureIds([]);
+    setCmCorridorComparison(null);
+    setCmAfterField(null);
+    setCorridorView('baseline');
     try {
       const result = await runMobilityAppreciation(mobilityOriginPaint, mobilityObjectivePaint, {
         profileId: mobilityProfileId,
@@ -542,12 +553,43 @@ const App: React.FC = () => {
         cmPlacements
       );
       setCmLedger(entries);
+
+      // Iterative scenario view (owner 2026-07-26: "once countermeasures are
+      // in place, show how that affects the corridor and the relative
+      // difficulty it adds at those points... this analysis may need to be
+      // iterative"). Re-derives the WHOLE corridor picture with every
+      // emplaced measure applied together — not the sum of the per-measure
+      // ledger rows above, because blocking two of three corridors pushes
+      // everything onto the third, which only a combined re-run shows.
+      if (mobilityResult.corridorField) {
+        const scenarioPenalties = buildScenarioEdgePenalties(COUNTER_MEASURES, cmPlacements);
+        const afterField = buildCorridorField(
+          mobilityResult.cells,
+          mobilityResult.originKeys,
+          mobilityResult.objectiveKeys,
+          mobilityResult.profile,
+          mobilityNightMode,
+          mobilityResult.hexSize,
+          mobilityResult.proj,
+          { edgePenalties: scenarioPenalties }
+        );
+        setCmCorridorComparison(compareCorridorFields(mobilityResult.corridorField, afterField));
+        setCmAfterField(afterField);
+      }
     } catch (error) {
       logger.error('Delay ledger computation failed', error);
     } finally {
       setCmRunning(false);
     }
   }, [mobilityResult, mobilityNightMode, cmPlacements]);
+
+  /** Which corridor field the map draws. Falls back to the baseline whenever
+   *  no scenario has been computed yet, so the toggle can never leave the map
+   *  blank. */
+  const displayedCorridorField = useMemo(
+    () => (corridorView === 'scenario' && cmAfterField ? cmAfterField : mobilityResult?.corridorField ?? null),
+    [corridorView, cmAfterField, mobilityResult]
+  );
 
   const handleAddCounterMeasureToPlan = useCallback((measureId: string) => {
     setCmAddedMeasureIds(prev => (prev.includes(measureId) ? prev : [...prev, measureId]));
@@ -1155,6 +1197,8 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
+            corridors={displayedCorridorField?.corridors ?? null}
+            corridorRoutes={displayedCorridorField?.routes ?? null}
             chokepoints={mobilityResult?.chokepoints ?? null}
             barrierSegments={mobilityResult?.barrier?.segments ?? null}
             onRunAppreciation={handleRunMobilityAppreciation}
@@ -1224,6 +1268,9 @@ const App: React.FC = () => {
                 ledger={cmLedger}
                 addedMeasureIds={cmAddedMeasureIds}
                 onAddToPlan={handleAddCounterMeasureToPlan}
+                corridorComparison={cmCorridorComparison}
+                corridorView={corridorView}
+                onCorridorViewChange={setCorridorView}
               />
             )}
             </>

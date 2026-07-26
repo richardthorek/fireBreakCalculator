@@ -6,13 +6,15 @@
  */
 
 import { buildMobilityGrid } from './mobilityGrid';
+import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { SimPathNode } from './mobilityWorker';
-import { findKDissimilarPaths, computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
+import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
+import { buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT } from './corridorField';
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -28,8 +30,17 @@ export interface MobilityAppreciationResult {
    *  unit-simulation animation follows (docs "Terrain Mobility &
    *  Counter-Mobility": null only if no objective cell was reachable). */
   path: SimPathNode[] | null;
-  /** Pass 2 — up to 3 genuinely distinct origin→objective routes. */
+  /** The genuinely distinct origin→objective routes this run analysed. These
+   *  are the ANALYSIS substrate; `corridorField` below is what gets
+   *  presented (owner 2026-07-26: "use the individual pathways to analyse,
+   *  corridors for likely results"). */
   dissimilarRoutes: DissimilarRoute[];
+  /** Smoothed movement-density field segmented into ranked corridors — the
+   *  presentation-layer answer to "where will they move", replacing a single
+   *  confident polyline with bands whose fuzzy edges are the honest
+   *  statement of what Tier 0/1 data can resolve (docs §10, §27). Null when
+   *  no route existed to form a corridor from. */
+  corridorField: CorridorField | null;
   /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
   chokepoints: ChokepointCell[];
   /** Pass 2 — cheapest severing cut for this profile (null if the objective
@@ -43,6 +54,12 @@ export interface MobilityAppreciationResult {
   cells: MobilityGridCell[];
   originKeys: string[];
   objectiveKeys: string[];
+  /** Grid geometry, kept alongside `cells` so a counter-measure scenario can
+   *  re-derive corridors over the IDENTICAL grid rather than resampling (a
+   *  fresh sample could land a different hex layout and make the before/after
+   *  comparison meaningless). */
+  hexSize: number;
+  proj: LocalProjection;
 }
 
 export interface MobilityAppreciationOptions {
@@ -122,11 +139,36 @@ export async function runMobilityAppreciation(
   let dissimilarRoutes: DissimilarRoute[] = [];
   let chokepoints: ChokepointCell[] = [];
   let barrier: MinCutResult | null = null;
+  let corridorField: CorridorField | null = null;
   if (path) {
     onProgress?.(0.96);
-    onLog?.('FINDING DISTINCT ROUTES (BLOCKING THE BEST ONE JUST MOVES TRAFFIC)…');
-    dissimilarRoutes = findKDissimilarPaths(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, 3);
+    onLog?.(`DERIVING UP TO ${DEFAULT_CORRIDOR_ROUTE_COUNT} DISTINCT ROUTES (BLOCKING THE BEST ONE JUST MOVES TRAFFIC)…`);
+    corridorField = buildCorridorField(
+      grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj
+    );
+    dissimilarRoutes = corridorField?.routes ?? [];
     onLog?.(`${dissimilarRoutes.length} DISTINCT ROUTE(S) FOUND`);
+
+    if (corridorField) {
+      onLog?.('SMOOTHING ROUTES INTO MOVEMENT CORRIDORS…');
+      onLog?.(
+        `${corridorField.corridors.length} CORRIDOR(S) FORMED · ${corridorField.routedCellCount} CELLS ROUTED, ` +
+        `${corridorField.cellCount} IN BAND AFTER SMOOTHING`
+      );
+      if (corridorField.unconstrained) {
+        onLog?.(
+          `MOVEMENT UNCONSTRAINED — BANDS COVER ${Math.round(corridorField.coverageFraction * 100)}% OF THE AREA. ` +
+          'THIS GROUND DOES NOT CANALISE MOVEMENT: THERE ARE NO REAL CHOKEPOINTS TO DENY.'
+        );
+      }
+      for (const c of corridorField.corridors.slice(0, 4)) {
+        onLog?.(
+          `CORRIDOR ${c.rank} — ${c.routeCount}/${dissimilarRoutes.length} ROUTES · ${c.easeClass.toUpperCase()} · ` +
+          `BOTTLENECK ~${c.bottleneckWidthM.toFixed(0)} M (${c.bottleneckAbreast} ABREAST) · ` +
+          `MEDIAN ${(c.medianTravelSeconds / 60).toFixed(0)} MIN`
+        );
+      }
+    }
 
     chokepoints = computeChokepoints(grid.cells, grid.hexSize, grid.proj, dissimilarRoutes).slice(0, 12);
     if (chokepoints.length > 0) {
@@ -158,10 +200,13 @@ export async function runMobilityAppreciation(
     slowGoCount,
     path,
     dissimilarRoutes,
+    corridorField,
     chokepoints,
     barrier,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
+    hexSize: grid.hexSize,
+    proj: grid.proj,
   };
 }

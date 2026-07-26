@@ -26,6 +26,7 @@ import React from 'react';
 import { COUNTER_MEASURES, CounterMeasure, ObstacleEffect } from '../terrain/counterMeasures';
 import { BarrierSegment } from '../terrain/minCutBarrier';
 import { DelayLedgerEntry, CounterMeasurePlacement } from '../terrain/delayLedger';
+import { CorridorComparison } from '../terrain/corridorField';
 import { DataConfidenceBadge } from './DataConfidenceBadge';
 
 export interface CounterMobilityPanelProps {
@@ -53,6 +54,14 @@ export interface CounterMobilityPanelProps {
    *  used only to grey out an already-added row's action. */
   addedMeasureIds: string[];
   onAddToPlan: (measureId: string) => void;
+  /** Baseline-vs-scenario corridor diff, computed alongside the ledger — what
+   *  the emplaced measure SET does to the movement picture as a whole, which
+   *  is not the sum of the per-measure rows above (docs §28). */
+  corridorComparison?: CorridorComparison | null;
+  /** Which corridor picture the map is currently drawing, and a way to flip
+   *  it — the iterative propose → assess → revise loop. */
+  corridorView?: 'baseline' | 'scenario';
+  onCorridorViewChange?: (view: 'baseline' | 'scenario') => void;
 }
 
 const EFFECT_LABEL: Record<ObstacleEffect, string> = {
@@ -104,6 +113,9 @@ export const CounterMobilityPanel: React.FC<CounterMobilityPanelProps> = ({
   ledger,
   addedMeasureIds,
   onAddToPlan,
+  corridorComparison = null,
+  corridorView = 'baseline',
+  onCorridorViewChange,
 }) => {
   const measuresById = new Map(measures.map(m => [m.id, m]));
   const canAddPlacement = pendingSegmentIndex !== null && barrierSegments.length > 0;
@@ -263,6 +275,68 @@ export const CounterMobilityPanel: React.FC<CounterMobilityPanelProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {corridorComparison && (
+        <div className="tac-panel mobility-section">
+          <div className="tac-label">EFFECT ON MOVEMENT CORRIDORS</div>
+          <div className="tac-hint">
+            The whole corridor picture, re-derived with every placement above emplaced
+            together. This is not the sum of the per-measure delays — blocking two of
+            three corridors pushes movement onto the third.
+          </div>
+          {onCorridorViewChange && (
+            <div className="mobility-display-toggle">
+              <button
+                className={corridorView === 'baseline' ? 'active' : ''}
+                onClick={() => onCorridorViewChange('baseline')}
+              >
+                Baseline
+              </button>
+              <button
+                className={corridorView === 'scenario' ? 'active' : ''}
+                onClick={() => onCorridorViewChange('scenario')}
+              >
+                With measures
+              </button>
+            </div>
+          )}
+          <div className="mobility-result-stats tac-mono">
+            <div className="cm-effect-collapsed">{corridorComparison.collapsedCount} COLLAPSED</div>
+            <div className="cm-effect-degraded">{corridorComparison.degradedCount} DEGRADED</div>
+            <div className="cm-effect-displaced">{corridorComparison.displacedIntoCount} DISPLACED INTO</div>
+            <div>{corridorComparison.newCorridors.length} NEW</div>
+          </div>
+          {corridorComparison.effects.map(e => (
+            <div key={e.corridorId} className={`cm-corridor-effect cm-corridor-effect--${e.status}`}>
+              <div className="corridor-card-head">
+                <span className="corridor-rank tac-mono">CORRIDOR {e.rankBefore}</span>
+                <span className={`cm-effect-status cm-effect-status--${e.status}`}>
+                  {e.status.replace('-', ' ').toUpperCase()}
+                </span>
+              </div>
+              <div className="corridor-figures tac-mono">
+                <div>ROUTES {e.routeCountBefore} → {e.routeCountAfter}</div>
+                <div>
+                  DELAY {isFinite(e.medianDelaySeconds)
+                    ? `${e.medianDelaySeconds >= 0 ? '+' : ''}${(e.medianDelaySeconds / 60).toFixed(0)} MIN`
+                    : 'IMPASSABLE'}
+                </div>
+                <div>
+                  BOTTLENECK ~{e.bottleneckWidthBeforeM.toFixed(0)} → ~{e.bottleneckWidthAfterM.toFixed(0)} M
+                </div>
+                <div>{e.easeBefore.toUpperCase()} → {(e.easeAfter ?? 'GONE').toUpperCase()}</div>
+              </div>
+            </div>
+          ))}
+          {corridorComparison.newCorridors.length > 0 && (
+            <div className="mobility-caveat tac-mono">
+              BYPASS — {corridorComparison.newCorridors.length} CORRIDOR(S) APPEARED ON GROUND THAT
+              CARRIED NO MOVEMENT AT BASELINE. THE MEASURES PUSHED TRAFFIC HERE; SITE OBSERVATION
+              ACCORDINGLY OR EXPECT TO BE FLANKED.
+            </div>
+          )}
         </div>
       )}
 

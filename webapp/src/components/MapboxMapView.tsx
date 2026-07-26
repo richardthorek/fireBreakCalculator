@@ -150,6 +150,17 @@ interface MapboxMapViewProps {
   /** Paint vs erase — which kind of stroke the brush lays down next. */
   mobilityPaintMode?: PaintStrokeMode;
   onMobilityPaintModeChange?: (mode: PaintStrokeMode) => void;
+  /** Movement corridors (smoothed bands) from the last appreciation run, plus
+   *  the individual routes they were derived from. The bands are the
+   *  presentation; the routes render faintly INSIDE them so the analysis
+   *  underneath stays visible rather than being hidden by the abstraction
+   *  (docs §28). */
+  corridors?: {
+    rank: number;
+    easeClass: string;
+    cells: { polygon: { lat: number; lng: number }[]; density: number }[];
+  }[] | null;
+  corridorRoutes?: { path: { lat: number; lng: number }[] }[] | null;
   /** Result cells from the last terrain appreciation run. */
   mobilityHeatmap?: {
     polygon: { lat: number; lng: number }[];
@@ -227,6 +238,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onMobilityBrushSizeChange,
   mobilityPaintMode = 'paint',
   onMobilityPaintModeChange,
+  corridors = null,
+  corridorRoutes = null,
   mobilityHeatmap = null,
   mobilityDisplayMode = 'trafficability',
   onCursorMove,
@@ -1577,6 +1590,87 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       unitSimMarkerRef.current.setLngLat([unitSimPosition.lng, unitSimPosition.lat]);
     }
   }, [unitSimPosition]);
+
+  // Movement corridors — the presentation layer (docs §28). Two paired
+  // layers, deliberately in this order so the abstraction never hides its
+  // own evidence:
+  //   1. `mobility-corridors` — smoothed bands, per-cell opacity driven by
+  //      the cell's own density so edges FADE rather than stopping at a hard
+  //      line. That soft edge is the honest spatial statement ("movement is
+  //      somewhere in here"), not a styling flourish.
+  //   2. `mobility-corridor-routes` — the individual analysed pathways, as
+  //      faint hairlines on top. The corridors are what you read; the routes
+  //      are what they were computed from, left visible on purpose.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-corridor-routes')) map.removeLayer('mobility-corridor-routes');
+        if (map.getSource('mobility-corridor-routes')) map.removeSource('mobility-corridor-routes');
+        if (map.getLayer('mobility-corridors')) map.removeLayer('mobility-corridors');
+        if (map.getSource('mobility-corridors')) map.removeSource('mobility-corridors');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!corridors || corridors.length === 0) { remove(); return; }
+
+    // Rank-coded, using the mode's existing palette: rank 1 (most-used) reads
+    // hottest. Ease class is carried as a property for the popup/legend
+    // rather than a second colour axis, so one visual channel = one meaning.
+    const rankColor = (rank: number) =>
+      rank === 1 ? '#D8232A' : rank === 2 ? '#F6A609' : rank === 3 ? '#38bdf8' : '#94a3b8';
+
+    const cellFeatures = corridors.flatMap(c =>
+      c.cells.map(cell => ({
+        type: 'Feature' as const,
+        properties: {
+          rank: c.rank,
+          ease: c.easeClass,
+          color: rankColor(c.rank),
+          // Floor the opacity so a low-density fringe cell is still faintly
+          // visible (it IS part of the corridor) without reading as strongly
+          // as the spine.
+          opacity: 0.12 + 0.34 * Math.min(1, Math.max(0, cell.density)),
+        },
+        geometry: { type: 'Polygon' as const, coordinates: [cell.polygon.map(p => [p.lng, p.lat])] },
+      }))
+    );
+    const routeFeatures = (corridorRoutes ?? []).map(r => ({
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
+    }));
+
+    const apply = () => {
+      try {
+        const cellData = { type: 'FeatureCollection' as const, features: cellFeatures };
+        const routeData = { type: 'FeatureCollection' as const, features: routeFeatures };
+        const existing = map.getSource('mobility-corridors');
+        if (existing) {
+          existing.setData(cellData);
+          map.getSource('mobility-corridor-routes')?.setData(routeData);
+          return;
+        }
+        map.addSource('mobility-corridors', { type: 'geojson', data: cellData } as any);
+        map.addLayer({
+          id: 'mobility-corridors',
+          type: 'fill',
+          source: 'mobility-corridors',
+          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'opacity'] },
+        });
+        map.addSource('mobility-corridor-routes', { type: 'geojson', data: routeData } as any);
+        map.addLayer({
+          id: 'mobility-corridor-routes',
+          type: 'line',
+          source: 'mobility-corridor-routes',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#e2e8f0', 'line-width': 0.8, 'line-opacity': 0.35 },
+        });
+      } catch (e) { logger.warn('Failed to render movement corridors', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [corridors, corridorRoutes]);
 
   // Pass 2 — chokepoint markers, sized/coloured by how many of the
   // dissimilar routes cross each cell (docs §4: "the ground everything
