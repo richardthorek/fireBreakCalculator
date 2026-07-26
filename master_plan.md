@@ -60,6 +60,29 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility: paint tool actually broken on mobile,
+  two real bugs found and fixed**: owner reported that on a phone, "paint
+  origin" was still drawing a fire-break line and "paint objective" did
+  nothing at all. Root-caused, not patched around: **(1)** MapboxDraw's
+  drawing mode was only ever read from `tacticalMode` once, at construction
+  — correct for a fresh page load already in Terrain mode, but the in-app
+  "Terrain mode" header toggle doesn't remount the map, so a session that
+  starts in fire-break mode and then switches left MapboxDraw permanently
+  armed to draw lines, eating every tap regardless of which paint role was
+  selected. Fixed with a reactive `useEffect` that calls `draw.changeMode()`
+  on every toggle; the pencil/trash control buttons (which can't be
+  reconfigured post-construction at all) are now hidden via a
+  `.tactical-mode` CSS rule instead. **(2)** The paint tool's
+  mousedown/mousemove/mouseup handlers were mouse-only — Mapbox GL fires
+  genuinely distinct event types for touch, so a phone tap never fired
+  `mousedown` and the paint tool silently did nothing on touch devices at
+  all (bug 1 was masking this for the origin role specifically, since
+  MapboxDraw ate those taps first). Fixed by registering the same handler
+  logic against `touchstart`/`touchmove`/`touchend`/`touchcancel` too.
+  Verified: `tsc --noEmit`/`npm run build` clean; live touch-interaction
+  testing itself remains blocked by this sandbox's lack of a real
+  device/touch emulator — **confirm on a real phone against the live
+  preview**. Full detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §22.
 - **2026-07-26 — Step 11 first slice shipped**: owner said "build the next
   step" against the design review below. Shipped the three highest-impact,
   lowest-risk moves from that review, fire-break mode only: **hero readout**

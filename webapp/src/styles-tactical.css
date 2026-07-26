@@ -29,6 +29,19 @@
   flex-shrink: 0;
 }
 
+/* Fire-break's pencil/trash MapboxDraw control is a construction-time
+ * `controls: {...}` option — it can't be toggled after the fact, and the
+ * in-app "Terrain mode" header button doesn't remount the map, so those
+ * buttons kept showing (and, before the changeMode fix in
+ * MapboxMapView.tsx, kept swallowing taps) whenever tacticalMode became
+ * true after the map had already mounted in fire-break mode. Hidden here
+ * via CSS instead, which works regardless of which mode the map happened
+ * to construct in. The wrapper class is added unconditionally at
+ * construction (see MapboxMapView.tsx), so this always finds it. */
+.tactical-mode .mapboxgl-ctrl-group-draw {
+  display: none !important;
+}
+
 .tactical-mode ::selection {
   background: var(--tac-accent);
   color: var(--tac-bg);

@@ -326,6 +326,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       if (mobilityBoxRole) map.dragPan.disable(); else map.dragPan.enable();
     }
   }, [mobilityBoxRole]);
+  // MapboxDraw's mode is only read from `tacticalMode` once, at construction
+  // (see the "load-time decision" note where `new MapboxDraw(...)` is built
+  // below) — fine for a fresh page load with the mode already active, but the
+  // in-app "Terrain mode" header toggle flips `tacticalMode` on an
+  // ALREADY-MOUNTED map without remounting it, so MapboxDraw was staying
+  // armed in `draw_line_string` (or vice-versa) regardless of the toggle
+  // (field-reported: "paint origin still drawing a fire break line" after
+  // switching modes mid-session). This keeps it in sync on every toggle.
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    try { draw.changeMode(tacticalMode ? 'simple_select' : 'draw_line_string'); } catch { /* draw not ready yet */ }
+  }, [tacticalMode]);
   const onMobilityBoxRoleChangeRef = useRef(onMobilityBoxRoleChange);
   useEffect(() => { onMobilityBoxRoleChangeRef.current = onMobilityBoxRoleChange; }, [onMobilityBoxRoleChange]);
   const onMobilityPaintDabRef = useRef(onMobilityPaintDab);
@@ -782,14 +795,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       mobilityLastDabRef.current = { lat: lngLat.lat, lng: lngLat.lng };
       onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng, radiusM });
     };
-    map.on('mousedown', (e: any) => {
+    const handlePaintStart = (e: any) => {
       if (!mobilityBoxRoleRef.current) return;
       e.preventDefault?.();
       mobilityPaintingRef.current = true;
       paintDabAt({ lat: e.lngLat.lat, lng: e.lngLat.lng });
-    });
-    map.on('mousemove', (e: any) => {
+    };
+    const handlePaintMove = (e: any) => {
       if (!mobilityPaintingRef.current || !mobilityBoxRoleRef.current) return;
+      e.preventDefault?.();
       const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
       const last = mobilityLastDabRef.current;
       // Only add a new dab once the cursor has moved a meaningful fraction
@@ -800,9 +814,22 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const movedPx = lastPoint ? Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) : Infinity;
       const thresholdPx = { small: 10, medium: 18, large: 30 }[mobilityBrushSizeRef.current] ?? 18;
       if (movedPx >= thresholdPx) paintDabAt(pt);
-    });
-    map.on('mouseup', () => { mobilityPaintingRef.current = false; });
-    map.on('mouseleave', () => { mobilityPaintingRef.current = false; });
+    };
+    const handlePaintEnd = () => { mobilityPaintingRef.current = false; };
+    // Mapbox GL fires distinct event types for mouse vs. touch input —
+    // 'mousedown'/'mousemove'/'mouseup' never fire from a touch tap, so a
+    // mouse-only registration here silently did nothing on phones/tablets
+    // (field-reported: "paint destination does nothing" on mobile). Both
+    // event families share the same MapMouseEvent/MapTouchEvent `.lngLat`
+    // shape, so the same handlers cover both.
+    map.on('mousedown', handlePaintStart);
+    map.on('mousemove', handlePaintMove);
+    map.on('mouseup', handlePaintEnd);
+    map.on('mouseleave', handlePaintEnd);
+    map.on('touchstart', handlePaintStart);
+    map.on('touchmove', handlePaintMove);
+    map.on('touchend', handlePaintEnd);
+    map.on('touchcancel', handlePaintEnd);
     // Live cursor position for the tactical coordinate readout — independent
     // of any drawing tool. Throttled (~10 Hz): an unthrottled mousemove would
     // fire a React state update (and a UTM re-projection) on every pixel of

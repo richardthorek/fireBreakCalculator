@@ -1744,6 +1744,53 @@ interaction remains subject to the same sandbox proxy limitation recorded
 in §16 — **confirm live** before demoing the brush/paint gesture itself,
 though the underlying geometry it depends on is verified above.
 
+## 22. Field feedback round 2 — the paint tool didn't actually work on mobile (2026-07-26)
+
+The §21 paint tool shipped with two bugs that only show up on a real phone,
+both traced to their actual root cause rather than patched symptomatically.
+
+**Bug 1 — "paint origin" still drew a fire-break line, after switching
+modes mid-session.** §16's own fix comment for the *first* version of this
+bug (MapboxDraw unconditionally armed to draw lines) said the plainly:
+"`tacticalMode` is a load-time decision here, same as the basemap style
+choice" — i.e. `new MapboxDraw({ defaultMode: tacticalMode ? 'simple_select'
+: 'draw_line_string', ... })` only reads `tacticalMode` once, at
+construction. That's correct for a fresh page load already in Terrain mode,
+but the in-app "Terrain mode" header button doesn't remount the map — it
+just flips a prop on an already-mounted one — so a session that starts in
+fire-break mode (the default) and then switches to Terrain mode left
+MapboxDraw permanently armed in `draw_line_string`, silently eating every
+subsequent tap regardless of which paint role was selected. Fixed with a
+`useEffect` on `[tacticalMode]` in `MapboxMapView.tsx` that calls
+`draw.changeMode(...)` reactively on every toggle, in either direction — not
+just at construction. The pencil/trash control *buttons* have the same
+problem for a different reason (MapboxDraw's `controls` option can't be
+changed after construction at all), so they're hidden by CSS instead:
+`.tactical-mode .mapboxgl-ctrl-group-draw { display: none !important; }` in
+`styles-tactical.css`, targeting a wrapper class the draw-control setup
+already adds unconditionally, so it works regardless of which mode the map
+happened to construct in.
+
+**Bug 2 — "paint objective" did nothing at all, on mobile.** The paint
+tool's `mousedown`/`mousemove`/`mouseup`/`mouseleave` handlers were
+mouse-only. Mapbox GL JS fires genuinely distinct event types for mouse vs.
+touch input — a touch tap never fires `mousedown` — so on a touchscreen
+device the paint handlers simply never ran, for *either* role; bug 1 masked
+this for the origin role because MapboxDraw was intercepting those taps
+first, but with bug 1 fixed, origin would have shown the same "nothing
+happens" as objective. Fixed by registering the same handler bodies
+(`handlePaintStart`/`handlePaintMove`/`handlePaintEnd`) against
+`touchstart`/`touchmove`/`touchend`/`touchcancel` as well — Mapbox's
+`MapTouchEvent` carries the same `.lngLat` shape as `MapMouseEvent`, so no
+coordinate-conversion logic had to change, only which event names the
+existing logic is attached to.
+
+**Verification:** `npm run tsc --noEmit` / `npm run build` clean. Live
+touch-interaction testing remains subject to the sandbox proxy limitation
+recorded in §16 (no path to a real device/touch emulator from this build
+environment) — **confirm on a real phone against the live preview**, same
+caveat as §21's own paint gesture.
+
 ---
 
 ## Update policy
