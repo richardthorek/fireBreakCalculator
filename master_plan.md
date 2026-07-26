@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 12, 2026 (Step 7 shipped)
+**Last Updated**: July 26, 2026 (Step 10 secondary use case analysed — design only)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -46,6 +46,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
 | 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
+| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Design/analysis only, staged M1–M5, with **M3 (vegetation-structure/trafficability fidelity) as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem) | 📋 design recorded, not started |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -57,6 +58,83 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Secondary use case analysed: terrain mobility & counter-mobility**
+  (branch `claude/terrain-movement-analysis-xf1r3q`, docs only — no code): owner
+  raised an alternative framing — instead of "where do I cut a break", use the same
+  sampled terrain to answer "how do I move through this ground most efficiently,
+  area to area, for a given mover" and its inverse "which ways will someone else
+  move, and what engineering slows them down". Full design recorded as a new
+  section in [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) (that doc already
+  owns the cost surface; no new doc created) and added as **Step 10** above.
+  Headline findings: (1) it's a **mode, not a fork** — the whole sampling substrate
+  (DEM cache, area-query NVIS/SVTM, three-tier trail lookup, honesty flags,
+  exports) is reused unchanged, and the 2026-07-14 area-query + retention work is
+  what makes an AOI-scale product feasible on free upstream services at all;
+  (2) the **area-to-area** constraint is solved by seeding Dijkstra with every
+  origin-polygon cell (super-source) and, run to exhaustion from both areas and
+  summed, yields a **route-preference surface** whose low band *is* the movement
+  corridor — so you never have to guess an exact route; (3) `edgeCost` must become
+  an **injectable, directional, profile-parameterised** cost strategy — the same
+  refactor the "equipment-aware heatmap" follow-on already needs; (4) because the
+  grid is planar, **min-cut = shortest path in the dual graph**, i.e. the cheapest
+  counter-mobility barrier is found by the Dijkstra already in the repo — *a fire
+  break and a movement barrier are the same object*, a line severing a plane;
+  (5) the metric is **delay-per-dollar**, priced by the existing production engine,
+  with a non-negotiable **bypass rule** (never report a measure's delay without
+  re-running the search and reporting the bypass it creates) and an **egress-safety
+  gate** (a barrier that blocks your own crews' way out is refused, not scored).
+  Two integrity risks flagged as gating: obstacle **breach/delay values** must be
+  sourced-and-cited or visibly user-entered, or M4's output is fabricated
+  operational advice; and the "where will they go" half is tiered so the product
+  models **terrain, not people** (no individuals, no personal data). Also noted:
+  hazard-reduction burning *increases* cross-country mobility, which nothing else
+  in the agency toolkit will tell a planner. Staged M1–M5.
+  **Second pass same day, after owner feedback** (audience = defence /
+  secure-facility / land managers; "blocking roads is easy, working out trenches and
+  pushed-up scrub is hard"; "some vegetation is effectively grassland if the trees
+  are spaced far enough apart"): added **§10, the fidelity problem**, now the
+  analytical core of the mode, plus a throughput section (§6a) and a revised audience
+  section (§7). Key conclusions: **NVIS cannot answer trafficability** — canopy cover
+  ≠ stem spacing (a 10–30% cover woodland with stems 8–15 m apart *is* grassland for
+  mobility, and the current fuel mapping gets this exactly backwards), multi-stemmed
+  mallee/tea-tree/wattle thickets read as open while being a wall of stems, NVIS has
+  no concept of **condition or time-since-fire** (young regrowth can be an order of
+  magnitude denser than the mature stand of the same class), and its ~100 m raster
+  cannot see a 30 m drivable lane. Trafficability is a **percolation** problem on the
+  gap network, not a mean density, and it splits into **passability / pace / capacity
+  / reliability** — with **VCI₁ vs VCI₅₀** (one-pass vs fifty-pass cone index, NRMM
+  lineage) as the citable framing for "drivable vs drivable at scale". That reframes
+  counter-mobility as achievable: denying one motorbike is prohibitive, denying
+  *twenty wheeled vehicles inside two hours* is cheap, because you only have to break
+  pace and capacity — so measures are scored against a **specified threat package**,
+  not "anyone ever". On the three options asked about: **(a) current data** is worth
+  more than we're extracting (a structural NVIS mapping table with a multi-stem flag,
+  reusing the existing curated vegetation-mappings mechanism, plus unused DEM
+  derivatives — cross-slope, roughness, topographic position, wetness index) but is
+  **structurally incapable of tactical gap-finding**; **(b) Mapbox imagery CV** is
+  feasible for crown delineation → gap-network percolation, plantation rows and
+  unmapped "natural roadways", but hits three hard limits — **it cannot see the
+  understorey at all** (so it is biased *optimistic*, dangerous for own-movement),
+  remote-AU resolution/vintage must be probed per AOI rather than assumed, and
+  **Mapbox derivative-works licensing is a gate, likely excluding defence use** (the
+  defensible posture is client-side, ephemeral, nothing persisted, mirroring
+  `mapboxTrails.ts`); **(c) other datasets** hold most of the win and most of it is
+  **free** — the biggest fidelity gain per unit effort is **time-since-fire +
+  fractional cover + surface-water frequency**, *not* computer vision, with airborne
+  lidar (DSM−DEM canopy height model, and point-cloud 0.5–3 m return fraction =
+  understorey density *measured*) as the gold-standard overlay where coverage
+  permits. Recorded as a **5-tier trafficability stack** where every cell reports
+  which tier answered it, its confidence and its vintage, and where **bias direction
+  follows the question** — pessimistic for own movement, optimistic for adversary
+  mobility, same data, opposite rounding. Two things flagged as required-before-CV:
+  the **stem density research task** (field-plot-derived density/basal area/diameter
+  distributions per NVIS MVS *with variance*, plus an analytic gap-width derivation —
+  we do **not** have this today and it cannot be invented) and the lidar calibration
+  set. Also noted: a stand's stem density is simultaneously **the obstacle and the
+  construction material**, so the same structure layer prices pushed-up windrows and
+  abatis siting; soil type determines whether a trench survives; and fences are an
+  acknowledged blind spot invisible in every dataset. M3 re-staged as M3a–M3f,
+  cheapest-and-most-defensible first.
 - **2026-07-19 — Docs audit: fixed a badly stale root README** (cross-repo docs
   coverage pass, alongside Station Manager's in-app wiki work and Fire Santa
   Run's docs cleanup): `README.md` was dated January 2025 and pointed "For
