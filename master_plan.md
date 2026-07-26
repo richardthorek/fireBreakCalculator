@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback round — bug fixes, mobile UX, painted-area AOI — also shipped; Step 11 UI/UX 10x review recorded, awaiting go-ahead)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback round — bug fixes, mobile UX, painted-area AOI — also shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -48,7 +48,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
 | 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–21 = as-built) | ✅ Passes 1–4 shipped + integrated (mobility core, k-routes/min-cut, trafficability data layers, counter-mobility catalogue/ledger — all wired end to end), plus a field-feedback round (painted-area AOI selection, mobile-overlay controls, two critical bug fixes). Remaining 📋: DEM-derivative/Tier-1-layer wiring into per-cell sampling, VCI/RCI-weighted min-cut capacity, real entitlement/backend gating (currently a client-side `?ops=1` URL gate) |
 
-| 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). First demo-ready slice recommended: hero readout + reveal animation + re-skinned map controls. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 📋 reviewed, not started — awaiting go-ahead |
+| 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). **First slice shipped 2026-07-26**: hero readout (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as instrument-scale tabular-nums figures, replacing the old plain text spans) with count-up tweening (`useCountUp.ts`, ease-out cubic, `prefers-reduced-motion`-aware); the map's per-segment slope colouring now sweeps in over `REVEAL_DURATION_MS` (`revealTiming.ts`) via Mapbox GL feature-state instead of snapping to a finished state, in sync with the panel's count-up; move (3)'s map-control re-skin done for fire-break mode, and **a real root-cause bug fixed along the way**: a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was silently winning the cascade over the intended dark theme (equal `!important` specificity, later source order wins) — this was the actual reason controls rendered as plain white squares, not just a stale screenshot; removed rather than patched around. Moves (4) and (5) (shared type/confidence discipline across modes; fire-break mobile floating controls) not yet started. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 🚧 first slice shipped (moves 1–3 partial); moves 4–5 still 📋 |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -60,6 +60,36 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Step 11 first slice shipped**: owner said "build the next
+  step" against the design review below. Shipped the three highest-impact,
+  lowest-risk moves from that review, fire-break mode only: **hero readout**
+  (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as
+  large tabular-nums figures with small captions, replacing the old
+  same-weight text spans) that **counts up** into place via a new
+  `useCountUp` hook (ease-out cubic, `prefers-reduced-motion`-aware,
+  exported pure `tweenCountUp`/`easeOutCubic` verified with a standalone
+  smoke test); the map's per-segment slope colouring (`slope-segments` layer
+  in `MapboxMapView.tsx`) now **sweeps in** over a shared `REVEAL_DURATION_MS`
+  via Mapbox GL feature-state (unrevealed segments show as a faint neutral
+  preview line so the route's shape is visible immediately) instead of
+  snapping to a finished state the instant analysis completes — timed to
+  finish alongside the hero-readout's count-up, both driven off one shared
+  constant so they can't drift apart; and the **map controls were re-skinned**
+  onto the app's actual signal-red/hi-vis-amber brand. That last one turned
+  up a genuine bug, not just a stale-screenshot impression: a second,
+  later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was
+  silently winning the cascade over the intended dark theme (equal
+  `!important` specificity, later source order wins in a tie) — the literal
+  reason draw/zoom controls rendered as plain white squares. Removed rather
+  than patched around. Verified: `tsc --noEmit`/`npm run build` clean; a
+  standalone Node smoke test against the real exported tween math; a
+  Playwright screenshot of the live dev server confirmed no header/onboarding
+  regression (the map canvas itself doesn't render in this sandbox — no
+  Mapbox token available here — so the reveal animation and re-skinned
+  control chrome couldn't be exercised pixel-for-pixel end-to-end; **confirm
+  live** on the deployed preview). Remaining from the review: shared type/
+  confidence discipline across both modes, and fire-break mode's own
+  floating mobile controls (moves 4–5, still 📋).
 - **2026-07-26 — UI/UX 10x design review (Step 11, new)**: owner asked for an
   honest assessment of both modes against a single bar — "instant buy on first
   demo" — and a concrete improvement direction, form and function. Reviewed

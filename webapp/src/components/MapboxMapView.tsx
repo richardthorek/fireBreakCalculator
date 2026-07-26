@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { LngLat } from 'mapbox-gl';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
+import { REVEAL_DURATION_MS } from '../utils/revealTiming';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
@@ -284,6 +285,11 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => {
     try { reducedMotionRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* ignore */ }
   }, []);
+  // "The reveal is the demo" (2026-07-26 UI review, master_plan.md Step 11):
+  // increments on every renderSlopeSegments call so an in-flight reveal loop
+  // from a superseded analysis recognises it's stale and stops touching
+  // feature-state on the next frame.
+  const slopeRevealTokenRef = useRef(0);
   // WP3: the sweep eases toward this every frame instead of a fixed clock.
   const optimizerProgressRef = useRef(0);
   useEffect(() => { optimizerProgressRef.current = optimizerProgress; }, [optimizerProgress]);
@@ -1764,11 +1770,58 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.getSource('slope-segments')) map.removeSource('slope-segments');
     const features = analysis.segments.map((seg,i)=>({
       type:'Feature' as const,
+      id: i, // stable per-segment id — required for setFeatureState in the reveal below
       properties:{ slope:seg.slope, category:seg.category, distance:seg.distance, elevationChange:Math.abs(seg.endElevation-seg.startElevation), color:getSlopeColor(seg.category), index:i },
       geometry:{ type:'LineString' as const, coordinates:(seg.coords && seg.coords.length>=2? seg.coords.map(c=>[c[1],c[0]]): [[seg.start[1],seg.start[0]],[seg.end[1],seg.end[0]]]) }
     }));
     map.addSource('slope-segments',{ type:'geojson', data:{ type:'FeatureCollection', features } } as any);
-    map.addLayer({ id:'slope-segments', type:'line', source:'slope-segments', layout:{ 'line-join':'round','line-cap':'round'}, paint:{ 'line-color':['get','color'], 'line-width':6, 'line-opacity':0.8 } });
+    // Unrevealed segments render as a faint neutral preview line (so the
+    // route's shape is visible immediately) — feature-state flips each one
+    // to its real slope colour as startSlopeReveal sweeps through, with a
+    // short paint transition so each arrival fades in rather than popping.
+    map.addLayer({
+      id:'slope-segments', type:'line', source:'slope-segments',
+      layout:{ 'line-join':'round','line-cap':'round' },
+      paint:{
+        'line-color': ['case', ['boolean', ['feature-state','revealed'], false], ['get','color'], 'rgba(148,163,184,0.4)'],
+        'line-width': ['case', ['boolean', ['feature-state','revealed'], false], 6, 3],
+        'line-opacity': ['case', ['boolean', ['feature-state','revealed'], false], 0.85, 0.5],
+        'line-color-transition': { duration: 240 },
+        'line-width-transition': { duration: 240 },
+        'line-opacity-transition': { duration: 240 },
+      } as any,
+    });
+    startSlopeReveal(features.length);
+  };
+
+  /** Sweeps `revealed` feature-state across the slope-segments source over
+   *  REVEAL_DURATION_MS, left-to-right along the drawn line — "the reveal is
+   *  the demo" (2026-07-26 UI review, master_plan.md Step 11), the same
+   *  moment AnalysisPanel's hero-readout numbers count up in. Reduced-motion
+   *  users get every segment revealed on the first frame instead. */
+  const startSlopeReveal = (count: number) => {
+    const map = mapRef.current;
+    if (!map || count === 0) return;
+    const token = ++slopeRevealTokenRef.current;
+    if (reducedMotionRef.current) {
+      for (let i = 0; i < count; i++) map.setFeatureState({ source: 'slope-segments', id: i }, { revealed: true });
+      return;
+    }
+    const start = performance.now();
+    let revealed = 0;
+    const step = (now: number) => {
+      if (slopeRevealTokenRef.current !== token) return; // superseded by a newer analysis
+      const m = mapRef.current;
+      if (!m || !m.getSource('slope-segments')) return;
+      const elapsed = now - start;
+      const target = Math.min(count, Math.ceil((elapsed / REVEAL_DURATION_MS) * count));
+      for (let i = revealed; i < target; i++) {
+        m.setFeatureState({ source: 'slope-segments', id: i }, { revealed: true });
+      }
+      revealed = target;
+      if (revealed < count) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   };
 
   // Handle location selection from search

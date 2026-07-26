@@ -989,7 +989,13 @@ html, body {
 }
 .map-analyzing-badge .map-analyzing-text { font-weight:600; color:#cbefff; }
 
-/* Mapbox GL Draw control styling for better touch experience */
+/* Mapbox GL Draw + navigation control styling — 2026-07-26 UI review
+   (master_plan.md Step 11, "the map wears the brand"): re-skinned off
+   Mapbox's factory default chrome and onto this app's own signal-red/hi-vis
+   palette instead of a generic blue accent. Terrain (tactical) mode keeps
+   its own cyan accent via the `.tactical-mode` override below, per "one
+   instrument, two doctrines" — each mode's map controls read as that mode's
+   own brand, not a shared afterthought. */
 .mapboxgl-ctrl-group {
   background: rgba(30,36,51,0.98) !important;
   border-radius: 4px !important;
@@ -1008,11 +1014,19 @@ html, body {
 }
 
 .mapboxgl-ctrl-group button:hover {
-  background: rgba(79,195,247,0.12) !important;
+  background: rgba(246,166,9,0.14) !important; /* --accent-amber */
 }
 
 .mapboxgl-ctrl-group button.active {
-  background: rgba(79,195,247,0.2) !important;
+  background: rgba(216,35,42,0.22) !important; /* --rfs-core-red */
+}
+
+.tactical-mode .mapboxgl-ctrl-group button:hover {
+  background: rgba(56,189,248,0.14) !important; /* terrain mode's own ops-cyan accent */
+}
+
+.tactical-mode .mapboxgl-ctrl-group button.active {
+  background: rgba(56,189,248,0.22) !important;
 }
 
 /* Larger touch targets on mobile */
@@ -1260,10 +1274,67 @@ button:focus {
   font-weight: 600;
 }
 
-.distance-display {
+/* Hero readout — 2026-07-26 UI review (master_plan.md Step 11): one headline
+   figure per key result instead of small same-weight text, with numbers that
+   tween into place (useCountUp) in step with the map's segment-colour reveal
+   rather than snapping to a finished state. */
+.hero-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.hero-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 5px;
+  background: rgba(255,107,53,0.06);
+  border: 1px solid rgba(255,107,53,0.18);
+  line-height: 1.1;
+}
+
+.hero-figure--primary {
+  background: rgba(255,107,53,0.14);
+  border-color: rgba(255,107,53,0.4);
+}
+
+.hero-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #f5f7fa;
+  font-feature-settings: "tnum";
+}
+
+.hero-figure--primary .hero-value {
   color: #ff6b35;
-  font-weight: 600;
-  font-size: 0.9rem;
+}
+
+.hero-unit {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #94a3b8;
+  margin-left: 0.12rem;
+}
+
+.hero-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  white-space: nowrap;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1023px) {
+  .hero-readout { gap: 0.3rem; }
+  .hero-figure { padding: 0.2rem 0.45rem; }
+  .hero-value { font-size: 0.95rem; }
 }
 
 .expand-button {
@@ -2419,11 +2490,6 @@ button:focus {
   font-size: 0.85rem;
 }
 
-.slope-display {
-  color: #94a3b8;
-  font-weight: 500;
-}
-
 .analysis-loading {
   color: #ff6b35;
   font-size: 0.8rem;
@@ -2932,40 +2998,38 @@ button:focus {
   box-shadow: 0 0 0 2px rgba(255, 69, 0, 0.3);
 }
 
-/* Fix for MapboxGL Draw controls - make them visible with better contrast */
+/* MapboxGL Draw controls (pencil/trash) — re-skinned onto the app's own dark
+   theme + signal-red/hi-vis-amber brand (2026-07-26 UI review). This used to
+   carry a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }`
+   rule here that silently won the cascade over the dark theme above (equal
+   `!important` specificity, later source order wins) — the literal root
+   cause of the map controls rendering as plain white squares. Removed rather
+   than patched around. */
 .mapbox-gl-draw_ctrl-draw-btn {
-  background-color: #3773b3 !important; /* Dark blue background */
-  border-color: #aaaaaa !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
 }
 
 .mapbox-gl-draw_ctrl-draw-btn.active {
-  background-color: #2c5d91 !important; /* Even darker blue when active */
-  border-color: #ffffff !important;
+  background-color: rgba(216,35,42,0.28) !important; /* --rfs-core-red — armed and drawing */
+  border-color: transparent !important;
 }
 
 .mapbox-gl-draw_ctrl-draw-btn svg {
-  fill: #ffffff !important; /* White icons for contrast against dark background */
+  fill: #ffffff !important;
   stroke: #ffffff !important;
   stroke-width: 0.5px !important;
 }
 
 /* Specific styling for line string button */
 .mapbox-gl-draw_line {
-  border-left: 3px solid #ffffff !important;
+  border-left: 3px solid rgba(246,166,9,0.55) !important; /* --accent-amber — marks the primary tool */
 }
 
 /* Specific styling for trash button */
 .mapbox-gl-draw_trash {
-  background-color: #b92d2b !important; /* Red background for delete */
-  border-left: 3px solid #ffffff !important;
-}
-
-.mapboxgl-ctrl-group {
-  background-color: #ffffff !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4) !important;
-  border: 1px solid #cccccc !important;
-  margin-bottom: 10px !important; /* Add spacing between control groups */
+  background-color: transparent !important;
+  border-left: 3px solid rgba(216,35,42,0.4) !important; /* --rfs-core-red */
 }
 
 /* Additional spacing for map controls to prevent overlapping */
@@ -2975,18 +3039,6 @@ button:focus {
 
 .mapboxgl-ctrl-top-right .mapboxgl-ctrl {
   margin: 10px 10px 0 0 !important;
-}
-
-/* Make the draw control container stand out */
-.mapboxgl-ctrl-group.mapboxgl-ctrl-group-draw {
-  background-color: rgba(0,0,0,0.1) !important;
-  padding: 2px !important;
-  border: 2px solid #ffffff !important;
-}
-
-.mapboxgl-ctrl button {
-  background-color: #ffffff !important;
-  border-bottom: 1px solid #e0e0e0 !important;
 }
 
 /* Enhanced icon visibility for MapboxGL Draw */
@@ -3021,17 +3073,13 @@ button:focus {
   text-shadow: 0 0 2px rgba(0,0,0,0.5);
 }
 
-.mapboxgl-ctrl button:hover {
-  background-color: #f0f0f0 !important;
-}
-
 .mapbox-gl-draw_ctrl-draw-btn:hover {
-  background-color: #4a8bc5 !important; /* Lighter blue on hover */
+  background-color: rgba(246,166,9,0.16) !important; /* --accent-amber */
   cursor: pointer !important;
 }
 
 .mapbox-gl-draw_trash:hover {
-  background-color: #d13438 !important; /* Brighter red on hover */
+  background-color: rgba(216,35,42,0.22) !important; /* --rfs-core-red */
   cursor: pointer !important;
 }
 

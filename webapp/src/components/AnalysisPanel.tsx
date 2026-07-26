@@ -32,6 +32,7 @@ import { logger } from '../utils/logger';
 import { LiveFeedsControl } from './LiveFeedsControl';
 import type { LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
+import { useCountUp } from '../utils/useCountUp';
 
 interface AnalysisPanelProps {
   /** Distance of the drawn fire break in meters */
@@ -921,6 +922,20 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const quickAircraft = selectedQuickAircraft ? finalCalculations.find(c => c.id === selectedQuickAircraft) : undefined;
   const quickHandCrew = selectedQuickHandCrew ? finalCalculations.find(c => c.id === selectedQuickHandCrew) : undefined;
 
+  // Hero readout (2026-07-26 UI review, master_plan.md Step 11): one headline
+  // time figure, preferring whichever equipment category has a compatible
+  // quick option — machinery first (the most commonly built option), then
+  // hand crew, then aircraft.
+  const heroTimeOption = quickMachinery ?? quickHandCrew ?? quickAircraft;
+
+  // "The reveal is the demo": these numbers tween toward their target
+  // instead of snapping, in step with the map's per-segment colour reveal
+  // (see revealTiming.ts / renderSlopeSegments in MapboxMapView.tsx). Hooks
+  // must run unconditionally, so `null` inputs are handled by useCountUp.
+  const heroDistance = useCountUp(!isAnalyzing ? distance : null);
+  const heroMaxSlope = useCountUp(!isAnalyzing && trackAnalysis ? trackAnalysis.maxSlope : null);
+  const heroTime = useCountUp(!isAnalyzing && heroTimeOption ? heroTimeOption.time : null);
+
   return (
     <div className="analysis-panel-permanent">
   <div className="analysis-header">
@@ -932,9 +947,36 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               <span>Analyzing terrain...</span>
             </div>
           )}
-          {!isAnalyzing && distance && <span className="distance-display">{distance.toLocaleString(undefined, { maximumFractionDigits: 0 })}m</span>}
-          {!isAnalyzing && trackAnalysis && <span className="slope-display">Max Slope: {Math.round(trackAnalysis.maxSlope)}°</span>}
-          
+          {!isAnalyzing && distance != null && (
+            <div className="hero-readout" role="group" aria-label="Fire break headline results">
+              <div className="hero-figure hero-figure--primary">
+                <span className="hero-value">
+                  {Math.round(heroDistance ?? distance).toLocaleString()}
+                  <span className="hero-unit">m</span>
+                </span>
+                <span className="hero-label">Break length</span>
+              </div>
+              {trackAnalysis && (
+                <div className="hero-figure">
+                  <span className="hero-value">
+                    {Math.round(heroMaxSlope ?? trackAnalysis.maxSlope)}
+                    <span className="hero-unit">°</span>
+                  </span>
+                  <span className="hero-label">Max slope</span>
+                </div>
+              )}
+              {heroTimeOption && (
+                <div className="hero-figure">
+                  <span className="hero-value">
+                    {(heroTime ?? heroTimeOption.time).toFixed(1)}
+                    <span className="hero-unit">h</span>
+                  </span>
+                  <span className="hero-label">{heroTimeOption.name}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Backend Analysis Status */}
           {backendAvailable !== null && (
             <div className="backend-status">
