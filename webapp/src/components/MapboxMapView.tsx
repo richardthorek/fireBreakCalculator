@@ -15,7 +15,7 @@ import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
-import { brushRadiusMeters, dabToPolygon, BrushSize } from '../terrain/paintedArea';
+import { brushRadiusMeters, resolvePaintedAreaGeometry, BrushSize, PaintStrokeMode, PaintedArea } from '../terrain/paintedArea';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -136,15 +136,20 @@ interface MapboxMapViewProps {
    *  lays down dabs while armed — see terrain/paintedArea.ts). */
   mobilityBoxRole?: 'origin' | 'objective' | null;
   onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
-  /** Fired for every dab painted while a role is armed. */
+  /** Fired for every dab painted (or erased — see mobilityPaintMode) while a
+   *  role is armed. The caller tags the stroke's mode itself. */
   onMobilityPaintDab?: (role: 'origin' | 'objective', dab: { lat: number; lng: number; radiusM: number }) => void;
-  /** Persistent painted areas, rendered as real-ground-size circles until cleared. */
-  mobilityOriginPaint?: { lat: number; lng: number; radiusM: number }[];
-  mobilityObjectivePaint?: { lat: number; lng: number; radiusM: number }[];
+  /** Persistent painted areas — ordered paint/erase stroke sequences,
+   *  resolved to one shape and rendered until cleared. */
+  mobilityOriginPaint?: PaintedArea;
+  mobilityObjectivePaint?: PaintedArea;
   /** On-screen brush radius class — ground radius is derived from this and
    *  the map's zoom/latitude at the moment each dab is painted. */
   mobilityBrushSize?: BrushSize;
   onMobilityBrushSizeChange?: (size: BrushSize) => void;
+  /** Paint vs erase — which kind of stroke the brush lays down next. */
+  mobilityPaintMode?: PaintStrokeMode;
+  onMobilityPaintModeChange?: (mode: PaintStrokeMode) => void;
   /** Result cells from the last terrain appreciation run. */
   mobilityHeatmap?: {
     polygon: { lat: number; lng: number }[];
@@ -220,6 +225,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   mobilityObjectivePaint = [],
   mobilityBrushSize = 'medium',
   onMobilityBrushSizeChange,
+  mobilityPaintMode = 'paint',
+  onMobilityPaintModeChange,
   mobilityHeatmap = null,
   mobilityDisplayMode = 'trafficability',
   onCursorMove,
@@ -795,14 +802,24 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       mobilityLastDabRef.current = { lat: lngLat.lat, lng: lngLat.lng };
       onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng, radiusM });
     };
+    // A pinch/two-finger-pan gesture must still reach Mapbox's own
+    // touchZoomRotate handler (owner feedback 2026-07-26: "a two finger
+    // movement... should move the map as intended") — dragPan is disabled
+    // while a role is armed so a ONE-finger drag paints instead of panning,
+    // but that must not swallow a second finger. `e.points` is Mapbox's own
+    // per-touch screen-point array (present on touch events, absent on
+    // mouse events, where a single pointer is implicitly assumed).
+    const touchCount = (e: any): number => e?.points?.length ?? 1;
     const handlePaintStart = (e: any) => {
       if (!mobilityBoxRoleRef.current) return;
+      if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; }
       e.preventDefault?.();
       mobilityPaintingRef.current = true;
       paintDabAt({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     };
     const handlePaintMove = (e: any) => {
       if (!mobilityPaintingRef.current || !mobilityBoxRoleRef.current) return;
+      if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; } // a second finger joined mid-stroke — hand off to native pinch/pan
       e.preventDefault?.();
       const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
       const last = mobilityLastDabRef.current;
@@ -1377,14 +1394,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   }, [areaReconHeatmap, heatmapColorMode]);
 
   // Terrain Mobility mode — persistent painted origin (cyan) / objective
-  // (amber) areas: each dab renders as its own real-ground-size circle
-  // polygon (dabToPolygon), a MultiPolygon per role, rendered until cleared
-  // from App.tsx. Real ground size (not a fixed screen radius) so the
-  // painted area reads as a stable patch of ground at any zoom.
-  const dabsToMultiPolygon = (dabs: { lat: number; lng: number; radiusM: number }[]) => ({
-    type: 'MultiPolygon' as const,
-    coordinates: dabs.map(dab => [dabToPolygon(dab).map(p => [p.lng, p.lat])]),
-  });
+  // (amber) areas, rendered until cleared from App.tsx. Real ground size
+  // (not a fixed screen radius) so the painted area reads as a stable patch
+  // of ground at any zoom. The dabs are unioned into one continuous polygon
+  // (paintedAreaToUnionGeometry, real @turf/union geometry — owner feedback
+  // 2026-07-26: "a continuous shape, not a series of overlapping circles")
+  // rather than rendered as independent overlapping circles.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -1396,7 +1411,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       } catch (e) { /* style may already be gone */ }
     };
     if (mobilityOriginPaint.length === 0) { remove(); return; }
-    const data = { type: 'Feature' as const, properties: {}, geometry: dabsToMultiPolygon(mobilityOriginPaint) };
+    const geometry = resolvePaintedAreaGeometry(mobilityOriginPaint);
+    if (!geometry) { remove(); return; }
+    const data = { type: 'Feature' as const, properties: {}, geometry };
     const apply = () => {
       try {
         const existing = map.getSource('mobility-origin-paint');
@@ -1420,7 +1437,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       } catch (e) { /* style may already be gone */ }
     };
     if (mobilityObjectivePaint.length === 0) { remove(); return; }
-    const data = { type: 'Feature' as const, properties: {}, geometry: dabsToMultiPolygon(mobilityObjectivePaint) };
+    const geometry = resolvePaintedAreaGeometry(mobilityObjectivePaint);
+    if (!geometry) { remove(); return; }
+    const data = { type: 'Feature' as const, properties: {}, geometry };
     const apply = () => {
       try {
         const existing = map.getSource('mobility-objective-paint');
@@ -1968,14 +1987,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             className={`mobility-overlay-btn mobility-overlay-btn--origin${mobilityBoxRole === 'origin' ? ' active' : ''}`}
             onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'origin' ? null : 'origin')}
           >
-            {mobilityBoxRole === 'origin' ? 'Drag to paint…' : (mobilityOriginPaint.length > 0 ? `Origin (${mobilityOriginPaint.length})` : 'Paint origin')}
+            {mobilityBoxRole === 'origin' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityOriginPaint.length > 0 ? `Origin (${mobilityOriginPaint.length})` : 'Paint origin')}
           </button>
           <button
             type="button"
             className={`mobility-overlay-btn mobility-overlay-btn--objective${mobilityBoxRole === 'objective' ? ' active' : ''}`}
             onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'objective' ? null : 'objective')}
           >
-            {mobilityBoxRole === 'objective' ? 'Drag to paint…' : (mobilityObjectivePaint.length > 0 ? `Objective (${mobilityObjectivePaint.length})` : 'Paint objective')}
+            {mobilityBoxRole === 'objective' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityObjectivePaint.length > 0 ? `Objective (${mobilityObjectivePaint.length})` : 'Paint objective')}
           </button>
           {mobilityBoxRole && (
             <div className="mobility-brush-row">
@@ -1990,6 +2009,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
                 </button>
               ))}
             </div>
+          )}
+          {mobilityBoxRole && (
+            <button
+              type="button"
+              className={`mobility-overlay-btn mobility-overlay-btn--erase${mobilityPaintMode === 'erase' ? ' active' : ''}`}
+              onClick={() => onMobilityPaintModeChange?.(mobilityPaintMode === 'erase' ? 'paint' : 'erase')}
+            >
+              {mobilityPaintMode === 'erase' ? 'Erasing — tap to paint' : 'Erase'}
+            </button>
           )}
           {!mobilityRunning ? (
             <button

@@ -1791,6 +1791,121 @@ recorded in §16 (no path to a real device/touch emulator from this build
 environment) — **confirm on a real phone against the live preview**, same
 caveat as §21's own paint gesture.
 
+## 23. Field feedback round 3 — two-finger map gestures and a continuous painted shape (2026-07-26)
+
+Two more owner-tested refinements on top of §22's touch fixes.
+
+**Two-finger gestures were still being intercepted as painting.** §22 wired
+the paint tool's handlers to `touchstart`/`touchmove`/`touchend` so a
+single-finger tap/drag paints — but with no finger-count check, a
+two-finger pinch-zoom or two-finger pan (the gesture a user reaches for
+specifically to move the map, since one-finger drag is dedicated to
+painting while a role is armed) was *also* read as a paint stroke,
+fighting the native gesture. Mapbox's own `touchZoomRotate` handler is a
+separate handler from `dragPan` and stays enabled throughout (only
+`dragPan` is disabled while a role is armed, deliberately, so one-finger
+drag paints instead of panning) — the fix only needed the paint handlers to
+get out of the way, not any change to what Mapbox itself listens for.
+`MapboxMapView.tsx`'s `handlePaintStart`/`handlePaintMove` now check
+`e.points?.length` (Mapbox's own per-touch screen-point array on a touch
+event) and bail out — without painting, without `preventDefault()` — the
+moment more than one finger is down, including a second finger joining
+mid-stroke. The gesture then falls straight through to Mapbox's native
+pinch/pan handling exactly as it would outside the paint tool.
+
+**The painted area rendered as a cluster of overlapping circles, not one
+shape.** Each dab was rendered as its own independent circle polygon inside
+a `MultiPolygon` — geometrically correct for the `isInsidePaintedArea`
+membership test (§21, a real union-of-circles test), but visually every
+overlap showed a doubled fill and a stray outline seam, reading as "a pile
+of circles" rather than one painted patch of ground. Fixed with a real
+geometric union, not a rendering trick: new `paintedAreaToUnionGeometry`
+in `paintedArea.ts` builds one polygon per dab and merges them with
+`@turf/union` (new dependency — chosen over hand-rolling a polygon-clipping
+algorithm for the same correctness reasons §17 gives for using standard
+max-flow/min-cut rather than a bespoke construction: this is exactly the
+kind of computational-geometry code where a subtly-wrong DIY implementation
+is a real risk, and a widely-used, well-tested library is the safer choice).
+Two touching/overlapping dabs merge into one continuous `Polygon`; two
+genuinely separate strokes correctly stay a `MultiPolygon` — union only
+merges where geometry actually overlaps or touches, so a real gap in the
+painted area still renders as a real gap. `MapboxMapView.tsx`'s rendering
+effects for `mobility-origin-paint`/`mobility-objective-paint` now feed this
+unioned geometry to the map source instead of the raw per-dab circles.
+
+**Verification:** `npm run tsc --noEmit` / `npm run build` clean. A
+standalone Node smoke test against the real union geometry function
+(9 checks): two identical overlapping dabs union to within 3% of a single
+circle's own area (not double); two partially-overlapping dabs union to
+strictly less area than the sum of both circles yet more than one circle
+alone (the overlap is counted once, not zero or twice); two dabs far enough
+apart to never touch correctly stay a `MultiPolygon` rather than being
+forced together. Live two-finger touch-gesture testing remains subject to
+the same sandbox device/touch-emulator limitation as §22 — **confirm on a
+real phone against the live preview**.
+
+## 24. Erase function (2026-07-26)
+
+Owner asked, in the same round as §23: "add an erase function." The paint
+tool (§21) was add-only — the only way to correct a mistake was "Clear
+origin"/"Clear objective", which wipes the *entire* area, not a targeted fix.
+
+**Design: an ordered stroke log, not two standing sets.** The obvious first
+model — a "painted" dab list and a separate "erased" dab list, final area =
+union(painted) minus union(erased) — gets the expected eraser behaviour
+*wrong*: erase a mistake, then paint back over the same spot, and under that
+model it stays erased forever (the point is permanently in the "erased"
+set). Every real paint/eraser tool (MS Paint, Procreate, any raster editor)
+instead treats strokes as an ordered sequence of operations replayed in
+time — erase, then paint over the same spot, and it comes back, because the
+paint stroke is simply the *last* operation touching that area. `PaintedArea`
+is now `PaintStroke[]` (`{ mode: 'paint' | 'erase', dab: PaintDab }`, ordered
+by the time they were laid down) instead of a flat `PaintDab[]`, and
+`resolvePaintedAreaGeometry` (`paintedArea.ts`) replays the sequence:
+`@turf/union` on a `paint` stroke, `@turf/difference` on an `erase` stroke,
+each folded onto the running accumulated shape. New dependency
+(`@turf/difference`, alongside the `@turf/union` §23 already added) chosen
+for the same correctness reason as §17's max-flow/min-cut and §23's union
+choice: this is real computational geometry, and a hand-rolled polygon-clip
+implementation is exactly the kind of code where a subtle bug produces a
+confident-looking but wrong shape.
+
+**Membership testing moved off the raw dab list.** The old
+`isInsidePaintedArea` tested "is this point within *any* dab's radius" —
+correct for a paint-only, flat model, but wrong the moment erase exists (a
+point inside a painted dab that a later erase stroke removed would still
+read as "inside"). Replaced with `isInsideResolvedArea(point, geometry)`, a
+`@turf/boolean-point-in-polygon` test against the *resolved* shape.
+`mobilityGrid.ts` now resolves each painted area's geometry **once** (not
+per grid cell) before filtering cells — the boolean-ops replay is real work;
+membership testing against an already-resolved shape is cheap, so this
+keeps the same "resolve once, test many points" performance shape the
+codebase already uses elsewhere (e.g. one area-query per corridor scan
+rather than one per sampled point).
+
+**UI:** a new "Erase" toggle button in the map's floating overlay controls
+(shown alongside the brush-size row whenever an AOI role is armed — §21's
+"primary actions live on the map overlay" pattern, not a new location),
+styled in the app's existing danger-red (`--tac-nogo`) so it reads clearly
+as "about to remove area," not just another equal-weight mode button. Brush
+size is shared between paint and erase — no separate "erase brush size" —
+since the same on-screen/ground-radius relationship applies to
+subtracting area as adding it. `MobilityPanel.tsx`'s stroke-count display
+was relabelled from "N dabs painted" to "N strokes (paint + erase)" since
+the count now covers both kinds honestly rather than implying every entry
+added area.
+
+**Verification:** `npm run tsc --noEmit` / `npm run build` clean. A
+standalone Node smoke test against the real `resolvePaintedAreaGeometry` /
+`isInsideResolvedArea` (7 checks) — critically, the exact property a naive
+two-set model would get wrong: paint a spot, erase it, **paint the same
+spot again**, and it correctly reads as inside once more; also verifies
+erasing bigger than what was painted clears it entirely, erasing before
+anything is painted is a safe no-op (resolves to `null`, not a crash or
+phantom shape), and a *partial* erase removes only its own bite while the
+opposite edge of the original painted circle stays intact (a real boolean
+subtraction, not an all-or-nothing clear).
+
 ---
 
 ## Update policy

@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback round — bug fixes, mobile UX, painted-area AOI — also shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback rounds — bug fixes, mobile UX, painted-area AOI, two-finger gestures, continuous painted shape, erase function — all shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -60,6 +60,39 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility: two-finger map gestures, continuous
+  painted shape, erase function**: owner asked for three refinements on the
+  painted-area AOI tool in one round. **(1)** Two-finger pinch/pan was being
+  read as a paint stroke instead of reaching the map — `MapboxMapView.tsx`'s
+  paint handlers now check the touch point count and get out of the way
+  (no painting, no `preventDefault()`) the moment a second finger joins,
+  letting Mapbox's own (separate, never-disabled) `touchZoomRotate` handler
+  take the gesture. **(2)** The painted area rendered as a cluster of
+  overlapping circles, not one shape — replaced with a real geometric union
+  (`@turf/union`, new dependency — chosen over a hand-rolled polygon-clip
+  algorithm for the same correctness reasons §17 gives for standard
+  max-flow/min-cut) via a new `resolvePaintedAreaGeometry` in
+  `paintedArea.ts`. **(3)** Added an actual erase function, not just
+  "clear everything": `PaintedArea` is now an ORDERED sequence of
+  paint/erase strokes (`PaintStroke[]`), replayed via union (paint) /
+  `@turf/difference` (erase) — the only model that gets "erase a mistake,
+  then paint back over it" right, since a naive "painted set minus erased
+  set" would keep that spot erased forever. A new "Erase" toggle button
+  sits in the map's floating overlay controls (danger-red, matches this
+  app's existing delete/danger colour). Grid-cell membership testing
+  (`mobilityGrid.ts`) now resolves each area's geometry once and does a
+  real point-in-polygon test (`@turf/boolean-point-in-polygon`) against it,
+  replacing the old "distance to nearest dab centre" check, which would
+  have been wrong the moment erase strokes exist. Verified: `tsc --noEmit`/
+  `npm run build` clean; two standalone smoke tests against the real
+  modules — one proving the union is a real merge (overlapping dabs sum to
+  ~one circle's area, not double; disjoint dabs correctly stay a
+  MultiPolygon), one proving the paint/erase replay's key property
+  (erase then repaint the same spot brings it back; partial erase leaves
+  the untouched side of a circle intact; erasing nothing yet is a safe
+  no-op). Live touch-gesture testing remains blocked by this sandbox's lack
+  of a real device/touch emulator — **confirm on a real phone against the
+  live preview**. Full detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §23–§24.
 - **2026-07-26 — Terrain Mobility: paint tool actually broken on mobile,
   two real bugs found and fixed**: owner reported that on a phone, "paint
   origin" was still drawing a fire-break line and "paint objective" did

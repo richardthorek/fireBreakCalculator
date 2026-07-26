@@ -427,6 +427,14 @@
   color: #2a0505;
   border-color: var(--tac-nogo, #D8232A);
 }
+/* Paint/erase toggle (owner feedback 2026-07-26: "add an erase function") —
+ * a distinct danger-red active state so it reads clearly as "you are about
+ * to remove area", not just another equal-weight mode button. */
+.mobility-overlay-btn--erase.active {
+  background: var(--tac-nogo, #D8232A);
+  color: #fff;
+  border-color: var(--tac-nogo, #D8232A);
+}
 .mobility-brush-row { display: flex; gap: 6px; }
 .mobility-brush-btn {
   flex: 1;

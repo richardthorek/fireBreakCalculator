@@ -112,8 +112,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       <div className="tac-panel mobility-section">
         <div className="tac-label">AREAS OF INTEREST</div>
         <div className="mobility-aoi-detail tac-mono">
-          <span>Origin: {originPaint.length} dab{originPaint.length === 1 ? '' : 's'} painted</span>
-          <span>Objective: {objectivePaint.length} dab{objectivePaint.length === 1 ? '' : 's'} painted</span>
+          <span>Origin: {originPaint.length} stroke{originPaint.length === 1 ? '' : 's'} (paint + erase)</span>
+          <span>Objective: {objectivePaint.length} stroke{objectivePaint.length === 1 ? '' : 's'} (paint + erase)</span>
         </div>
         {boxRole ? (
           <div className="tac-hint">

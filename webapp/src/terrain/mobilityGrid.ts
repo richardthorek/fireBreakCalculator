@@ -8,10 +8,11 @@
  * speed (road vs cross-country factor) and vegetation passability (already
  * broken ground).
  *
- * Origin/objective areas are PAINTED (docs owner feedback 2026-07-26) — a
- * union of circular dabs (paintedArea.ts), not a drawn rectangle — so a cell
- * counts as "in" an area when its centre falls within ANY dab, tested via
- * `isInsidePaintedArea` rather than a simple bbox containment check.
+ * Origin/objective areas are PAINTED (docs owner feedback 2026-07-26) — an
+ * ordered sequence of paint/erase dabs (paintedArea.ts), not a drawn
+ * rectangle — resolved ONCE per area into a single polygon
+ * (`resolvePaintedAreaGeometry`) and tested per cell via
+ * `isInsideResolvedArea` rather than a simple bbox containment check.
  */
 
 import { LatLng } from '../utils/chainage';
@@ -22,7 +23,7 @@ import {
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import { fetchCorridorInfrastructure, distanceToNearestTrail } from '../utils/infrastructureService';
 import { MobilityGridCell } from './accumulatedCost';
-import { PaintedArea, paintedAreaBounds, isInsidePaintedArea } from './paintedArea';
+import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry, isInsideResolvedArea } from './paintedArea';
 
 const TARGET_CELL_COUNT = 1400;
 const MAX_HEX_CELLS = 1800;
@@ -114,8 +115,13 @@ export async function buildMobilityGrid(
     onTrail: infra.trails.length > 0 && distanceToNearestTrail(points[i], infra.trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
   }));
 
-  const originKeys = cells.filter(c => isInsidePaintedArea(c.center, origin)).map(c => c.key);
-  const objectiveKeys = cells.filter(c => isInsidePaintedArea(c.center, objective)).map(c => c.key);
+  // Resolve each painted area's paint/erase strokes into one shape ONCE
+  // here, rather than per cell — the geometry-boolean-ops replay is real
+  // work, membership testing against the already-resolved shape is cheap.
+  const originGeom = resolvePaintedAreaGeometry(origin);
+  const objectiveGeom = resolvePaintedAreaGeometry(objective);
+  const originKeys = cells.filter(c => isInsideResolvedArea(c.center, originGeom)).map(c => c.key);
+  const objectiveKeys = cells.filter(c => isInsideResolvedArea(c.center, objectiveGeom)).map(c => c.key);
 
   onProgress?.(0.7);
 

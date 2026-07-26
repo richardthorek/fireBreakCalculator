@@ -29,7 +29,7 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
-import { PaintDab, PaintedArea, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
+import { PaintDab, PaintedArea, PaintStrokeMode, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
@@ -427,6 +427,11 @@ const App: React.FC = () => {
   const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
   const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
   const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
+  // Paint vs erase (owner feedback 2026-07-26: "add an erase function") —
+  // which kind of stroke the next dab lays down, tagged onto the stroke
+  // itself so resolvePaintedAreaGeometry can replay paint/erase in the
+  // order they actually happened (see terrain/paintedArea.ts).
+  const [mobilityPaintMode, setMobilityPaintMode] = useState<PaintStrokeMode>('paint');
   const [mobilityRunning, setMobilityRunning] = useState(false);
   const [mobilityLogLines, setMobilityLogLines] = useState<string[]>([]);
   const [mobilityResult, setMobilityResult] = useState<MobilityAppreciationResult | null>(null);
@@ -446,10 +451,11 @@ const App: React.FC = () => {
   const [cmAddedMeasureIds, setCmAddedMeasureIds] = useState<string[]>([]);
 
   const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
-    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, dab]);
-    else setMobilityObjectivePaint(prev => [...prev, dab]);
+    const stroke = { mode: mobilityPaintMode, dab };
+    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, stroke]);
+    else setMobilityObjectivePaint(prev => [...prev, stroke]);
     setMobilityResult(null); // a stale result over a changed AOI would mislead
-  }, []);
+  }, [mobilityPaintMode]);
 
   const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
     mobilityAbortRef.current?.abort();
@@ -1122,6 +1128,8 @@ const App: React.FC = () => {
             mobilityObjectivePaint={mobilityObjectivePaint}
             mobilityBrushSize={mobilityBrushSize}
             onMobilityBrushSizeChange={setMobilityBrushSize}
+            mobilityPaintMode={mobilityPaintMode}
+            onMobilityPaintModeChange={setMobilityPaintMode}
             mobilityHeatmap={mobilityHeatmapForMap}
             mobilityDisplayMode={mobilityDisplayMode}
             onCursorMove={setMobilityCursor}
