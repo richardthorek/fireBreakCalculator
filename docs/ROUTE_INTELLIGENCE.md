@@ -1031,9 +1031,32 @@ The §10.4 research task is more tractable than it looked:
 | **DEA Water Observations from Space** | Per-pixel wet/dry classification at **25 m** (Landsat); annual and all-time **summaries give frequency of wet observations** as clear-wet ÷ clear-total | 1 |
 | **DEA Fractional Cover** | Per-pixel **bare soil / photosynthetic vegetation / non-photosynthetic vegetation** percentages at **25 m** | 1 |
 | **DEA Land Cover** | Annual national land cover | 1 |
+| **NAFI** (North Australian Fire Information, Charles Darwin University, `firenorth.org.au`) | **Fire scar mapping 2000→present** at **250 m** (MODIS-derived), with **20 m HiRes in some regions**; covers NT to 26°S, far-northern WA to 21°S, all Qld to 29°S, northern SA to 29°S (since 2012); **validated by aerial and on-ground transects north of 20°S** | 1 — and **the single most valuable layer for the real theatre**: purpose-built northern-Australia time-since-fire, which §10.3(c) identified as the top free predictor of understorey density |
+| **TERN Litchfield Savanna SuperSite** (Litchfield NP, NT, ~80 km south of Darwin, managed by Charles Darwin University) | A **5 × 5 km block of open-forest savanna** with **airborne lidar (ALS, 2013), terrestrial lidar (TLS, 2018) and UAV lidar (2018)**, hyperspectral imagery, SLATS star transects, and measured **tree structure and LAI**; flux tower; data via TERN under its fair-use policy | 2 **and** validation — measured structure *and* measured understorey on representative northern savanna, with no custom acquisition |
 
 Every one of these still needs the standard endpoint/CORS/licensing assessment this
 repo applies to any new source before it is wired in.
+
+### 11.8 Mover profile catalogue scope (owner decision, 2026-07-26)
+
+All three families ship, because they serve different conversations. Each profile
+carries a per-figure source and confidence, and the UI shows it:
+
+- **Foot, done properly.** Individual movement on the Irmischer & Clarke off-path
+  function (primary) with Tobler as cross-check and Márquez-Pérez as the
+  "prefers-easy-ground" variant; laden endurance via Pandolf with its published error
+  band shown, never as an absolute; **unit** movement on the doctrinal march rates in
+  §11.2, clearly labelled as unit-not-individual.
+- **AU agency / civilian fleet.** The vehicles the StationKit audience actually
+  operates. Specs are largely published by manufacturers and the existing equipment
+  catalogue already carries some of them, so confidence is high and this family also
+  serves the fire product's access/egress use.
+- **ADF-relevant vehicle classes.** Sourced from open material only, and this is the
+  one family where **individual figures may not be reliably citable** — so each is
+  entered with an explicit confidence and, where a real figure can't be sourced, the
+  profile falls back to its **generic width/weight class** rather than a guessed
+  number. A generic-class fallback is the honest answer to an unsourceable spec, and
+  it keeps the model usable without asserting anything we can't defend.
 
 ---
 
@@ -1181,20 +1204,27 @@ halves differently.**
   staging area, and where trail has to be cut are *directly* useful fire-agency
   capability and strengthen the core product. No gate, no defence vocabulary — the
   copy stays "access and egress".
-- **The counter-mobility half is a separately licensed product and must be
-  server-gated.** A hidden client toggle is **not a control**: a flag in a shipped
-  bundle is discoverable, and discovering barrier-planning tools inside a volunteer
-  firefighting app is a reputational problem at best. So:
-  - **Server-side entitlement, enforced at the endpoint** — the existing pattern is
-    already proven here (`suiteAuthService` validating a bearer token against
-    Station Manager, the `fireBreakEnabled` org entitlement, the saved-plans
-    entitlement gate returning 401/403). A new `terrainDenialEnabled` entitlement is
-    a known quantity, not new architecture.
-  - **And route-level code-splitting so the licensed deployment is the only build
-    that contains the bundle at all.** Server gating protects the compute; not
-    shipping the code protects the framing.
-  - Doctrinal vocabulary, obstacle symbology and the tactical skin live **only** in
-    that build.
+- **The counter-mobility half needs a real gate before any wide release**, and the
+  proven pattern is here already: server-side entitlement enforced at the endpoint
+  (`suiteAuthService` validating a bearer token against Station Manager, the
+  `fireBreakEnabled` org entitlement, the saved-plans gate returning 401/403 — a new
+  `terrainDenialEnabled` entitlement is a known quantity, not new architecture),
+  plus route-level code-splitting so the licensed build is the only bundle that
+  contains it. Server gating protects the compute; not shipping the code protects
+  the framing.
+- **POC exception — owner decision, 2026-07-26.** The demo must run **off the current
+  deployed infrastructure**, using **only openly discoverable data**, so for the POC
+  the gate is a **subtle UI toggle or a URL query parameter**, not an entitlement.
+  Recorded plainly with its residual risk: a client-side flag in a shipped bundle is
+  discoverable by anyone who reads the JS, so for the duration of the POC the
+  counter-mobility surface should be treated as *effectively public*. Two mitigations
+  that cost nothing and should ship with it: keep the standing disclaimer, authority
+  prerequisites and egress-safety gate unconditional (they are the substantive
+  protection, and they don't depend on the gate), and keep the **fire product's
+  default copy free of defence vocabulary** so the public surface reads as access and
+  egress regardless of who finds the toggle. **Convert to the real entitlement +
+  code-split before any release beyond demo use** — tracked as a Pass 4 exit
+  condition in §15.
 - **Pricing separation follows the architecture**, which is what makes it credible:
   mobility as an uplift on the existing StationKit tier; counter-mobility licensed
   per site or per seat with support, positioned against the geospatial-intelligence
@@ -1203,6 +1233,117 @@ halves differently.**
   and a field validation survey. For a fixed facility that services line is both the
   highest-value attach and the thing that converts the whole model from inference to
   measurement (§7), so it is a genuine deliverable rather than a markup.
+
+---
+
+## 15. POC build plan — 4 passes, on hold pending "go"
+
+**Owner decisions, 2026-07-26:** build **all** features described above; split into
+2–4 major passes; the real area of interest is **most of northern Australia**; the
+demo runs on the **best available open data** with **no custom lidar acquisition**;
+gate for the POC is a subtle toggle or URL parameter (§14).
+
+### 15.1 Demo AOI: Litchfield National Park / Darwin hinterland, NT
+
+Recommended, and it beats the earlier NSW state-forest suggestion on every criterion
+that matters here — most importantly, **it is inside the real theatre rather than a
+southern proxy**:
+
+- **Representative of the actual AOI.** Litchfield is high-rainfall, frequently burnt
+  **tropical savanna — the dominant ecosystem type across northern Australia** — so
+  what the demo shows generalises to the stated theatre instead of arguing by analogy.
+- **Measured ground truth already exists, free, no acquisition.** The TERN Litchfield
+  Savanna SuperSite is a **5 × 5 km block with airborne, terrestrial *and* UAV lidar,
+  hyperspectral imagery, SLATS star transects, and measured tree structure and LAI**
+  (§11.7). That means Tier 2 (canopy height model, understorey return fraction) can be
+  *demonstrated* rather than described, **and** it doubles as the calibration set the
+  imagery CV work is gated on — the single biggest blocker in §10.3(b), solved by site
+  selection rather than by budget.
+- **It is the ideal ground for the headline insight.** Open-forest savanna with widely
+  spaced stems is exactly the "spaced trees behave as grassland for mobility" case
+  (§10.1) — the model's most counter-intuitive claim, demonstrable on real terrain.
+- **Fire history is free, purpose-built and dramatic.** NAFI covers it with annual
+  fire-scar mapping back to 2000, 20 m HiRes in places, validated on the ground north
+  of 20°S. In savanna that burns most years, **time-since-fire varies visibly across
+  a single AOI**, so the top free predictor of understorey density (§10.3c) produces a
+  striking, defensible visual rather than a subtle one.
+- **Seasonality is a feature, not a caveat.** Top End wet-versus-dry is the most
+  operationally consequential trafficability swing in the country. The wet/dry toggle
+  driven by fractional cover, surface-water frequency and soil moisture becomes the
+  most compelling single moment in the demo, and it is *true*.
+- **Defence relevance is inherent to the geography** and needs no special pleading.
+
+**To confirm in Pass 1** (do not assume): ELVIS lidar/1 m DEM coverage and vintage for
+the specific demo box; TERN data-access terms under the fair-use policy for
+programmatic use; NAFI service endpoint form and CORS behaviour; NVIS MVS classes
+present in the box; and whether Mapbox satellite resolution over the box supports
+crown work at all (the §12 `describeCoverage` probe).
+
+### 15.2 The four passes
+
+Each pass is independently demoable — that matters, because it means a funding
+conversation can happen after any of them.
+
+| Pass | Theme | Scope | Demo you can give at the end |
+|---|---|---|---|
+| **1** | **Terrain core + mobility** | Extract shared `terrain/` core from the existing sampling stack; mover profile catalogue (all three families, §11.8); **injectable, directional, profile-parameterised cost strategy** (replacing the single `edgeCost` formula); multi-source area→area search; accumulated cost field → **isochrones**; GO/SLOW-GO/NO-GO per profile; AOI polygon drawing roles; **Web Worker** for the exhaustive search (the §8 reversal); tactical skin v1 — dark theme, MGRS grid + coordinate readout, assessment log; POC toggle/URL gate | *"My people are here. On foot, and in a 4WD, here is how far they get in 30 / 60 / 180 minutes, and here is the best way through."* |
+| **2** | **Corridors, capacity, MCOO** | Route-preference surface; k-dissimilar ranked routes; betweenness chokepoints; **dual-graph min-cut → cheapest barrier locations**; corridor capacity card with **VCI₁/VCI₅₀ pass verdict**; avenues of approach sized by echelon; **MCOO overlay + GIS export**; baseline-vs-scenario swipe with **consensus corridor**; assistant narrative wired through the existing grounding gate | *The hero screenshot.* Full MCOO with corridors, chokepoints and capacity per vehicle class — plus *"block these four places and the approach collapses."* |
+| **3** | **Trafficability data uplift (the defensibility pass)** | Tier 0 structural NVIS mapping + multi-stem flag + DEM derivatives (cross-slope, roughness, topographic position, TWI); Tier 1 free layers — **NAFI time-since-fire**, fractional cover, surface-water frequency, land use, soil + soil moisture, Sentinel-1; Tier 2 lidar overlay — ELVIS + Litchfield ALS → canopy height model + **understorey return fraction**; the **AusPlots-derived stem density / basal area / diameter table with variance**; tier + confidence + vintage plumbing end to end; **bias-direction switch** | *"Here is why you should believe it"* — the wet/dry swing, the fire-history effect on understorey, and measured lidar understorey density against inferred, with the data-confidence gauge visible throughout. |
+| **4** | **Counter-mobility + imagery CV (the differentiators)** | Counter-measure catalogue with **doctrinal disrupt/turn/fix/block effects** and obstacle symbology; **delay ledger + bypass rule + egress-safety gate**; provider-agnostic imagery (§12) with the Mapbox provider and the CV engine — texture tier first, then crown delineation → gap-network percolation, then plantation rows and linear features; "what we don't know" panel; briefing + export pack; **convert the POC toggle to the real entitlement + code-split** | *"And here is what it costs to stop them, what delay it buys, and where they'd go instead."* |
+
+Rationale for that order, since it isn't the obvious one: **Pass 2 already delivers
+the analytic core of counter-mobility** (min-cut tells you *where* to block), so the
+commercially distinctive story lands early. Pass 4 adds *what to build, what it costs
+and what delay it buys* — which is the part that depends on breach/delay values we
+cannot yet cite, so it belongs behind the data-credibility pass rather than in front
+of it. And imagery CV sits in Pass 4 because Pass 3 is what produces its calibration
+set.
+
+### 15.3 Assumptions to confirm at each pass boundary
+
+Listed here so they are settled deliberately rather than discovered late.
+
+**Before Pass 1 starts:**
+- The AOI verification list in §15.1.
+- Whether the existing `edgeCost` refactor should also be adopted by the fire product
+  immediately (it unblocks the equipment-aware heatmap) or kept parallel until proven.
+- Foot-profile defaults: confirm the doctrinal cross-country ~0.6 and night ~0.67
+  factors are acceptable as shipped defaults (§11.2).
+
+**Before Pass 2:**
+- **Echelon sizing for avenues of approach and mobility corridors.** Doctrine sizes
+  corridors by the force that can move through them, but the specific width-per-echelon
+  figures were **not** obtained in the research above — they must be read off the
+  source publication before being coded, or the feature ships as "corridor width" with
+  no echelon claim.
+- The VCI probability-banding table must be read off the source rather than a
+  secondary summary (§11.3).
+- Which GIS/export targets the defence audience actually wants (the existing pack is
+  fire/agency-oriented).
+
+**Before Pass 3:**
+- TERN fair-use terms for programmatic access, and NAFI endpoint/licensing.
+- Soil-moisture product choice and its update cadence.
+- Whether the AusPlots stem-density derivation is done in-repo or as a one-off
+  offline analysis producing a checked-in table with provenance (recommend the
+  latter — it's a research artefact, not runtime code).
+
+**Before Pass 4:**
+- **The breach/delay basis.** Still the single largest integrity gate. Either a citable
+  source is found, or the ledger ships with visibly user-entered planning assumptions.
+  This decision cannot be deferred past Pass 4's start.
+- Imagery provider and licence class for the demo, and whether any derived structure
+  data may be persisted (§12 defaults to no).
+- Confirmation that the POC toggle converts to a real entitlement before any
+  non-demo release.
+
+### 15.4 Standing constraints for every pass
+
+Non-negotiable, and they are what make the demo survive being probed: no fabricated
+numbers anywhere including in screenshots; every headline claim traceable in two
+clicks to cell, tier, vintage and citation; the egress-safety gate and authority
+prerequisites unconditional; the assistant narrates and cites but never computes; and
+one deliberate limitation panel in every demo.
 
 ---
 

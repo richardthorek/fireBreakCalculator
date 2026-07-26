@@ -183,7 +183,48 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
   is the only bundle containing it** — a hidden client toggle is not a control, and
   discovering barrier planning inside a volunteer firefighting app is a reputational
   problem. Pricing follows that split, with the data uplift (commissioned lidar,
-  licensed imagery, field validation) as a services line.
+  licensed imagery, field validation) as a services line. *(Superseded for the POC only
+  — see the fourth pass below.)*
+  **Fourth pass same day** — owner answered the four blocking questions: **build
+  everything**, split into 2–4 passes with assumption gates; real AOI is **most of
+  northern Australia**, demo on best-available open data with **no custom lidar**; ship
+  **all three mover-profile families** (foot done properly + AU agency fleet + ADF
+  classes, the last with per-figure confidence and a generic width/weight fallback where
+  a spec can't be sourced); and for the POC the gate is a **subtle toggle or URL query**
+  on the existing infrastructure rather than an entitlement (recorded in §14 with its
+  residual risk — a client flag is discoverable, so the counter-mobility surface is
+  effectively public for the POC; the unconditional disclaimer/authority/egress-safety
+  gates and defence-vocabulary-free default copy are the substantive protection, and
+  conversion to a real entitlement + code-split is a Pass 4 exit condition). Added
+  **§15: POC build plan** — recommended demo AOI is **Litchfield NP / Darwin hinterland,
+  NT**, which beats the earlier NSW state-forest suggestion because it is *inside* the
+  real theatre: representative frequently-burnt tropical savanna, and the **TERN
+  Litchfield Savanna SuperSite** is a 5×5 km block with **airborne + terrestrial + UAV
+  lidar, hyperspectral, SLATS transects and measured tree structure/LAI** — so Tier 2 is
+  demonstrable *and* the imagery-CV calibration set is solved by site selection rather
+  than budget. **NAFI** (fire scars 2000→present, 250 m with 20 m HiRes in places,
+  ground-validated north of 20°S) supplies the top free understorey predictor for the
+  actual theatre, and Top End wet/dry seasonality turns the trafficability toggle into
+  the demo's strongest moment. Four passes, each independently demoable: (1) terrain
+  core + mobility + isochrones + tactical skin + Web Worker; (2) corridors, capacity
+  (VCI₁/VCI₅₀), chokepoints, min-cut, **MCOO** — the hero screenshot; (3) trafficability
+  data uplift (Tier 0 structural NVIS + DEM derivatives, Tier 1 free layers, Tier 2
+  lidar, AusPlots stem table, tier/confidence/vintage plumbing) — the defensibility
+  pass; (4) counter-mobility planner + provider-agnostic imagery CV + entitlement
+  conversion. Min-cut lands in Pass 2, so the distinctive analytic ships early while the
+  parts depending on uncitable breach values sit behind the credibility pass.
+  Per-boundary assumption-confirmation lists recorded in §15.3 (notably: **echelon
+  width-per-corridor figures were NOT obtained in research and must be read off the
+  source before coding**, same for the VCI probability banding table).
+  **Also produced `docs/PITCH_TERRAIN_DENIAL.md`** — an owner-requested 2–3 page external
+  pitch in Australian Defence terminology, aligned to the 2026 NDS Strategy of Denial and
+  northern-approaches framing, the 2026 IIP northern-bases ($13–16bn) and
+  theatre-logistics ($14–21bn) lines, with RFSG/NORFORCE, 1 CER, northern base force
+  protection and Bradshaw training-area management as named users. A deliberate exception
+  to the no-new-docs rule: it is an external commercial artefact, not planning or
+  as-built content, and duplicates nothing here. It carries a standing note to verify
+  NDS/IIP wording against the published documents before external use and to state
+  plainly that the mobility mode is designed, not built.
 - **2026-07-19 — Docs audit: fixed a badly stale root README** (cross-repo docs
   coverage pass, alongside Station Manager's in-app wiki work and Fire Santa
   Run's docs cleanup): `README.md` was dated January 2025 and pointed "For
