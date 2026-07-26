@@ -1,0 +1,294 @@
+/**
+ * Tactical Mode — dark GIS/defence skin.
+ *
+ * Scoped entirely under `.tactical-mode` so it never touches the existing
+ * fire-break UI. Palette deliberately reuses the app's existing
+ * green/amber/red heatmap hexes (--tac-go/--tac-slowgo/--tac-nogo) and the
+ * existing #38bdf8 cyan accent, just against a near-black background —
+ * restrained and dense, a real capability rather than sci-fi chrome.
+ */
+
+.tactical-mode {
+  --tac-bg: #05070a;
+  --tac-panel-bg: #0c1118;
+  --tac-border: #1c2733;
+  --tac-text: #d7e4ee;
+  --tac-text-dim: #6b7f8f;
+  --tac-accent: #38bdf8;
+  --tac-go: #1E9E62;
+  --tac-slowgo: #F6A609;
+  --tac-nogo: #D8232A;
+  --tac-mono-font: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  background: var(--tac-bg);
+  color: var(--tac-text);
+}
+
+.app-logo--tactical {
+  color: var(--tac-accent, #38bdf8);
+  flex-shrink: 0;
+}
+
+.tactical-mode ::selection {
+  background: var(--tac-accent);
+  color: var(--tac-bg);
+}
+
+/* ---------- Panels ---------- */
+.tactical-mode .tac-panel {
+  position: relative;
+  background: var(--tac-panel-bg);
+  border: 1px solid var(--tac-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* Restrained corner brackets, not chrome — two opposing corners only. */
+.tactical-mode .tac-panel::before,
+.tactical-mode .tac-panel::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--tac-accent);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.tactical-mode .tac-panel::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.tactical-mode .tac-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* ---------- Text ---------- */
+.tactical-mode .tac-mono {
+  font-family: var(--tac-mono-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.tactical-mode .tac-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--tac-text-dim);
+}
+
+/* ---------- Coordinate readout ---------- */
+.tactical-mode .tac-readout-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.tactical-mode .tac-readout-grid .tac-label {
+  align-self: center;
+}
+
+/* ---------- Assessment log ---------- */
+.tactical-mode .tac-log {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-right: 4px;
+}
+
+.tactical-mode .tac-log-line {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--tac-text);
+  border-left: 2px solid var(--tac-border);
+  padding-left: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: tac-log-fade-in 180ms ease-out;
+}
+
+.tactical-mode .tac-log-line--placeholder {
+  color: var(--tac-text-dim);
+  border-left-color: transparent;
+}
+
+@keyframes tac-log-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tactical-mode .tac-log-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--tac-accent);
+  vertical-align: text-bottom;
+  animation: tac-blink 1s steps(1, start) infinite;
+}
+
+@keyframes tac-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tactical-mode .tac-log-line {
+    animation: none;
+  }
+  .tactical-mode .tac-log-cursor {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- Confidence badges ---------- */
+.tactical-mode .tac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: var(--tac-mono-font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* measured — cool cyan solid: highest trust */
+.tactical-mode .tac-badge--measured {
+  background: var(--tac-accent);
+  border: 1px solid var(--tac-accent);
+  color: #04212f;
+}
+
+/* published — green-ish, agency/published-source data */
+.tactical-mode .tac-badge--published {
+  background: rgba(30, 158, 98, 0.18);
+  border: 1px solid var(--tac-go);
+  color: #7be0ae;
+}
+
+/* estimated — amber outline: model/inferred value */
+.tactical-mode .tac-badge--estimated {
+  background: transparent;
+  border: 1px solid var(--tac-slowgo);
+  color: var(--tac-slowgo);
+}
+
+/* generic-fallback — dashed grey outline: least trust */
+.tactical-mode .tac-badge--generic {
+  background: transparent;
+  border: 1px dashed var(--tac-text-dim);
+  color: var(--tac-text-dim);
+}
+
+/* ---------- MobilityPanel layout ---------- */
+.mobility-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.mobility-section { display: flex; flex-direction: column; gap: 8px; }
+.mobility-select {
+  background: var(--tac-bg);
+  color: var(--tac-text);
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+}
+.mobility-profile-meta { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.mobility-profile-source, .mobility-profile-notes { color: var(--tac-text-dim); font-size: 0.75em; line-height: 1.4; }
+.mobility-night-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85em; color: var(--tac-text-dim); }
+.mobility-aoi-row { display: flex; gap: 8px; }
+.mobility-aoi-button, .mobility-run-button, .mobility-clear-button, .mobility-sim-button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 0.85em;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-aoi-button--origin.active { border-color: var(--tac-accent); color: var(--tac-accent); }
+.mobility-aoi-button--objective.active { border-color: var(--tac-slowgo); color: var(--tac-slowgo); }
+.mobility-run-button {
+  background: var(--tac-accent);
+  color: #04212f;
+  border: none;
+  font-weight: 600;
+}
+.mobility-run-button:disabled { background: var(--tac-border); color: var(--tac-text-dim); cursor: not-allowed; }
+.mobility-run-button--cancel { background: var(--tac-nogo); color: #2a0505; }
+.mobility-clear-button { align-self: flex-start; padding: 4px 8px; font-size: 0.78em; }
+.mobility-result-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.85em; }
+.mobility-stat-nogo { color: var(--tac-nogo); }
+.mobility-stat-slowgo { color: var(--tac-slowgo); }
+.mobility-caveat { color: var(--tac-slowgo); font-size: 0.78em; }
+.mobility-display-toggle, .mobility-speed-toggle { display: flex; gap: 6px; }
+.mobility-display-toggle button, .mobility-speed-toggle button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text-dim);
+  border-radius: 3px;
+  padding: 6px 4px;
+  font-size: 0.78em;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-display-toggle button.active, .mobility-speed-toggle button.active {
+  border-color: var(--tac-accent);
+  color: var(--tac-accent);
+}
+.mobility-limitation-panel {
+  font-size: 0.72em;
+  color: var(--tac-text-dim);
+  border-top: 1px dashed var(--tac-border);
+  padding-top: 8px;
+  line-height: 1.5;
+}
+.mobility-eta {
+  font-size: 0.85em;
+  color: var(--tac-text);
+}
+
+/* Unit simulation marker — a small pulsing dot, mirrors the accent colour
+ * used for the intended-path line. Pulse disabled under reduced motion. */
+.unit-sim-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--tac-accent, #38bdf8);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 10px rgba(56, 189, 248, 0.8);
+  border: 2px solid #04212f;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .unit-sim-marker { animation: unit-sim-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes unit-sim-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 10px rgba(56, 189, 248, 0.8); }
+  50% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0.12), 0 0 14px rgba(56, 189, 248, 1); }
+}

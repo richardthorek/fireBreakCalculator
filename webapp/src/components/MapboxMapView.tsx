@@ -123,6 +123,40 @@ interface MapboxMapViewProps {
   onViewBoundsChange?: (bounds: ViewBounds | null) => void;
   /** Live feed data to render on the map. */
   liveFeedData?: LiveFeedMapData;
+
+  // --- Terrain Mobility mode (docs/ROUTE_INTELLIGENCE.md "Terrain Mobility &
+  // Counter-Mobility") — additive, only active while the mode is armed from
+  // App.tsx. Switches the initial basemap to a dark tactical style.
+  /** Dark tactical basemap + chrome, decided once at map init (mirrors the
+   *  mode's URL-gated, load-time nature — not a live runtime toggle). */
+  tacticalMode?: boolean;
+  /** Which AOI box is currently being drawn (next two map clicks define
+   *  opposite corners), mirroring the area-recon box-tool pattern. */
+  mobilityBoxRole?: 'origin' | 'objective' | null;
+  onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
+  onMobilityBoxDrawn?: (role: 'origin' | 'objective', sw: { lat: number; lng: number }, ne: { lat: number; lng: number }) => void;
+  /** Persistent drawn AOI boxes, rendered until cleared. */
+  mobilityOriginBox?: { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } } | null;
+  mobilityObjectiveBox?: { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } } | null;
+  /** Result cells from the last terrain appreciation run. */
+  mobilityHeatmap?: {
+    polygon: { lat: number; lng: number }[];
+    trafficability: 'GO' | 'SLOW-GO' | 'NO-GO';
+    timeSeconds: number;
+    bandIndex: number;
+  }[] | null;
+  /** 'trafficability' colours by GO/SLOW-GO/NO-GO (a terrain property,
+   *  independent of reachability); 'isochrone' colours by arrival-time band
+   *  (a reachability property from the origin AOI). */
+  mobilityDisplayMode?: 'trafficability' | 'isochrone';
+  /** Live cursor position, for the tactical coordinate readout. */
+  onCursorMove?: (point: { lat: number; lng: number } | null) => void;
+  /** Unit simulation — current animated position (moved via a plain
+   *  mapboxgl.Marker so per-frame updates never touch React state). */
+  unitSimPosition?: { lat: number; lng: number } | null;
+  /** Unit simulation — the intended path currently being followed (redrawn
+   *  whenever a mid-course replan splices a new remainder onto it). */
+  unitSimPath?: { lat: number; lng: number }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -160,7 +194,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   areaReconStatus = 'idle',
   onClearAreaRecon,
   onViewBoundsChange,
-  liveFeedData: externalLiveFeedData
+  liveFeedData: externalLiveFeedData,
+  tacticalMode = false,
+  mobilityBoxRole = null,
+  onMobilityBoxRoleChange,
+  onMobilityBoxDrawn,
+  mobilityOriginBox = null,
+  mobilityObjectiveBox = null,
+  mobilityHeatmap = null,
+  mobilityDisplayMode = 'trafficability',
+  onCursorMove,
+  unitSimPosition = null,
+  unitSimPath = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -194,6 +239,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
+  const unitSimMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const locationMarkerRef = useRef<any | null>(null);
   const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
   // Ensure we only signal initial location settled once to avoid duplicate
@@ -230,6 +276,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => { onAreaReconBoxDrawnRef.current = onAreaReconBoxDrawn; }, [onAreaReconBoxDrawn]);
   const areaReconStartRef = useRef<{ lat: number; lng: number } | null>(null);
 
+  // Terrain Mobility mode — origin/objective AOI box tool, same two-click
+  // pattern as area recon above (refs so the once-registered map listeners
+  // always read the latest prop values).
+  const mobilityBoxRoleRef = useRef(mobilityBoxRole);
+  useEffect(() => { mobilityBoxRoleRef.current = mobilityBoxRole; }, [mobilityBoxRole]);
+  const onMobilityBoxRoleChangeRef = useRef(onMobilityBoxRoleChange);
+  useEffect(() => { onMobilityBoxRoleChangeRef.current = onMobilityBoxRoleChange; }, [onMobilityBoxRoleChange]);
+  const onMobilityBoxDrawnRef = useRef(onMobilityBoxDrawn);
+  useEffect(() => { onMobilityBoxDrawnRef.current = onMobilityBoxDrawn; }, [onMobilityBoxDrawn]);
+  const mobilityBoxStartRef = useRef<{ lat: number; lng: number } | null>(null);
+  const onCursorMoveRef = useRef(onCursorMove);
+  useEffect(() => { onCursorMoveRef.current = onCursorMove; }, [onCursorMove]);
+
   // Live context feeds (hotspots, fire boundaries, incidents) — the control
   // panel owns fetching/refresh; this component just tracks the current map
   // view (to drive the hotspots bbox query) and renders whatever it's given.
@@ -264,7 +323,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       return;
     }
   mapboxgl.accessToken = token;
-  const styleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+  const styleURL = tacticalMode
+    ? ((import.meta as any).env?.VITE_MAPBOX_TACTICAL_STYLE || 'mapbox://styles/mapbox/dark-v11')
+    : ((import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t');
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
@@ -652,6 +713,49 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         casing: { type: 'line', paint: { 'line-color': '#38bdf8', 'line-width': 2, 'line-dasharray': [2, 2] } },
       });
     });
+
+    // Terrain Mobility mode — origin/objective AOI box tool: same two-click
+    // pattern as area recon above, coloured by which role is being drawn.
+    map.on('click', (e: any) => {
+      const role = mobilityBoxRoleRef.current;
+      if (!role) return;
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      if (!mobilityBoxStartRef.current) {
+        mobilityBoxStartRef.current = pt;
+        return;
+      }
+      const sw = mobilityBoxStartRef.current;
+      mobilityBoxStartRef.current = null;
+      onMobilityBoxRoleChangeRef.current?.(null);
+      onMobilityBoxDrawnRef.current?.(role, sw, pt);
+      setOverlay('mobility-box-preview', null, {});
+    });
+    map.on('mousemove', (e: any) => {
+      const role = mobilityBoxRoleRef.current;
+      if (!role || !mobilityBoxStartRef.current) return;
+      const sw = mobilityBoxStartRef.current;
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      const coords = [
+        [sw.lng, sw.lat], [pt.lng, sw.lat], [pt.lng, pt.lat], [sw.lng, pt.lat], [sw.lng, sw.lat],
+      ];
+      const color = role === 'origin' ? '#38bdf8' : '#F6A609';
+      setOverlay('mobility-box-preview', { type: 'Polygon', coordinates: [coords] }, {
+        main: { type: 'fill', paint: { 'fill-color': color, 'fill-opacity': 0.14 } },
+        casing: { type: 'line', paint: { 'line-color': color, 'line-width': 2, 'line-dasharray': [2, 2] } },
+      });
+    });
+    // Live cursor position for the tactical coordinate readout — independent
+    // of any drawing tool. Throttled (~10 Hz): an unthrottled mousemove would
+    // fire a React state update (and a UTM re-projection) on every pixel of
+    // mouse travel, which is unnecessary jank for a read-only display.
+    let lastCursorEmit = 0;
+    map.on('mousemove', (e: any) => {
+      const now = performance.now();
+      if (now - lastCursorEmit < 100) return;
+      lastCursorEmit = now;
+      onCursorMoveRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    });
+    map.on('mouseout', () => onCursorMoveRef.current?.(null));
 
     return () => {
       // Drop the map-backed trail provider so a stale map instance is never
@@ -1185,6 +1289,156 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     return () => remove();
   }, [areaReconHeatmap, heatmapColorMode]);
+
+  // Terrain Mobility mode — persistent origin (cyan) / objective (amber) AOI
+  // box overlays, rendered until cleared from App.tsx.
+  useEffect(() => {
+    const boxToPolygon = (box: { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } }) => ({
+      type: 'Polygon' as const,
+      coordinates: [[
+        [box.sw.lng, box.sw.lat], [box.ne.lng, box.sw.lat], [box.ne.lng, box.ne.lat], [box.sw.lng, box.ne.lat], [box.sw.lng, box.sw.lat],
+      ]],
+    });
+    setOverlay('mobility-origin-box', mobilityOriginBox ? boxToPolygon(mobilityOriginBox) : null, {
+      main: { type: 'fill', paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.16 } },
+      casing: { type: 'line', paint: { 'line-color': '#38bdf8', 'line-width': 2 } },
+    });
+  }, [mobilityOriginBox]);
+  useEffect(() => {
+    const boxToPolygon = (box: { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } }) => ({
+      type: 'Polygon' as const,
+      coordinates: [[
+        [box.sw.lng, box.sw.lat], [box.ne.lng, box.sw.lat], [box.ne.lng, box.ne.lat], [box.sw.lng, box.ne.lat], [box.sw.lng, box.sw.lat],
+      ]],
+    });
+    setOverlay('mobility-objective-box', mobilityObjectiveBox ? boxToPolygon(mobilityObjectiveBox) : null, {
+      main: { type: 'fill', paint: { 'fill-color': '#F6A609', 'fill-opacity': 0.16 } },
+      casing: { type: 'line', paint: { 'line-color': '#F6A609', 'line-width': 2 } },
+    });
+  }, [mobilityObjectiveBox]);
+
+  // Terrain Mobility mode — result heatmap. Two independently switchable
+  // colourings over the SAME cells (docs "Terrain Mobility & Counter-
+  // Mobility" §3/§4): 'trafficability' is a terrain property (GO/SLOW-GO/
+  // NO-GO, independent of reachability), 'isochrone' is a reachability
+  // property (arrival-time band from the origin AOI's super-source search).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cells = mobilityHeatmap;
+
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-heatmap-outline')) map.removeLayer('mobility-heatmap-outline');
+        if (map.getLayer('mobility-heatmap')) map.removeLayer('mobility-heatmap');
+        if (map.getSource('mobility-heatmap')) map.removeSource('mobility-heatmap');
+      } catch (e) { /* style may already be gone */ }
+    };
+
+    if (!cells || cells.length === 0) {
+      remove();
+      return;
+    }
+
+    const maxBand = Math.max(1, ...cells.map(c => c.bandIndex));
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: cells.map(c => ({
+        type: 'Feature' as const,
+        properties: {
+          trafficability: c.trafficability,
+          bandIndex: c.bandIndex,
+          reached: c.bandIndex >= 0 ? 1 : 0,
+        },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-heatmap');
+        if (existing) {
+          existing.setData(data);
+        } else {
+          map.addSource('mobility-heatmap', { type: 'geojson', data } as any);
+          map.addLayer({
+            id: 'mobility-heatmap',
+            type: 'fill',
+            source: 'mobility-heatmap',
+            paint: { 'fill-color': '#1E9E62', 'fill-opacity': 0.5 },
+          });
+          map.addLayer({
+            id: 'mobility-heatmap-outline',
+            type: 'line',
+            source: 'mobility-heatmap',
+            paint: { 'line-color': 'rgba(56,189,248,0.3)', 'line-width': 0.5 },
+          });
+        }
+        if (mobilityDisplayMode === 'isochrone') {
+          map.setPaintProperty('mobility-heatmap', 'fill-color', [
+            'case',
+            ['==', ['get', 'reached'], 0], '#1c2733',
+            ['interpolate', ['linear'], ['get', 'bandIndex'], 0, '#38bdf8', maxBand, '#0b2a3f'],
+          ]);
+          map.setPaintProperty('mobility-heatmap', 'fill-opacity', ['case', ['==', ['get', 'reached'], 0], 0.06, 0.55]);
+        } else {
+          map.setPaintProperty('mobility-heatmap', 'fill-color', [
+            'match', ['get', 'trafficability'],
+            'GO', '#1E9E62',
+            'SLOW-GO', '#F6A609',
+            'NO-GO', '#D8232A',
+            '#55607A',
+          ]);
+          map.setPaintProperty('mobility-heatmap', 'fill-opacity', 0.5);
+        }
+      } catch (e) {
+        logger.warn('Failed to render mobility heatmap', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+
+    return () => remove();
+  }, [mobilityHeatmap, mobilityDisplayMode]);
+
+  // Unit simulation — intended path line (redrawn whenever a mid-course
+  // replan splices a new remainder onto it).
+  useEffect(() => {
+    const coords = unitSimPath && unitSimPath.length >= 2 ? unitSimPath.map(p => [p.lng, p.lat]) : null;
+    setOverlay('unit-sim-path', coords ? { type: 'LineString', coordinates: coords } : null, {
+      main: {
+        type: 'line',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-opacity': 0.85, 'line-dasharray': [1.5, 1] },
+      },
+    });
+  }, [unitSimPath]);
+
+  // Unit simulation — the moving unit itself. A plain mapboxgl.Marker moved
+  // via setLngLat on every animation frame (see App.tsx's UnitSimulationController)
+  // so per-frame updates never touch React state / re-render this component.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    if (!map || !mapboxgl) return;
+
+    if (!unitSimPosition) {
+      unitSimMarkerRef.current?.remove();
+      unitSimMarkerRef.current = null;
+      return;
+    }
+
+    if (!unitSimMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'unit-sim-marker';
+      unitSimMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat([unitSimPosition.lng, unitSimPosition.lat]).addTo(map);
+    } else {
+      unitSimMarkerRef.current.setLngLat([unitSimPosition.lng, unitSimPosition.lat]);
+    }
+  }, [unitSimPosition]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);

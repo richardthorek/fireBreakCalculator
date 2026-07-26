@@ -98,11 +98,16 @@ Extend the optimizer smoke-suite pattern: synthetic road grid → nearest-entry 
 
 ---
 
-## Terrain Mobility & Counter-Mobility — 📋 design only (secondary use case)
+## Terrain Mobility & Counter-Mobility — 🚧 Pass 1 shipped (secondary use case)
 
-**Status:** analysis/design, nothing built. Recorded here rather than in a new doc
-because it is the same cost surface this doc already owns, read with a different
-objective. Roadmap entry: `master_plan.md` Step 10.
+**Status:** Pass 1 of the §15 build plan is built and merged — mover profile
+catalogue, directional profile-parameterised cost model, multi-source area-to-area
+search (Web Worker), GO/SLOW-GO/NO-GO + isochrone rendering, tactical UI skin with a
+full app-identity swap, and the bonus unit-movement simulation with a real
+mid-course replan (§16). Passes 2–4 (corridors/MCOO/min-cut, trafficability data
+uplift, counter-mobility planner + imagery) remain 📋 design only. Recorded here
+rather than in a new doc because it is the same cost surface this doc already owns,
+read with a different objective. Roadmap entry: `master_plan.md` Step 10.
 **Primary audience:** defence, secure-facility operators, land managers (§7).
 **Start with §10 if you only read one part** — vegetation structure/trafficability
 fidelity is the constraint everything else depends on.
@@ -1344,6 +1349,119 @@ numbers anywhere including in screenshots; every headline claim traceable in two
 clicks to cell, tier, vintage and citation; the egress-safety gate and authority
 prerequisites unconditional; the assistant narrates and cites but never computes; and
 one deliberate limitation panel in every demo.
+
+---
+
+## 16. Pass 1 — as-built (2026-07-26)
+
+Shipped: mover profile catalogue and directional cost strategy, multi-source
+area-to-area search running in a Web Worker, GO/SLOW-GO/NO-GO + isochrone
+rendering, a full tactical UI skin including a complete app-identity swap, and —
+added as an owner-requested bonus during the build — an RTS-style unit movement
+simulation with a genuine mid-course replan.
+
+### New modules (`webapp/src/terrain/`)
+
+- **`moverProfiles.ts`** — ~18 profiles across all three requested families (foot
+  individual/unit, AU agency/civilian fleet, ADF-relevant generic classes), each
+  carrying `confidence` (`measured`/`published`/`estimated`/`generic-fallback`) and a
+  `source` string. Foot-unit figures are the doctrinal march rates from §11.2
+  (4.0/2.4/1.6 km/h, cross-country factor 0.6, night factor 0.67); AU dozer classes
+  reuse the exact `maxSlope` values already in `webapp/src/config/standardEquipment.ts`
+  so the fire and mobility modes never assert two numbers for the same machine; ADF
+  classes are generic width/weight bands per the §11.8 fallback rule, with
+  `overrideStemDiameterMm` present only on tracked profiles and absent on wheeled —
+  the §11.4 "two different mechanisms" finding encoded directly in the type.
+- **`mobilityCost.ts`** — the injectable, directional, profile-parameterised
+  replacement for `routeOptimizer.ts`'s fixed `edgeCost` (§2). `signedSlopeDegrees`
+  gives climb direction; `irmischerClarkeSpeedKmh`/`toblerSpeedKmh` implement the two
+  individual foot models from §11.1; `vehicleGradeSpeedFactor` is an engineering
+  interpolation between a profile's doctrinal slope anchors (stated as such, not
+  itself a doctrinal figure); `estimateStructureFromVegetation` is an explicitly
+  labelled **Tier 0 placeholder** (NVIS-formation-only, per §10.1) pending the Pass 3
+  AusPlots-derived table — every result this module produces carries
+  `dataTier: 0` and `estimated: true` so nothing downstream can silently treat it as
+  measured. `edgeMobilityCost` classifies GO/SLOW-GO/NO-GO with separate gap-width
+  (wheeled) and override-force (tracked) checks, per §11.4.
+- **`accumulatedCost.ts`** — the area-to-area engine from §3: `runAccumulatedCostSearch`
+  is a multi-source Dijkstra (a binary min-heap, self-contained) seeded from every
+  cell in the origin AOI at cost 0; `extractPath` backtracks the single cheapest
+  origin→objective route from the same predecessor map the isochrone field already
+  built — no second search. `classifyCellTerrain` is a separate, direction-agnostic
+  terrain-only GO/SLOW-GO/NO-GO classifier (steepest local gradient in any direction),
+  kept deliberately distinct from the directional reachability search per the
+  worked-example rationale in §3 (a terrain property vs a reachability property).
+  Cross-slope gating is **not implemented for the search** in Pass 1 (only for the
+  terrain-only overlay) — stated as a scope cut, not silently dropped.
+- **`mobilityGrid.ts`** — grid sampling that mirrors `areaScan.ts`'s box-scan pattern
+  exactly (same hex machinery, same elevation/vegetation caches — a mobility run
+  shares cache hits with any prior fire-break analysis over the same ground) but
+  additionally resolves trail proximity per cell, which `areaScan.ts` deliberately
+  skips.
+- **`mobilityWorker.ts`** / **`mobilityWorkerClient.ts`** — the §8 Web Worker reversal:
+  sampling (network I/O) stays on the main thread using the existing caches; the
+  search itself (CPU-bound at AOI scale, unlike the corridor case) runs in a worker.
+- **`unitSimulation.ts`** — the bonus feature. `positionAtElapsed` interpolates a
+  unit's position from the path's real cumulative arrival times (not a distance
+  proxy). `UnitSimulationController` drives a `requestAnimationFrame` loop with a
+  speed multiplier and, once the unit has covered `replanAtFraction` (default 0.5) of
+  the *original* estimated travel time, triggers a **genuine second search** from a
+  small AOI box around the unit's current position to the same objective, splicing
+  the result onto the already-travelled prefix. The path only ever changes because a
+  real recomputation happened — nothing here is scripted or simulated theatre.
+
+### UI
+
+`MobilityPanel.tsx` (profile picker grouped by family with confidence badge +
+source citation, origin/objective AOI draw buttons, run/cancel, assessment log,
+result stats, GO/SLOW-GO/NO-GO ↔ isochrone toggle, unit-simulation controls, a
+standing POC-limitations disclaimer) plus three small tactical-skin components
+(`TacticalCoordinateReadout`, `AssessmentLog`, `DataConfidenceBadge`) and
+`styles-tactical.css`, built in parallel by a background agent against a fully
+specified prop contract while the algorithm core was written — zero merge conflicts,
+confirmed by a clean `npm run build` from each side independently before integration.
+
+**Full app-identity swap** (owner follow-up, 2026-07-26): activating the mode swaps
+the header title/subtitle/icon (a lucide `Radar` glyph replacing the app logo), the
+browser tab title, and the favicon (an inline SVG data URI, no new asset file), and
+hides the fire-break-specific Configuration button. Nothing in the active UI reads
+"Fire Break Calculator" while the mode is on. Gate remains the POC toggle from §14
+(`?ops=1` URL query) — entitlement/backend split is explicitly deferred to Pass 4.
+
+`MapboxMapView.tsx` gained: an origin/objective AOI box-draw tool (clone of the
+existing area-recon two-click pattern), a `mobility-heatmap` layer switchable between
+trafficability colouring and isochrone-band colouring (same cells, two paint
+expressions — mirrors the existing `heatmapColorMode` pattern), a persistent
+unit-simulation path line, and a pulsing unit marker moved via direct
+`mapboxgl.Marker.setLngLat()` per animation frame so 60fps position updates never
+touch React state.
+
+### Verification
+
+`npm run build` (webapp, strict TS) clean throughout, including a live-browser check
+of every panel/state change (URL gate → mode toggle → full identity swap → tactical
+skin → mover-profile catalogue rendering with sourced confidence badges → coordinate
+readout → assessment log), driven with Playwright against a real dev server. A
+standalone Vite-lib-mode-bundled Node smoke test against the real (not
+reimplemented) `terrain/` modules — 29 checks: profile catalogue shape and doctrinal
+figures, signed-slope direction, both individual foot speed models' asymmetry,
+directional profile-parameterised NO-GO gating (including the wheeled-gap-width vs
+tracked-override-force distinction from §11.4, and a genuinely-impassable-for-
+everyone case that looked like a bug on first run and turned out to be correct
+behaviour against the Tier 0 placeholder numbers), multi-source seeding, path
+backtracking, isochrone banding, and time-based simulation interpolation — all pass.
+
+**Known verification gap, stated plainly:** the actual map-canvas interaction (drawing
+AOI boxes, running a live search, watching the heatmap/simulation render) could not
+be exercised end-to-end in the build sandbox. Root-caused, not just observed: this
+sandbox's outbound HTTPS goes through a policy-enforcing relay proxy that only
+accepts HTTPS CONNECT tunnels; `curl` respects that transparently, but a
+Playwright-launched headless Chromium's own HTTPS-through-proxy path failed against
+this specific relay even when explicitly configured with the same proxy (confirmed:
+both the Mapbox token and the custom style resolve fine over plain `curl` through the
+identical proxy). This is the same class of gap this doc has flagged before when the
+sandbox couldn't reach Mapbox — **confirm live** before relying on the map-interaction
+UI, same as those earlier entries.
 
 ---
 

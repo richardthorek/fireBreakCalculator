@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 secondary use case analysed — design only)
+**Last Updated**: July 26, 2026 (Step 10 Pass 1 shipped: mobility core, tactical UI, unit-sim bonus)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -46,7 +46,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
 | 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
-| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Design/analysis only, staged M1–M5, with **M3 (vegetation-structure/trafficability fidelity) as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem) | 📋 design recorded, not started |
+| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §16 = Pass 1 as-built) | 🚧 Pass 1 shipped (mobility core + tactical UI + unit-sim bonus); Passes 2–4 still 📋 |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -58,6 +58,49 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility Pass 1 shipped** (same branch, first code on top of
+  the design work below): owner said "go, implement it all" and asked for a bonus
+  RTS-style unit-movement simulation along the way. Built the Pass 1 vertical slice
+  from `docs/ROUTE_INTELLIGENCE.md` §15: `webapp/src/terrain/` core (mover profile
+  catalogue across all three requested families — foot done properly, AU
+  agency/civilian fleet, ADF generic classes; injectable directional
+  profile-parameterised cost model; multi-source area-to-area Dijkstra seeded from
+  the whole origin AOI; a Web Worker for the search per the §8 CPU-vs-network
+  reversal), a tactical UI skin (built in parallel by a background agent against a
+  fixed prop contract — zero merge conflicts), `MobilityPanel.tsx`, and map wiring
+  for AOI drawing + a GO/SLOW-GO/NO-GO ↔ isochrone-band heatmap toggle. **Plus the
+  bonus**: `terrain/unitSimulation.ts` animates a unit along the real computed path
+  in real time with a speed multiplier, and once it's covered half the estimated
+  travel time triggers a **genuine second search** from its current position
+  (not scripted) and splices the refined remainder onto the path it already walked —
+  "the path may change as the unit gets more local fidelity" implemented for real.
+  **Follow-up same day (owner):** the mode now swaps the *entire* app identity when
+  active — header title/subtitle/icon (a `Radar` glyph replaces the fire-break logo),
+  browser tab title, and favicon (inline SVG, no new asset), plus the fire-break-only
+  Configuration button is hidden — nothing reads "Fire Break Calculator" while
+  Terrain mode is on. Gate is still the §14 POC toggle (`?ops=1` URL query); the
+  backend entitlement split stays a Pass 4 exit condition, deliberately deferred per
+  the owner's explicit instruction to demo off current infrastructure with open data.
+  **Verified two ways** since the build sandbox couldn't fully exercise the live map
+  (see below): a strict-TS `npm run build` clean throughout, plus a 29-check
+  standalone Vite-bundled Node smoke test against the REAL (not reimplemented)
+  terrain modules — profile catalogue shape, signed-slope direction, both individual
+  foot speed models, the wheeled-gap-width-vs-tracked-override-force NO-GO
+  distinction (§11.4), multi-source seeding, path backtracking, isochrone banding,
+  time-based simulation interpolation. Live-browser-verified separately: URL gate,
+  mode toggle, full identity swap, tactical skin, mover-profile catalogue with
+  sourced confidence badges, coordinate readout, assessment log — all confirmed
+  rendering correctly via Playwright against a real dev server. **Root-caused and
+  documented, not just observed:** the actual map-canvas interaction (drawing AOI
+  boxes, running a live search) couldn't be verified live in this session — this
+  sandbox's egress proxy only accepts HTTPS CONNECT tunnels, which `curl` handles
+  transparently but which a Playwright-launched headless Chromium's own proxy path
+  failed against even when explicitly configured (confirmed both the Mapbox token
+  and custom style resolve fine over `curl` through the identical proxy) — flagged in
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §16 as **confirm live**, the
+  same pattern this doc has used before when the sandbox couldn't reach Mapbox.
+  Passes 2–4 (corridors/MCOO/min-cut, trafficability data uplift, counter-mobility
+  planner + imagery CV) remain design-only, staged in §15.2.
 - **2026-07-26 — Secondary use case analysed: terrain mobility & counter-mobility**
   (branch `claude/terrain-movement-analysis-xf1r3q`, docs only — no code): owner
   raised an alternative framing — instead of "where do I cut a break", use the same

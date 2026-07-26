@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Settings2 } from 'lucide-react';
+import { Settings2, Radar } from 'lucide-react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
@@ -29,6 +29,13 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
+import { MobilityAoi } from './terrain/mobilityGrid';
+import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
+import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
+import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
+import { MobilityPanel } from './components/MobilityPanel';
+import { UnitSimulationController } from './terrain/unitSimulation';
+import './styles-tactical.css';
 
 // Site logo/favicon is in the public directory and served at /favicon-96x96.png.
 const logo96 = '/favicon-96x96.png';
@@ -365,6 +372,178 @@ const App: React.FC = () => {
     setAreaReconStatus('idle');
     setAreaReconHeatmap(null);
   }, []);
+
+  // --- Terrain Mobility mode (Pass 1, POC) -----------------------------------
+  // Owner decision 2026-07-26: gated by a URL query param for the demo (a
+  // subtle toggle on current infrastructure, open data only — NOT a real
+  // entitlement; see docs/ROUTE_INTELLIGENCE.md §14 for the residual-risk
+  // note and the requirement to convert to a real gate before any release
+  // beyond demo use). Computed once — this is a load-time decision, not a
+  // live runtime toggle, matching how the mode's basemap style is chosen.
+  const mobilityModeAvailable = useMemo(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ops') === '1',
+    []
+  );
+  const [mobilityModeActive, setMobilityModeActive] = useState(false);
+
+  // Full identity swap (owner, 2026-07-26): the app must not read as "Fire
+  // Break Calculator" anywhere while Terrain mode is active — browser tab
+  // title and favicon included, not just in-page chrome.
+  useEffect(() => {
+    const originalTitle = document.title;
+    const iconLink = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const originalIconHref = iconLink?.href;
+    if (mobilityModeActive) {
+      document.title = 'Terrain Mobility — POC';
+      if (iconLink) {
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+          <rect width='32' height='32' rx='6' fill='#05070a'/>
+          <circle cx='16' cy='16' r='10' fill='none' stroke='#38bdf8' stroke-width='2'/>
+          <circle cx='16' cy='16' r='3' fill='#38bdf8'/>
+          <line x1='16' y1='2' x2='16' y2='7' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='16' y1='25' x2='16' y2='30' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='2' y1='16' x2='7' y2='16' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='25' y1='16' x2='30' y2='16' stroke='#38bdf8' stroke-width='2'/>
+        </svg>`;
+        iconLink.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+      }
+    }
+    return () => {
+      document.title = originalTitle;
+      if (iconLink && originalIconHref) iconLink.href = originalIconHref;
+    };
+  }, [mobilityModeActive]);
+  const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
+  const [mobilityNightMode, setMobilityNightMode] = useState(false);
+  const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
+  const [mobilityOriginBox, setMobilityOriginBox] = useState<MobilityAoi | null>(null);
+  const [mobilityObjectiveBox, setMobilityObjectiveBox] = useState<MobilityAoi | null>(null);
+  const [mobilityRunning, setMobilityRunning] = useState(false);
+  const [mobilityLogLines, setMobilityLogLines] = useState<string[]>([]);
+  const [mobilityResult, setMobilityResult] = useState<MobilityAppreciationResult | null>(null);
+  const [mobilityDisplayMode, setMobilityDisplayMode] = useState<'trafficability' | 'isochrone'>('trafficability');
+  const [mobilityCursor, setMobilityCursor] = useState<{ lat: number; lng: number } | null>(null);
+  const mobilityAbortRef = useRef<AbortController | null>(null);
+
+  const handleMobilityBoxDrawn = useCallback((role: 'origin' | 'objective', sw: { lat: number; lng: number }, ne: { lat: number; lng: number }) => {
+    const box = { sw, ne };
+    if (role === 'origin') setMobilityOriginBox(box);
+    else setMobilityObjectiveBox(box);
+    setMobilityResult(null); // a stale result over a changed AOI would mislead
+  }, []);
+
+  const handleClearMobilityBoxes = useCallback(() => {
+    mobilityAbortRef.current?.abort();
+    setMobilityOriginBox(null);
+    setMobilityObjectiveBox(null);
+    setMobilityResult(null);
+    setMobilityLogLines([]);
+    setMobilityRunning(false);
+  }, []);
+
+  const handleRunMobilityAppreciation = useCallback(async () => {
+    if (!mobilityOriginBox || !mobilityObjectiveBox) return;
+    mobilityAbortRef.current?.abort();
+    const controller = new AbortController();
+    mobilityAbortRef.current = controller;
+    setMobilityRunning(true);
+    setMobilityLogLines([]);
+    setMobilityResult(null);
+    try {
+      const result = await runMobilityAppreciation(mobilityOriginBox, mobilityObjectiveBox, {
+        profileId: mobilityProfileId,
+        nightMode: mobilityNightMode,
+        signal: controller.signal,
+        onLog: line => setMobilityLogLines(prev => [...prev, line]),
+      });
+      if (controller.signal.aborted) return;
+      if (!result) {
+        setMobilityLogLines(prev => [...prev, 'RUN FAILED — SEE ABOVE']);
+        return;
+      }
+      setMobilityResult(result);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      logger.error('Terrain mobility appreciation failed', error);
+      setMobilityLogLines(prev => [...prev, `ERROR — ${error instanceof Error ? error.message : 'unknown failure'}`]);
+    } finally {
+      if (!controller.signal.aborted) setMobilityRunning(false);
+    }
+  }, [mobilityOriginBox, mobilityObjectiveBox, mobilityProfileId, mobilityNightMode]);
+
+  const handleCancelMobilityAppreciation = useCallback(() => {
+    mobilityAbortRef.current?.abort();
+    setMobilityRunning(false);
+  }, []);
+
+  const mobilityHeatmapForMap = useMemo(() => {
+    if (!mobilityResult) return null;
+    return mobilityResult.results.map(r => {
+      let bandIndex = -1;
+      if (isFinite(r.timeSeconds)) {
+        const minutes = r.timeSeconds / 60;
+        bandIndex = DEFAULT_ISOCHRONE_MINUTES.findIndex(t => minutes <= t);
+        if (bandIndex === -1) bandIndex = DEFAULT_ISOCHRONE_MINUTES.length - 1;
+      }
+      return { polygon: r.polygon, trafficability: r.trafficability, timeSeconds: r.timeSeconds, bandIndex };
+    });
+  }, [mobilityResult]);
+
+  // --- Unit movement simulation (owner "bonus feature", 2026-07-26) ----------
+  // An RTS-style animated unit following the real computed path, with a real
+  // mid-course replan (not simulated) once it's covered half the estimated
+  // travel time — see terrain/unitSimulation.ts.
+  const [unitSimPosition, setUnitSimPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const [unitSimPath, setUnitSimPath] = useState<{ lat: number; lng: number }[] | null>(null);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState(20);
+  const [simElapsedSeconds, setSimElapsedSeconds] = useState<number | null>(null);
+  const unitSimControllerRef = useRef<UnitSimulationController | null>(null);
+
+  const stopUnitSimulation = useCallback(() => {
+    unitSimControllerRef.current?.stop();
+    unitSimControllerRef.current = null;
+    setSimRunning(false);
+  }, []);
+
+  const handleStartSimulation = useCallback(() => {
+    if (!mobilityResult?.path || !mobilityObjectiveBox) return;
+    unitSimControllerRef.current?.stop();
+    setSimElapsedSeconds(0);
+    const controller = new UnitSimulationController(
+      mobilityResult.path,
+      mobilityObjectiveBox,
+      mobilityProfileId,
+      mobilityNightMode,
+      {
+        onPosition: (pos, elapsed) => { setUnitSimPosition(pos); setSimElapsedSeconds(elapsed); },
+        onPathChange: path => setUnitSimPath(path.map(p => ({ lat: p.lat, lng: p.lng }))),
+        onLog: line => setMobilityLogLines(prev => [...prev, line]),
+        onArrived: () => setSimRunning(false),
+      }
+    );
+    controller.setSpeedMultiplier(simSpeedMultiplier);
+    unitSimControllerRef.current = controller;
+    controller.start();
+    setSimRunning(true);
+  }, [mobilityResult, mobilityObjectiveBox, mobilityProfileId, mobilityNightMode, simSpeedMultiplier]);
+
+  const handleSpeedMultiplierChange = useCallback((x: number) => {
+    setSimSpeedMultiplier(x);
+    unitSimControllerRef.current?.setSpeedMultiplier(x);
+  }, []);
+
+  // A stale simulation over a changed AOI/result would mislead — clear it
+  // whenever the boxes are cleared or a fresh run starts.
+  useEffect(() => {
+    stopUnitSimulation();
+    setUnitSimPosition(null);
+    setUnitSimPath(null);
+    setSimElapsedSeconds(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobilityOriginBox, mobilityObjectiveBox, mobilityRunning]);
+
+  useEffect(() => () => unitSimControllerRef.current?.stop(), []);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
   const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);
@@ -787,13 +966,26 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${mobilityModeActive ? ' tactical-mode' : ''}`}>
       <header className="app-header">
         <div className="header-left">
-          <img src={logo96} alt="App logo" className="app-logo" />
+          {mobilityModeActive ? (
+            <Radar size={40} strokeWidth={1.6} aria-hidden className="app-logo app-logo--tactical" />
+          ) : (
+            <img src={logo96} alt="App logo" className="app-logo" />
+          )}
           <div className="header-titles">
-            <h1 className="app-title">Fire Break Calculator</h1>
-            <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
+            {mobilityModeActive ? (
+              <>
+                <h1 className="app-title">Terrain Mobility</h1>
+                <span className="app-subtitle">Area Mobility &amp; Counter-Mobility Appreciation — POC</span>
+              </>
+            ) : (
+              <>
+                <h1 className="app-title">Fire Break Calculator</h1>
+                <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
+              </>
+            )}
           </div>
         </div>
         <div className="header-center">
@@ -810,15 +1002,27 @@ const App: React.FC = () => {
             plansVersion={plansVersion}
             openSignal={signInSignal}
           />
-          <button
-            className="config-panel-toggle"
-            onClick={() => setIsConfigOpen(v => !v)}
-            title="Open Configuration Panel"
-            aria-label="Open configuration panel for equipment and vegetation mappings"
-          >
-            <Settings2 size={20} strokeWidth={2} aria-hidden className="config-icon" />
-            <span className="config-label">Configuration</span>
-          </button>
+          {!mobilityModeActive && (
+            <button
+              className="config-panel-toggle"
+              onClick={() => setIsConfigOpen(v => !v)}
+              title="Open Configuration Panel"
+              aria-label="Open configuration panel for equipment and vegetation mappings"
+            >
+              <Settings2 size={20} strokeWidth={2} aria-hidden className="config-icon" />
+              <span className="config-label">Configuration</span>
+            </button>
+          )}
+          {mobilityModeAvailable && (
+            <button
+              className="config-panel-toggle"
+              onClick={() => setMobilityModeActive(v => !v)}
+              title="Terrain appreciation mode (POC)"
+              aria-label="Toggle terrain appreciation mode"
+            >
+              <span className="config-label">{mobilityModeActive ? 'Fire break mode' : 'Terrain mode'}</span>
+            </button>
+          )}
         </div>
       </header>
       <main className="app-main" id="main-content">
@@ -859,6 +1063,17 @@ const App: React.FC = () => {
             onClearAreaRecon={handleClearAreaRecon}
             onViewBoundsChange={setViewBounds}
             liveFeedData={liveFeedData}
+            tacticalMode={mobilityModeActive}
+            mobilityBoxRole={mobilityBoxRole}
+            onMobilityBoxRoleChange={setMobilityBoxRole}
+            onMobilityBoxDrawn={handleMobilityBoxDrawn}
+            mobilityOriginBox={mobilityOriginBox}
+            mobilityObjectiveBox={mobilityObjectiveBox}
+            mobilityHeatmap={mobilityHeatmapForMap}
+            mobilityDisplayMode={mobilityDisplayMode}
+            onCursorMove={setMobilityCursor}
+            unitSimPosition={unitSimPosition}
+            unitSimPath={unitSimPath}
           />
           <MapEmptyState 
             initialLocationSettled={initialLocationSettled}
@@ -866,6 +1081,34 @@ const App: React.FC = () => {
           />
         </div>
         <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>
+          {mobilityModeActive ? (
+            <MobilityPanel
+              profileId={mobilityProfileId}
+              onProfileChange={setMobilityProfileId}
+              nightMode={mobilityNightMode}
+              onNightModeChange={setMobilityNightMode}
+              boxRole={mobilityBoxRole}
+              onBoxRoleChange={setMobilityBoxRole}
+              originBox={mobilityOriginBox}
+              objectiveBox={mobilityObjectiveBox}
+              onClearBoxes={handleClearMobilityBoxes}
+              onRun={handleRunMobilityAppreciation}
+              onCancel={handleCancelMobilityAppreciation}
+              running={mobilityRunning}
+              logLines={mobilityLogLines}
+              result={mobilityResult}
+              displayMode={mobilityDisplayMode}
+              onDisplayModeChange={setMobilityDisplayMode}
+              cursor={mobilityCursor}
+              hasPath={!!mobilityResult?.path}
+              simRunning={simRunning}
+              onStartSimulation={handleStartSimulation}
+              onStopSimulation={stopUnitSimulation}
+              speedMultiplier={simSpeedMultiplier}
+              onSpeedMultiplierChange={handleSpeedMultiplierChange}
+              simElapsedSeconds={simElapsedSeconds}
+            />
+          ) : (
           <AnalysisPanel
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
@@ -907,8 +1150,9 @@ const App: React.FC = () => {
             anonymousLimited={anonymousLimited}
             onRequestSignIn={requestSignIn}
           />
+          )}
         </div>
-        <IntegratedConfigPanel 
+        <IntegratedConfigPanel
           isOpen={isConfigOpen}
           onToggle={() => setIsConfigOpen(v => !v)}
           
