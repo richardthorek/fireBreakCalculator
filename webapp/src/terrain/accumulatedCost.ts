@@ -19,12 +19,18 @@
  *    search, which DOES use the directional, profile-parameterised edge cost
  *    in mobilityCost.ts (climbing one way is not the same as the other).
  *
- * PASS 1 SCOPE CUT, stated plainly: the search gates on climb-slope and
- * vegetation passability (both real and profile-specific) but not
- * cross-slope, which would need a per-directed-edge perpendicular-neighbour
- * lookup this pass doesn't build. The terrain-only overlay's steepest-
- * gradient proxy is a coarser stand-in for "is this cell rideable at all",
- * not a substitute. Both gaps are noted here rather than silently closed.
+ * CROSS-SLOPE (2026-07-26 update): Pass 1 shipped with the search gating on
+ * climb-slope and vegetation only — cross-slope was always `null` ("unknown"),
+ * so `mobilityCost.ts`'s hard side-slope NO-GO gate never actually fired. Now
+ * wired to a real per-cell value (`MobilityGridCell.crossSlopeDeg`, from
+ * `dataLayers/demDerivatives.ts`'s local plane fit over the elevation grid
+ * already sampled — no new network source). It is still a direction-agnostic
+ * "steepest gradient in this cell's worst direction" proxy, not a true
+ * per-directed-edge perpendicular-to-travel calculation (that would need a
+ * travel-heading-aware lookup this module doesn't build) — stated plainly in
+ * that module's own docs, and deliberately the CONSERVATIVE choice: it can
+ * only over-estimate roll-over risk in a given direction of travel, never
+ * under-estimate it, which is the correct bias for a hard safety gate.
  */
 
 import { LatLng } from '../utils/chainage';
@@ -46,6 +52,14 @@ export interface MobilityGridCell {
   vegetation: VegetationType;
   vegEstimated: boolean;
   onTrail: boolean;
+  /** Direction-agnostic local terrain gradient magnitude, degrees — from
+   *  `dataLayers/demDerivatives.ts`'s local plane fit (docs §10.7 M3a, "free
+   *  fidelity" from the elevation grid already sampled, no new network
+   *  source). An upper-bound proxy for roll-over risk in this cell's WORST
+   *  direction, not a true per-directed-edge perpendicular slope — see that
+   *  module's own caveat. 0 when the grid is too small for the search to
+   *  have wired this in (defensive default, not "flat"). */
+  crossSlopeDeg: number;
 }
 
 export interface MobilityCellResult {
@@ -88,7 +102,13 @@ function classifyCellTerrain(
     if (s > steepestAbsDeg) steepestAbsDeg = s;
   }
 
-  if (steepestAbsDeg > profile.maxClimbDeg || steepestAbsDeg > profile.maxSideSlopeDeg) {
+  // Climb uses the steepest-neighbour proxy (direction-agnostic "is this
+  // patch of ground rideable in ANY direction"); side-slope now uses the
+  // real per-cell plane-fit gradient (crossSlopeDeg, wired in via
+  // mobilityGrid.ts/dataLayers/demDerivatives.ts) instead of reusing the
+  // same steepest-neighbour number for both purposes, which conflated two
+  // different physical failure modes (pitching over vs rolling over).
+  if (steepestAbsDeg > profile.maxClimbDeg || cell.crossSlopeDeg > profile.maxSideSlopeDeg) {
     return { trafficability: 'NO-GO', estimated: true };
   }
 
@@ -104,8 +124,9 @@ function classifyCellTerrain(
   if (vegBlocked) return { trafficability: 'NO-GO', estimated: true };
 
   const climbRatio = steepestAbsDeg / profile.maxClimbDeg;
+  const sideRatio = profile.maxSideSlopeDeg > 0 ? cell.crossSlopeDeg / profile.maxSideSlopeDeg : 0;
   const heavyVeg = (cell.vegetation === 'heavyforest' || cell.vegetation === 'mediumscrub') && !cell.onTrail;
-  if (climbRatio > 0.85 || heavyVeg) return { trafficability: 'SLOW-GO', estimated: true };
+  if (climbRatio > 0.85 || sideRatio > 0.85 || heavyVeg) return { trafficability: 'SLOW-GO', estimated: true };
   return { trafficability: 'GO', estimated: cell.vegEstimated };
 }
 
@@ -216,7 +237,7 @@ export function runAccumulatedCostSearch(
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
       const sampleA: MobilitySample = { lat: cell.center.lat, lng: cell.center.lng, elevation: cell.elevation, vegetation: cell.vegetation, vegEstimated: cell.vegEstimated, onTrail: cell.onTrail };
       const sampleB: MobilitySample = { lat: neighbor.center.lat, lng: neighbor.center.lng, elevation: neighbor.elevation, vegetation: neighbor.vegetation, vegEstimated: neighbor.vegEstimated, onTrail: neighbor.onTrail };
-      const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode });
+      const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO edge — never relax through it
       const penalty = edgePenalties?.get(`${cur.key}|${nKey}`) ?? 1;
       const candidateTime = known.timeSeconds + result.timeSeconds * penalty;

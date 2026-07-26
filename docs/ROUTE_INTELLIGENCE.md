@@ -2002,6 +2002,102 @@ Verified live: `?ops=1` alone (no click) now shows "Terrain Mobility" in
 the header on first load; no `ops` param, and `?ops=2` (anything other
 than exactly `"1"`), both still correctly land in "Fire Break Calculator".
 
+## 27. Analytical depth pass — cross-slope wired live, larger AOIs, edge cases (2026-07-26)
+
+Owner: "have a look at the original intent... take this up a notch, make
+the analysis better, consider more factors, think about a larger area...
+ensure the edge cases are thought about, and that the basic is not
+missed." Read against §1's original intent and §10's own fidelity-stack
+plan, the honest gap was never "invent a new capability" — it was that
+several things §10.7/§16 already flagged as real, cited, *built* work
+(Pass 3's `demDerivatives.ts`) had never actually been wired into the
+search that uses them. Finishing already-verified work beats fabricating
+new "10x" features that can't be checked, so that's what this pass does,
+plus two genuine edge cases and one honest capacity increase.
+
+**Cross-slope is now a real, live gate, not a permanently-inert one.**
+§3/§16 stated plainly that the search only gated on climb-slope and
+vegetation — cross-slope was always passed as `null` ("unknown") to
+`edgeMobilityCost`, so its hard side-slope NO-GO gate (roll-over risk, a
+real safety factor for wheeled/tracked movers) never fired, ever, in any
+run. `MobilityGridCell` now carries a real `crossSlopeDeg` field, computed
+once per grid build from `dataLayers/demDerivatives.ts`'s local plane fit
+over the elevation grid already sampled (no new network source, no new
+dependency) — wired into all three places that call `edgeMobilityCost`
+directly: the main search (`accumulatedCost.ts`, which everything else —
+k-dissimilar routes, the delay ledger — already goes through), the
+terrain-only GO/SLOW-GO/NO-GO classifier (`classifyCellTerrain`, which
+previously double-used one steepest-neighbour number for both the climb
+AND side-slope checks, conflating two different physical failure modes —
+now uses the real plane-fit value for the side-slope check specifically),
+and min-cut barrier siting (`minCutBarrier.ts`, both its flow-graph
+construction and its final segment-extraction pass). Still a direction-
+agnostic "worst-case in this cell's steepest direction" proxy, not a true
+per-directed-edge perpendicular-to-travel calculation (stated in
+`demDerivatives.ts`'s own docs) — but deliberately the conservative choice
+for a hard safety gate: it can only over-estimate roll-over risk, never
+under-estimate it. The in-app "POC limitations" disclaimer (which
+previously said outright "cross-slope is not evaluated") is corrected to
+describe what actually runs now, not what used to.
+
+**Larger areas, argued from what the sampling pipeline can actually
+sustain, not an arbitrary bump.** `TARGET_CELL_COUNT`/`MAX_HEX_CELLS`
+raised from 1400/1800 to 2200/2800. This is safe specifically because both
+upstream sampling calls this grid depends on are already area-batched
+(`sampleVegetation` resolves from at most two area requests once enough
+points are uncached; `sampleElevationsCached` batches its cache misses in
+one call) — the "hundreds of upstream requests" risk that keeps something
+like NAFI's point-query mechanism deliberately capped small (see its own
+module header) does not apply here. The search itself and
+`demDerivatives.ts`'s per-cell plane fit + one MFD accumulation pass are
+both O(cells log cells) in a Web Worker — negligible at this size.
+
+**A grid that had to coarsen for a large AOI now says so.** The existing
+hex-size-doubling loop (up to 5 tries, already there since Pass 1) never
+surfaced whether it actually fired. `MobilityGridResult.usedCoarseGrid` is
+now a real flag (`tries > 0`), surfaced as a log line
+("CAUTION — AOI IS LARGE, GRID COARSENED…") — a coarsened grid is still a
+genuine search over genuine samples, just at lower spatial resolution than
+the target, so a narrow gap or a short obstacle may not survive being
+averaged into a bigger cell. Silently trusting a coarse grid at full-
+fidelity confidence would have been exactly the kind of unflagged
+degradation this project's data-honesty principle forbids.
+
+**Edge case: overlapping origin/objective areas.** A painted origin and
+objective that touch or overlap share at least one cell, so the cheapest
+route between them is genuinely ~0 seconds — correct behaviour, not a bug,
+but confusing to see with no explanation. `runMobilityAppreciation` now
+detects the shared-cell case and logs it plainly
+("ORIGIN AND OBJECTIVE OVERLAP — N SHARED CELL(S), ROUTE IS TRIVIAL BY
+DESIGN") rather than leaving the user to guess why a route looks
+suspiciously instant.
+
+**What this pass deliberately does NOT do, stated plainly rather than
+rushed:** NAFI/DEA time-since-fire, fractional-cover and surface-water
+(Tier 1, §10.7 M3c) are built and verified (§19) but still not wired into
+per-cell sampling — that needs a genuine new area-query mechanism for
+NAFI specifically (its own module header explains why the point-query form
+can't just be called per cell at grid scale), which is real, scoped,
+un-started work, not a quick wire-up like the DEM derivatives above were.
+Min-cut capacity is still unit/trail-weighted, not real VCI/RCI vehicle
+capacity (§17, needs Pass 3's soil layers — not yet sampled either).
+Imagery CV remains gated on a lidar calibration set per §12/§18. All three
+are real, prioritized next steps, not silently dropped — see the roadmap
+entry in `master_plan.md`.
+
+**Verification:** `npm run tsc --noEmit` / `npm run build` clean. A
+standalone Node smoke test against the real modules (10 checks) — the
+central claim: passing a synthetic `crossSlopeDeg` that exceeds a mover's
+`maxSideSlopeDeg` now genuinely blocks the edge in `edgeMobilityCost`
+directly, in the full multi-source search (a multi-hop-away objective
+becomes correctly unreachable once every approach is side-slope-blocked,
+while immediate one-hop neighbours of a flat origin correctly remain
+reachable — proving the "at the FROM cell" contract is honoured, not just
+that something got blocked somewhere), in the terrain-only classifier (more
+cells read NO-GO once real values exceed the limit), and in min-cut (a
+flow graph with every edge blocked correctly returns no barrier to site,
+rather than silently ignoring the block).
+
 ---
 
 ## Update policy

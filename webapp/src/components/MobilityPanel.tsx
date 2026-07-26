@@ -226,9 +226,11 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
 
       <div className="mobility-limitation-panel tac-mono">
         POC LIMITATIONS: vegetation structure (stem diameter / gap width) is a Tier 0
-        estimate from NVIS formation only — not measured. Cross-slope is not evaluated
-        in the reachability search. Counter-mobility planning, imagery analysis and real
-        soil/lidar structure data are later passes, not this one.
+        estimate keyed to vegetation class, not measured per cell. Cross-slope is a
+        direction-agnostic worst-case proxy (steepest local gradient), not a true
+        per-direction-of-travel calculation. Time-since-fire/fractional-cover/surface-water
+        (Tier 1) are built but not yet sampled per cell. Real soil/lidar structure data
+        and imagery analysis are later passes, not this one.
       </div>
     </div>
   );

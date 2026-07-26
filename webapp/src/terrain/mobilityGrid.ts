@@ -24,9 +24,19 @@ import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimize
 import { fetchCorridorInfrastructure, distanceToNearestTrail } from '../utils/infrastructureService';
 import { MobilityGridCell } from './accumulatedCost';
 import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry, isInsideResolvedArea } from './paintedArea';
+import { computeDemDerivatives } from './dataLayers/demDerivatives';
 
-const TARGET_CELL_COUNT = 1400;
-const MAX_HEX_CELLS = 1800;
+// Raised from 1400/1800 (2026-07-26, "think about a larger area"): both
+// upstream sampling calls this grid depends on are already area-batched, not
+// per-point (sampleVegetation resolves from at most two area requests once
+// enough points are uncached; sampleElevationsCached batches misses in one
+// call) — the "hundreds of upstream requests" risk that keeps NAFI/DEA point
+// queries capped small (docs §10.7, dataLayers/nafiFireHistoryService.ts)
+// does not apply here. The search itself is O(cells log cells) in a Web
+// Worker, and demDerivatives.ts's per-cell plane fit + one MFD accumulation
+// pass are the same order — both stay well under a second at this size.
+const TARGET_CELL_COUNT = 2200;
+const MAX_HEX_CELLS = 2800;
 const TRAIL_SNAP_M = 30;
 
 export interface MobilityGridResult {
@@ -41,6 +51,13 @@ export interface MobilityGridResult {
   objectiveKeys: string[];
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
+  /** True when the painted AOI was large enough that the hex size had to be
+   *  coarsened (doubled at least once) to stay inside MAX_HEX_CELLS — an
+   *  honesty flag, not a silent trade-off: a coarsened grid is still a real
+   *  search over real samples, but at lower spatial resolution than the
+   *  target, so a narrow gap or a short-radius obstacle may not survive
+   *  being averaged into a bigger cell. */
+  usedCoarseGrid: boolean;
 }
 
 /**
@@ -113,7 +130,19 @@ export async function buildMobilityGrid(
     vegetation: vegRes[i].type,
     vegEstimated: vegRes[i].estimated,
     onTrail: infra.trails.length > 0 && distanceToNearestTrail(points[i], infra.trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
+    crossSlopeDeg: 0, // filled in below once the grid is finalised
   }));
+
+  // Real cross-slope, not the dormant "always unknown" placeholder Pass 1
+  // shipped with (docs §10.7 M3a / §3's own stated scope cut) — computed
+  // once here from the elevation grid already in hand, no new network call.
+  // `edgeMobilityCost`'s hard side-slope NO-GO gate only ever fires when a
+  // real number reaches it; this is what makes that gate live instead of
+  // permanently inert.
+  const derivatives = computeDemDerivatives(cells);
+  for (const cell of cells) {
+    cell.crossSlopeDeg = derivatives.get(cell.key)?.crossSlopeDeg ?? 0;
+  }
 
   // Resolve each painted area's paint/erase strokes into one shape ONCE
   // here, rather than per cell — the geometry-boolean-ops replay is real
@@ -133,5 +162,6 @@ export async function buildMobilityGrid(
     objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys : [cells[cells.length - 1].key],
     usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated),
     infrastructureAvailable: infra.available,
+    usedCoarseGrid: tries > 0,
   };
 }

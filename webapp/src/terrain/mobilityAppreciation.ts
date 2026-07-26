@@ -80,6 +80,17 @@ export async function runMobilityAppreciation(
   onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
   if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
+  if (grid.usedCoarseGrid) {
+    onLog?.('CAUTION — AOI IS LARGE, GRID COARSENED TO STAY WITHIN COMPUTE BUDGET (RESOLUTION REDUCED)');
+  }
+  // Edge case, stated plainly rather than left to look like a bug: a
+  // painted origin and objective that overlap or touch share at least one
+  // cell, so the cheapest route between them is genuinely ~0 seconds — the
+  // search is correct, the AOIs are just not disjoint.
+  const overlapKeys = grid.originKeys.filter(k => grid.objectiveKeys.includes(k));
+  if (overlapKeys.length > 0) {
+    onLog?.(`ORIGIN AND OBJECTIVE OVERLAP — ${overlapKeys.length} SHARED CELL(S), ROUTE IS TRIVIAL BY DESIGN`);
+  }
 
   onProgress?.(0.72);
   onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);

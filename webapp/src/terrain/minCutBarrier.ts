@@ -145,7 +145,7 @@ export function computeMinCutBarrier(
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode });
+      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO — carries no traffic, excluded
       const capacity = cell.onTrail && neighbor.onTrail ? TRAIL_CAPACITY_MULTIPLIER : 1;
       graph.addEdge(cell.key, nKey, capacity);
@@ -203,7 +203,7 @@ export function computeMinCutBarrier(
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode });
+      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // wasn't a real edge in the original graph
       segments.push({ fromKey: cell.key, toKey: nKey, from: cell.center, to: neighbor.center });
     }

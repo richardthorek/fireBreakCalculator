@@ -28,7 +28,7 @@
  *    (MFD) accumulation over the finite grid in hand, not the cheap
  *    "count neighbours with higher elevation" proxy the task brief offered as
  *    a fallback — see the TWI section below for why the full pass is cheap
- *    enough to just do properly at these grid sizes (≤ ~1500 cells/corridor
+ *    enough to just do properly at these grid sizes (≤ ~2800 cells/corridor
  *    per docs §8).
  */
 
@@ -232,7 +232,7 @@ export function computeDemDerivatives(cells: DemDerivativeCell[]): Map<string, D
   // WHY THE FULL PASS INSTEAD OF THE CHEAP PROXY: the task brief offered
   // "count of neighbouring cells with higher elevation" as an acceptable
   // cheap stand-in. A genuine accumulation is only one sort (O(N log N)) plus
-  // one O(N·6) routing pass over a grid docs §8 already caps at ~1500 cells
+  // one O(N·6) routing pass over a grid docs §8 already caps at ~2800 cells
   // per corridor — negligible cost for a materially more meaningful number
   // (a real upslope-contributing-area estimate, not a same-cell neighbour
   // count), so there is no real reason to take the coarser shortcut here.

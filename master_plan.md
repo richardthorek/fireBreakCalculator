@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback rounds — bug fixes, mobile UX, painted-area AOI, two-finger gestures, continuous painted shape, erase function, mode-switch audit + control scheme, `?ops=1` default — all shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
+**Last Updated**: July 26, 2026 (Step 10 Passes 1–4 shipped; field-feedback rounds — bug fixes, mobile UX, painted-area AOI, two-finger gestures, continuous painted shape, erase function, mode-switch audit + control scheme, `?ops=1` default, cross-slope wired live + larger AOIs — all shipped; Step 11 first slice shipped — hero readout, reveal animation, map-control re-skin)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -46,7 +46,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
 | 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
-| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–21 = as-built) | ✅ Passes 1–4 shipped + integrated (mobility core, k-routes/min-cut, trafficability data layers, counter-mobility catalogue/ledger — all wired end to end), plus a field-feedback round (painted-area AOI selection, mobile-overlay controls, two critical bug fixes). Remaining 📋: DEM-derivative/Tier-1-layer wiring into per-cell sampling, VCI/RCI-weighted min-cut capacity, real entitlement/backend gating (currently a client-side `?ops=1` URL gate) |
+| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–27 = as-built) | ✅ Passes 1–4 shipped + integrated, plus multiple field-feedback rounds (painted-area AOI, mobile controls, mode-switch audit, `?ops=1` default) and an analytical-depth pass: **cross-slope is now a live, real gate** in the search/classifier/min-cut (was permanently inert — always `null` — since Pass 1); grid budget raised (1400/1800 → 2200/2800 cells) for larger AOIs, argued from the sampling pipeline's real area-batching limits, not an arbitrary bump; two honesty flags added (`usedCoarseGrid`, origin/objective-overlap log line). Remaining 📋, prioritized: **(1)** NAFI/DEA Tier-1 layers (time-since-fire, fractional cover, surface-water) are built and verified (§19) but need a genuine new area-query mechanism before they can be sampled per cell — NAFI's point-query form can't just be called per cell at grid scale (see its own module header); **(2)** VCI/RCI-weighted min-cut capacity, needs Pass 3's soil layers (not yet sampled either); **(3)** real entitlement/backend gating (currently a client-side `?ops=1` URL default, not a real permission boundary) |
 
 | 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). **First slice shipped 2026-07-26**: hero readout (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as instrument-scale tabular-nums figures, replacing the old plain text spans) with count-up tweening (`useCountUp.ts`, ease-out cubic, `prefers-reduced-motion`-aware); the map's per-segment slope colouring now sweeps in over `REVEAL_DURATION_MS` (`revealTiming.ts`) via Mapbox GL feature-state instead of snapping to a finished state, in sync with the panel's count-up; move (3)'s map-control re-skin done for fire-break mode, and **a real root-cause bug fixed along the way**: a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was silently winning the cascade over the intended dark theme (equal `!important` specificity, later source order wins) — this was the actual reason controls rendered as plain white squares, not just a stale screenshot; removed rather than patched around. Moves (4) and (5) (shared type/confidence discipline across modes; fire-break mobile floating controls) not yet started. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 🚧 first slice shipped (moves 1–3 partial); moves 4–5 still 📋 |
 
@@ -60,6 +60,41 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-26 — Terrain Mobility: analytical depth pass (cross-slope wired
+  live, larger AOIs, edge cases)**: owner asked to re-read the original
+  intent against what's been built and "take this up a notch... consider
+  more factors, think about a larger area... ensure edge cases are thought
+  about, and that the basic is not missed." The honest gap, on inspection,
+  wasn't a missing capability — it was that real, already-verified Pass 3
+  work (`demDerivatives.ts`) had never actually been wired into the search
+  that needed it. Finishing verified work over fabricating new "10x"
+  features: **cross-slope is now a real, live gate** — `MobilityGridCell`
+  carries a genuine per-cell `crossSlopeDeg` (from the already-sampled
+  elevation grid, no new network source), wired into all three places that
+  call `edgeMobilityCost` directly (the main search, the terrain-only
+  classifier, min-cut barrier siting) — previously always `null`, so the
+  hard side-slope NO-GO gate (real roll-over-risk safety factor) had never
+  fired in any run since Pass 1. The in-app disclaimer that said "cross-
+  slope is not evaluated" is corrected. **Larger areas**: grid budget raised
+  1400/1800 → 2200/2800 cells, justified specifically by the fact that both
+  upstream sampling calls this depends on are already area-batched (not
+  per-point) — the risk that keeps something like NAFI's point queries
+  capped small doesn't apply here. **Two edge cases**: a grid that had to
+  coarsen for a large AOI now says so (`usedCoarseGrid` flag + log line,
+  instead of silently trusting a lower-resolution grid at full confidence);
+  overlapping origin/objective areas now get an explicit log line
+  explaining why the route is ~0 seconds, instead of looking like a bug.
+  **Stated plainly, not silently dropped**: NAFI/DEA Tier-1 layers, VCI/
+  RCI-weighted min-cut capacity, and imagery CV remain real, scoped,
+  un-started next steps (see Step 10 above) — none of them a quick wire-up
+  like cross-slope was. Verified: `tsc --noEmit`/`npm run build` clean; a
+  10-check standalone Node smoke test against the real modules, centred on
+  proving the exact documented contract ("crossSlopeDeg is evaluated at the
+  FROM cell") rather than just "something got blocked somewhere" — a
+  multi-hop-away objective is correctly unreachable once every approach is
+  side-slope-blocked, while a flat origin's own immediate neighbours
+  correctly remain reachable. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §27.
 - **2026-07-26 — Terrain Mobility: mode-switch audit, control scheme,
   `?ops=1` default**: owner reported fire-break UI (Getting Started card,
   the pencil/trash draw control) still showing in Terrain mode, and asked
