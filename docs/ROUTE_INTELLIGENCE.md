@@ -3247,17 +3247,68 @@ spends its budget where the terrain demands it — so typical runs should get
 (unreachable objective, budget exhausted) is genuinely expensive, hence the
 ceiling above.
 
-### Deliberately NOT in this slice
+### Sequencing: roads first, then landscape
 
-- **Road-first routing / hybrid road graph.** Owner's original proposal opened
-  with road-network routing (find roads near origin, run driving directions,
-  block and repeat). Correct and valuable — roads are a *network* while hexes
-  are a *tessellation*, and today `onTrail` is a single per-cell boolean,
-  which is precisely why road class is still discarded (§32's largest
-  remaining fidelity gap). A hybrid graph (road edges + hex off-road edges +
-  transfer edges) would close that item too. Scoped out of the first slice by
-  owner decision ("lazy grid only") — it fixes a different problem and is
-  independently shippable.
+Initially scoped the other way (lazy grid first, roads deferred). Owner
+corrected it:
+
+> "Roads matter as they need to be identified to protect or deny rapid
+> movement. Then landscape as it's harder to engineer barriers."
+
+That is the stronger ordering, for a reason worth stating explicitly:
+**road-network routing is inherently box-free.** You traverse OSM ways
+wherever they lead — no tessellation, no bounding box, therefore no Lake
+George failure mode at all for vehicle movement. It does not need the lazy
+hex grid to work.
+
+- **Slice A — road network graph + routing.** Roads are a *network*; hexes are
+  a *tessellation*. Today `onTrail` is a single per-cell boolean, which is
+  precisely why road class is still discarded (§32's largest remaining
+  fidelity gap). Building a real road graph (nodes/edges from the OSM ways
+  already fetched, routed with the same A* machinery on a different edge set)
+  fixes Lake George for vehicles, closes the road-class gap, and produces the
+  actionable counter-mobility output — you *block a road*; engineering a
+  barrier across open landscape is far harder and rarer.
+- **Slice B — lazy hex grid.** Everything in §35 above. Still required, but
+  scoped to what roads can't answer: off-road and foot movement, and the
+  off-road half of the Lake George case.
+
+### Data cost: which layers refine for free (verified 2026-07-27)
+
+Owner asked whether finer hex resolution costs upstream API calls or only
+local compute. Checked in code, because §35's fine pass depends on the answer.
+
+**Free per sample point** — one area fetch, decoded locally, then any number
+of hexes sampled from it at no marginal upstream cost:
+
+| Layer | Mechanism |
+|---|---|
+| Vegetation (NVIS/NSW) | ≤2 area requests, sampled locally — `routeOptimizer.ts:352` comments "bulk-resolve from locally-held area data (free per point)" |
+| Water (DEA WOfS) | One WMS `GetMap` per bbox, colour-ramp decoded (§34) |
+| Fire history (NAFI) | 2 WCS requests per AOI (§31) |
+| Elevation — Terrain-RGB *fallback* | Tiles cached in `terrainTileCache`, pixels decoded locally |
+
+**NOT free — the one exception:** elevation's PRIMARY path.
+`fetchElevationProfile` POSTs the point list to `/api/elevation/profile`,
+which builds an ArcGIS `getSamples` URL with **every point in the query
+string** (`elevationService.ts:72`). Point-sampling, not raster: cost scales
+linearly with point count, with a hard URL-length ceiling on top of ArcGIS's
+own `sampleCount` cap. This is the layer slope and cross-slope depend on, so
+naive hex refinement would hit this wall first.
+
+Resolved by the two-pass structure above:
+- **Coarse-wide pass** → Terrain-RGB tiles (genuinely raster, already cached,
+  ~4–8 m/pixel at z15 — finer than any hex size in use). Unlimited extent at
+  no marginal cost.
+- **Fine-narrow pass** → bare-earth DEM via *chunked* `getSamples`, over the
+  few cells inside a discovered corridor, where the accuracy pays for itself.
+
+Caveat on "internal cost": these rasters decode in the **browser** (canvas
+`getImageData`), not server-side. The ceiling is client CPU/memory — generous,
+but real at very fine resolution over very large areas.
+
+### Deliberately NOT in this design
+
 - **Mixed-size cells in one graph** — superseded by the two-pass approach
   above.
 
