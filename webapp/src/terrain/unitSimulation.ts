@@ -19,6 +19,7 @@ import { buildMobilityGrid } from './mobilityGrid';
 import { PaintedArea, singleDabArea } from './paintedArea';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
+import { MoverTrajectory } from './movementSimulation';
 
 /** Linear interpolation between the two path nodes bracketing `elapsedSeconds`.
  *  Clamps to the endpoints outside the path's time range. Returns null for an
@@ -171,5 +172,102 @@ export class UnitSimulationController {
     } finally {
       this.replanInFlight = false;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ensemble animation — many movers at once (owner, 2026-07-27: "the simulate
+// movement draws a single line very quickly… there is a degree of probability
+// that over the course of many simulations units take common paths")
+// ---------------------------------------------------------------------------
+
+export interface EnsembleMoverState {
+  index: number;
+  lat: number;
+  lng: number;
+  /** The ground this mover has actually covered so far — drawn as a fading
+   *  trail so the ensemble visibly fans out and re-converges instead of
+   *  appearing as a finished picture. */
+  trail: { lat: number; lng: number }[];
+  arrived: boolean;
+  /** True once this mover has reached the end of its own trajectory, whether
+   *  or not it made the objective. */
+  finished: boolean;
+}
+
+export interface EnsembleAnimationCallbacks {
+  onFrame: (movers: EnsembleMoverState[], elapsedSeconds: number) => void;
+  onComplete?: (elapsedSeconds: number) => void;
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Animates a whole `MoverTrajectory[]` on one clock. Every mover sets off at
+ * the same simulated instant and moves at its OWN real pace, so what you watch
+ * is the actual spread the ensemble computed — the leaders pulling away, the
+ * unlucky ones detouring, and (where the terrain canalises movement) the
+ * visible convergence onto shared ground. Nothing here recomputes or smooths a
+ * route; it only interpolates trajectories `movementSimulation.ts` produced.
+ */
+export class EnsembleAnimationController {
+  private readonly trajectories: MoverTrajectory[];
+  private readonly totalSeconds: number;
+  private readonly callbacks: EnsembleAnimationCallbacks;
+  private elapsedSeconds = 0;
+  private speedMultiplier = 1;
+  private lastFrameMs: number | null = null;
+  private rafHandle: number | null = null;
+  private completeFired = false;
+
+  constructor(trajectories: MoverTrajectory[], callbacks: EnsembleAnimationCallbacks) {
+    this.trajectories = trajectories.filter(t => t.steps.length > 0);
+    this.totalSeconds = this.trajectories.reduce(
+      (max, t) => Math.max(max, t.steps[t.steps.length - 1].cumulativeSeconds), 0
+    );
+    this.callbacks = callbacks;
+  }
+
+  setSpeedMultiplier(x: number): void {
+    this.speedMultiplier = x;
+  }
+
+  start(): void {
+    if (this.trajectories.length === 0) {
+      this.callbacks.onLog?.('NO TRAJECTORIES TO ANIMATE');
+      return;
+    }
+    this.lastFrameMs = performance.now();
+    const tick = (nowMs: number) => {
+      const deltaMs = this.lastFrameMs === null ? 0 : nowMs - this.lastFrameMs;
+      this.lastFrameMs = nowMs;
+      this.elapsedSeconds += (deltaMs / 1000) * this.speedMultiplier;
+
+      const movers: EnsembleMoverState[] = this.trajectories.map((t, index) => {
+        const last = t.steps[t.steps.length - 1];
+        const finished = this.elapsedSeconds >= last.cumulativeSeconds;
+        const pos = positionAtElapsed(t.steps, this.elapsedSeconds)!;
+        const trail = t.steps
+          .filter(s => s.cumulativeSeconds <= this.elapsedSeconds)
+          .map(s => ({ lat: s.lat, lng: s.lng }));
+        trail.push({ lat: pos.lat, lng: pos.lng });
+        return { index, lat: pos.lat, lng: pos.lng, trail, arrived: t.arrived && finished, finished };
+      });
+      this.callbacks.onFrame(movers, this.elapsedSeconds);
+
+      if (this.elapsedSeconds >= this.totalSeconds) {
+        if (!this.completeFired) {
+          this.completeFired = true;
+          this.callbacks.onComplete?.(this.elapsedSeconds);
+        }
+        return; // stop scheduling once the slowest mover has finished
+      }
+      this.rafHandle = requestAnimationFrame(tick);
+    };
+    this.rafHandle = requestAnimationFrame(tick);
+  }
+
+  stop(): void {
+    if (this.rafHandle !== null) cancelAnimationFrame(this.rafHandle);
+    this.rafHandle = null;
   }
 }

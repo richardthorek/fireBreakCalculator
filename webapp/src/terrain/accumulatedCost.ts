@@ -255,6 +255,77 @@ export function runAccumulatedCostSearch(
 }
 
 /**
+ * The SAME engine run backwards: seconds remaining from every cell TO the
+ * objective AOI, rather than from the origin AOI to every cell.
+ *
+ * This is not a convenience wrapper — the edge cost is directional (climbing
+ * out of a gully is not the reverse of dropping into it), so "time to get
+ * there from here" genuinely cannot be read off the forward field. Seeding at
+ * `objectiveKeys` and relaxing each popped cell's PREDECESSORS (cost of the
+ * edge u→v, not v→u) is the correct reversal.
+ *
+ * Used by movementSimulation.ts as the mover's "cost-to-go": the thing a unit
+ * is implicitly steering by when it decides which cell to step into next.
+ * Cells the objective cannot be reached from are simply absent from the map
+ * (not zero, not a large number) — callers decide what an unreachable
+ * lookahead means for them.
+ */
+export function runCostToGoSearch(
+  cells: MobilityGridCell[],
+  objectiveKeys: string[],
+  profile: MoverProfile,
+  nightMode: boolean,
+  /** Directed edges (`${fromKey}|${toKey}`) that are severed outright — an
+   *  emplaced restriction (a road block, a blown culvert). Excluded from this
+   *  field exactly as a NO-GO edge is, so a mover who KNOWS about the block
+   *  routes around it, while a mover who does not still drives up to it and
+   *  has to turn around (movementSimulation.ts enforces the block itself). */
+  blockedEdges?: Set<string>
+): Map<string, number> {
+  const byKey = new Map<string, MobilityGridCell>();
+  for (const c of cells) byKey.set(c.key, c);
+
+  const best = new Map<string, number>();
+  const heap = new MinHeap();
+  for (const key of objectiveKeys) {
+    if (!byKey.has(key)) continue;
+    best.set(key, 0);
+    heap.push(key, 0);
+  }
+
+  while (heap.size > 0) {
+    const cur = heap.pop()!;
+    const known = best.get(cur.key);
+    if (known === undefined || cur.priority > known) continue; // stale heap entry
+    const cell = byKey.get(cur.key);
+    if (!cell) continue;
+
+    for (const nHex of hexNeighbors(cell.hex)) {
+      const nKey = hexKey(nHex);
+      const neighbor = byKey.get(nKey);
+      if (!neighbor) continue;
+      const dist = calculateDistance(neighbor.center.lat, neighbor.center.lng, cell.center.lat, cell.center.lng);
+      // Directed edge neighbour → cell: the cost of the step that would bring
+      // a mover standing at `neighbor` onto `cell`, which is the direction the
+      // remaining-time field must be built from.
+      const sampleFrom: MobilitySample = { lat: neighbor.center.lat, lng: neighbor.center.lng, elevation: neighbor.elevation, vegetation: neighbor.vegetation, vegEstimated: neighbor.vegEstimated, onTrail: neighbor.onTrail };
+      const sampleTo: MobilitySample = { lat: cell.center.lat, lng: cell.center.lng, elevation: cell.elevation, vegetation: cell.vegetation, vegEstimated: cell.vegEstimated, onTrail: cell.onTrail };
+      if (blockedEdges?.has(`${nKey}|${cur.key}`)) continue;
+      const result = edgeMobilityCost(profile, sampleFrom, sampleTo, dist, { nightMode, crossSlopeDeg: neighbor.crossSlopeDeg });
+      if (!isFinite(result.timeSeconds)) continue;
+      const candidate = known + result.timeSeconds;
+      const existing = best.get(nKey);
+      if (existing === undefined || candidate < existing) {
+        best.set(nKey, candidate);
+        heap.push(nKey, candidate);
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
  * Backtrack the cheapest path from anywhere in the origin AOI to the
  * cheapest-reached cell inside `objectiveKeys`, using the predecessor map a
  * search run already produced. Returns ordered cell keys (origin → objective)

@@ -233,17 +233,28 @@ export function edgeMobilityCost(
   }
 
   // --- Speed ----------------------------------------------------------------
+  const onNetwork = from.onTrail && to.onTrail;
   let speedKmh: number;
   switch (profile.speedModel) {
     case 'irmischer-clarke-offpath':
-      speedKmh = irmischerClarkeSpeedKmh(grade);
+      // A track or road is faster on foot too, and this module already carries
+      // both published functions with exactly that distinction: Irmischer &
+      // Clarke is measured OFF-path, Tobler is an ON-path hiking function.
+      // Using the off-path function for on-path movement understated a formed
+      // track's benefit to a foot mover to zero, which is wrong on its own
+      // terms and made a road worthless to every foot profile — visible as
+      // soon as movement was simulated as a route CHOICE rather than solved as
+      // a cost field (owner, 2026-07-27: "you might take roads and highways as
+      // a preference"). Each function is now applied to the case it was
+      // actually calibrated for.
+      speedKmh = onNetwork ? toblerSpeedKmh(grade) : irmischerClarkeSpeedKmh(grade);
       break;
     case 'tobler':
       speedKmh = toblerSpeedKmh(grade);
       break;
     case 'doctrinal-unit-march':
     case 'vehicle-gradient': {
-      const base = to.onTrail && from.onTrail ? profile.roadSpeedKmh : profile.roadSpeedKmh * profile.crossCountryFactor;
+      const base = onNetwork ? profile.roadSpeedKmh : profile.roadSpeedKmh * profile.crossCountryFactor;
       const gradeFactor = vehicleGradeSpeedFactor(absSlope, profile.maxClimbDeg);
       speedKmh = base * Math.max(0.05, gradeFactor); // floor so a near-limit slope creeps rather than divides by ~0
       break;

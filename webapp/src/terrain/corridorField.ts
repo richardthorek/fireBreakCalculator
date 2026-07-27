@@ -164,8 +164,24 @@ export interface Corridor {
   usedEstimatedData: boolean;
 }
 
+/**
+ * What the corridors were derived FROM. This has to be carried and shown,
+ * because the two answer subtly different questions and a reader must not
+ * confuse them:
+ *
+ *  - 'optimiser-routes' — k globally-cheapest routes under iterative edge
+ *    penalties. "Where the best routes are." Perfect knowledge assumed.
+ *  - 'simulated-movers' — the transit frequency of an ensemble of independent,
+ *    boundedly-rational movers (movementSimulation.ts). "Where movers actually
+ *    went." Includes their road preference, their imperfect knowledge, and
+ *    their mistakes — and is therefore MODELLED BEHAVIOUR, with all the
+ *    assumed parameters that module documents.
+ */
+export type CorridorEvidence = 'optimiser-routes' | 'simulated-movers';
+
 export interface CorridorField {
   corridors: Corridor[];
+  evidence: CorridorEvidence;
   /** The route set the corridors were formed from — kept so the UI can draw
    *  the individual pathways faintly INSIDE the bands ("the analysis is
    *  visible underneath the presentation"). */
@@ -324,7 +340,29 @@ export function buildCorridorField(
   nightMode: boolean,
   hexSize: number,
   proj: LocalProjection,
-  options: CorridorFieldOptions & { routeCount?: number; edgePenalties?: Map<string, number> } = {}
+  options: CorridorFieldOptions & {
+    routeCount?: number;
+    edgePenalties?: Map<string, number>;
+    /**
+     * Use THESE paths as the evidence instead of deriving k cheapest routes.
+     * The presentation pipeline below (density → smooth → segment → metrics)
+     * does not care where the paths came from, which is what lets the
+     * simulated movement ensemble become the evidence base for what is shown
+     * without a second, parallel corridor implementation that could disagree
+     * with this one.
+     */
+    routesOverride?: DissimilarRoute[];
+    evidence?: CorridorEvidence;
+    /**
+     * Weight each path by how attractive it is (best time ÷ this path's time).
+     * Correct for OPTIMISER routes, where one route standing for "the second
+     * best way" should not count as much as the best. Wrong for a SIMULATED
+     * ensemble, where each mover is one independent observation and the
+     * frequency itself is the evidence — so this defaults to true but is set
+     * false for ensemble input.
+     */
+    weightByAttractiveness?: boolean;
+  } = {}
 ): CorridorField | null {
   const opts: Required<CorridorFieldOptions> = {
     smoothingIterations: options.smoothingIterations ?? DEFAULTS.smoothingIterations,
@@ -335,10 +373,12 @@ export function buildCorridorField(
   };
   const routeCount = options.routeCount ?? DEFAULT_CORRIDOR_ROUTE_COUNT;
 
-  const routes = findKDissimilarPaths(
+  const routes = options.routesOverride ?? findKDissimilarPaths(
     cells, originKeys, objectiveKeys, profile, nightMode, routeCount, options.edgePenalties
   );
   if (routes.length === 0) return null;
+  const evidence: CorridorEvidence = options.evidence ?? 'optimiser-routes';
+  const weightByAttractiveness = options.weightByAttractiveness ?? true;
 
   const facts = computeCellFacts(cells, originKeys, profile, nightMode, options.edgePenalties);
   const byKey = new Map(cells.map(c => [c.key, c]));
@@ -351,7 +391,9 @@ export function buildCorridorField(
   const rawRouteCount = new Map<string, number>();
   const routesByCell = new Map<string, Set<number>>();
   routes.forEach((route, idx) => {
-    const weight = route.totalSeconds > 0 ? Math.max(0.05, bestSeconds / route.totalSeconds) : 1;
+    const weight = weightByAttractiveness
+      ? (route.totalSeconds > 0 ? Math.max(0.05, bestSeconds / route.totalSeconds) : 1)
+      : 1;
     for (const key of new Set(route.keys)) {
       raw.set(key, (raw.get(key) ?? 0) + weight);
       rawRouteCount.set(key, (rawRouteCount.get(key) ?? 0) + 1);
@@ -414,6 +456,7 @@ export function buildCorridorField(
 
   return {
     corridors: built,
+    evidence,
     routes,
     cellCount,
     routedCellCount: rawRouteCount.size,
@@ -424,6 +467,40 @@ export function buildCorridorField(
       coverageFraction >= UNCONSTRAINED_COVERAGE_THRESHOLD && pinchRatio > UNCONSTRAINED_PINCH_RATIO,
     options: opts,
   };
+}
+
+/**
+ * Adapt simulated mover tracks into the same `DissimilarRoute` shape the
+ * corridor pipeline already consumes, so an ensemble can be fed straight into
+ * `buildCorridorField({ routesOverride })`.
+ *
+ * `path` is rebuilt from the mover's own cell sequence with its own cumulative
+ * times, so the hairlines drawn inside a band really are the simulated tracks —
+ * not a re-derived or smoothed version of them.
+ */
+export function ensembleTracksToRoutes(
+  tracks: { keys: string[]; totalSeconds: number }[],
+  cells: MobilityGridCell[]
+): DissimilarRoute[] {
+  const byKey = new Map(cells.map(c => [c.key, c]));
+  return tracks
+    .filter(t => t.keys.length > 1)
+    .map(t => {
+      const steps = t.keys.length - 1;
+      const path = t.keys.map((key, i) => {
+        const cell = byKey.get(key);
+        return {
+          lat: cell?.center.lat ?? 0,
+          lng: cell?.center.lng ?? 0,
+          // Even spacing across the mover's own total: the per-step times are
+          // not retained for every mover (only for the animated sample), and
+          // an evenly-spaced approximation is honest for a hairline whose only
+          // job is to show WHERE the mover went.
+          cumulativeSeconds: steps > 0 ? (t.totalSeconds * i) / steps : 0,
+        };
+      });
+      return { keys: t.keys, path, totalSeconds: t.totalSeconds };
+    });
 }
 
 function buildCorridor(

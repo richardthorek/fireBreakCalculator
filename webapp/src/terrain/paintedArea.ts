@@ -113,17 +113,40 @@ function dabToTurfPolygon(dab: PaintDab) {
  * has removed everything painted so far.
  */
 export function resolvePaintedAreaGeometry(area: PaintedArea): Polygon | MultiPolygon | null {
-  let acc: Feature<Polygon | MultiPolygon> | null = null;
-  for (const stroke of area) {
+  const acc = applyStrokes(null, area);
+  return acc ? acc.geometry : null;
+}
+
+/**
+ * The incremental form: fold `strokes` onto an ALREADY-RESOLVED accumulator
+ * and return the new one, so a live drag only pays for the dab it just laid
+ * down instead of replaying the whole stroke history.
+ *
+ * This matters for feel, not just throughput (owner, 2026-07-27: "ensure the
+ * painting happens during the drag and not at the end"). Replaying every
+ * stroke on every dab makes the work quadratic in stroke count, and since each
+ * replay is real polygon-boolean work, a long stroke visibly falls behind the
+ * finger — the painted shape then appears to catch up in a lump when the drag
+ * stops. The strokes array is append-only during a drag, so the caller can
+ * keep the accumulator and extend it, which keeps the cost per dab constant.
+ *
+ * Returns the accumulator unchanged (`null`) when erasing before anything has
+ * been painted — there is nothing to subtract from.
+ */
+export function applyStrokes(
+  acc: Feature<Polygon | MultiPolygon> | null,
+  strokes: PaintedArea
+): Feature<Polygon | MultiPolygon> | null {
+  let current = acc;
+  for (const stroke of strokes) {
     const dabPoly = dabToTurfPolygon(stroke.dab);
     if (stroke.mode === 'paint') {
-      acc = acc ? (union(featureCollection([acc, dabPoly])) ?? acc) : dabPoly;
-    } else if (acc) {
-      // Erasing before anything has been painted is a no-op — nothing to subtract from.
-      acc = difference(featureCollection([acc, dabPoly]));
+      current = current ? (union(featureCollection([current, dabPoly])) ?? current) : dabPoly;
+    } else if (current) {
+      current = difference(featureCollection([current, dabPoly]));
     }
   }
-  return acc ? acc.geometry : null;
+  return current;
 }
 
 /** True when `point` falls within the resolved (paint-minus-erase) shape.

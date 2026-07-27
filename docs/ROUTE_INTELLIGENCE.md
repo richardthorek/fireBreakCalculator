@@ -2609,5 +2609,253 @@ legend and pixel arithmetic it depends on are what's actually verified here).
 
 ---
 
+## 32. Probabilistic movement — the simulation becomes the engine (2026-07-27)
+
+Owner, in two parts on the same day:
+
+> "The simulate movement draws a single line very quickly. This app is trying
+> to simulate *likely* movement pathways. To an extent there is a degree of
+> probability that over the course of many simulations units take common paths
+> through the various starting and end points. Moving more slowly or around
+> obstacles... We need to account for the unknown of what the moving unit will
+> TRY to do, as they progress from cell to cell and make the next routing
+> decision."
+
+> "That movement sim model should be the crux of the recommendations and the
+> ultimate pathways through. Think of it as if you were in that vehicle and set
+> off in the direction of where you were heading, you might take roads and
+> highways as a preference until they're blocked or denied. A longer route
+> would be assumed to be quicker on a road. Going cross country then brings
+> into scope all of the vegetation and landscape elements. I would expect our
+> model to account for an 'unrestricted' set of movement corridors, and then
+> add in a set of recommended restrictions like road blocking."
+
+### The gap this closes
+
+Everything this mode computed before Pass 5 was an **optimiser's** answer: the
+cheapest path (`extractPath`), or k cheapest paths under iterative edge
+penalties (`corridorField.ts` §28). Those are correct as analysis, and the
+corridor bands honestly widened them — but every one of them is a global
+optimum computed with perfect knowledge of the whole grid. A real unit does not
+solve Dijkstra over ground it has not seen. It heads for the objective, prefers
+the road it is on, decides from what it can perceive, and finds out about the
+gully when it reaches the gully.
+
+### `movementSimulation.ts` — the model
+
+A mover on cell `u` scores each traversable neighbour `v` by the total
+remaining time it *believes* that step commits it to, and samples:
+
+```
+score(v) = edgeTime(u→v) + perceivedToGo(v) + turn + revisit + network
+P(v)     ∝ exp( −score(v) / τ )
+```
+
+Four terms, each carrying one idea:
+
+| Term | What it represents | Parameter |
+|---|---|---|
+| `network` | Road preference. Leaving the trail/road network costs believed time; rejoining credits it. **The first-order route decision.** | `roadAffinitySeconds`, from the profile's kind × the spread |
+| `perceivedToGo` | `k · trueToGo + (1−k) · naiveToGo`. `trueToGo` is the exact reverse cost field (`runCostToGoSearch`); `naiveToGo` is straight-line ÷ nominal speed — a map-and-compass estimate. | `terrainKnowledge` k ∈ [0,1] |
+| softmax `τ` | Decision noise, in SECONDS of believed journey time: "differences smaller than ~τ do not reliably decide which way this mover turns." | `decisionTemperatureSeconds` |
+| `turn` / `revisit` | Momentum, and not orbiting the same few cells. | assumed constants |
+
+**The property that makes it work: the mover pays the REAL edge cost whatever
+it believed.** Belief steers the choice; terrain charges for it. A
+low-knowledge mover commits to a bearing, walks into ground that costs more
+than it expected, and works around it — arriving later than the optimiser's
+figure. Nothing is scripted; it falls out of the same `edgeMobilityCost`
+everything else in this mode uses, so the ensemble can never show movement the
+analysis calls impossible.
+
+At τ→0, k→1, road affinity→0, this collapses to the deterministic single line
+that used to be the whole answer. The old result is a limiting case of the new
+one, not a competing one.
+
+**Road preference is why vegetation matters at the right time.** With a road
+present, a wheeled profile's simulated movement is overwhelmingly on it, and
+the vegetation/structure model barely binds. Deny the road, and movement is
+pushed into ground where gap width, stem diameter and side-slope decide
+everything. That ordering is the owner's stated mental model, and it is now the
+model's behaviour rather than a description of it.
+
+### One supporting fix in the cost model
+
+`mobilityCost.ts` used the **off-path** Irmischer & Clarke function for every
+foot movement, including movement along a formed track — so a road was worth
+literally nothing to a foot profile. Both published functions were already in
+the module with exactly that distinction documented (Tobler is the *on-path*
+hiking function). Each is now applied to the case it was calibrated for. This
+was invisible while movement was solved as a cost field and became obvious the
+moment it was simulated as a route *choice*.
+
+### `restrictionPlanner.ts` — recommended restrictions
+
+The actionable half. Not a scoring formula — **re-simulation**:
+
+1. Rank candidate edges by how many simulated movers actually crossed them
+   (`edgeTransit` from the baseline), preferring edges where both cells are on
+   the network: a road block is cheap, doctrinally ordinary, and per the
+   baseline is where the traffic is.
+2. Greedily, one at a time: re-run a reduced ensemble (70 movers — enough to
+   *rank*) with each shortlisted candidate added to the set already chosen,
+   keep the one that hurts movement most, record its **marginal** effect,
+   repeat. The chosen set is then re-run at full mover count for the figures
+   actually shown.
+
+Greedy and iterative for the reason that justifies simulating at all: blocking
+the best road does not remove that traffic, it **moves** it — onto the next
+road, and eventually into the bush where a different set of terrain factors
+binds. Only re-running against the partially-restricted world shows where it
+went, so each recommendation is made against the world the previous ones
+created.
+
+**What it refuses to do**: if the best remaining candidate buys less than
+`MIN_MEANINGFUL_EFFECT_SECONDS` (2 min of median delay), planning stops and
+reports the bypass. Terrain that offers a free bypass cannot be denied by
+blocking points, and padding the list with measures that achieve nothing would
+be worse than a short list — the same finding §28's `unconstrained` reports,
+reached from the other direction.
+
+### Corridors are now built from the simulation
+
+`buildCorridorField` gained `routesOverride` / `evidence` /
+`weightByAttractiveness`, so the **identical** density → smooth → segment →
+metrics pipeline serves either evidence base. `CorridorField.evidence`
+(`'optimiser-routes' | 'simulated-movers'`) travels with the field and is
+surfaced in the panel, the map key, the GIS export attributes
+(`evidence` + `evidence_note`) and the assistant briefing — because
+"180" means something different when it counts simulated movers rather than
+computed optimal routes, and a reader has no other way to tell.
+
+The optimiser field is still computed and kept as `optimiserCorridorField`:
+chokepoints and the min-cut are graph properties of the *route* set, and
+"where the best routes are" vs "where movers went" is itself informative.
+
+### Honesty boundary — the part that must not be lost
+
+The **terrain** is the same measured/estimated data with the same Tier 0/1
+flags. The **behaviour** parameters (τ, the k distribution, road affinity, turn
+and revisit penalties, step budget, the unreachable-lookahead constant, and the
+denial-equivalent seconds the planner ranks with) are **ASSUMED**. No source
+was found that calibrates how a real unit trades believed remaining time
+against local effort, and none is claimed. The ordering of the road-affinity
+figures by mover kind is defensible from the physical facts the profiles
+already encode; the magnitudes are engineering choices.
+
+Therefore a transit frequency is *"the share of simulated movers under this
+behaviour model that crossed this cell"*, never *"the probability a real unit
+goes here"*. Everything the module returns carries `behaviourModelled: true`,
+the panel leads with the behaviour selector rather than burying it in a
+footnote, the map key marks the modelled entries, and the assistant template
+states the caveat whenever a simulated figure appears. The restriction
+planner's delay figures are siting **priorities**, deliberately distinct from
+`delayLedger.ts`'s engineering build/breach ledger — different questions, kept
+apart.
+
+### Verification
+
+`tsc --noEmit` and `npm run build` clean on `webapp/` and `api/`;
+`npm run test:unit` green (12 new checks added to
+`api/src/test/mobilityAssistant.test.ts` covering the new payload blocks, the
+evidence labelling, the bypass finding, backward compatibility with payloads
+that lack them, and validator rejection of half-formed ones).
+
+A 39-check standalone Node smoke test over the real modules (disposable vite
+lib-mode entry, deleted before commit) built a synthetic AOI with a road across
+otherwise heavy scrub and asserted: every mover accounted for; percentiles
+ordered; simulated median ≥ the optimiser's best; same seed → identical
+ensemble and different seed → a different one; **a wheeled profile's movement
+stays on the road when one exists and is entirely cross-country when it does
+not, and the road makes the journey faster**; familiar movers spread over less
+ground and arrive sooner than unfamiliar ones; no mover ever crosses a blocked
+edge; corridors build from ensemble tracks; the planner prefers road blocks,
+ranks 1..n, blocks both directions, and blocking the road both **doubles the
+median journey and pushes movement cross-country** (23% → 41%); and empty
+origin/objective return null rather than an invented ensemble.
+
+**One real defect the test caught.** `crossCountryFraction` was first
+implemented as a pooled count of every step by every mover. A mover that never
+arrives runs to the full step budget (~130 steps) while one that drives down
+the road finishes in ~29, so a handful of stranded movers thrashing in the bush
+outweighed everyone who succeeded: an ensemble whose every individual track was
+4–7% off-road reported **46% off-road overall**. Now a per-mover mean — one
+mover, one vote — which still counts a stranded mover at 1.0 but never more.
+
+Map rendering is unverifiable in this sandbox (no Mapbox token) — **confirm on
+the live preview**.
+
+### Still open
+
+- Road **class** is not modelled: `onTrail` is a single boolean from OSM, so a
+  highway and a farm track are the same thing to the mover. Road affinity and
+  speed should differ between them, and the data to do it (OSM `highway=*`) is
+  already being fetched and discarded. This is the largest remaining fidelity
+  gap in the new model and the natural next step.
+- Restrictions are sited on grid EDGES, so a recommendation's spatial precision
+  is the hex resolution, not a surveyed point on a road.
+- The recommended set is not costed. Which of two equally-effective blocks is
+  cheaper to emplace is `delayLedger.ts`'s question and the two are not yet
+  joined up.
+
+---
+
+## 33. Terrain-mode UI clarity pass (2026-07-27)
+
+Eight field-reported items, all in one round. Recorded together because they
+share one cause: the mode had accumulated real analytical depth with no
+corresponding investment in reading it.
+
+1. **Brush cursor.** A ring drawn at the brush's actual on-screen radius
+   (`BRUSH_PIXEL_RADIUS`), coloured by role and switching to a dashed danger
+   ring for erase. Since the brush is *defined* in screen pixels, the ring is
+   an exact preview of the next dab at any zoom, not an approximation.
+2. **Painting guidance, and painting during the drag.** A dismissible hint
+   while a role is armed. The "happens at the end" symptom was a real
+   performance bug, not a missing feature: painting did fire per dab, but the
+   render replayed **every** stroke through `@turf`'s polygon booleans on every
+   one of them — quadratic, and real work each time, so a long stroke fell
+   behind the finger and the shape landed in a lump at mouse-up. A drag only
+   ever *appends*, so `applyStrokes` now folds new strokes onto a cached
+   accumulator; any other change still does a full replay.
+3. **Hold to pan.** Space (or Alt) temporarily hands `dragPan` back and
+   suppresses painting, with a badge while held. Registered on `window` (the
+   canvas is not focusable), guarded against firing inside form fields, and
+   released on window blur so a lost keyup cannot strand the tool in pan mode.
+4. **Progress.** `runMobilityAppreciation` never emitted progress at all — the
+   option existed and App.tsx did not pass it. Now: named stages
+   (`MobilityStage`), a bar and the latest real log line in an on-map HUD, and
+   — the part that actually helps — `onPreviewCells` paints the terrain-only
+   classified grid as soon as sampling finishes, so the map fills in while the
+   search, ensemble and planner are still working. The progress budget was
+   rebalanced (sampling 0→0.45) because the simulation stages are now real work
+   of comparable length.
+5. **Map key.** `MobilityLegend.tsx`, listing only what is actually drawn — a
+   key showing absent symbols is worse than none — and marking which entries
+   are modelled behaviour rather than a property of the ground.
+6. **Overlay opacity.** One slider, applied as a **multiplier** on each layer's
+   own designed opacity (`registerOverlayOpacity`), so the meanings already
+   encoded in opacity — the corridor density gradient, the isochrone field's
+   unreached dimming — survive being faded. Painted AOIs are deliberately
+   excluded: they are the user's input, not a result.
+7. See §32.
+8. **Corridors made legible.** The band-only render was the right honesty
+   statement and unreadable as a shape. Now four paired layers: the density
+   fill (unchanged in meaning), a **dissolved outline** per corridor (a real
+   `@turf/union` of its own hexes, so it is the actual extent), a brighter
+   spine at high density, and the analysed tracks as hairlines on top. Plus an
+   on-map label per corridor and a selection that dims every band but one,
+   driven from either the panel card or the band itself.
+
+Recommended restrictions render as numbered heavy bars between two real cell
+centres — never an invented point along an edge, matching §29's export rule.
+
+**Verification**: `tsc --noEmit`/`npm run build` clean. Map rendering and the
+touch/keyboard interactions are unverifiable in this sandbox — **confirm on the
+live preview**.
+
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
