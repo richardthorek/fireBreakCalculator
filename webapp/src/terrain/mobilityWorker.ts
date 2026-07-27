@@ -32,6 +32,7 @@ import { LocalProjection } from '../utils/hexGrid';
 import { getMoverProfile } from './moverProfiles';
 import { simulateMovementEnsemble, MovementEnsembleResult } from './movementSimulation';
 import { planRestrictions, RestrictionPlan } from './restrictionPlanner';
+import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
 
 export interface SimPathNode {
   lat: number;
@@ -49,6 +50,11 @@ export interface MobilitySearchRequest {
   objectiveKeys: string[];
   profileId: string;
   nightMode: boolean;
+  /** User-edited road-class speeds (docs §35 config UI) — set into THIS
+   *  worker's own module instance of roadSpeedModel.ts on every request (see
+   *  that module's own doc comment on why: a Worker shares no memory with
+   *  the main thread that set it). Undefined/absent means "no overrides". */
+  roadSpeedOverrides?: RoadSpeedOverrides;
 }
 
 export interface MobilityMovementRequest {
@@ -68,6 +74,9 @@ export interface MobilityMovementRequest {
    *  and re-run it with those restrictions emplaced. */
   planRestrictions: boolean;
   maxRestrictions?: number;
+  /** Same as `MobilitySearchRequest.roadSpeedOverrides` — see that field's
+   *  doc comment. */
+  roadSpeedOverrides?: RoadSpeedOverrides;
 }
 
 export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest;
@@ -106,6 +115,10 @@ const post = (message: MobilityWorkerResponse) => (self as unknown as Worker).po
 
 self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
   const req = e.data;
+  // Set once per request, before any cost-model call this request will make
+  // — see roadSpeedModel.ts's own doc comment on why this can't just be set
+  // once from the main thread (the worker has no shared memory with it).
+  setRoadSpeedOverrides(req.roadSpeedOverrides ?? null);
   const profile = getMoverProfile(req.profileId);
 
   if (req.kind === 'movement') {

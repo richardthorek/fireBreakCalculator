@@ -42,6 +42,8 @@ import {
   MobilityGridCell, assembleMobilityResults,
 } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
+import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
+import { findVehicleRoadRoute, RoadRouteSearchResult } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
@@ -71,6 +73,15 @@ export interface MobilityAppreciationResult {
    *  unit-simulation animation follows (docs "Terrain Mobility &
    *  Counter-Mobility": null only if no objective cell was reachable). */
   path: SimPathNode[] | null;
+  /** The box-free ROAD-NETWORK route between the two painted areas (docs
+   *  §35 Slice A, `roadRouteSearch.ts`) — computed independently of the
+   *  hex-grid search above and the padded box it still runs inside. Null for
+   *  non-vehicle profiles, when no road data was fetched, or when the road
+   *  network genuinely doesn't connect the two areas. This is what actually
+   *  answers a Lake-George-shaped "no route" for vehicles: the hex-grid
+   *  `path` above can still legitimately be null in that case while this
+   *  isn't. */
+  roadRoute: RoadRouteSearchResult | null;
   /** The genuinely distinct origin→objective routes this run analysed. These
    *  are the ANALYSIS substrate; `corridorField` below is what gets
    *  presented (owner 2026-07-26: "use the individual pathways to analyse,
@@ -156,6 +167,14 @@ export interface MobilityAppreciationOptions {
    * `timeSeconds` legitimately Infinity because nothing has been reached yet.
    */
   onPreviewCells?: (cells: MobilityCellResult[]) => void;
+  /** User-edited road-class speeds (docs §35 config UI). Set into this
+   *  thread's own roadSpeedModel.ts module instance at the top of this run,
+   *  and forwarded into the worker (a separate module instance — see
+   *  roadSpeedModel.ts's own doc comment) on every worker call this run
+   *  makes. Main-thread cost evaluation (corridorField.ts, minCutBarrier.ts,
+   *  corridorAnalysis.ts, the road-route search) picks it up from the
+   *  same set-once call — no threading required beyond this one option. */
+  roadSpeedOverrides?: RoadSpeedOverrides;
 }
 
 export async function runMobilityAppreciation(
@@ -169,11 +188,20 @@ export async function runMobilityAppreciation(
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
     planRestrictions = true,
+    roadSpeedOverrides,
   } = options;
   const profile = getMoverProfile(profileId);
   if (!profile) {
     onLog?.(`ERROR — unknown mover profile "${profileId}"`);
     return null;
+  }
+  // Set once, here, before any main-thread cost evaluation this run makes —
+  // see roadSpeedModel.ts's own doc comment on why the worker call sites
+  // below must ALSO forward this explicitly (a Worker is a separate module
+  // instance; this call is invisible to it).
+  setRoadSpeedOverrides(roadSpeedOverrides ?? null);
+  if (roadSpeedOverrides) {
+    onLog?.('USING USER-EDITED ROAD-CLASS SPEEDS — SEE CONFIG PANEL FOR WHICH CLASSES WERE OVERRIDDEN');
   }
 
   onLog?.(`PROFILE ${profile.label.toUpperCase()} · ${profile.confidence.toUpperCase()} CONFIDENCE (${profile.source.slice(0, 72)}${profile.source.length > 72 ? '…' : ''})`);
@@ -236,6 +264,25 @@ export async function runMobilityAppreciation(
     onLog?.(`ORIGIN AND OBJECTIVE OVERLAP — ${overlapKeys.length} SHARED CELL(S), ROUTE IS TRIVIAL BY DESIGN`);
   }
 
+  // Box-free ROAD-NETWORK route (docs §35 Slice A) — independent of the
+  // hex-grid search below and the padded box it still runs inside. Vehicle
+  // profiles only (roadRouteSearch.ts's own gate); cheap enough to run
+  // synchronously on the main thread (a handful of OSM ways, not a grid).
+  let roadRoute: RoadRouteSearchResult | null = null;
+  if (profile.speedModel === 'vehicle-gradient') {
+    roadRoute = findVehicleRoadRoute(origin, objective, grid.roadWays, profile, roadSpeedOverrides);
+    if (roadRoute) {
+      onLog?.(
+        `ROAD-NETWORK ROUTE (VEHICLE, BOX-FREE) — ${(roadRoute.totalDistanceM / 1000).toFixed(1)} KM VIA ` +
+        `${roadRoute.wayNames.length > 0 ? roadRoute.wayNames.slice(0, 3).join(', ') : 'UNNAMED WAYS'} · ` +
+        `${(roadRoute.totalSeconds / 60).toFixed(0)} MIN ROAD-NETWORK ACCESS TO ROAD-NETWORK ACCESS ` +
+        `(EXCLUDES OFF-ROAD LEGS TO/FROM THE PAINTED AREAS)`
+      );
+    } else if (grid.roadWays.length > 0) {
+      onLog?.('NO ROAD-NETWORK ROUTE FOUND BETWEEN THE PAINTED AREAS (NO NEARBY ROAD, OR THE NETWORK DOES NOT CONNECT THEM)');
+    }
+  }
+
   // Paint the surveyed ground NOW, before the search runs. Same assembly the
   // final render uses, with an empty reachability map — so every cell shows
   // its real terrain classification and nothing shows an arrival time it has
@@ -249,7 +296,8 @@ export async function runMobilityAppreciation(
   onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
 
   const { results, path } = await runMobilitySearchInWorker(
-    grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode
+    grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+    roadSpeedOverrides
   );
   if (signal?.aborted) return null;
   onProgress?.(0.5);
@@ -294,6 +342,7 @@ export async function runMobilityAppreciation(
         spreadId: behaviourSpreadId,
         seed: simulationSeed,
         planRestrictions,
+        roadSpeedOverrides,
         onProgress: (f, phase) => {
           if (phase === 'ensemble') onProgress?.(0.5 + f * 0.18);
           else onProgress?.(0.75 + f * 0.22);
@@ -436,6 +485,7 @@ export async function runMobilityAppreciation(
     noGoCount,
     slowGoCount,
     path,
+    roadRoute,
     dissimilarRoutes,
     corridorField,
     optimiserCorridorField,

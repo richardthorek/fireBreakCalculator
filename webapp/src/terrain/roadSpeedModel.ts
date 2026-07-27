@@ -179,6 +179,33 @@ function lookup(
 }
 
 /**
+ * Active user overrides, set once per run rather than threaded as a
+ * parameter through every caller (`edgeMobilityCost` → `runAccumulatedCostSearch`
+ * → `movementSimulation.ts` → `restrictionPlanner.ts` → ... — nine files deep
+ * by the time it reaches here). Same precedent as `infrastructureService.ts`'s
+ * `setLocalTrailProvider`: a cross-cutting config value set once, read by
+ * every call site without a signature change.
+ *
+ * WORKER BOUNDARY: `mobilityWorker.ts` runs in a real Web Worker — a separate
+ * module instance with no shared memory with the main thread. Setting this on
+ * the main thread does NOT make it visible inside the worker. Each side must
+ * call `setRoadSpeedOverrides` itself: the main thread once per run
+ * (`mobilityAppreciation.ts`), the worker once per request, sourced from a
+ * `roadSpeedOverrides` field carried on the request message (structured-clone
+ * safe — this is a plain nested `Record<string, number>`).
+ */
+let activeOverrides: RoadSpeedOverrides | null = null;
+
+/** Set (or clear, with `null`) the overrides every `roadClassCeiling` call in
+ *  THIS module instance falls back to when its caller doesn't pass one
+ *  explicitly. See the field's own doc comment for why this exists instead
+ *  of a threaded parameter, and why it must be called on both sides of the
+ *  worker boundary. */
+export function setRoadSpeedOverrides(overrides: RoadSpeedOverrides | null): void {
+  activeOverrides = overrides;
+}
+
+/**
  * The vehicle speed ceiling one OSM way's tags imply, km/h — the min across
  * whichever of highway/surface/tracktype/smoothness are present, each
  * capable of being user-overridden independently. Returns `null` only when
@@ -190,20 +217,26 @@ function lookup(
  * independent ceiling — take `min()` of both, never substitute one for the
  * other. See the module header for why foot profiles must never pass
  * through this function at all.
+ *
+ * `overrides`, when omitted, falls back to whatever `setRoadSpeedOverrides`
+ * last set (or no overrides at all if it was never called) — an explicit
+ * argument always wins over the fallback, for callers (tests, the road-graph
+ * search) that want to pass one directly without touching global state.
  */
 export function roadClassCeiling(way: RoadWayTags, overrides?: RoadSpeedOverrides): RoadClassResult | null {
+  const effective = overrides ?? activeOverrides ?? undefined;
   const components: Component[] = [];
 
-  const highway = lookup(HIGHWAY_SPEED_KMH, overrides?.highway, 'highway', way.highway, 'OSRM car profile highway speed');
+  const highway = lookup(HIGHWAY_SPEED_KMH, effective?.highway, 'highway', way.highway, 'OSRM car profile highway speed');
   if (highway) components.push(highway);
 
-  const surface = lookup(SURFACE_SPEED_CAP_KMH, overrides?.surface, 'surface', way.surface, 'OSRM car profile surface cap');
+  const surface = lookup(SURFACE_SPEED_CAP_KMH, effective?.surface, 'surface', way.surface, 'OSRM car profile surface cap');
   if (surface) components.push(surface);
 
-  const tracktype = lookup(TRACKTYPE_SPEED_CAP_KMH, overrides?.tracktype, 'tracktype', way.tracktype, 'OSRM car profile tracktype cap');
+  const tracktype = lookup(TRACKTYPE_SPEED_CAP_KMH, effective?.tracktype, 'tracktype', way.tracktype, 'OSRM car profile tracktype cap');
   if (tracktype) components.push(tracktype);
 
-  const smoothness = lookup(SMOOTHNESS_SPEED_CAP_KMH, overrides?.smoothness, 'smoothness', way.smoothness, 'OSRM car profile smoothness cap');
+  const smoothness = lookup(SMOOTHNESS_SPEED_CAP_KMH, effective?.smoothness, 'smoothness', way.smoothness, 'OSRM car profile smoothness cap');
   if (smoothness) components.push(smoothness);
 
   if (components.length > 0) {

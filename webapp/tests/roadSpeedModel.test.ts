@@ -8,6 +8,7 @@
 import * as assert from 'node:assert';
 import {
   roadClassCeiling,
+  setRoadSpeedOverrides,
   HIGHWAY_SPEED_KMH,
   TRACKTYPE_SPEED_CAP_KMH,
   UNTAGGED_TRACK_FALLBACK_KMH,
@@ -113,6 +114,42 @@ test('composition scenarios: vehicle-limited vs road-limited both bind correctly
   // The same 4WD on a grade5 track (20 ceiling) — road-limited.
   const grade5Track = roadClassCeiling({ highway: 'track', tracktype: 'grade5' })!;
   assert.strictEqual(Math.min(60, grade5Track.speedKmh), 20);
+});
+
+// --- The global-override singleton (docs §35 config UI, mobilityWorker.ts's
+// worker-boundary problem) — setRoadSpeedOverrides is how a caller who
+// doesn't want to thread an explicit `overrides` argument through every
+// intermediate function still gets picked up. ---------------------------
+test('setRoadSpeedOverrides makes roadClassCeiling pick up an override with NO explicit argument', () => {
+  setRoadSpeedOverrides({ highway: { residential: 5 } });
+  try {
+    const r = roadClassCeiling({ highway: 'residential' }); // no second argument at all
+    assert.ok(r);
+    assert.strictEqual(r!.speedKmh, 5);
+    assert.strictEqual(r!.confidence, 'user-override');
+  } finally {
+    setRoadSpeedOverrides(null); // never leak state into a later test
+  }
+});
+
+test('an explicit overrides argument still wins over whatever the global was last set to', () => {
+  setRoadSpeedOverrides({ highway: { residential: 5 } });
+  try {
+    const r = roadClassCeiling({ highway: 'residential' }, { highway: { residential: 12 } });
+    assert.ok(r);
+    assert.strictEqual(r!.speedKmh, 12, 'the explicit argument must win, not the global');
+  } finally {
+    setRoadSpeedOverrides(null);
+  }
+});
+
+test('setRoadSpeedOverrides(null) clears it — a call after clearing sees the sourced default again', () => {
+  setRoadSpeedOverrides({ highway: { residential: 5 } });
+  setRoadSpeedOverrides(null);
+  const r = roadClassCeiling({ highway: 'residential' });
+  assert.ok(r);
+  assert.strictEqual(r!.speedKmh, 25); // the sourced default, not 5
+  assert.strictEqual(r!.confidence, 'published');
 });
 
 if (process.exitCode === 1) {

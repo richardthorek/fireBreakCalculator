@@ -223,6 +223,11 @@ interface MapboxMapViewProps {
   /** Unit simulation — the intended path currently being followed (redrawn
    *  whenever a mid-course replan splices a new remainder onto it). */
   unitSimPath?: { lat: number; lng: number }[] | null;
+  /** Docs §35 Slice A — the box-free ROAD-NETWORK route between the painted
+   *  areas (vehicle profiles only, `roadRouteSearch.ts`). Drawn as its own
+   *  distinct line since it is independent of, and can exist even when,
+   *  the hex-grid search's own path/corridors above found nothing. */
+  roadRoute?: { lat: number; lng: number }[] | null;
   /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
   chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
   /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
@@ -325,6 +330,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onCursorMove,
   unitSimPosition = null,
   unitSimPath = null,
+  roadRoute = null,
   chokepoints = null,
   barrierSegments = null,
   onRunAppreciation,
@@ -2112,6 +2118,23 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       },
     });
   }, [unitSimPath]);
+
+  // Docs §35 Slice A — box-free road-network route (vehicle profiles only).
+  // Amber/dashed, distinct from the sky-blue unit-sim path above: this line
+  // can exist even when the hex-grid search found no path at all, and is
+  // deliberately styled so it doesn't read as "the" answer, just as A road
+  // answer, restricted to the road network (see the log line that reports
+  // it for the door-to-door caveat).
+  useEffect(() => {
+    const coords = roadRoute && roadRoute.length >= 2 ? roadRoute.map(p => [p.lng, p.lat]) : null;
+    setOverlay('road-route-line', coords ? { type: 'LineString', coordinates: coords } : null, {
+      main: {
+        type: 'line',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#f59e0b', 'line-width': 4, 'line-opacity': 0.8, 'line-dasharray': [3, 2] },
+      },
+    });
+  }, [roadRoute]);
 
   // Unit simulation — the moving unit itself. A plain mapboxgl.Marker moved
   // via setLngLat on every animation frame (see App.tsx's UnitSimulationController)

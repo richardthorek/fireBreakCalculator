@@ -33,6 +33,7 @@ import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from './terrain
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
+import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
@@ -52,6 +53,8 @@ const logo96 = '/favicon-96x96.png';
  * Renders a fixed-height header (10% of viewport), responsive Mapbox GL JS map,
  * and analysis panel for fire break calculations.
  */
+const ROAD_SPEED_OVERRIDES_STORAGE_KEY = 'firebreak.terrainMobility.roadSpeedOverrides.v1';
+
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
@@ -427,6 +430,28 @@ const App: React.FC = () => {
   }, [mobilityModeActive]);
   const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
   const [mobilityNightMode, setMobilityNightMode] = useState(false);
+  // Docs §35 Slice A config UI — user-edited road-class speeds, persisted so
+  // a brigade/unit calibrates once (owner requirement: "configurable... for
+  // fine grained adjustments"). Loaded lazily (useState initializer) rather
+  // than in an effect, so the very first run after a reload already sees any
+  // saved overrides instead of one run at the sourced defaults.
+  const [roadSpeedOverrides, setRoadSpeedOverridesState] = useState<RoadSpeedOverrides>(() => {
+    try {
+      const raw = localStorage.getItem(ROAD_SPEED_OVERRIDES_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as RoadSpeedOverrides) : {};
+    } catch {
+      return {}; // corrupt/unavailable storage — fall back to sourced defaults, not a crash
+    }
+  });
+  const setRoadSpeedOverrides = useCallback((next: RoadSpeedOverrides) => {
+    setRoadSpeedOverridesState(next);
+    try {
+      localStorage.setItem(ROAD_SPEED_OVERRIDES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Storage full/unavailable — the override still applies for this
+      // session via state, it just won't survive a reload.
+    }
+  }, []);
   const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
   // Cross-mode cleanup (2026-07-26 UI review: "ensure everything switches...
   // and back again"). Hiding a mode's controls isn't enough on its own — an
@@ -550,6 +575,7 @@ const App: React.FC = () => {
         nightMode: mobilityNightMode,
         signal: controller.signal,
         behaviourSpreadId,
+        roadSpeedOverrides,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
         onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
         onStage: stage => { if (!controller.signal.aborted) setMobilityStage(stage); },
@@ -580,7 +606,7 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
@@ -1346,6 +1372,7 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
+            roadRoute={mobilityResult?.roadRoute?.waypoints ?? null}
             corridors={displayedMovementCorridorField?.corridors ?? null}
             corridorRoutes={corridorRoutesForMap}
             highlightedCorridorId={highlightedCorridorId}
@@ -1383,6 +1410,7 @@ const App: React.FC = () => {
                 water: (waterFeaturesForMap?.length ?? 0) > 0,
                 unitPath: !!unitSimPath,
                 movers: !!ensembleMovers && ensembleMovers.length > 0,
+                roadRoute: !!mobilityResult?.roadRoute,
               }}
             />
           )}
@@ -1417,6 +1445,8 @@ const App: React.FC = () => {
               onProfileChange={setMobilityProfileId}
               nightMode={mobilityNightMode}
               onNightModeChange={setMobilityNightMode}
+              roadSpeedOverrides={roadSpeedOverrides}
+              onRoadSpeedOverridesChange={setRoadSpeedOverrides}
               boxRole={mobilityBoxRole}
               onBoxRoleChange={setMobilityBoxRole}
               originPaint={mobilityOriginPaint}

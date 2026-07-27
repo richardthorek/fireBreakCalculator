@@ -16,6 +16,7 @@ import {
 } from './mobilityWorker';
 import { MovementEnsembleResult } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
+import { RoadSpeedOverrides } from './roadSpeedModel';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
@@ -54,7 +55,8 @@ export function runMobilitySearchInWorker(
   originKeys: string[],
   objectiveKeys: string[],
   profileId: string,
-  nightMode: boolean
+  nightMode: boolean,
+  roadSpeedOverrides?: RoadSpeedOverrides
 ): Promise<MobilitySearchOutcome> {
   const w = ensureWorker();
   const requestId = nextRequestId++;
@@ -67,6 +69,7 @@ export function runMobilitySearchInWorker(
     });
     const request: MobilityWorkerRequest = {
       kind: 'search', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      roadSpeedOverrides,
     };
     w.postMessage(request);
   });
@@ -79,6 +82,7 @@ export interface MovementEnsembleRequestOptions {
   /** Also derive and evaluate the recommended restriction set. */
   planRestrictions: boolean;
   maxRestrictions?: number;
+  roadSpeedOverrides?: RoadSpeedOverrides;
   onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun') => void;
   onLog?: (line: string) => void;
 }
@@ -119,6 +123,7 @@ export function runMovementEnsembleInWorker(
       kind: 'movement', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
       moverCount: options.moverCount, spreadId: options.spreadId, seed: options.seed,
       planRestrictions: options.planRestrictions, maxRestrictions: options.maxRestrictions,
+      roadSpeedOverrides: options.roadSpeedOverrides,
     };
     w.postMessage(request);
   });

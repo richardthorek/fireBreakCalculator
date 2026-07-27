@@ -3463,22 +3463,36 @@ presented as published."*
   as if we implemented it would be a fabrication. Referenced as prior art for
   the approach only.
 
-### Configurability (owner requirement)
+### Configurability (owner requirement) — IMPLEMENTED 2026-07-27
 
-Every table above ships as a **documented default the user can override**,
-following the precedent already set by `productionModel.ts`'s named,
-calibratable constants and the vegetation-override UI:
+Every table above ships as a **documented default the user can override**:
 
-- A road-speed profile object, defaults from the tables above, each entry
-  carrying its source string.
-- UI: an editable table in the Terrain panel's config area — per-class km/h,
-  reset-to-default per row and globally.
-- An edited row flips that class's confidence from `published` to
-  `user-override` (a third state — user values are neither our published
-  source nor our estimate). Surfaced in the panel and carried into GIS export
-  attributes and the AI briefing, matching how vegetation overrides already
-  behave.
-- Persist alongside existing config so a brigade or unit can calibrate once.
+- `RoadSpeedOverrides` (`roadSpeedModel.ts`) — a per-table, per-tag partial
+  record. `roadClassCeiling(way, overrides?)` takes the min across whichever
+  tags are present, each independently overridable; an edited component
+  flips `RoadClassResult.confidence` from `published` to `user-override`.
+- **UI**: `RoadSpeedOverridePanel.tsx`, an editable table for all four tables
+  (highway/surface/tracktype/smoothness) in the Terrain panel, directly under
+  the mover-profile selector — per-row reset, reset-all, and a header badge
+  showing how many classes are currently overridden. States plainly that it
+  only affects vehicle-gradient profiles.
+- **Plumbing**: threaded as a set-once **global**, not a parameter chased
+  through nine files (`edgeMobilityCost` → `runAccumulatedCostSearch` →
+  `movementSimulation.ts` → ... ) — `setRoadSpeedOverrides()`, same precedent
+  as `infrastructureService.ts`'s `setLocalTrailProvider`. The one real
+  subtlety: `mobilityWorker.ts` runs in an actual Web Worker, a SEPARATE
+  module instance with no shared memory with the main thread, so the global
+  must be set on BOTH sides — once on the main thread at the top of
+  `runMobilityAppreciation`, and once per request inside the worker, carried
+  over as a plain serialisable field on the request message.
+- **Persistence**: `localStorage` (`firebreak.terrainMobility.roadSpeedOverrides.v1`),
+  loaded lazily on first render so the very first run after a reload already
+  sees any saved overrides.
+- **Not yet done, tracked separately** (Next-up in master_plan.md): carrying
+  `user-override` confidence into GIS export attributes and the AI briefing
+  payload — the override mechanism itself works and is visibly flagged in
+  the panel and the run log, but export/briefing wiring is real, separate
+  work that was not attempted here rather than claimed done.
 
 ### Files
 
@@ -3491,7 +3505,9 @@ calibratable constants and the vegetation-override UI:
 | `webapp/src/terrain/roadRouting.ts` *(new)* | A* over `RoadGraph`; k-alternatives by edge penalty, reusing `corridorField.ts`'s existing diversification idiom |
 | `webapp/src/terrain/moverProfiles.ts` | No table changes; document that `roadSpeedKmh` is now a *ceiling*, composed via `min()` |
 | `webapp/src/terrain/mobilityCost.ts` | `edgeMobilityCost` accepts an optional road-class ceiling |
-| Config UI + persistence | Editable speed table, per-row reset, `user-override` flagging |
+| `webapp/src/terrain/roadRouteSearch.ts` *(new, 2026-07-27)* | Live-pipeline wiring — see "Slice A.9" below |
+| `webapp/src/components/RoadSpeedOverridePanel.tsx` *(new, 2026-07-27)* | Config UI |
+| Config UI + persistence | ✅ Editable speed table, per-row reset, `user-override` flagging, `localStorage` |
 
 ### Tests
 
@@ -3506,10 +3522,58 @@ Framework-free `node:assert`, matching `api/src/test/analysis.test.ts`:
 - Foot profiles are **unaffected** by road class — a regression guard on the
   deliberate decision above.
 - A user override wins over the sourced default and flips confidence.
+- The global-override singleton (`setRoadSpeedOverrides`) is picked up with
+  NO explicit argument; an explicit argument still wins over it; clearing it
+  reverts to the sourced default.
 - **The claim that matters:** a synthetic Lake George — origin west, objective
   east, an impassable water body spanning well beyond the direct corridor, and
   a road running around the northern end. The road route must be found. This
   is the whole point of the slice and must fail before the fix.
+
+### Slice A.9 — the road graph existed but nothing ever called it (2026-07-27)
+
+Found while starting the config-UI item above: `roadGraph.ts`/`roadRouting.ts`
+were built and proven correct in isolation (the Lake George synthetic test),
+but a repo-wide search turned up **zero** references to either module outside
+themselves and their own tests. `mobilityWorker.ts` — the ONLY place a real
+run actually searches for a route — only ever ran the hex-grid Dijkstra
+(`accumulatedCost.ts`), which still has the padded-box defect this whole
+section exists to fix. In plain terms: **the live app did not yet fix Lake
+George for vehicles.** The design's own claim ("fixes Lake George for
+vehicles... does not need the lazy hex grid to work") was true of the module,
+not of the running product.
+
+Root cause: the original 8-step checklist built and proved the road graph but
+never had an explicit "wire it into the live search" step — an oversight in
+the design, not a skipped implementation step.
+
+**Fix**: `roadRouteSearch.ts` (new) — `findVehicleRoadRoute(origin, objective,
+roadWays, profile, overrides?)`. Builds a `RoadGraph` from `MobilityGridResult.roadWays`
+(a new field, populated from the SAME `highway-mobility` fetch `mobilityGrid.ts`
+already made — no second network round-trip), snaps each painted area's
+bounding-box centroid onto the graph via a new `nodesWithin()` (all nodes
+within 3 km, not just the single nearest — a painted AREA has no one "correct"
+access point), and runs `findRoadRoute`. Called from `mobilityAppreciation.ts`
+right after the grid resolves, for `vehicle-gradient` profiles only, and
+logged/drawn on the map (`road-route-line`, amber dashed) as its own overlay.
+
+**Deliberately additive, not fused**: this result sits ALONGSIDE the hex-grid
+search's path/corridors/simulation, which is unchanged and still runs. A
+vehicle profile at Lake George now gets a real, correct road route even when
+the hex-grid search inside its padded box finds nothing — the actual
+field-reported bug is fixed for vehicles — but movement simulation,
+chokepoints and min-cut do not yet see road-graph routes. Fusing the two
+into one search is real future work, not attempted here.
+
+**Honesty on scope**: the reported route runs road-access-point to
+road-access-point — it explicitly does NOT include the off-road leg from a
+painted area to the road or from the road back to the painted area. Stated in
+both the log line and the map legend, never presented as a door-to-door ETA.
+
+Proven by `roadRouteSearch.test.ts` — the SAME synthetic Lake George geometry
+as `lakeGeorgeRoadRouting.test.ts`, but exercised through `findVehicleRoadRoute`
+with `PaintedArea` inputs (what the app actually has), not raw graph node IDs
+(what the isolated test used) — closing the exact gap this section reports.
 
 ---
 
@@ -3520,28 +3584,32 @@ the previous is green.
 
 **Slice A — roads (fixes Lake George for vehicles, box-free by construction)**
 
-1. Extract `surface`/`tracktype`/`smoothness` in both `infrastructureService`
+1. ✅ Extract `surface`/`tracktype`/`smoothness` in both `infrastructureService`
    copies. Verify parity between the webapp and API sets.
-2. Add the `'highway-mobility'` kind with motorway/trunk/primary included.
+2. ✅ Add the `'highway-mobility'` kind with motorway/trunk/primary included.
    Confirm the fire-break optimizer's behaviour is unchanged.
-3. `roadSpeedModel.ts` with the four sourced tables + tests.
-4. `roadGraph.ts` — build the network; test connectivity on a synthetic set.
-5. `roadRouting.ts` — A*, then k-alternatives by penalty.
-6. Compose into `mobilityCost.ts` via `min()`; regression-test that foot
+3. ✅ `roadSpeedModel.ts` with the four sourced tables + tests.
+4. ✅ `roadGraph.ts` — build the network; test connectivity on a synthetic set.
+5. ✅ `roadRouting.ts` — A*, then k-alternatives by penalty.
+6. ✅ Compose into `mobilityCost.ts` via `min()`; regression-test that foot
    profiles are untouched.
-7. Config UI + `user-override` flagging, carried into export and briefing.
-8. The Lake George synthetic test must pass.
+7. ✅ Config UI + `user-override` flagging. (Export/briefing carry-through
+   still open — tracked separately, not blocking.)
+8. ✅ The Lake George synthetic test must pass.
+9. ✅ **(A.9, found mid-step-7)** Wire the road graph into the actual LIVE
+   search — steps 1–8 built and proved the module correct in isolation but
+   nothing in the running app ever called it. See "Slice A.9" above.
 
 **Slice B — lazy grid (off-road; everything in §35 above)**
 
-9. Lazy cell materialisation behind the existing `MobilityGridCell` interface.
-10. Tile-ring expansion (async at tile granularity, keeping the worker search
+10. Lazy cell materialisation behind the existing `MobilityGridCell` interface.
+11. Tile-ring expansion (async at tile granularity, keeping the worker search
     synchronous).
-11. Cost budget `α·C*`, α user-adjustable, 2× default.
-12. Corridor-count termination (2–5), reusing `corridorField.ts` bundling.
-13. Two-pass coarse→fine; Terrain-RGB tiles coarse, chunked DEM fine.
-14. Honest no-route reporting + frontier painting.
-15. Delete the bounding-box construction in `mobilityGrid.ts:101-112`.
+12. Cost budget `α·C*`, α user-adjustable, 2× default.
+13. Corridor-count termination (2–5), reusing `corridorField.ts` bundling.
+14. Two-pass coarse→fine; Terrain-RGB tiles coarse, chunked DEM fine.
+15. Honest no-route reporting + frontier painting.
+16. Delete the bounding-box construction in `mobilityGrid.ts:101-112`.
 
 **Throughout:** `npm run build` (webapp) and `npm run test:unit` (api) must
 pass; TypeScript strict, no unjustified `any`; every estimated or overridden

@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 — roadmap reorganised into Shipped / Next up / Blocked, sorted by effort; see Recent Updates for the dated history.
+**Last Updated**: July 27, 2026 — Slice A road-speed config UI shipped, plus the Slice A.9 live-wiring fix; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -56,6 +56,8 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 18 | Slice A — road network graph + routing (core) | Real road graph (nodes/edges from OSM ways, A\* on a road edge set) — box-free by construction, fixes the Lake George "no route" defect for vehicle movement, closes the road-class gap. Speeds from the OSRM car/foot profiles, composed as a ceiling via `min()` with each mover profile's own `roadSpeedKmh`. Wired into BOTH the new road graph and the existing hex-grid onTrail bonus. Proven with a synthetic Lake-George-scale test (route found, genuine detour, control with the connector removed correctly fails) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 19 | Painting is real hex cells, not circles | Brush dabs are now actual hex-cell clusters (100m circumradius, `hexRing`/`hexSpiral` — the same hex math the analysis grid uses) instead of zoom-relative circles; small/medium/large/xl = 1/10/100/1000 hexes. Per-area local anchor avoids whole-country distortion a single global tiling would cause | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | 20 | Paint↔analysis grid reconciliation | `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` now test real geodesic area overlap (`@turf/intersect`/`@turf/area`) between each analysis hex and the resolved painted polygon, not just the cell centre — a coarse analysis hex only seeds as origin/objective when a real (≥15%) share of it is actually painted, faithful regardless of the fixed 100m paint-hex size vs. the analysis grid's own `chooseHexSize` result | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
+| 21 | Slice A — road-speed config UI + user-override plumbing | `RoadSpeedOverridePanel.tsx` (editable table, per-row/global reset, `localStorage`), threaded as a set-once global (`setRoadSpeedOverrides`) rather than a parameter chased through 9 files, set on BOTH sides of the `mobilityWorker.ts` Worker boundary since a Worker shares no memory with the main thread | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 22 | Slice A.9 — road-network routing wired into the LIVE app (found + fixed) | Discovered mid-step-21: `roadGraph.ts`/`roadRouting.ts` were correct in isolation (Lake George synthetic test) but never called by the running app — only the hex-grid search ever ran, so Lake George was still genuinely unfixed for vehicles in the product. `roadRouteSearch.ts` (new) wires a box-free road route into `mobilityAppreciation.ts` for vehicle profiles, additive alongside the hex-grid search, drawn on the map as its own amber line. Re-proven end to end with `PaintedArea` inputs (what the app actually has), not raw graph node IDs | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 
 ### Next up
 
@@ -64,8 +66,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
 | 🐞 **Slice B — lazy hex grid, cost budget, corridor stop** | The off-road half. Field-reported (Lake George W→E): the AOI is padded by 20% *of the origin↔objective span*, so a straight run across a long perpendicular obstacle gets almost no room to detour and returns "no route" — unable to distinguish "there is no way" from "I wasn't allowed to look". Lazy grid materialisation under an A* frontier, a **cost budget** (α·C\*, 2× default, user-adjustable) replacing the geometric bound, stop on **2–5 distinct corridors**, two uniform passes (coarse-wide on Terrain-RGB tiles, fine-narrow on chunked DEM), and an honest no-route report that paints the explored frontier | L | Slice A (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| Slice A — user-configurable road-speed overrides | The four OSRM-sourced tables (highway/surface/tracktype/smoothness) are implemented and composed correctly, but not yet editable — an edited class should flip to a `user-override` confidence and carry into GIS export/AI briefing, matching the vegetation-override pattern | S/M | Slice A core (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | A "fidelity" selector feeding the analysis grid's target cell count | Owner's paint↔analysis reconciliation answer named "user selection of fidelity" as one input to the eventual analysis hex size, alongside area scale — today `chooseHexSize`'s target count is a fixed constant | S | Paint↔analysis reconciliation (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
+| Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
 | OSM water relations (multipolygon lakes) | Only `way`-tagged water features are fetched today; add relation support | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
@@ -98,6 +101,57 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Slice A road-speed config UI shipped, AND a genuine gap
+  found + fixed: road routing wasn't actually live (steps 21–22)**: owner:
+  "Keep going with slice a and b." Two things happened investigating the
+  config-UI item (step 21, the last item Slice A's original checklist
+  named).
+
+  First, the UI itself: `RoadSpeedOverridePanel.tsx` — an editable table for
+  all four OSRM-sourced tables, per-row/global reset, a header badge showing
+  how many classes are overridden, `localStorage`-persisted. The overrides
+  reach the cost model as a set-once GLOBAL (`setRoadSpeedOverrides`) rather
+  than a parameter threaded through the nine files between `edgeMobilityCost`
+  and here — same precedent as `infrastructureService.ts`'s
+  `setLocalTrailProvider`. The one real subtlety: `mobilityWorker.ts` is an
+  actual Web Worker, a separate module instance with no shared memory with
+  the main thread, so the global has to be set on BOTH sides — main thread
+  once per run, worker once per request off a new message field.
+
+  Second, and more consequential: while wiring this in, a repo-wide search
+  for `roadGraph`/`roadRouting` usage turned up **zero** references outside
+  the modules' own tests. `mobilityWorker.ts` — the only place a real run
+  ever searches for a route — was still exclusively running the hex-grid
+  Dijkstra, which still has the padded-box defect this whole section (§35)
+  exists to fix. Put plainly: despite step 18 shipping "Slice A — road
+  network graph + routing (core)" as ✅, **the live app had not actually
+  fixed Lake George for vehicles** — the module was correct and proven in
+  isolation, but nothing in the running product ever called it. This was a
+  gap in the original design's checklist (no "wire into the live search"
+  step was ever written), not a skipped implementation step.
+
+  Fixed via `roadRouteSearch.ts` (new): builds a road graph from data
+  `mobilityGrid.ts` already fetches (`roadWays`, a new field — no second
+  network round-trip), snaps each painted area onto it via a new
+  `nodesWithin()` (every node within 3 km, not just the nearest — a painted
+  AREA has no one "correct" road-access point), and runs the existing A*.
+  Wired into `mobilityAppreciation.ts` for vehicle profiles, additive
+  alongside the unchanged hex-grid search, drawn on the map as its own
+  amber dashed line with an honest "road access to road access, excludes
+  the off-road legs" caveat in both the log and the legend. Re-proven with
+  the SAME synthetic Lake George geometry `lakeGeorgeRoadRouting.test.ts`
+  uses, but through `findVehicleRoadRoute` with `PaintedArea` inputs — the
+  shape the app actually has — closing the exact gap this update reports,
+  not just re-testing what was already proven.
+
+  17 new/extended tests (global-override singleton behaviour, the
+  live-pipeline wiring, its own Lake George + control cases). Full
+  regression (60 tests across 8 files) green; `tsc`/`npm run build` clean.
+  Not fused into movement simulation/corridors/chokepoints/min-cut yet
+  (still hex-grid-only) — tracked as its own Next-up item rather than
+  implied by this one. GIS export/AI briefing carry-through for
+  `user-override` confidence also tracked separately, not done here.
 
 - **2026-07-27 — Paint↔analysis grid reconciliation shipped (step 20)**: the
   Next-up item spawned by the painting rework above is now built.

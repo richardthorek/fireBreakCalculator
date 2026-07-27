@@ -39,6 +39,7 @@ export interface MobilityLegendProps {
     water: boolean;
     unitPath: boolean;
     movers: boolean;
+    roadRoute: boolean;
   };
   overlayOpacity: number;
   onOverlayOpacityChange: (value: number) => void;
@@ -206,6 +207,19 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                     </Swatch>
                   </>
                 )}
+              </ul>
+            </section>
+          )}
+
+          {present.roadRoute && (
+            <section>
+              <h4>Road-network route (docs §35)</h4>
+              <ul>
+                <Swatch color="#f59e0b" kind="dash">
+                  Amber dashed line — fastest ROAD-ONLY route between the painted areas
+                  (vehicle profiles), independent of the hex-grid search above. Road
+                  access point to road access point — excludes the off-road legs.
+                </Swatch>
               </ul>
             </section>
           )}

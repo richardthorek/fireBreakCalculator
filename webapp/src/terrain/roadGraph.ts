@@ -159,3 +159,20 @@ export function nearestNode(graph: RoadGraph, point: LatLngLike, maxDistanceM: n
   }
   return best;
 }
+
+/**
+ * Every graph node within `maxDistanceM` of `point` — the multi-source/
+ * multi-target seed set `findRoadRoute`/`findKDissimilarRoadRoutes` expect
+ * (`originNodeIds`/`objectiveNodeIds`), rather than a single nearest node.
+ * A painted origin/objective is an AREA, not a point, so there is genuinely
+ * no single "correct" access node — any road within snapping distance is a
+ * legitimate candidate, and A* itself picks whichever actually gives the
+ * cheapest route. Same linear-scan caveat as `nearestNode`.
+ */
+export function nodesWithin(graph: RoadGraph, point: LatLngLike, maxDistanceM: number): RoadNode[] {
+  const found: RoadNode[] = [];
+  for (const node of graph.nodes.values()) {
+    if (haversineM(point, node) <= maxDistanceM) found.push(node);
+  }
+  return found;
+}

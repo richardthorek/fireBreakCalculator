@@ -28,12 +28,16 @@ import { COUNTER_MEASURES } from '../terrain/counterMeasures';
 import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
 import { BEHAVIOUR_SPREADS, MovementEnsembleResult } from '../terrain/movementSimulation';
 import { CorridorField } from '../terrain/corridorField';
+import { RoadSpeedOverrides } from '../terrain/roadSpeedModel';
+import { RoadSpeedOverridePanel } from './RoadSpeedOverridePanel';
 
 export interface MobilityPanelProps {
   profileId: string;
   onProfileChange: (id: string) => void;
   nightMode: boolean;
   onNightModeChange: (v: boolean) => void;
+  roadSpeedOverrides: RoadSpeedOverrides;
+  onRoadSpeedOverridesChange: (overrides: RoadSpeedOverrides) => void;
   boxRole: 'origin' | 'objective' | null;
   onBoxRoleChange: (role: 'origin' | 'objective' | null) => void;
   originPaint: PaintedArea;
@@ -102,6 +106,7 @@ function groupByFamily(profiles: MoverProfile[]): [MoverFamily, MoverProfile[]][
 
 export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   profileId, onProfileChange, nightMode, onNightModeChange,
+  roadSpeedOverrides, onRoadSpeedOverridesChange,
   boxRole, onBoxRoleChange, originPaint, objectivePaint,
   brushSize, onBrushSizeChange, onClearPaint,
   running, logLines, result,
@@ -172,6 +177,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
           Night / limited visibility
         </label>
       </div>
+
+      <RoadSpeedOverridePanel overrides={roadSpeedOverrides} onOverridesChange={onRoadSpeedOverridesChange} />
 
       {/* How the simulated movers behave. This is the model's biggest
           assumption and it belongs in front of the user BEFORE the run, not

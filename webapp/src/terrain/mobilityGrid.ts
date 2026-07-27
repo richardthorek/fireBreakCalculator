@@ -84,6 +84,12 @@ export interface MobilityGridResult {
    *  hex cells it influenced. Empty when hydrologyAvailable's OSM half
    *  returned nothing (query failed, or genuinely no mapped water here). */
   waterFeatures: InfrastructureTrail[];
+  /** The raw OSM `highway-mobility` ways this run fetched (motorway/trunk/
+   *  primary included — docs §35) — kept alongside the per-cell `onTrail`
+   *  derived fields so a box-free ROAD-GRAPH search (`roadRouteSearch.ts`)
+   *  can be built from the SAME fetch, not a second network round-trip.
+   *  Empty when infrastructureAvailable is false. */
+  roadWays: InfrastructureTrail[];
   /** True when the painted AOI was large enough that the hex size had to be
    *  coarsened (doubled at least once) to stay inside MAX_HEX_CELLS — an
    *  honesty flag, not a silent trade-off: a coarsened grid is still a real
@@ -329,6 +335,7 @@ export async function buildMobilityGrid(
     infrastructureAvailable: infra.available,
     hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
     waterFeatures: waterways.trails,
+    roadWays: infra.trails,
     usedCoarseGrid: tries > 0,
   };
 }
