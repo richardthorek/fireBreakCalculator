@@ -86,6 +86,7 @@
  */
 
 import { logger } from '../../utils/logger';
+import { decodeImageBytes } from '../../utils/nvisVegetationService';
 
 const NAFI_WMS_BASE =
   (import.meta.env.VITE_NAFI_WMS_URL as string | undefined) || 'https://firenorth.org.au/geoserver/public/ows';
@@ -242,4 +243,316 @@ export async function fetchNAFITimeSinceFire(lat: number, lng: number, signal?: 
 
 export function _clearNAFICache(): void {
   Object.keys(cache).forEach((k) => delete cache[k]);
+}
+
+// ---------------------------------------------------------------------------
+// AREA QUERY (2026-07-27) — the mechanism the module header above flagged as
+// the concrete next step, now built. One request PER WINDOW for a whole grid
+// (2 requests total, not one per cell/point) — the same "area-batched, not
+// per-point" discipline as NVIS's vegetation raster (docs "Area-query
+// vegetation").
+//
+// WHY WCS `GetCoverage` + PNG, not the GeoTIFF the module header originally
+// guessed at: live-verified this session (via `curl` + Pillow, not inferred).
+// `DescribeCoverage` for `tslb_last10_250m` lists GeoTIFF/GIF/JPEG/PNG/TIFF as
+// the coverage's own supported formats. The GeoTIFF path was tried first and
+// rejected: GeoServer serves it as a TILED (not simple-stripped) 8-bit
+// palette raster (`TileWidth`/`TileOffsets` present in the IFD), which would
+// need a real TIFF-tile decoder — meaningfully more implementation risk than
+// this repo's existing, already-trusted pattern. PNG sidesteps all of that:
+// it decodes with the SAME `decodeImageBytes` canvas helper NVIS's own area
+// raster already uses, and a live 1×1-pixel cross-check confirmed it encodes
+// the identical underlying value as the point-query's `GetFeatureInfo` call
+// (both resolved to years=1 at the same coordinate) — just as an RGB colour
+// (indexed differently per PNG, since GD renumbers its own palette per
+// image) rather than a raw index, which is why colour-legend matching is
+// still needed, exactly as it already is for NVIS's MVG raster.
+//
+// THE NO-ANSWER SIGNAL: a pixel with no plausible fire-recency value for a
+// window (either genuinely outside the data footprint, or unburnt within
+// that specific window) renders fully TRANSPARENT (alpha 0) — live-confirmed
+// against a known open-ocean point that returned raw property "_": 11 (i.e.
+// past `MAX_PLAUSIBLE_YEARS.last10`) via GetFeatureInfo, and alpha 0 via the
+// PNG area path for the identical point. This module does not attempt to
+// further distinguish "genuinely no data" from "no fire in this window" —
+// both already collapse to the same "try the next window, else no answer"
+// behaviour the point-query function above uses, so preserving that same
+// ambiguity here is a deliberate consistency choice, not an oversight.
+//
+// THE 22–26 YEAR TIE (`tslb_longterm_250m` only): the live-fetched legend has
+// FIVE consecutive year values (22–26) rendered in the identical colour
+// (53,80,89) — the source's own palette design flattens the tail of its
+// ramp, not a decode bug (confirmed by reading the raw GeoTIFF ColorMap
+// tag directly, independent of the PNG path). A colour match against that
+// shared colour cannot recover which of the five years it actually is.
+// Resolved conservatively for THIS product's purpose (denser regrowth over a
+// longer unburnt period generally means harder going, and this project's
+// standing rule is to never understate difficulty on ambiguous data): the
+// HIGHEST year in the tied band (26) is reported, flagged `coarseBand: true`
+// so callers/UI can carry the caveat rather than presenting it as an exact
+// figure.
+
+/** RGB legend entries verified live this session (curl + Pillow against the
+ *  server's own GeoTIFF ColorMap tag) for each window's 1..N year ramp. Never
+ *  re-derived from a guess — these are the actual palette colours observed. */
+interface NAFIColourEntry { years: number; r: number; g: number; b: number }
+
+const NAFI_LEGEND_LAST10: NAFIColourEntry[] = [
+  { years: 1, r: 121, g: 35, b: 33 },
+  { years: 2, r: 230, g: 56, b: 39 },
+  { years: 3, r: 240, g: 130, b: 56 },
+  { years: 4, r: 255, g: 210, b: 0 },
+  { years: 5, r: 250, g: 245, b: 119 },
+  { years: 6, r: 208, g: 242, b: 17 },
+  { years: 7, r: 51, g: 247, b: 74 },
+  { years: 8, r: 107, g: 213, b: 124 },
+  { years: 9, r: 139, g: 239, b: 210 },
+  { years: 10, r: 139, g: 205, b: 237 },
+];
+
+const NAFI_LEGEND_LONGTERM: NAFIColourEntry[] = [
+  { years: 1, r: 121, g: 35, b: 33 },
+  { years: 2, r: 200, g: 40, b: 23 },
+  { years: 3, r: 238, g: 88, b: 88 },
+  { years: 4, r: 240, g: 130, b: 56 },
+  { years: 5, r: 253, g: 164, b: 8 },
+  { years: 6, r: 255, g: 210, b: 0 },
+  { years: 7, r: 250, g: 245, b: 119 },
+  { years: 8, r: 208, g: 242, b: 17 },
+  { years: 9, r: 151, g: 231, b: 25 },
+  { years: 10, r: 51, g: 247, b: 74 },
+  { years: 11, r: 10, g: 220, b: 35 },
+  { years: 12, r: 107, g: 213, b: 124 },
+  { years: 13, r: 75, g: 220, b: 180 },
+  { years: 14, r: 60, g: 240, b: 240 },
+  { years: 15, r: 155, g: 235, b: 235 },
+  { years: 16, r: 210, g: 245, b: 245 },
+  { years: 17, r: 205, g: 225, b: 225 },
+  { years: 18, r: 160, g: 200, b: 200 },
+  { years: 19, r: 132, g: 170, b: 182 },
+  { years: 20, r: 91, g: 137, b: 151 },
+  { years: 21, r: 78, g: 118, b: 130 },
+  // 22-26 share one colour in the source palette (see module note) — the
+  // tie is resolved by matchNAFIColour, not by listing duplicate entries.
+  { years: 22, r: 53, g: 80, b: 89 },
+  { years: 23, r: 53, g: 80, b: 89 },
+  { years: 24, r: 53, g: 80, b: 89 },
+  { years: 25, r: 53, g: 80, b: 89 },
+  { years: 26, r: 53, g: 80, b: 89 },
+];
+
+const LEGEND: Record<NAFITimeSinceFireWindow, NAFIColourEntry[]> = {
+  last10: NAFI_LEGEND_LAST10,
+  longterm: NAFI_LEGEND_LONGTERM,
+};
+
+/** Squared-distance colour tolerance — same threshold NVIS's own
+ *  `matchColorToLegend` uses for the same anti-aliasing concern (a solid
+ *  legend colour rendered through PNG can pick up minor filtering noise). */
+const COLOR_MATCH_TOLERANCE_SQ = 300;
+
+/**
+ * Nearest legend colour within tolerance, resolving an exact colour TIE
+ * (only occurs in `NAFI_LEGEND_LONGTERM`'s flattened 22-26 band) to the
+ * HIGHEST tied year — see module note on why higher/harder is the
+ * conservative choice here. Pure — exported for tests.
+ */
+export function matchNAFIColour(
+  r: number, g: number, b: number, window: NAFITimeSinceFireWindow
+): { years: number; coarseBand: boolean } | null {
+  let bestD = Infinity;
+  let tied: NAFIColourEntry[] = [];
+  for (const e of LEGEND[window]) {
+    const d = (r - e.r) ** 2 + (g - e.g) ** 2 + (b - e.b) ** 2;
+    if (d < bestD - 1e-6) {
+      bestD = d;
+      tied = [e];
+    } else if (Math.abs(d - bestD) <= 1e-6) {
+      tied.push(e);
+    }
+  }
+  if (bestD > COLOR_MATCH_TOLERANCE_SQ || tied.length === 0) return null;
+  const years = Math.max(...tied.map((e) => e.years));
+  return { years, coarseBand: tied.length > 1 };
+}
+
+/**
+ * Build the WCS 1.0.0 `GetCoverage` KVP URL for one window's area raster.
+ * BBOX axis order verified LIVE this session: WCS 1.0.0 with
+ * `CRS=EPSG:4326` on this GeoServer takes (lng,lat) order — NOT the
+ * lat/lng order WMS 1.3.0 uses for the same EPSG code (which is exactly why
+ * the point-query function above sidesteps the ambiguity with `CRS:84`
+ * instead). Getting this backwards would silently mirror the sampled grid,
+ * so it is called out here rather than left implicit.
+ */
+export function buildNAFIAreaCoverageUrl(
+  bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  width: number,
+  height: number,
+  window: NAFITimeSinceFireWindow
+): string {
+  return (
+    `${NAFI_WMS_BASE}?SERVICE=WCS&VERSION=1.0.0&REQUEST=GetCoverage` +
+    `&COVERAGE=public:${LAYER_NAME[window]}&CRS=EPSG:4326` +
+    `&BBOX=${bounds.minLng},${bounds.minLat},${bounds.maxLng},${bounds.maxLat}` +
+    `&WIDTH=${width}&HEIGHT=${height}&FORMAT=PNG`
+  );
+}
+
+/** Max side length requested from the upstream raster — matches NVIS's own
+ *  export-size cap (`MAX_EXPORT_PX`), same rationale: keep the single request
+ *  small regardless of how large the painted AOI is, coarsening rather than
+ *  ever growing unbounded. */
+const MAX_AREA_PX = 400;
+
+export interface NAFIAreaRaster {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+  width: number;
+  height: number;
+  /** Resolved years-since-fire per pixel (last10 preferred, longterm
+   *  fallback — same precedence as the point-query function). -1 = no
+   *  plausible answer from either window at this pixel. */
+  years: Int16Array;
+  /** Which window answered each pixel: 0 = last10, 1 = longterm, -1 = neither
+   *  (see `years`). Tracked directly during resolution rather than inferred
+   *  from the years value afterward — last10 and longterm's legends overlap
+   *  in range (both can answer e.g. "5 years"), so a post-hoc guess from the
+   *  number alone would be wrong for a real fraction of pixels. */
+  window: Int8Array;
+  /** 1 where the resolved value came from `tslb_longterm_250m`'s colour-tied
+   *  22-26 band (see module note) — a coarser figure than the rest of the
+   *  raster, flagged per-pixel rather than for the whole raster since most
+   *  pixels won't hit it. */
+  coarseBand: Uint8Array;
+  /** 1 where this pixel is south of the coarse validated-latitude cutoff
+   *  (`CORE_VALIDATED_SOUTH_LAT`) — mirrors the point-query function's own
+   *  'estimated' confidence tier, computed per-pixel since a large AOI can
+   *  straddle that latitude. */
+  estimated: Uint8Array;
+  source: string;
+}
+
+/**
+ * Fetch BOTH time-since-fire windows for a bbox as ONE PNG each (2 upstream
+ * requests total, regardless of grid size) and decode to a per-pixel years
+ * raster. Null on any failure (decode unsupported — browser-only, same
+ * limitation `decodeImageBytes` documents — or a network/HTTP error),
+ * signalling the caller to fall back to the point-query function above.
+ */
+export async function fetchNAFITimeSinceFireArea(
+  bounds: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  signal?: AbortSignal
+): Promise<NAFIAreaRaster | null> {
+  const { minLat, minLng, maxLat, maxLng } = bounds;
+  if (maxLat <= minLat || maxLng <= minLng) return null;
+  if (!inTechnicalBbox(minLat, minLng) && !inTechnicalBbox(maxLat, maxLng)) return null;
+
+  const degWidth = maxLng - minLng;
+  const degHeight = maxLat - minLat;
+  const nativePxPerDeg = 1 / 0.0025; // 250 m native pixel, in degrees (matches DescribeCoverage's offsetVector)
+  let width = Math.max(2, Math.ceil(degWidth * nativePxPerDeg));
+  let height = Math.max(2, Math.ceil(degHeight * nativePxPerDeg));
+  const maxSide = Math.max(width, height);
+  if (maxSide > MAX_AREA_PX) {
+    const scale = MAX_AREA_PX / maxSide;
+    width = Math.max(2, Math.round(width * scale));
+    height = Math.max(2, Math.round(height * scale));
+  }
+
+  const fetchWindow = async (window: NAFITimeSinceFireWindow) => {
+    const resp = await fetch(buildNAFIAreaCoverageUrl(bounds, width, height, window), { signal });
+    if (!resp.ok) {
+      logger.warn('NAFI area GetCoverage HTTP', window, resp.status, resp.statusText);
+      return null;
+    }
+    return decodeImageBytes(await resp.blob());
+  };
+
+  let last10: { width: number; height: number; data: Uint8ClampedArray } | null;
+  let longterm: { width: number; height: number; data: Uint8ClampedArray } | null;
+  try {
+    [last10, longterm] = await Promise.all([fetchWindow('last10'), fetchWindow('longterm')]);
+  } catch (e) {
+    logger.warn('NAFI area query failed', e);
+    return null;
+  }
+  if (!last10 && !longterm) return null; // decode unsupported (non-browser) or both requests failed
+
+  const years = new Int16Array(width * height).fill(-1);
+  const windowAt = new Int8Array(width * height).fill(-1);
+  const coarseBand = new Uint8Array(width * height);
+  const estimated = new Uint8Array(width * height);
+  let matched = 0;
+
+  for (let py = 0; py < height; py++) {
+    const lat = maxLat - ((py + 0.5) / height) * (maxLat - minLat);
+    const rowEstimated = lat < CORE_VALIDATED_SOUTH_LAT ? 1 : 0;
+    for (let px = 0; px < width; px++) {
+      const i = py * width + px;
+      estimated[i] = rowEstimated;
+      const o = i * 4;
+
+      if (last10 && last10.data[o + 3] >= 128) {
+        const m = matchNAFIColour(last10.data[o], last10.data[o + 1], last10.data[o + 2], 'last10');
+        if (m) {
+          years[i] = m.years;
+          windowAt[i] = 0;
+          coarseBand[i] = m.coarseBand ? 1 : 0;
+          matched++;
+          continue;
+        }
+      }
+      if (longterm && longterm.data[o + 3] >= 128) {
+        const m = matchNAFIColour(longterm.data[o], longterm.data[o + 1], longterm.data[o + 2], 'longterm');
+        if (m) {
+          years[i] = m.years;
+          windowAt[i] = 1;
+          coarseBand[i] = m.coarseBand ? 1 : 0;
+          matched++;
+        }
+      }
+    }
+  }
+
+  if (matched === 0) {
+    logger.warn('NAFI area query decoded but matched no pixel against either legend — falling back');
+    return null;
+  }
+
+  return {
+    minLat, minLng, maxLat, maxLng, width, height,
+    years, window: windowAt, coarseBand, estimated,
+    source:
+      'NAFI (North Australia & Rangelands Fire Information), Charles Darwin University — ' +
+      `${LAYER_NAME.last10}/${LAYER_NAME.longterm} via WCS GetCoverage area query (firenorth.org.au).`,
+  };
+}
+
+/**
+ * Sample a fetched area raster at a point — pure, exported for tests. Mirrors
+ * `nvisVegetationService.ts`'s `rasterCodeAt` contract: null outside the
+ * raster's own bounds or where no pixel matched either legend.
+ */
+export function sampleNAFIAreaRaster(raster: NAFIAreaRaster, lat: number, lng: number): NAFITimeSinceFireResult | null {
+  if (lat < raster.minLat || lat > raster.maxLat || lng < raster.minLng || lng > raster.maxLng) return null;
+  const px = Math.min(raster.width - 1, Math.max(0, Math.floor(((lng - raster.minLng) / (raster.maxLng - raster.minLng)) * raster.width)));
+  const py = Math.min(raster.height - 1, Math.max(0, Math.floor(((raster.maxLat - lat) / (raster.maxLat - raster.minLat)) * raster.height)));
+  const i = py * raster.width + px;
+  const yearsSinceFire = raster.years[i];
+  if (yearsSinceFire < 0 || raster.window[i] < 0) return null;
+
+  const window: NAFITimeSinceFireWindow = raster.window[i] === 0 ? 'last10' : 'longterm';
+  const confidence: 'published' | 'estimated' = raster.estimated[i] ? 'estimated' : 'published';
+  const coarseNote = raster.coarseBand[i]
+    ? ' Colour-band-limited: the source palette does not distinguish this figure from nearby years in its 22-26yr band — treat as approximate.'
+    : '';
+  return {
+    yearsSinceFire,
+    window,
+    confidence,
+    source: raster.source + coarseNote,
+  };
 }

@@ -2498,6 +2498,115 @@ a live Foundry deployment remains unverified in this sandbox, same as the
 rest of the AI assistant feature (docs/AI_ASSISTANT.md §1) — **sanity-check a
 real briefing once `deployAiAssistant=true` is provisioned**.
 
+## 31. NAFI time-since-fire — a real area-query mechanism (2026-07-27)
+
+Closes the backlog item `nafiFireHistoryService.ts`'s own module header left
+open: "SCOPE CUT, stated plainly: POINT query only, not an area/tile query
+... flagged here as the concrete next step for whoever wires an area form
+in". Built and **live-verified this session** (via `curl` + Pillow against
+the real `firenorth.org.au` GeoServer, not inferred from documentation) —
+same discipline the point-query module itself set.
+
+**What was tried first and rejected, stated rather than hidden**: the module
+header's own guess was a `WCS GetCoverage` raw-grid extract. `DescribeCoverage`
+confirms GeoTIFF is a supported format, but the actual served GeoTIFF turned
+out to be a **tiled** (not simply-stripped) 8-bit palette raster (`TileWidth`/
+`TileOffsets` present) — a real TIFF-tile decoder is meaningfully more
+implementation risk than this repo's already-trusted pattern, so that path
+was dropped in favour of **PNG**, which the coverage also serves and which
+decodes with the exact same `decodeImageBytes` canvas helper NVIS's own area
+raster already uses (now exported from `nvisVegetationService.ts` for reuse,
+rather than a second copy of the canvas-decode boilerplate).
+
+**What was verified live, precisely, before writing any resolution logic**:
+- A 1×1-pixel `WCS GetCoverage` request at a known coordinate returned the
+  identical raw value (`1`) as the point-query function's own `GetFeatureInfo`
+  call at the same coordinate — confirming the PNG path answers the same
+  question as the trusted point path, just needing a colour-legend match
+  (RGB) rather than exposing the raw index directly (GD renumbers its own
+  per-image palette, so the *index* isn't portable across requests — the
+  *colour* is).
+- **WCS 1.0.0's BBOX axis order for `CRS=EPSG:4326` on this server is
+  (lng,lat)** — confirmed by a live request that correctly returned the
+  known point's value. This is the OPPOSITE of what WMS 1.3.0 uses for the
+  same EPSG code (which is exactly why the point-query function sidesteps
+  the ambiguity with `CRS:84` instead) — an easy way to silently mirror the
+  whole sampled grid if assumed rather than checked, so it's called out
+  explicitly in `buildNAFIAreaCoverageUrl`'s own doc comment.
+- **The "no plausible answer" signal is PNG alpha, not a specific colour**:
+  a known open-ocean point (raw value `11` via `GetFeatureInfo`, i.e. past
+  `MAX_PLAUSIBLE_YEARS.last10`) rendered fully **transparent** (alpha 0) via
+  the PNG area path at the identical coordinate — so the area path reuses
+  exactly the same "positive NoData short-circuits, never treated as a
+  fabricated value" convention NVIS's own raster already established,
+  rather than inventing a new one.
+- **The colour legend was read from the server's own GeoTIFF `ColorMap` tag**
+  directly (not eyeballed off a rendered image) — 10 distinct colours for
+  `tslb_last10_250m` (years 1-10), 26 for `tslb_longterm_250m` (years 1-26),
+  transcribed verbatim into `NAFI_LEGEND_LAST10`/`NAFI_LEGEND_LONGTERM`.
+- **A genuine, source-side ambiguity found and preserved, not smoothed over**:
+  `tslb_longterm_250m`'s palette renders years 22-26 in the IDENTICAL colour
+  `(53,80,89)` — confirmed from the raw ColorMap tag, so it's the source's
+  own design choice (a flattened ramp tail), not a decode bug. A colour match
+  against that shared colour genuinely cannot recover which of the five
+  years it is. Resolved to the **highest** tied year (26), flagged
+  `coarseBand: true` per-pixel — the conservative direction for a mobility
+  tool (longer time-since-fire generally means more regrowth/harder going,
+  and this project's standing rule is to never understate difficulty on
+  ambiguous data, the same reasoning the cross-slope proxy's own
+  "worst-case in this cell's direction" choice used in §27).
+
+**API shape** (`nafiFireHistoryService.ts`): `fetchNAFITimeSinceFireArea(bounds)`
+fetches BOTH windows as ONE PNG each — **2 upstream requests total for a
+whole grid, not one per cell** (the exact discipline the module header
+demanded, matching NVIS's "one export image per corridor" convention) —
+decodes both, and resolves a per-pixel `NAFIAreaRaster` (`years` Int16Array,
+`-1` sentinel for no plausible answer; `window` Int8Array recording WHICH
+layer actually answered each pixel — tracked directly during resolution,
+not inferred from the years value afterward, since last10 and longterm's
+legends overlap in range and a post-hoc guess would be wrong for a real
+fraction of pixels; `coarseBand`/`estimated` Uint8Arrays). `sampleNAFIAreaRaster(raster, lat, lng)`
+mirrors NVIS's `rasterCodeAt` contract exactly (null outside the raster's own
+bounds, same pixel-index arithmetic) and returns the *same*
+`NAFITimeSinceFireResult` shape the point-query function already returns, so
+a caller can use either interchangeably. Export sized to a request-count-
+bounded cap (`MAX_AREA_PX = 400`, mirroring NVIS's own `MAX_EXPORT_PX`) —
+large AOIs get a coarser raster, never a bigger request.
+
+**Deliberately NOT done in this pass, stated plainly rather than silently
+dropped:**
+- **Not wired into `mobilityGrid.ts`/`MobilityGridCell`/the cost model.** The
+  backlog item asked specifically for "an area-query mechanism... so Tier 1
+  data CAN be sampled per grid cell" — that mechanism is what this section
+  delivers. Actually consuming it (adding a years-since-fire field to
+  `MobilityGridCell`, and deciding HOW it should modulate structure/
+  trafficability alongside vegetation type — docs §10.3(c) names the
+  combination as the target, but the actual weighting is its own calibration
+  decision) is a separate design pass, not folded in here under time
+  pressure — doing that hastily is exactly the kind of under-verified
+  wiring this project's data-honesty rule warns against.
+- **DEA's own fractional-cover/water-observations layers are NOT covered.**
+  `deaOwsClient.ts` is a genuinely different server (`datacube-ows`, not
+  GeoServer), a different response shape, and was not re-investigated for an
+  area-query form this pass — its own area mechanism, if built, needs its
+  own live verification pass exactly like this one, not an assumption that
+  NAFI's approach transfers.
+
+**Verification**: `tsc --noEmit`/`npm run build` clean. A standalone Node
+smoke test (real module, disposable vite lib-mode entry, deleted before
+commit) covers everything that's pure and doesn't need a browser: exact and
+near (anti-aliased) colour matches for both legends, the 22-26 tie resolving
+to 26 with `coarseBand: true`, no match for an unrelated colour, the WCS URL's
+`(lng,lat)` BBOX order and PNG format, and `sampleNAFIAreaRaster` against a
+hand-built synthetic raster (a `-1`-sentinel pixel returns null rather than a
+fabricated year, a resolved pixel carries the right window/confidence/coarse
+caveat, a point outside the raster's bounds returns null). The actual
+`fetch()` + canvas-decode path (`fetchNAFITimeSinceFireArea` itself) is
+**not** testable in this sandbox — browser-only, the same accepted limitation
+`decodeImageBytes`'s own doc comment already states for NVIS's equivalent —
+**confirm the live fetch path once deployed** (the URL construction, colour
+legend and pixel arithmetic it depends on are what's actually verified here).
+
 ---
 
 ## Update policy
