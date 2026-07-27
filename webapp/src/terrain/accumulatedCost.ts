@@ -40,6 +40,7 @@ import {
   LocalProjection, AxialCoord, hexKey, hexNeighbors, hexCorners, axialToLocal, toLatLng,
 } from '../utils/hexGrid';
 import { MoverProfile } from './moverProfiles';
+import { RoadWayTags } from './roadSpeedModel';
 import {
   MobilitySample, TrafficabilityClass, edgeMobilityCost, signedSlopeDegrees, estimateStructureFromVegetation,
   estimateFordingRequirement,
@@ -53,6 +54,14 @@ export interface MobilityGridCell {
   vegetation: VegetationType;
   vegEstimated: boolean;
   onTrail: boolean;
+  /** Tags of the nearest trail/road within snap distance (docs §35) — same
+   *  feature `onTrail` itself is derived from, found in the same scan. Feeds
+   *  the road-class speed ceiling (`roadSpeedModel.ts`) so an onTrail hex's
+   *  speed bonus reflects what kind of road it actually is (a motorway and a
+   *  grade-5 track are not the same "onTrail"), rather than a flat bonus.
+   *  `null` when `onTrail` is false, or when the trail data source didn't
+   *  reach this cell. */
+  nearestTrailTags: RoadWayTags | null;
   /** Direction-agnostic local terrain gradient magnitude, degrees — from
    *  `dataLayers/demDerivatives.ts`'s local plane fit (docs §10.7 M3a, "free
    *  fidelity" from the elevation grid already sampled, no new network
@@ -105,6 +114,7 @@ export function toMobilitySample(cell: MobilityGridCell): MobilitySample {
     vegetation: cell.vegetation,
     vegEstimated: cell.vegEstimated,
     onTrail: cell.onTrail,
+    nearestTrailTags: cell.nearestTrailTags,
     waterDistanceM: cell.waterDistanceM,
     inWaterBody: cell.inWaterBody,
     nearestWaterwayKind: cell.nearestWaterwayKind,

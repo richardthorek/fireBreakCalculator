@@ -24,6 +24,7 @@
 import { VegetationType } from '../config/classification';
 import { MoverProfile } from './moverProfiles';
 import { lookupStructure } from './dataLayers/structureTable';
+import { RoadWayTags, roadClassCeiling } from './roadSpeedModel';
 
 // ---------------------------------------------------------------------------
 // Directional slope
@@ -205,6 +206,13 @@ export interface MobilitySample {
   vegetation: VegetationType;
   vegEstimated: boolean;
   onTrail: boolean;
+  /** Tags of the nearest trail/road (docs §35) — feeds the road-class speed
+   *  ceiling for `vehicle-gradient` profiles ONLY (see `edgeMobilityCost`).
+   *  Optional/nullable for the same reason as the hydrology fields below: a
+   *  caller/fixture built before this existed still compiles, and
+   *  `edgeMobilityCost` treats an absent value as "no road-class data",
+   *  never as "definitely a particular road class". */
+  nearestTrailTags?: RoadWayTags | null;
   /** Hydrology (docs §34) — optional so a caller/fixture built before this
    *  gate existed still compiles without threading water data through.
    *  `edgeMobilityCost` treats an absent field as "no water signal", never as
@@ -359,9 +367,31 @@ export function edgeMobilityCost(
     case 'tobler':
       speedKmh = toblerSpeedKmh(grade);
       break;
-    case 'doctrinal-unit-march':
-    case 'vehicle-gradient': {
+    case 'doctrinal-unit-march': {
+      // A foot unit's road speed is its own doctrinal march rate — flat,
+      // NOT modulated by road class (docs §35, roadSpeedModel.ts's own
+      // header: OSRM's tables encode vehicle speeds and have nothing to say
+      // about how fast a person walks).
       const base = onNetwork ? profile.roadSpeedKmh : profile.roadSpeedKmh * profile.crossCountryFactor;
+      const gradeFactor = vehicleGradeSpeedFactor(absSlope, profile.maxClimbDeg);
+      speedKmh = base * Math.max(0.05, gradeFactor);
+      break;
+    }
+    case 'vehicle-gradient': {
+      // Road-class ceiling (docs §35) — composed via min(), never a
+      // substitute for the vehicle's own road capability: a hex "onTrail"
+      // covers everything from a motorway to a grade-5 track, and those are
+      // not the same speed. Prefers the ARRIVAL cell's trail (matching the
+      // ford/vegetation gates' own `to`-gated convention above); falls back
+      // to the departure cell's when the arrival cell's scan found nothing
+      // (e.g. right at a trail's mapped end).
+      let roadSpeed = profile.roadSpeedKmh;
+      if (onNetwork) {
+        const tags: RoadWayTags | null = to.nearestTrailTags ?? from.nearestTrailTags ?? null;
+        const ceiling = tags ? roadClassCeiling(tags) : null;
+        roadSpeed = ceiling ? Math.min(profile.roadSpeedKmh, ceiling.speedKmh) : profile.roadSpeedKmh;
+      }
+      const base = onNetwork ? roadSpeed : profile.roadSpeedKmh * profile.crossCountryFactor;
       const gradeFactor = vehicleGradeSpeedFactor(absSlope, profile.maxClimbDeg);
       speedKmh = base * Math.max(0.05, gradeFactor); // floor so a near-limit slope creeps rather than divides by ~0
       break;

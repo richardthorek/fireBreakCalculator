@@ -22,13 +22,14 @@ import {
 } from '../utils/hexGrid';
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import {
-  fetchCorridorInfrastructure, fetchCorridorWaterways, distanceToNearestTrail, distanceToNearestWater,
+  fetchCorridorMobilityRoads, fetchCorridorWaterways, distanceToNearestTrail, distanceToNearestWater,
   InfrastructureTrail,
 } from '../utils/infrastructureService';
 import { MobilityGridCell } from './accumulatedCost';
 import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry, isInsideResolvedArea } from './paintedArea';
 import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
+import { RoadWayTags } from './roadSpeedModel';
 
 // Raised from 1400/1800 (2026-07-26, "think about a larger area"): both
 // upstream sampling calls this grid depends on are already area-batched, not
@@ -144,7 +145,14 @@ export async function buildMobilityGrid(
     sampleElevationsCached(points),
     sampleVegetation(points, signal, (done, total) => onProgress?.(0.05 + 0.55 * (done / Math.max(1, total))),
       { minLat: boundsSw.lat, minLng: boundsSw.lng, maxLat: boundsNe.lat, maxLng: boundsNe.lng }),
-    fetchCorridorInfrastructure(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
+    // 'highway-mobility' (docs §35 — the wider road set, motorway/trunk/
+    // primary included), NOT the fire-break optimizer's REUSABLE_HIGHWAYS
+    // default: a hex sitting on a motorway is exactly the case a movement/
+    // denial appreciation most needs to register as onTrail, and the
+    // fire-break "reusable broken ground" set deliberately excludes it. Also
+    // carries surface/tracktype/smoothness per way, feeding the road-class
+    // speed ceiling below.
+    fetchCorridorMobilityRoads(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
     // Hydrology (docs §34) — two independent sources, batched exactly like
     // everything else here (one request each regardless of grid size, not
     // per-cell): OSM waterway/water-body geometry for a crisp, resolution-
@@ -202,6 +210,27 @@ export async function buildMobilityGrid(
       ? sampleSurfaceWaterFrequencyRaster(waterFrequencyRaster, center.lat, center.lng)?.frequency ?? null
       : null;
 
+    // onTrail + the nearest trail's own tags in ONE scan (docs §35) — the
+    // road-class speed model (roadSpeedModel.ts) needs surface/tracktype/
+    // smoothness, not just "is there a trail here", so this now finds the
+    // SAME nearest feature onTrail already needed rather than re-scanning
+    // `infra.trails` a second time for it.
+    let onTrail = false;
+    let nearestTrailTags: RoadWayTags | null = null;
+    if (infra.trails.length > 0) {
+      let bestD = Infinity;
+      for (const feature of infra.trails) {
+        const d = distanceToNearestTrail(center, [feature], TRAIL_SNAP_M);
+        if (d < bestD) {
+          bestD = d;
+          nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
+        }
+        if (bestD <= 0) break; // nothing can beat 0
+      }
+      onTrail = bestD <= TRAIL_SNAP_M;
+      if (!onTrail) nearestTrailTags = null;
+    }
+
     return {
       key: hexKey(c.hex),
       hex: c.hex,
@@ -209,7 +238,8 @@ export async function buildMobilityGrid(
       elevation: elevRes.elevations[i],
       vegetation: vegRes[i].type,
       vegEstimated: vegRes[i].estimated,
-      onTrail: infra.trails.length > 0 && distanceToNearestTrail(center, infra.trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
+      onTrail,
+      nearestTrailTags,
       crossSlopeDeg: 0, // filled in below once the grid is finalised
       waterDistanceM,
       inWaterBody,
