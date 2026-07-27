@@ -575,3 +575,399 @@
   border-color: var(--tac-accent, #38bdf8);
   color: var(--tac-accent, #38bdf8);
 }
+
+/* ===========================================================================
+ * Terrain Mobility — painting, progress, key, corridors, restrictions
+ * (owner field feedback, 2026-07-27; docs/ROUTE_INTELLIGENCE.md §33)
+ * =========================================================================== */
+
+/* ---------- Brush cursor ----------
+ * Sized to the brush's real on-screen radius (BRUSH_PIXEL_RADIUS), so the ring
+ * IS the area the next dab covers rather than a generic pointer. The OS cursor
+ * is hidden over the canvas while a role is armed so the two don't compete. */
+.tactical-mode .mapboxgl-canvas-container.mapboxgl-interactive { cursor: crosshair; }
+.paint-brush-cursor {
+  position: absolute;
+  z-index: 985;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--tac-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 0 1px rgba(4, 33, 47, 0.7) inset, 0 0 10px rgba(56, 189, 248, 0.35);
+}
+.paint-brush-cursor--objective {
+  border-color: var(--tac-slowgo, #F6A609);
+  background: rgba(246, 166, 9, 0.12);
+  box-shadow: 0 0 0 1px rgba(47, 30, 4, 0.7) inset, 0 0 10px rgba(246, 166, 9, 0.35);
+}
+/* Erase reads as a hollow, dashed danger ring — it removes area, and must not
+ * look like just another colour of paint. */
+.paint-brush-cursor--erase {
+  border-style: dashed;
+  border-color: var(--tac-nogo, #D8232A);
+  background: rgba(216, 35, 42, 0.08);
+  box-shadow: 0 0 0 1px rgba(42, 5, 5, 0.7) inset, 0 0 10px rgba(216, 35, 42, 0.35);
+}
+.paint-brush-cursor-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  color: inherit;
+  opacity: 0.9;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+/* ---------- Painting guidance ---------- */
+.paint-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 992;
+  max-width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 34px 10px 14px;
+  border-radius: 10px;
+  background: rgba(12, 17, 24, 0.94);
+  border: 1px solid var(--tac-border, #1c2733);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  color: var(--tac-text, #d7e4ee);
+  font-size: 12.5px;
+  line-height: 1.45;
+  pointer-events: auto;
+}
+.paint-hint strong { font-weight: 700; color: var(--tac-accent, #38bdf8); }
+.paint-hint span { color: var(--tac-text-dim, #6b7f8f); font-size: 11.5px; }
+.paint-hint button {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--tac-text-dim, #6b7f8f);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.paint-hint kbd,
+.tac-hint kbd {
+  font-family: var(--tac-mono-font, monospace);
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--tac-border, #1c2733);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--tac-text, #d7e4ee);
+}
+.paint-pan-badge {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 993;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--tac-accent, #38bdf8);
+  color: #04212f;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.paint-pan-badge kbd { background: rgba(4, 33, 47, 0.18); border: none; padding: 0 3px; }
+
+/* ---------- Run progress HUD ---------- */
+.mobility-progress-hud {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  z-index: 991;
+  width: min(420px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(12, 17, 24, 0.95);
+  border: 1px solid var(--tac-border, #1c2733);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.55);
+  color: var(--tac-text, #d7e4ee);
+}
+.mobility-progress-hud-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+.mobility-progress-hud-stage { flex: 1; font-weight: 600; }
+.mobility-progress-hud-head strong {
+  font-family: var(--tac-mono-font, monospace);
+  color: var(--tac-accent, #38bdf8);
+  font-variant-numeric: tabular-nums;
+}
+.mobility-progress-hud-spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid rgba(56, 189, 248, 0.25);
+  border-top-color: var(--tac-accent, #38bdf8);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mobility-progress-hud-spinner { animation: mobility-hud-spin 900ms linear infinite; }
+}
+@keyframes mobility-hud-spin { to { transform: rotate(360deg); } }
+.mobility-progress-hud-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.mobility-progress-hud-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--tac-accent, #38bdf8), #7dd3fc);
+  transition: width 300ms ease;
+}
+.mobility-progress-hud-log {
+  font-size: 10.5px;
+  color: var(--tac-text-dim, #6b7f8f);
+  line-height: 1.4;
+  max-height: 2.8em;
+  overflow: hidden;
+}
+
+/* ---------- Map key ---------- */
+.mobility-legend {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 989;
+  width: min(300px, calc(100vw - 40px));
+  border-radius: 10px;
+  background: rgba(12, 17, 24, 0.95);
+  border: 1px solid var(--tac-border, #1c2733);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.55);
+  color: var(--tac-text, #d7e4ee);
+  overflow: hidden;
+}
+.mobility-legend-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  color: var(--tac-text, #d7e4ee);
+  font-family: var(--tac-mono-font, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.mobility-legend-chevron { color: var(--tac-text-dim, #6b7f8f); }
+.mobility-legend-body {
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mobility-legend-body section { display: flex; flex-direction: column; gap: 5px; }
+.mobility-legend-body h4 {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tac-text-dim, #6b7f8f);
+  font-family: var(--tac-mono-font, monospace);
+}
+.mobility-legend-body ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.legend-row { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.4; }
+.legend-label { flex: 1; }
+.legend-swatch { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; }
+.legend-swatch--fill {
+  background: var(--legend-color);
+  border-radius: 3px;
+  opacity: 0.85;
+}
+.legend-swatch--line {
+  height: 16px;
+  background:
+    linear-gradient(var(--legend-color), var(--legend-color)) center/100% 3px no-repeat;
+  border-radius: 2px;
+}
+.legend-swatch--dash {
+  height: 16px;
+  background:
+    repeating-linear-gradient(90deg, var(--legend-color) 0 5px, transparent 5px 8px) center/100% 4px no-repeat;
+}
+.legend-swatch--dot {
+  width: 12px;
+  height: 12px;
+  margin: 3px 2px 0;
+  border-radius: 50%;
+  background: var(--legend-color);
+  border: 1.5px solid #fff;
+}
+.mobility-legend-note {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--tac-text-dim, #6b7f8f);
+}
+.mobility-legend-note.modelled {
+  color: var(--tac-slowgo, #F6A609);
+  border-left: 2px solid var(--tac-slowgo, #F6A609);
+  padding-left: 7px;
+}
+.mobility-legend-opacity {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--tac-border, #1c2733);
+}
+.mobility-legend-opacity label { font-size: 11.5px; }
+.mobility-legend-opacity label strong {
+  font-family: var(--tac-mono-font, monospace);
+  color: var(--tac-accent, #38bdf8);
+  font-variant-numeric: tabular-nums;
+}
+.mobility-legend-opacity input[type='range'] { width: 100%; accent-color: var(--tac-accent, #38bdf8); }
+
+/* Legend and progress HUD must not fight for the same corner on a phone.
+   Both can be on-screen together (legend appears as soon as an area is
+   painted; the HUD appears the moment a run starts) so on narrow viewports
+   they split the bottom edge left/right instead of both going full-width,
+   which would stack them on top of each other at identical coordinates. */
+@media (max-width: 640px) {
+  .mobility-legend { right: 8px; bottom: 8px; width: min(200px, 48vw); }
+  .mobility-legend-body { max-height: 38vh; }
+  .mobility-progress-hud { left: 8px; right: auto; bottom: 8px; width: min(200px, 48vw); }
+}
+
+/* ---------- Corridor map labels ---------- */
+.corridor-map-label {
+  font-family: var(--tac-mono-font, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: rgba(5, 7, 10, 0.86);
+  border: 1px solid currentColor;
+  color: #94a3b8;
+  transition: opacity 140ms ease;
+}
+.corridor-map-label--rank1 { color: #D8232A; }
+.corridor-map-label--rank2 { color: #F6A609; }
+.corridor-map-label--rank3 { color: #38bdf8; }
+.corridor-map-label--rank4 { color: #94a3b8; }
+.corridor-map-label.dimmed { opacity: 0.28; }
+
+/* ---------- Recommended restriction badges ---------- */
+.restriction-map-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--tac-mono-font, monospace);
+  font-size: 12px;
+  font-weight: 700;
+  color: #2a0505;
+  background: #ff4d4d;
+  border: 2px solid #2a0505;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+.restriction-map-badge--ground-denial { background: var(--tac-slowgo, #F6A609); }
+
+/* ---------- Movement figures (ensemble + restriction summaries) ---------- */
+.movement-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.movement-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid var(--tac-border, #1c2733);
+  border-radius: 4px;
+}
+.movement-figure-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--tac-accent, #38bdf8);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.movement-figure-label {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--tac-text-dim, #6b7f8f);
+}
+
+/* ---------- Recommended restriction cards ---------- */
+.restriction-card {
+  border: 1px solid var(--tac-border, #1c2733);
+  border-left-width: 3px;
+  border-left-color: #ff4d4d;
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.restriction-card--ground-denial { border-left-color: var(--tac-slowgo, #F6A609); }
+.restriction-card-head { display: flex; align-items: center; gap: 8px; }
+.restriction-rank {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: #ff4d4d;
+  color: #2a0505;
+  flex: 0 0 auto;
+}
+.restriction-card--ground-denial .restriction-rank { background: var(--tac-slowgo, #F6A609); }
+.restriction-kind {
+  font-family: var(--tac-mono-font, monospace);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/* ---------- Corridor cards become selectable ---------- */
+.corridor-card {
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: opacity 140ms ease, border-color 140ms ease;
+}
+.corridor-card.dimmed { opacity: 0.45; }
+.corridor-card.selected {
+  background: rgba(56, 189, 248, 0.07);
+  border-color: var(--tac-accent, #38bdf8);
+}

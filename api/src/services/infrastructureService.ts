@@ -29,6 +29,17 @@
  *  the same set. */
 const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential';
 
+/** Waterway/water-body classes queried for the Terrain Mobility hydrology gate
+ *  (docs/ROUTE_INTELLIGENCE.md §34) — linear watercourses plus standing water
+ *  bodies. MUST match the webapp's WATER_WATERWAYS/WATER_NATURAL so proxied and
+ *  direct results are the same set. Deliberately excludes `ditch`/`drain`
+ *  below `canal` in typical width — including them produced too many false
+ *  "unfordable" gates on farmland drainage in manual review of sample AOIs. */
+const WATER_WATERWAYS = 'river|canal|stream';
+const WATER_NATURAL = 'water';
+
+export type InfrastructureKind = 'highway' | 'water';
+
 const OVERPASS_ENDPOINTS: string[] = (process.env.OVERPASS_URLS
   ? String(process.env.OVERPASS_URLS).split(',').map(s => s.trim()).filter(Boolean)
   : [
@@ -64,8 +75,20 @@ const cache = new Map<string, CacheEntry>();
  *  re-pay a rate-limited primary's failure on every corridor. */
 let preferredEndpointIndex = 0;
 
-const bboxKey = (s: number, w: number, n: number, e: number) =>
-  [s, w, n, e].map(v => v.toFixed(3)).join(',');
+const bboxKey = (s: number, w: number, n: number, e: number, kind: InfrastructureKind) =>
+  [kind, s, w, n, e].map(v => typeof v === 'number' ? v.toFixed(3) : v).join(',');
+
+function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e: number): string {
+  if (kind === 'water') {
+    return (
+      `[out:json][timeout:12];` +
+      `(way["waterway"~"^(${WATER_WATERWAYS})$"](${s},${w},${n},${e});` +
+      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
+      `out geom;`
+    );
+  }
+  return `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${s},${w},${n},${e});out geom;`;
+}
 
 function getCached(key: string): InfrastructureResult | null {
   const entry = cache.get(key);
@@ -106,13 +129,14 @@ export async function fetchCorridorInfrastructure(
   south: number,
   west: number,
   north: number,
-  east: number
+  east: number,
+  kind: InfrastructureKind = 'highway'
 ): Promise<InfrastructureResult> {
-  const key = bboxKey(south, west, north, east);
+  const key = bboxKey(south, west, north, east, kind);
   const cached = getCached(key);
   if (cached) return cached;
 
-  const query = `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${south},${west},${north},${east});out geom;`;
+  const query = buildQuery(kind, south, west, north, east);
   const order = [
     ...OVERPASS_ENDPOINTS.slice(preferredEndpointIndex),
     ...OVERPASS_ENDPOINTS.slice(0, preferredEndpointIndex),
@@ -125,7 +149,7 @@ export async function fetchCorridorInfrastructure(
         .filter((el: any) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2)
         .map((el: any) => ({
           name: el.tags?.name,
-          kind: el.tags?.highway ?? 'track',
+          kind: kind === 'water' ? (el.tags?.waterway ?? el.tags?.natural ?? 'water') : (el.tags?.highway ?? 'track'),
           coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
         }));
       const data: InfrastructureResult = { trails, available: true };

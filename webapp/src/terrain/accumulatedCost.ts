@@ -42,6 +42,7 @@ import {
 import { MoverProfile } from './moverProfiles';
 import {
   MobilitySample, TrafficabilityClass, edgeMobilityCost, signedSlopeDegrees, estimateStructureFromVegetation,
+  estimateFordingRequirement,
 } from './mobilityCost';
 
 export interface MobilityGridCell {
@@ -60,6 +61,55 @@ export interface MobilityGridCell {
    *  module's own caveat. 0 when the grid is too small for the search to
    *  have wired this in (defensive default, not "flat"). */
   crossSlopeDeg: number;
+
+  // --- Hydrology (docs §34) ---------------------------------------------
+  /** Distance to the nearest mapped water feature, metres — sampled at the
+   *  cell's centre AND its six hex corners (not centre alone, unlike
+   *  `onTrail`'s single-point test), keeping the minimum. A linear
+   *  watercourse narrower than the hex is more likely to clip a corner than
+   *  land exactly on the centre, so this catches more real crossings than a
+   *  centre-only test at the same grid resolution — see mobilityGrid.ts.
+   *  `Infinity` when no watercourse/water-body data reached this cell
+   *  (Overpass unavailable) or none was found nearby. */
+  waterDistanceM: number;
+  /** True when the cell's own CENTRE falls inside a mapped `natural=water`
+   *  body (point-in-polygon, not proximity) — the direct "this ground IS
+   *  water" case, always the most severe regardless of `waterDistanceM`. */
+  inWaterBody: boolean;
+  /** OSM class of the nearest watercourse within snap distance
+   *  (`river`/`canal`/`stream`), or null when nothing is in range. Feeds the
+   *  fording-severity gate in `mobilityCost.ts`. */
+  nearestWaterwayKind: string | null;
+  /** DEA Water Observations multi-year wet-frequency (0..1) at this cell,
+   *  from the area-raster colour-ramp reconstruction
+   *  (`dataLayers/deaWaterObservationsService.ts`) — null when unavailable
+   *  (fetch failed, outside DEA's technical extent, or the pixel matched no
+   *  ramp colour). Never fabricated as 0; absence is absence. */
+  waterFrequency: number | null;
+}
+
+/**
+ * Project a grid cell down to the `MobilitySample` shape `edgeMobilityCost`
+ * consumes — ONE place that lists every field the cost function reads off a
+ * cell, so a field added to either interface (this is where the hydrology
+ * fields landed) can't silently go stale at one call site while every other
+ * caller picks it up. Every module that builds an edge's `from`/`to` sample
+ * (this file, corridorField.ts, minCutBarrier.ts, movementSimulation.ts)
+ * should call this rather than hand-writing the object literal.
+ */
+export function toMobilitySample(cell: MobilityGridCell): MobilitySample {
+  return {
+    lat: cell.center.lat,
+    lng: cell.center.lng,
+    elevation: cell.elevation,
+    vegetation: cell.vegetation,
+    vegEstimated: cell.vegEstimated,
+    onTrail: cell.onTrail,
+    waterDistanceM: cell.waterDistanceM,
+    inWaterBody: cell.inWaterBody,
+    nearestWaterwayKind: cell.nearestWaterwayKind,
+    waterFrequency: cell.waterFrequency,
+  };
 }
 
 export interface MobilityCellResult {
@@ -123,10 +173,21 @@ function classifyCellTerrain(
   }
   if (vegBlocked) return { trafficability: 'NO-GO', estimated: true };
 
+  // Hydrology (docs §34) — same fording gate `edgeMobilityCost` applies to a
+  // directed edge, applied here to the cell's own ground so the terrain-only
+  // GO/SLOW-GO/NO-GO overlay agrees with what the search would actually do
+  // arriving into this cell. Skipped on a mapped trail, matching the
+  // vegetation exemption above (a road crossing implies a bridge/ford).
+  let ford: ReturnType<typeof estimateFordingRequirement> = null;
+  if (!cell.onTrail) ford = estimateFordingRequirement(toMobilitySample(cell));
+  if (ford && (profile.fordingDepthM === undefined || ford.assumedDepthM > profile.fordingDepthM)) {
+    return { trafficability: 'NO-GO', estimated: true };
+  }
+
   const climbRatio = steepestAbsDeg / profile.maxClimbDeg;
   const sideRatio = profile.maxSideSlopeDeg > 0 ? cell.crossSlopeDeg / profile.maxSideSlopeDeg : 0;
   const heavyVeg = (cell.vegetation === 'heavyforest' || cell.vegetation === 'mediumscrub') && !cell.onTrail;
-  if (climbRatio > 0.85 || sideRatio > 0.85 || heavyVeg) return { trafficability: 'SLOW-GO', estimated: true };
+  if (climbRatio > 0.85 || sideRatio > 0.85 || heavyVeg || ford) return { trafficability: 'SLOW-GO', estimated: true };
   return { trafficability: 'GO', estimated: cell.vegEstimated };
 }
 
@@ -235,8 +296,8 @@ export function runAccumulatedCostSearch(
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const sampleA: MobilitySample = { lat: cell.center.lat, lng: cell.center.lng, elevation: cell.elevation, vegetation: cell.vegetation, vegEstimated: cell.vegEstimated, onTrail: cell.onTrail };
-      const sampleB: MobilitySample = { lat: neighbor.center.lat, lng: neighbor.center.lng, elevation: neighbor.elevation, vegetation: neighbor.vegetation, vegEstimated: neighbor.vegEstimated, onTrail: neighbor.onTrail };
+      const sampleA: MobilitySample = toMobilitySample(cell);
+      const sampleB: MobilitySample = toMobilitySample(neighbor);
       const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO edge — never relax through it
       const penalty = edgePenalties?.get(`${cur.key}|${nKey}`) ?? 1;
@@ -252,6 +313,77 @@ export function runAccumulatedCostSearch(
   }
 
   return { best, prev };
+}
+
+/**
+ * The SAME engine run backwards: seconds remaining from every cell TO the
+ * objective AOI, rather than from the origin AOI to every cell.
+ *
+ * This is not a convenience wrapper — the edge cost is directional (climbing
+ * out of a gully is not the reverse of dropping into it), so "time to get
+ * there from here" genuinely cannot be read off the forward field. Seeding at
+ * `objectiveKeys` and relaxing each popped cell's PREDECESSORS (cost of the
+ * edge u→v, not v→u) is the correct reversal.
+ *
+ * Used by movementSimulation.ts as the mover's "cost-to-go": the thing a unit
+ * is implicitly steering by when it decides which cell to step into next.
+ * Cells the objective cannot be reached from are simply absent from the map
+ * (not zero, not a large number) — callers decide what an unreachable
+ * lookahead means for them.
+ */
+export function runCostToGoSearch(
+  cells: MobilityGridCell[],
+  objectiveKeys: string[],
+  profile: MoverProfile,
+  nightMode: boolean,
+  /** Directed edges (`${fromKey}|${toKey}`) that are severed outright — an
+   *  emplaced restriction (a road block, a blown culvert). Excluded from this
+   *  field exactly as a NO-GO edge is, so a mover who KNOWS about the block
+   *  routes around it, while a mover who does not still drives up to it and
+   *  has to turn around (movementSimulation.ts enforces the block itself). */
+  blockedEdges?: Set<string>
+): Map<string, number> {
+  const byKey = new Map<string, MobilityGridCell>();
+  for (const c of cells) byKey.set(c.key, c);
+
+  const best = new Map<string, number>();
+  const heap = new MinHeap();
+  for (const key of objectiveKeys) {
+    if (!byKey.has(key)) continue;
+    best.set(key, 0);
+    heap.push(key, 0);
+  }
+
+  while (heap.size > 0) {
+    const cur = heap.pop()!;
+    const known = best.get(cur.key);
+    if (known === undefined || cur.priority > known) continue; // stale heap entry
+    const cell = byKey.get(cur.key);
+    if (!cell) continue;
+
+    for (const nHex of hexNeighbors(cell.hex)) {
+      const nKey = hexKey(nHex);
+      const neighbor = byKey.get(nKey);
+      if (!neighbor) continue;
+      const dist = calculateDistance(neighbor.center.lat, neighbor.center.lng, cell.center.lat, cell.center.lng);
+      // Directed edge neighbour → cell: the cost of the step that would bring
+      // a mover standing at `neighbor` onto `cell`, which is the direction the
+      // remaining-time field must be built from.
+      const sampleFrom: MobilitySample = toMobilitySample(neighbor);
+      const sampleTo: MobilitySample = toMobilitySample(cell);
+      if (blockedEdges?.has(`${nKey}|${cur.key}`)) continue;
+      const result = edgeMobilityCost(profile, sampleFrom, sampleTo, dist, { nightMode, crossSlopeDeg: neighbor.crossSlopeDeg });
+      if (!isFinite(result.timeSeconds)) continue;
+      const candidate = known + result.timeSeconds;
+      const existing = best.get(nKey);
+      if (existing === undefined || candidate < existing) {
+        best.set(nKey, candidate);
+        heap.push(nKey, candidate);
+      }
+    }
+  }
+
+  return best;
 }
 
 /**

@@ -38,7 +38,10 @@ import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
 import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
 import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from './terrain/corridorField';
-import { UnitSimulationController } from './terrain/unitSimulation';
+import { UnitSimulationController, EnsembleAnimationController, EnsembleMoverState } from './terrain/unitSimulation';
+import { MobilityLegend } from './components/MobilityLegend';
+import { DEFAULT_BEHAVIOUR_SPREAD_ID } from './terrain/movementSimulation';
+import { MobilityStage } from './terrain/mobilityAppreciation';
 import './styles-tactical.css';
 
 // Site logo/favicon is in the public directory and served at /favicon-96x96.png.
@@ -459,6 +462,27 @@ const App: React.FC = () => {
   const [mobilityDisplayMode, setMobilityDisplayMode] = useState<'trafficability' | 'isochrone'>('trafficability');
   const [mobilityCursor, setMobilityCursor] = useState<{ lat: number; lng: number } | null>(null);
   const mobilityAbortRef = useRef<AbortController | null>(null);
+  // Run progress + phase, so the map can show that something is happening
+  // during a run that takes tens of seconds (owner, 2026-07-27).
+  const [mobilityProgress, setMobilityProgress] = useState(0);
+  const [mobilityStage, setMobilityStage] = useState<MobilityStage | null>(null);
+  /** Terrain-only classified cells, painted as soon as sampling finishes and
+   *  replaced by the full result — so the map fills in mid-run instead of
+   *  staying blank until everything is done. */
+  const [mobilityPreviewCells, setMobilityPreviewCells] = useState<
+    { polygon: { lat: number; lng: number }[]; trafficability: 'GO' | 'SLOW-GO' | 'NO-GO'; timeSeconds: number; bandIndex: number }[] | null
+  >(null);
+  /** One master opacity for the analysis overlays (owner, 2026-07-27). */
+  const [mobilityOverlayOpacity, setMobilityOverlayOpacity] = useState(1);
+  /** Corridor picked out in the panel or on the map — dims the others. */
+  const [highlightedCorridorId, setHighlightedCorridorId] = useState<string | null>(null);
+  /** Which behaviour population the movement ensemble draws movers from. */
+  const [behaviourSpreadId, setBehaviourSpreadId] = useState<string>(DEFAULT_BEHAVIOUR_SPREAD_ID);
+  /** Which movement picture the map draws: unrestricted, or with the
+   *  recommended restrictions emplaced. */
+  const [movementView, setMovementView] = useState<'unrestricted' | 'restricted'>('unrestricted');
+  /** Show the simulated transit-frequency field over the cells. */
+  const [showTransitField, setShowTransitField] = useState(true);
 
   // Counter-mobility planner — Pass 4 (docs/ROUTE_INTELLIGENCE.md §5, §15.4).
   // Shares the appreciation run's own sampled grid/min-cut segments rather
@@ -502,6 +526,11 @@ const App: React.FC = () => {
     setMobilityRunning(true);
     setMobilityLogLines([]);
     setMobilityResult(null);
+    setMobilityProgress(0);
+    setMobilityStage(null);
+    setMobilityPreviewCells(null);
+    setHighlightedCorridorId(null);
+    setMovementView('unrestricted');
     // A fresh run resamples the grid, so any prior min-cut segment indices/
     // placements/ledger no longer refer to real cells — clear rather than
     // let them silently go stale.
@@ -517,7 +546,22 @@ const App: React.FC = () => {
         profileId: mobilityProfileId,
         nightMode: mobilityNightMode,
         signal: controller.signal,
+        behaviourSpreadId,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
+        onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
+        onStage: stage => { if (!controller.signal.aborted) setMobilityStage(stage); },
+        onPreviewCells: cells => {
+          if (controller.signal.aborted) return;
+          // Terrain classification only — no arrival times exist yet, so
+          // bandIndex is -1 for every cell and the isochrone colouring
+          // correctly shows them all as "not reached".
+          setMobilityPreviewCells(cells.map(c => ({
+            polygon: c.polygon,
+            trafficability: c.trafficability,
+            timeSeconds: c.timeSeconds,
+            bandIndex: -1,
+          })));
+        },
       });
       if (controller.signal.aborted) return;
       if (!result) {
@@ -525,6 +569,7 @@ const App: React.FC = () => {
         return;
       }
       setMobilityResult(result);
+      setMobilityPreviewCells(null); // the real result supersedes the preview
     } catch (error) {
       if (controller.signal.aborted) return;
       logger.error('Terrain mobility appreciation failed', error);
@@ -532,7 +577,7 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
@@ -561,7 +606,12 @@ const App: React.FC = () => {
       // emplaced measure applied together — not the sum of the per-measure
       // ledger rows above, because blocking two of three corridors pushes
       // everything onto the third, which only a combined re-run shows.
-      if (mobilityResult.corridorField) {
+      // Compared against the OPTIMISER field, not the (now simulated) headline
+      // one: `afterField` below is built from k penalised optimal routes, so
+      // diffing it against a simulated-mover baseline would compare two
+      // different kinds of evidence and attribute the difference between them
+      // to the counter-measures. Like-for-like or not at all.
+      if (mobilityResult.optimiserCorridorField) {
         const scenarioPenalties = buildScenarioEdgePenalties(COUNTER_MEASURES, cmPlacements);
         const afterField = buildCorridorField(
           mobilityResult.cells,
@@ -573,7 +623,7 @@ const App: React.FC = () => {
           mobilityResult.proj,
           { edgePenalties: scenarioPenalties }
         );
-        setCmCorridorComparison(compareCorridorFields(mobilityResult.corridorField, afterField));
+        setCmCorridorComparison(compareCorridorFields(mobilityResult.optimiserCorridorField, afterField));
         setCmAfterField(afterField);
       }
     } catch (error) {
@@ -583,20 +633,62 @@ const App: React.FC = () => {
     }
   }, [mobilityResult, mobilityNightMode, cmPlacements]);
 
-  /** Which corridor field the map draws. Falls back to the baseline whenever
-   *  no scenario has been computed yet, so the toggle can never leave the map
-   *  blank. */
-  const displayedCorridorField = useMemo(
-    () => (corridorView === 'scenario' && cmAfterField ? cmAfterField : mobilityResult?.corridorField ?? null),
-    [corridorView, cmAfterField, mobilityResult]
-  );
-
   const handleAddCounterMeasureToPlan = useCallback((measureId: string) => {
     setCmAddedMeasureIds(prev => (prev.includes(measureId) ? prev : [...prev, measureId]));
   }, []);
 
+  /** The movement picture currently on the map: unrestricted, or with the
+   *  recommended restrictions emplaced. Falls back to unrestricted whenever no
+   *  restricted run exists, so the toggle can never blank the map. */
+  const displayedEnsemble = useMemo(() => {
+    if (movementView === 'restricted' && mobilityResult?.restrictionPlan?.scenario) {
+      return mobilityResult.restrictionPlan.scenario;
+    }
+    return mobilityResult?.ensemble ?? null;
+  }, [movementView, mobilityResult]);
+
+  /** Corridors matching whichever movement picture is displayed. Counter-
+   *  mobility's own baseline/scenario toggle still wins when it has produced a
+   *  field, since that is a more specific user action. */
+  const displayedMovementCorridorField = useMemo(() => {
+    if (corridorView === 'scenario' && cmAfterField) return cmAfterField;
+    if (movementView === 'restricted' && mobilityResult?.restrictedCorridorField) {
+      return mobilityResult.restrictedCorridorField;
+    }
+    return mobilityResult?.corridorField ?? null;
+  }, [corridorView, cmAfterField, movementView, mobilityResult]);
+
+  const transitCellsForMap = useMemo(() => {
+    if (!showTransitField || !displayedEnsemble) return null;
+    return displayedEnsemble.cells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
+  }, [showTransitField, displayedEnsemble]);
+
+  /** Only a sample of the simulated tracks is drawn as hairlines: 240 of them
+   *  would be a grey wash that hides the very band they are evidence for. */
+  const corridorRoutesForMap = useMemo(() => {
+    const routes = displayedMovementCorridorField?.routes ?? [];
+    if (routes.length <= 24) return routes;
+    const stride = Math.ceil(routes.length / 24);
+    return routes.filter((_, i) => i % stride === 0);
+  }, [displayedMovementCorridorField]);
+
+  const restrictionsForMap = useMemo(() => {
+    if (!mobilityResult?.restrictionPlan) return null;
+    return mobilityResult.restrictionPlan.restrictions.map(r => ({
+      id: r.id, rank: r.rank, kind: r.kind, from: r.from, to: r.to,
+    }));
+  }, [mobilityResult]);
+
+  /** The real mapped watercourse/water-body geometry (docs §34), for the
+   *  map's own reference layer — separate from any gated cell, so the user
+   *  can see the actual river/lake shape the analysis is reacting to. */
+  const waterFeaturesForMap = useMemo(() => {
+    if (!mobilityResult || mobilityResult.waterFeatures.length === 0) return null;
+    return mobilityResult.waterFeatures.map(f => ({ kind: f.kind, coords: f.coords }));
+  }, [mobilityResult]);
+
   const mobilityHeatmapForMap = useMemo(() => {
-    if (!mobilityResult) return null;
+    if (!mobilityResult) return mobilityPreviewCells;
     return mobilityResult.results.map(r => {
       let bandIndex = -1;
       if (isFinite(r.timeSeconds)) {
@@ -652,17 +744,71 @@ const App: React.FC = () => {
     unitSimControllerRef.current?.setSpeedMultiplier(x);
   }, []);
 
+  // --- Ensemble playback (docs §32) ------------------------------------------
+  // The default "simulate movement" action is now the whole ensemble moving at
+  // once, not one unit on the optimal line: watching a dozen movers set off
+  // together, spread, and re-converge on the same ground is the point the
+  // single line could never make. The single-unit replanning simulation is
+  // kept as an explicit alternative — it demonstrates something different
+  // (a real mid-course re-search) and still works.
+  const [simMode, setSimMode] = useState<'ensemble' | 'single'>('ensemble');
+  const [ensembleMovers, setEnsembleMovers] = useState<EnsembleMoverState[] | null>(null);
+  const ensembleControllerRef = useRef<EnsembleAnimationController | null>(null);
+
+  const stopEnsembleAnimation = useCallback(() => {
+    ensembleControllerRef.current?.stop();
+    ensembleControllerRef.current = null;
+  }, []);
+
+  const handleStartEnsembleAnimation = useCallback(() => {
+    const trajectories = displayedEnsemble?.sampleTrajectories ?? [];
+    if (trajectories.length === 0) return;
+    ensembleControllerRef.current?.stop();
+    setSimElapsedSeconds(0);
+    const controller = new EnsembleAnimationController(trajectories, {
+      onFrame: (movers, elapsed) => { setEnsembleMovers(movers); setSimElapsedSeconds(elapsed); },
+      onComplete: () => setSimRunning(false),
+      onLog: line => setMobilityLogLines(prev => [...prev, line]),
+    });
+    controller.setSpeedMultiplier(simSpeedMultiplier);
+    ensembleControllerRef.current = controller;
+    controller.start();
+    setSimRunning(true);
+  }, [displayedEnsemble, simSpeedMultiplier]);
+
+  const handleStartAnySimulation = useCallback(() => {
+    if (simMode === 'ensemble') handleStartEnsembleAnimation();
+    else handleStartSimulation();
+  }, [simMode, handleStartEnsembleAnimation, handleStartSimulation]);
+
+  const handleStopAnySimulation = useCallback(() => {
+    stopUnitSimulation();
+    stopEnsembleAnimation();
+    setSimRunning(false);
+  }, [stopUnitSimulation, stopEnsembleAnimation]);
+
+  const handleSpeedMultiplierChangeAll = useCallback((x: number) => {
+    setSimSpeedMultiplier(x);
+    unitSimControllerRef.current?.setSpeedMultiplier(x);
+    ensembleControllerRef.current?.setSpeedMultiplier(x);
+  }, []);
+
   // A stale simulation over a changed AOI/result would mislead — clear it
   // whenever the boxes are cleared or a fresh run starts.
   useEffect(() => {
     stopUnitSimulation();
+    stopEnsembleAnimation();
     setUnitSimPosition(null);
     setUnitSimPath(null);
+    setEnsembleMovers(null);
     setSimElapsedSeconds(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityRunning]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityRunning, movementView]);
 
-  useEffect(() => () => unitSimControllerRef.current?.stop(), []);
+  useEffect(() => () => {
+    unitSimControllerRef.current?.stop();
+    ensembleControllerRef.current?.stop();
+  }, []);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
   const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);
@@ -1197,14 +1343,46 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
-            corridors={displayedCorridorField?.corridors ?? null}
-            corridorRoutes={displayedCorridorField?.routes ?? null}
+            corridors={displayedMovementCorridorField?.corridors ?? null}
+            corridorRoutes={corridorRoutesForMap}
+            highlightedCorridorId={highlightedCorridorId}
+            onCorridorHighlight={setHighlightedCorridorId}
             chokepoints={mobilityResult?.chokepoints ?? null}
             barrierSegments={mobilityResult?.barrier?.segments ?? null}
             onRunAppreciation={handleRunMobilityAppreciation}
             onCancelAppreciation={handleCancelMobilityAppreciation}
             mobilityRunning={mobilityRunning}
+            mobilityProgress={mobilityProgress}
+            mobilityStageLabel={mobilityStage?.label ?? null}
+            mobilityLatestLog={mobilityLogLines.length > 0 ? mobilityLogLines[mobilityLogLines.length - 1] : null}
+            mobilityOverlayOpacity={mobilityOverlayOpacity}
+            mobilityTransitCells={transitCellsForMap}
+            ensembleMovers={ensembleMovers}
+            restrictions={restrictionsForMap}
+            waterFeatures={waterFeaturesForMap}
           />
+          {mobilityModeActive && (
+            <MobilityLegend
+              overlayOpacity={mobilityOverlayOpacity}
+              onOverlayOpacityChange={setMobilityOverlayOpacity}
+              present={{
+                originPaint: mobilityOriginPaint.length > 0,
+                objectivePaint: mobilityObjectivePaint.length > 0,
+                cells: !!mobilityHeatmapForMap && mobilityHeatmapForMap.length > 0,
+                displayMode: mobilityDisplayMode,
+                corridors: (displayedMovementCorridorField?.corridors.length ?? 0) > 0,
+                corridorsFromSimulation: displayedMovementCorridorField?.evidence === 'simulated-movers',
+                corridorRoutes: corridorRoutesForMap.length > 0,
+                transitField: !!transitCellsForMap && transitCellsForMap.length > 0,
+                chokepoints: (mobilityResult?.chokepoints.length ?? 0) > 0,
+                barrier: (mobilityResult?.barrier?.segments.length ?? 0) > 0,
+                restrictions: (restrictionsForMap?.length ?? 0) > 0,
+                water: (waterFeaturesForMap?.length ?? 0) > 0,
+                unitPath: !!unitSimPath,
+                movers: !!ensembleMovers && ensembleMovers.length > 0,
+              }}
+            />
+          )}
           <MapEmptyState
             key={mobilityModeActive ? 'terrain' : 'firebreak'}
             initialLocationSettled={initialLocationSettled}
@@ -1251,13 +1429,25 @@ const App: React.FC = () => {
               cursor={mobilityCursor}
               hasPath={!!mobilityResult?.path}
               simRunning={simRunning}
-              onStartSimulation={handleStartSimulation}
-              onStopSimulation={stopUnitSimulation}
+              onStartSimulation={handleStartAnySimulation}
+              onStopSimulation={handleStopAnySimulation}
               speedMultiplier={simSpeedMultiplier}
-              onSpeedMultiplierChange={handleSpeedMultiplierChange}
+              onSpeedMultiplierChange={handleSpeedMultiplierChangeAll}
               simElapsedSeconds={simElapsedSeconds}
               cmPlacements={cmPlacements}
               cmLedger={cmLedger}
+              behaviourSpreadId={behaviourSpreadId}
+              onBehaviourSpreadChange={setBehaviourSpreadId}
+              movementView={movementView}
+              onMovementViewChange={setMovementView}
+              showTransitField={showTransitField}
+              onShowTransitFieldChange={setShowTransitField}
+              displayedEnsemble={displayedEnsemble}
+              displayedCorridorField={displayedMovementCorridorField}
+              highlightedCorridorId={highlightedCorridorId}
+              onCorridorHighlight={setHighlightedCorridorId}
+              simMode={simMode}
+              onSimModeChange={setSimMode}
             />
             ) : (
               <CounterMobilityPanel

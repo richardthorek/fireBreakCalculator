@@ -35,6 +35,12 @@ interface Equipment {
 }
 ```
 
+## Analysis Endpoint
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/analysis/calculate` | POST | Per-segment production-model estimate (time/cost/compatibility) for a drawn fire-break line against every equipment item — the sole calculation engine ([CALCULATION_REVIEW.md](CALCULATION_REVIEW.md)). Prefers a client-joined `segments[]` profile; degrades to marginal slope/vegetation distributions when absent. Segments crossing mapped water are excluded from every result (already a natural break); segments carry independent along-line and sidehill slope figures, gated separately. | `AnalysisRequest` (`distance`, `trackAnalysis`, `vegetationAnalysis`, `segments?: RouteSegment[]`, `breakWidthMeters?`, `parameters?`) | `AnalysisResponse` (`calculations: CalculationResult[]`, `metadata.analysisParameters` incl. `waterCrossingLength`) | No |
+
 ## Saved Plans Endpoints (suite subscription)
 
 All saved-plan endpoints require a Station Manager JWT (`Authorization: Bearer <token>`), validated server-side against SM `GET /api/auth/me`, and the org's `fireBreakEnabled` entitlement. Responses when not satisfied: `401` (no/invalid token), `403` (plan lacks the entitlement), `503` (`SUITE_AUTH_URL` unset on the deployment), `502` (Station Manager unreachable). Storage: Table Storage (`SAVED_PLANS_TABLE_NAME`, default `savedplans`), PartitionKey = SM user id.
@@ -119,9 +125,15 @@ On upstream failure returns `502` and the client falls back to calling Overpass
 directly; a `404` (endpoint not deployed) makes the client stop probing the
 proxy for the session and use the direct path.
 
+**`kind` param (added docs §34):** `highway` (default) fetches reusable trails/
+roads; `water` fetches waterway/water-body geometry (`waterway=river|canal|
+stream`, `natural=water`) for the Terrain Mobility hydrology gate. Same proxy,
+same resilience, same cache — one extra query branch rather than a second
+endpoint.
+
 | Endpoint | Method | Purpose | Request | Response | Auth Required |
 |----------|--------|---------|---------|----------|---------------|
-| `/api/infrastructure` | GET | Reusable trails/roads within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°) | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
+| `/api/infrastructure` | GET | Reusable trails/roads (or waterways, see `kind`) within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°), optional `kind=highway\|water` | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
 
 ## AI Assistant Endpoints
 

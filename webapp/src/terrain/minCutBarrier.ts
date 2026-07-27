@@ -36,9 +36,9 @@
 
 import { LatLng } from '../utils/chainage';
 import { hexKey, hexNeighbors } from '../utils/hexGrid';
-import { MobilityGridCell } from './accumulatedCost';
+import { MobilityGridCell, toMobilitySample } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { edgeMobilityCost, MobilitySample } from './mobilityCost';
+import { edgeMobilityCost } from './mobilityCost';
 import { calculateDistance } from '../utils/slopeCalculation';
 
 const SOURCE = '__SOURCE__';
@@ -133,11 +133,6 @@ export function computeMinCutBarrier(
   const byKey = new Map(cells.map(c => [c.key, c]));
   const graph = new ResidualGraph();
 
-  const toSample = (c: MobilityGridCell): MobilitySample => ({
-    lat: c.center.lat, lng: c.center.lng, elevation: c.elevation,
-    vegetation: c.vegetation, vegEstimated: c.vegEstimated, onTrail: c.onTrail,
-  });
-
   let edgeCount = 0;
   for (const cell of cells) {
     for (const nHex of hexNeighbors(cell.hex)) {
@@ -145,7 +140,7 @@ export function computeMinCutBarrier(
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
+      const result = edgeMobilityCost(profile, toMobilitySample(cell), toMobilitySample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO — carries no traffic, excluded
       const capacity = cell.onTrail && neighbor.onTrail ? TRAIL_CAPACITY_MULTIPLIER : 1;
       graph.addEdge(cell.key, nKey, capacity);
@@ -203,7 +198,7 @@ export function computeMinCutBarrier(
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const result = edgeMobilityCost(profile, toSample(cell), toSample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
+      const result = edgeMobilityCost(profile, toMobilitySample(cell), toMobilitySample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // wasn't a real edge in the original graph
       segments.push({ fromKey: cell.key, toKey: nKey, from: cell.center, to: neighbor.center });
     }

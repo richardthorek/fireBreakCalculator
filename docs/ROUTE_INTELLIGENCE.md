@@ -2609,5 +2609,674 @@ legend and pixel arithmetic it depends on are what's actually verified here).
 
 ---
 
+## 32. Probabilistic movement — the simulation becomes the engine (2026-07-27)
+
+Owner, in two parts on the same day:
+
+> "The simulate movement draws a single line very quickly. This app is trying
+> to simulate *likely* movement pathways. To an extent there is a degree of
+> probability that over the course of many simulations units take common paths
+> through the various starting and end points. Moving more slowly or around
+> obstacles... We need to account for the unknown of what the moving unit will
+> TRY to do, as they progress from cell to cell and make the next routing
+> decision."
+
+> "That movement sim model should be the crux of the recommendations and the
+> ultimate pathways through. Think of it as if you were in that vehicle and set
+> off in the direction of where you were heading, you might take roads and
+> highways as a preference until they're blocked or denied. A longer route
+> would be assumed to be quicker on a road. Going cross country then brings
+> into scope all of the vegetation and landscape elements. I would expect our
+> model to account for an 'unrestricted' set of movement corridors, and then
+> add in a set of recommended restrictions like road blocking."
+
+### The gap this closes
+
+Everything this mode computed before Pass 5 was an **optimiser's** answer: the
+cheapest path (`extractPath`), or k cheapest paths under iterative edge
+penalties (`corridorField.ts` §28). Those are correct as analysis, and the
+corridor bands honestly widened them — but every one of them is a global
+optimum computed with perfect knowledge of the whole grid. A real unit does not
+solve Dijkstra over ground it has not seen. It heads for the objective, prefers
+the road it is on, decides from what it can perceive, and finds out about the
+gully when it reaches the gully.
+
+### `movementSimulation.ts` — the model
+
+A mover on cell `u` scores each traversable neighbour `v` by the total
+remaining time it *believes* that step commits it to, and samples:
+
+```
+score(v) = edgeTime(u→v) + perceivedToGo(v) + turn + revisit + network
+P(v)     ∝ exp( −score(v) / τ )
+```
+
+Four terms, each carrying one idea:
+
+| Term | What it represents | Parameter |
+|---|---|---|
+| `network` | Road preference. Leaving the trail/road network costs believed time; rejoining credits it. **The first-order route decision.** | `roadAffinitySeconds`, from the profile's kind × the spread |
+| `perceivedToGo` | `k · trueToGo + (1−k) · naiveToGo`. `trueToGo` is the exact reverse cost field (`runCostToGoSearch`); `naiveToGo` is straight-line ÷ nominal speed — a map-and-compass estimate. | `terrainKnowledge` k ∈ [0,1] |
+| softmax `τ` | Decision noise, in SECONDS of believed journey time: "differences smaller than ~τ do not reliably decide which way this mover turns." | `decisionTemperatureSeconds` |
+| `turn` / `revisit` | Momentum, and not orbiting the same few cells. | assumed constants |
+
+**The property that makes it work: the mover pays the REAL edge cost whatever
+it believed.** Belief steers the choice; terrain charges for it. A
+low-knowledge mover commits to a bearing, walks into ground that costs more
+than it expected, and works around it — arriving later than the optimiser's
+figure. Nothing is scripted; it falls out of the same `edgeMobilityCost`
+everything else in this mode uses, so the ensemble can never show movement the
+analysis calls impossible.
+
+At τ→0, k→1, road affinity→0, this collapses to the deterministic single line
+that used to be the whole answer. The old result is a limiting case of the new
+one, not a competing one.
+
+**Road preference is why vegetation matters at the right time.** With a road
+present, a wheeled profile's simulated movement is overwhelmingly on it, and
+the vegetation/structure model barely binds. Deny the road, and movement is
+pushed into ground where gap width, stem diameter and side-slope decide
+everything. That ordering is the owner's stated mental model, and it is now the
+model's behaviour rather than a description of it.
+
+### One supporting fix in the cost model
+
+`mobilityCost.ts` used the **off-path** Irmischer & Clarke function for every
+foot movement, including movement along a formed track — so a road was worth
+literally nothing to a foot profile. Both published functions were already in
+the module with exactly that distinction documented (Tobler is the *on-path*
+hiking function). Each is now applied to the case it was calibrated for. This
+was invisible while movement was solved as a cost field and became obvious the
+moment it was simulated as a route *choice*.
+
+### `restrictionPlanner.ts` — recommended restrictions
+
+The actionable half. Not a scoring formula — **re-simulation**:
+
+1. Rank candidate edges by how many simulated movers actually crossed them
+   (`edgeTransit` from the baseline), preferring edges where both cells are on
+   the network: a road block is cheap, doctrinally ordinary, and per the
+   baseline is where the traffic is.
+2. Greedily, one at a time: re-run a reduced ensemble (70 movers — enough to
+   *rank*) with each shortlisted candidate added to the set already chosen,
+   keep the one that hurts movement most, record its **marginal** effect,
+   repeat. The chosen set is then re-run at full mover count for the figures
+   actually shown.
+
+Greedy and iterative for the reason that justifies simulating at all: blocking
+the best road does not remove that traffic, it **moves** it — onto the next
+road, and eventually into the bush where a different set of terrain factors
+binds. Only re-running against the partially-restricted world shows where it
+went, so each recommendation is made against the world the previous ones
+created.
+
+**What it refuses to do**: if the best remaining candidate buys less than
+`MIN_MEANINGFUL_EFFECT_SECONDS` (2 min of median delay), planning stops and
+reports the bypass. Terrain that offers a free bypass cannot be denied by
+blocking points, and padding the list with measures that achieve nothing would
+be worse than a short list — the same finding §28's `unconstrained` reports,
+reached from the other direction.
+
+### Corridors are now built from the simulation
+
+`buildCorridorField` gained `routesOverride` / `evidence` /
+`weightByAttractiveness`, so the **identical** density → smooth → segment →
+metrics pipeline serves either evidence base. `CorridorField.evidence`
+(`'optimiser-routes' | 'simulated-movers'`) travels with the field and is
+surfaced in the panel, the map key, the GIS export attributes
+(`evidence` + `evidence_note`) and the assistant briefing — because
+"180" means something different when it counts simulated movers rather than
+computed optimal routes, and a reader has no other way to tell.
+
+The optimiser field is still computed and kept as `optimiserCorridorField`:
+chokepoints and the min-cut are graph properties of the *route* set, and
+"where the best routes are" vs "where movers went" is itself informative.
+
+### Honesty boundary — the part that must not be lost
+
+The **terrain** is the same measured/estimated data with the same Tier 0/1
+flags. The **behaviour** parameters (τ, the k distribution, road affinity, turn
+and revisit penalties, step budget, the unreachable-lookahead constant, and the
+denial-equivalent seconds the planner ranks with) are **ASSUMED**. No source
+was found that calibrates how a real unit trades believed remaining time
+against local effort, and none is claimed. The ordering of the road-affinity
+figures by mover kind is defensible from the physical facts the profiles
+already encode; the magnitudes are engineering choices.
+
+Therefore a transit frequency is *"the share of simulated movers under this
+behaviour model that crossed this cell"*, never *"the probability a real unit
+goes here"*. Everything the module returns carries `behaviourModelled: true`,
+the panel leads with the behaviour selector rather than burying it in a
+footnote, the map key marks the modelled entries, and the assistant template
+states the caveat whenever a simulated figure appears. The restriction
+planner's delay figures are siting **priorities**, deliberately distinct from
+`delayLedger.ts`'s engineering build/breach ledger — different questions, kept
+apart.
+
+### Verification
+
+`tsc --noEmit` and `npm run build` clean on `webapp/` and `api/`;
+`npm run test:unit` green (12 new checks added to
+`api/src/test/mobilityAssistant.test.ts` covering the new payload blocks, the
+evidence labelling, the bypass finding, backward compatibility with payloads
+that lack them, and validator rejection of half-formed ones).
+
+A 39-check standalone Node smoke test over the real modules (disposable vite
+lib-mode entry, deleted before commit) built a synthetic AOI with a road across
+otherwise heavy scrub and asserted: every mover accounted for; percentiles
+ordered; simulated median ≥ the optimiser's best; same seed → identical
+ensemble and different seed → a different one; **a wheeled profile's movement
+stays on the road when one exists and is entirely cross-country when it does
+not, and the road makes the journey faster**; familiar movers spread over less
+ground and arrive sooner than unfamiliar ones; no mover ever crosses a blocked
+edge; corridors build from ensemble tracks; the planner prefers road blocks,
+ranks 1..n, blocks both directions, and blocking the road both **doubles the
+median journey and pushes movement cross-country** (23% → 41%); and empty
+origin/objective return null rather than an invented ensemble.
+
+**One real defect the test caught.** `crossCountryFraction` was first
+implemented as a pooled count of every step by every mover. A mover that never
+arrives runs to the full step budget (~130 steps) while one that drives down
+the road finishes in ~29, so a handful of stranded movers thrashing in the bush
+outweighed everyone who succeeded: an ensemble whose every individual track was
+4–7% off-road reported **46% off-road overall**. Now a per-mover mean — one
+mover, one vote — which still counts a stranded mover at 1.0 but never more.
+
+Map rendering is unverifiable in this sandbox (no Mapbox token) — **confirm on
+the live preview**.
+
+### Still open
+
+- Road **class** is not modelled: `onTrail` is a single boolean from OSM, so a
+  highway and a farm track are the same thing to the mover. Road affinity and
+  speed should differ between them, and the data to do it (OSM `highway=*`) is
+  already being fetched and discarded. This is the largest remaining fidelity
+  gap in the new model and the natural next step.
+- Restrictions are sited on grid EDGES, so a recommendation's spatial precision
+  is the hex resolution, not a surveyed point on a road.
+- The recommended set is not costed. Which of two equally-effective blocks is
+  cheaper to emplace is `delayLedger.ts`'s question and the two are not yet
+  joined up.
+
+---
+
+## 33. Terrain-mode UI clarity pass (2026-07-27)
+
+Eight field-reported items, all in one round. Recorded together because they
+share one cause: the mode had accumulated real analytical depth with no
+corresponding investment in reading it.
+
+1. **Brush cursor.** A ring drawn at the brush's actual on-screen radius
+   (`BRUSH_PIXEL_RADIUS`), coloured by role and switching to a dashed danger
+   ring for erase. Since the brush is *defined* in screen pixels, the ring is
+   an exact preview of the next dab at any zoom, not an approximation.
+2. **Painting guidance, and painting during the drag.** A dismissible hint
+   while a role is armed. The "happens at the end" symptom was a real
+   performance bug, not a missing feature: painting did fire per dab, but the
+   render replayed **every** stroke through `@turf`'s polygon booleans on every
+   one of them — quadratic, and real work each time, so a long stroke fell
+   behind the finger and the shape landed in a lump at mouse-up. A drag only
+   ever *appends*, so `applyStrokes` now folds new strokes onto a cached
+   accumulator; any other change still does a full replay.
+3. **Hold to pan.** Space (or Alt) temporarily hands `dragPan` back and
+   suppresses painting, with a badge while held. Registered on `window` (the
+   canvas is not focusable), guarded against firing inside form fields, and
+   released on window blur so a lost keyup cannot strand the tool in pan mode.
+4. **Progress.** `runMobilityAppreciation` never emitted progress at all — the
+   option existed and App.tsx did not pass it. Now: named stages
+   (`MobilityStage`), a bar and the latest real log line in an on-map HUD, and
+   — the part that actually helps — `onPreviewCells` paints the terrain-only
+   classified grid as soon as sampling finishes, so the map fills in while the
+   search, ensemble and planner are still working. The progress budget was
+   rebalanced (sampling 0→0.45) because the simulation stages are now real work
+   of comparable length.
+5. **Map key.** `MobilityLegend.tsx`, listing only what is actually drawn — a
+   key showing absent symbols is worse than none — and marking which entries
+   are modelled behaviour rather than a property of the ground.
+6. **Overlay opacity.** One slider, applied as a **multiplier** on each layer's
+   own designed opacity (`registerOverlayOpacity`), so the meanings already
+   encoded in opacity — the corridor density gradient, the isochrone field's
+   unreached dimming — survive being faded. Painted AOIs are deliberately
+   excluded: they are the user's input, not a result.
+7. See §32.
+8. **Corridors made legible.** The band-only render was the right honesty
+   statement and unreadable as a shape. Now four paired layers: the density
+   fill (unchanged in meaning), a **dissolved outline** per corridor (a real
+   `@turf/union` of its own hexes, so it is the actual extent), a brighter
+   spine at high density, and the analysed tracks as hairlines on top. Plus an
+   on-map label per corridor and a selection that dims every band but one,
+   driven from either the panel card or the band itself.
+
+Recommended restrictions render as numbered heavy bars between two real cell
+centres — never an invented point along an edge, matching §29's export rule.
+
+**Verification**: `tsc --noEmit`/`npm run build` clean. Map rendering and the
+touch/keyboard interactions are unverifiable in this sandbox — **confirm on the
+live preview**.
+
+
+---
+
+## 34. Hydrology — waterways as a real barrier, not silently invisible (2026-07-27)
+
+Owner, reviewing the shipped Terrain Mobility mode:
+
+> "I can see substantial waterways in my sample area but they don't seem to
+> form a 'barrier' in the overlay analysis. If they are being considered then
+> we need to show more of that. This is an initial planning aid and
+> considerations tool, not necessarily down to the specific plan being spit
+> out. I need to get credible buy-in for the analysis early."
+
+And, in the same round:
+
+> "Do we need smaller grid sample areas for specifics along corridors etc. At
+> the moment the cells are very large so elevation specifics and smaller but
+> significant landscape is being lost."
+
+### The finding, before any fix
+
+Investigation (not guesswork) turned up four independent facts, each verified
+by reading the actual code and, where a new endpoint was needed, by live
+`curl` against the real service — this project's standing discipline for a new
+data source:
+
+1. **NVIS actively mislabels water as the EASIEST terrain.**
+   `nvisVegetationService.ts`'s MVG code 24 ("Inland Aquatic — freshwater, salt
+   lakes, lagoons") and any label matching `water|lake|sea|estuar|salt lake`
+   resolved to `vegetation: 'grassland'` — the same bucket as open, fast,
+   easy-to-cross ground. A river read to the cost model as GO terrain, not an
+   obstacle. Not a gap — an active mislabel, and the actual mechanism behind
+   the symptom reported.
+2. **A live-verified DEA Water Observations client existed and was never
+   called.** `deaWaterObservationsService.ts`'s point-query function was
+   built, tested, cited — and never wired into `mobilityGrid.ts`'s sampling.
+3. **`fordingDepthM` — real, sourced figures on every mover profile — was
+   never read anywhere.** Declared on the profile schema, populated (0.7 m for
+   a light 4WD, 1.2 m for a tracked IFV, …), and dead: no caller of
+   `edgeMobilityCost` ever consulted it.
+4. **No linear watercourse geometry was fetched at all.** The Overpass query
+   in `infrastructureService.ts` only ever asked for `highway=*`.
+
+The panel's own limitations footer already half-admitted this ("surface-water
+(Tier 1)... built but not yet sampled per cell") — but a footnote nobody reads
+undersold how bad it actually was: a river wasn't unsampled ground, it was
+coded as *easier* than the vegetation on either bank.
+
+### Why this did NOT need a finer grid (answering the second question first)
+
+The grid-resolution question is real and worth its own numbers: at
+`TARGET_CELL_COUNT = 2200`, a typical 4 km × 2 km two-AOI run produces hexes
+roughly **65 m flat-to-flat**; an 8 km × 4 km AOI coarsens to roughly **130 m**.
+A 10–30 m river sits well inside a single hex alongside dry land on both
+sides — genuinely too coarse to resolve as an AREAL classification.
+
+But a watercourse is not an areal property, it's a **linear barrier**, and the
+existing per-cell architecture (classify the ground a hex sits on) was never
+going to represent that well at ANY affordable resolution — uniformly
+shrinking the grid to catch a 20 m river would blow the 2200–2800 cell compute
+budget this mode is deliberately capped at (docs §8). The right fix is
+resolution-INDEPENDENT: test proximity to the real vector geometry at multiple
+points per cell (its centre AND its six hex corners — not centre alone, which
+is what `onTrail` already accepts as adequate for the identical problem with
+roads), so a narrow feature clipping a hex's edge is still caught even when
+the hex's centre sits on dry land. This is the same order-of-magnitude
+resolution improvement a full grid refinement would have bought, without the
+compute-budget cost or the risk of touching the hot-path search's core
+tiling assumptions. **Uniform grid refinement for fine elevation detail (a
+genuinely separate ask — gullies, knolls, micro-terrain) remains open**, and
+is recorded under "Still open" below rather than folded into this pass.
+
+### The fix
+
+**`waterInfrastructure` (via `infrastructureService.ts`, both API and
+webapp)**: the existing Overpass proxy/direct-endpoint machinery generalised
+with a `kind: 'highway' | 'water'` parameter rather than a second endpoint —
+`waterway=river|canal|stream` and `natural=water` queried the same way roads
+already are. `distanceToNearestWater` extends the existing polyline-distance
+test with a point-in-polygon check (`@turf/boolean-point-in-polygon`, already
+a project dependency) for `natural=water` bodies — a lake's EDGE-distance
+alone would say a point in the middle of a large lake is far from "the trail",
+which is backwards for a filled body; a mover standing in the middle of a lake
+IS water, not near it.
+
+**`deaWaterObservationsService.ts` gained an area-raster path
+(`fetchSurfaceWaterFrequencyArea`)** for AOIs where OSM tagging is sparse —
+ONE request regardless of grid size, matching the discipline `mobilityGrid.ts`
+already holds every other sampling call to. LIVE-VERIFIED this session that
+this could NOT reuse NAFI's WCS `GetCoverage` pattern: `ga_ls_wo_fq_myear_3`'s
+`DescribeCoverage` advertises only GeoTIFF/netCDF, and a live `FORMAT=PNG`
+WCS request is rejected outright (confirmed by `curl`) — there is no
+browser-native GeoTIFF decoder in this project and one was deliberately not
+added to work around a single layer. WMS `GetMap` with `FORMAT=image/png`,
+by contrast, IS live-verified to return a real styled PNG. The trade-off
+that choice buys: what comes back is a STYLED 8-bit image, not the exact
+`frequency` float the existing point-query function reads directly off the
+data band, so the area path reconstructs an approximate frequency via
+colour-ramp matching against `mysummary_wofs_frequency_blue_3`'s own
+`legend.png` (sampled live this session, 23 control points, the same
+technique `nvisVegetationService.ts`/`nafiFireHistoryService.ts` already use
+for their own legend-coded rasters) — always reported `confidence:
+'estimated'`, never conflated with the point function's `'published'` figure.
+Sanity-checked against two real scenes this session: Lake Argyle (a known
+near-permanent reservoir) matched at frequency ≈0.91 at its centre; a Sydney
+Harbour-area bbox correctly left 363/400 sampled land pixels unmatched
+(transparent) while matching real water pixels near the harbour/river.
+
+**`MobilityGridCell` gained four hydrology fields** (`waterDistanceM`,
+`inWaterBody`, `nearestWaterwayKind`, `waterFrequency`), sampled once per grid
+build alongside elevation/vegetation/trail — never per-cell network calls.
+
+**`mobilityCost.ts` gained `estimateFordingRequirement`** — the same class of
+Tier 0 engineering assumption `estimateStructureFromVegetation` already makes
+for vegetation gap width, held to the same honesty rule (always `estimated:
+true`, a class-representative figure, never a measured per-crossing depth,
+because no source in this app measures actual river depth at a point). OSM
+tag class wins when present (a human classification of what the feature IS)
+over WOfS frequency (only a symptom of it being wet): body > river/canal >
+stream > high-frequency-untagged > moderate-frequency-untagged > nothing.
+
+**`edgeMobilityCost` gates on it** exactly where every other hard constraint
+in that function already gates — NO-GO when the assumed depth exceeds the
+profile's `fordingDepthM` (finally live), SLOW-GO with a genuine speed penalty
+when it's within capability (a passable ford is never as fast as the same
+distance on dry ground). **Skipped when both ends of the edge are on the
+mapped trail/road network** — the exact same "ground here is already broken"
+idiom the vegetation gate already uses for `onTrail`, on the reasoning that a
+road crossing a mapped watercourse implies a bridge/causeway/ford the network
+already accounts for. `classifyCellTerrain`'s direct terrain-only
+classification got the identical gate, so the GO/SLOW-GO/NO-GO overlay agrees
+with what the search would actually do arriving into that cell.
+
+**Every call site that builds an edge's `from`/`to` sample now goes through
+one new function, `toMobilitySample` (`accumulatedCost.ts`)**, rather than
+each hand-writing the object literal — `accumulatedCost.ts` itself,
+`corridorField.ts`, `minCutBarrier.ts`, `movementSimulation.ts`. This exists
+specifically so a field added to the hydrology (or any future) extension can't
+silently go stale at one call site while every other caller picks it up —
+exactly the failure mode a hand-audited grep for `vegEstimated:` across the
+codebase turned up before this refactor (8 near-identical object literals,
+already drifting from each other's exact field lists).
+
+**Map + panel**: the real OSM waterway/water-body geometry now travels through
+`MobilityGridResult` → `MobilityAppreciationResult` → the map as its own
+reference layer (`mobility-water-line`/`mobility-water-body`) — a bold blue
+line/casing for a river/canal/stream, a filled polygon for a standing body —
+independent of any hex cell it influenced, so a reviewer sees the actual
+mapped river the gate is reacting to, not just scattered red hexes near it.
+The map key gained a "Waterways & water bodies" section. The run log reports a
+real computed count (`N/M CELLS CARRY A WATER SIGNAL`), not a claim — the
+single most direct way to answer "is this actually being considered" without
+having to trust the model's word for it.
+
+### Honesty boundary
+
+The water GEOMETRY (OSM tags) is real, human-mapped data — as reliable as the
+trail data this mode already leans on, with the identical "OSM completeness
+varies in remote areas" caveat. The WOfS frequency is REAL MEASUREMENT
+(satellite-observed, not modelled) but reconstructed through a colour-ramp
+approximation, `estimated`, not `published`. The DEPTH assumed for the
+fording gate is entirely engineering judgement — no source in this app
+measures actual crossing depth — held to the identical Tier 0 discipline
+`estimateStructureFromVegetation` already established for vegetation
+structure: always flagged, a class-representative figure, never silently
+upgraded to a measurement.
+
+### Verification
+
+`tsc --noEmit`/`npm run build` clean on both `webapp/` and `api/`;
+`npm run test:unit` unaffected (no API-side behaviour changed beyond the
+`kind` query param, itself backward-compatible — omitted `kind` defaults to
+the existing `highway` behaviour, verified by re-running the full existing
+suite green).
+
+A 29-check standalone smoke test over the real modules (disposable vite
+lib-mode entry, deleted before commit) covered: `estimateFordingRequirement`'s
+severity ordering (body > river > stream, WOfS frequency as a fallback signal,
+no false positives on trace-frequency damp ground); `edgeMobilityCost`
+genuinely NO-GOing a vehicle at a mapped river beyond its fording limit while
+passing a shallow stream as SLOW-GO with a real speed penalty; the `onTrail`
+bridge exemption; a foot profile gated identically to a vehicle;
+`distanceToNearestWater`'s point-in-polygon correctness for a lake vs a plain
+line for a river; and the WOfS colour-ramp matcher against its own live-derived
+control points, including correctly REJECTING an unrelated colour rather than
+force-matching it.
+
+**The test that matters most**, and the one that directly answers the field
+report: a synthetic AOI with a real river band (wide enough to span multiple
+hex columns — narrower bands leave gaps a route can weave through between
+staggered rows, a property of hex tiling caught and fixed while building this
+test) severing an origin from an objective, with one bridge crossing.
+Confirmed: (a) a route is found and it genuinely uses the bridge, never
+crossing the river off it; (b) remove the bridge, and the SAME river now
+**actually severs the AOI** — `extractPath` returns null, no route exists; (c)
+as a control, the identical river with its water signal stripped (the
+pre-fix state) does NOT block movement — proving the test exercises the fix,
+not something else.
+
+Live map rendering is unverifiable in this sandbox (no Mapbox token) —
+**confirm the water reference layer and the GO/SLOW-GO/NO-GO overlay's
+reaction to a real waterway on the live preview.**
+
+### Still open
+
+- **Road/water CLASS is a single OSM tag with no further nuance** — `waterway=
+  river` always assumes 1.2 m regardless of whether it's a wide lowland river
+  or a modest highland one; there is no per-crossing measured depth anywhere
+  in this stack, and none exists in open Australian data at the resolution
+  this mode operates at.
+- **Uniform fine-grained elevation resolution remains open** (the second half
+  of the owner's question) — this pass fixed the LINEAR-barrier case
+  (resolution-independent by construction), not areal micro-terrain
+  (gullies, knolls) which genuinely needs either a finer grid within the
+  existing compute budget or an adaptive/corridor-focused tiling scheme —
+  a materially larger architecture change (hex adjacency, `demDerivatives.ts`'s
+  neighbour-based plane fit, and `corridorField.ts`'s smoothing all currently
+  assume a UNIFORM hex size) than this pass, deliberately not attempted here.
+- GIS export (`mobilityGisExport.ts`) and the AI assistant payload
+  (`mobilityAssistantApi.ts`) do not yet carry hydrology-specific attributes —
+  the water reference layer and gate are visible on the map/panel/log, but a
+  downloaded GIS pack or an AI briefing doesn't yet name which cells were
+  water-gated specifically (it inherits the general
+  `estimated`/`blockedReason` fields, just not a dedicated hydrology summary).
+- Relations (multipolygon lakes, common for larger water bodies in OSM) are
+  not fetched — only `way`-tagged features, matching the existing trail
+  fetcher's own way-only scope.
+
+### §34 follow-up: end-to-end review fixes (2026-07-27)
+
+A full read-through of the PR (logic, UI wiring, mobile usability) turned up
+two real gaps in the hydrology pass above, both fixed in `mobilityGrid.ts`:
+
+- **Lake-edge cells were missing the gate.** `inWaterBody` was computed at the
+  hex CENTRE only, while `waterDistanceM`/`nearestWaterwayKind` already used
+  centre+corners. A cell whose CORNER (not centre) clipped a lake got
+  `waterDistanceM = 0` (correctly detected) but `inWaterBody = false` AND
+  `nearestWaterwayKind = null` (the corner search deliberately skips `'water'`-
+  kind features, by design — see the fix above), so `estimateFordingRequirement`
+  returned `null` and the gate silently never fired for that cell. Fixed:
+  `inWaterBody` now checks all sample points (centre + six corners) against
+  water-body features, not the centre alone.
+- **`usedEstimatedData` didn't know about hydrology.** The top-level honesty
+  flag on `MobilityGridResult` only OR'd elevation/vegetation estimation —
+  a run entirely shaped by an assumed fording depth (always Tier 0 by design)
+  could show no "CAUTION — ESTIMATED DATA" warning at all. Fixed: it now also
+  ORs in whether any cell carries a water signal (in a body, near a mapped
+  linear watercourse, or above the WOfS frequency threshold) — the same
+  predicate `mobilityAppreciation.ts`'s log line already computed for its own
+  count, now also driving the honesty flag itself.
+
+Also fixed, mobile usability: on a narrow viewport the run-progress HUD and
+the map key were BOTH pinned to `bottom: 12px` and stretched full-width —
+directly contradicting the comment above that rule ("must not fight for the
+same corner on a phone"). Since the legend can be visible as soon as an area
+is painted and the HUD appears the moment a run starts, both can legitimately
+be on-screen together; they now split the bottom edge left/right on mobile
+instead of overlapping.
+
+UI wiring (`MapboxMapView`/`MobilityPanel` prop interfaces vs. their call
+sites in `App.tsx`, the simulation-controller handlers, touch/pinch painting)
+was reviewed and found correctly connected — no further gaps found.
+
+---
+
+## 35. The bounding box is the bug — lazy grid, cost budget, corridor-count stop (design, 2026-07-27)
+
+**Status: DESIGN ONLY. Not built.** Recorded here before implementation per
+CLAUDE.md's roadmap-first rule.
+
+### The field report
+
+Owner ran a west→east crossing of Lake George, NSW:
+
+> "It didn't find pathway because the lake was taller than the survey grid. If
+> the system had considered an extra bit of space to the north or south it may
+> have found a way."
+
+### The mechanism, confirmed in code
+
+`mobilityGrid.ts:101-112` builds the AOI as the union of the two painted
+areas, padded by **20% of that same span**:
+
+```js
+const padLat = (maxLat - minLat) * 0.2;   // proportional to the span
+```
+
+For a due-west→due-east run, `maxLat - minLat` is only the north–south
+*thickness of the two painted blobs* — perhaps 2 km, so the north–south pad is
+~400 m. Lake George is ~25 km north–south. Every cell in the crossing band is
+water → NO-GO → `extractPath` returns null.
+
+**The padding is proportional to the origin↔objective span, so the geometry
+that most needs room to detour receives the least.** A straight run across a
+long perpendicular obstacle is the worst case for this formula, and it is
+exactly the case a user is most likely to draw.
+
+The failure is not the search — it is that the search was walled in and then
+reported "no route" with no way to distinguish *"there is no way"* from *"I
+was not allowed to look."* That conflation is the real defect; the missing
+route is the symptom.
+
+### Why "just pad more" is not the fix
+
+`chooseHexSize` (line 124-131) sizes hexes to fit ~`TARGET_CELL_COUNT` cells
+*inside whatever box it is given*, coarsening up to 5× to stay under
+`MAX_HEX_CELLS`. Enlarging the box therefore silently **coarsens resolution** —
+firing `usedCoarseGrid` and making cells bigger, the opposite of the owner's
+standing "cells are very large, small landscape features are lost" feedback
+(§34). Padding trades the reported bug for a previously-reported one.
+
+### The design
+
+**1. Lazy grid materialisation — delete the box.**
+Today the entire grid is built first (line 125), then Dijkstra runs inside it.
+Invert that: materialise a hex only when the A* frontier reaches it. The
+explored region then grows organically into whatever shape the terrain
+dictates, and its bounds become an emergent property rather than a declared
+rectangle. The search algorithm was never the problem; the pre-materialised
+grid was.
+
+Owner's framing — *"every cell could spawn off a path finding direction on the
+surrounding cells toward the target… analysed cells organically spread out
+from the starting point based on what they find"* — is best-first search
+(A*). Implemented as a priority queue plus a visited set, not literal
+per-cell spawning (which is exponential).
+
+**2. A cost budget replaces the geometric bound.**
+Two phases:
+- Phase 1: A* to the objective with no geometric limit → best cost `C*`.
+- Phase 2: explore and diversify only within `α · C*`.
+
+That budget is a **travel-time ellipse, not a rectangle**, and it self-sizes:
+an easy run stays tight and cheap; Lake George forces a large `C*`, so the
+budget automatically opens wide enough to admit the north and south ways
+around. The right answer emerges *because* the terrain is hard.
+
+`α = 2.0` default, **user-adjustable** (owner: "2x default with a ui option to
+expand or contract"). Time-based, not distance-based, so a fast road detour
+correctly beats a short cross-country slog.
+
+**3. Stop on corridor count, not path count.**
+Owner: *"the intent is, for any given scenario, identify 2-5 possible travel
+'corridors' (noting dozens of adjacent paths form a corridor)."*
+
+This is the primary termination rule — search until 2–5 **distinct corridors**
+exist, with `α·C*` and a hard cell ceiling as safety bounds behind it. Routes
+staying within a corridor-width of each other are one corridor, not several;
+`corridorField.ts` already bundles on exactly this basis, so this is reuse
+rather than new clustering machinery.
+
+**4. Two passes, uniform hex size within each.**
+Owner asked for adaptive resolution (fine near routes, coarse elsewhere).
+Mixed hex sizes in a single graph break `demDerivatives.ts`'s neighbour plane
+fit, `corridorField.ts`'s smoothing, and `hexGrid.ts`'s adjacency — the
+larger architecture change deferred in §34's Still-open list. Two sequential
+passes deliver the same effect without that break:
+
+- **Pass 1 — coarse, wide.** Lazy A* on coarse hexes under the cost budget.
+  Answers "where can we get through at all?" and finds the corridor bundles.
+- **Pass 2 — fine, narrow.** Lazy A* on fine hexes, materialised only within a
+  band around pass-1's routes. Refines them.
+
+Each pass is internally uniform, so nothing downstream needs to change.
+
+**5. Eager coarse tiles, lazy fine cells.**
+Lazy cells need data on demand, but the search runs **synchronously** inside
+`mobilityWorker.ts`; awaiting a fetch per cell would wreck it. Owner's own
+point — *"load data in large bounding box cells but conduct the travel
+analysis on a much smaller scale"* — resolves this: fetch sample data in
+coarse area tiles (all upstream sampling is already area-batched, one request
+each regardless of cell count — see `mobilityGrid.ts`'s own comment at lines
+33-41) and expand the tile ring outward when the frontier nears an edge. The
+search then pauses at **tile** boundaries, not per cell — a handful of awaits
+rather than thousands.
+
+**6. Honest failure.**
+With no box, an unreachable objective would otherwise expand forever. A hard
+ceiling (max cells / max travel time, both user-configurable per owner) must
+produce *"no route found within N hours of travel, M cells explored"* — and
+paint the explored frontier on the map so the wall that stopped it is
+visible. This is the honesty half of the Lake George bug and matters as much
+as finding the route.
+
+### Compute
+
+Today: ~2200–2800 cells over a rectangle, sampled up front, most never
+usefully touched. Lazy A* materialises far fewer on a straightforward run and
+spends its budget where the terrain demands it — so typical runs should get
+**higher resolution and less total work simultaneously**. Worst case
+(unreachable objective, budget exhausted) is genuinely expensive, hence the
+ceiling above.
+
+### Deliberately NOT in this slice
+
+- **Road-first routing / hybrid road graph.** Owner's original proposal opened
+  with road-network routing (find roads near origin, run driving directions,
+  block and repeat). Correct and valuable — roads are a *network* while hexes
+  are a *tessellation*, and today `onTrail` is a single per-cell boolean,
+  which is precisely why road class is still discarded (§32's largest
+  remaining fidelity gap). A hybrid graph (road edges + hex off-road edges +
+  transfer edges) would close that item too. Scoped out of the first slice by
+  owner decision ("lazy grid only") — it fixes a different problem and is
+  independently shippable.
+- **Mixed-size cells in one graph** — superseded by the two-pass approach
+  above.
+
+### Already shipped — not to be rebuilt
+
+- **Bridges/fords.** §34 already exempts the fording gate where an edge sits
+  on the mapped trail network, matching owner's "roads or tracks over water
+  have bridges or fords." A real road graph would sharpen this from a
+  per-hex boolean to an actual road edge crossing water.
+- **Corridor clustering.** `corridorField.ts` ranks routes into bands and
+  tracks `evidence`; feeding it north/south routes should produce the
+  two-corridor picture directly.
+- **Streaming paint-in.** Frontier expansion is inherently incremental, so the
+  owner's requested "hex grid painted in as pathways are identified" becomes
+  *easier* than today's staged progress. Worker progress channel (§33) and
+  the water reference layer (§34) already exist; roads as a drawn layer are
+  new but the data is already fetched.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

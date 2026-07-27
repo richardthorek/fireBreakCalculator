@@ -85,11 +85,21 @@ function missionProperties(input: ExportMobilityInput) {
   };
 }
 
-function corridorProperties(c: Corridor, totalRoutes: number) {
+function corridorProperties(c: Corridor, totalRoutes: number, evidence: string) {
   return {
     kind: 'movement_corridor',
     rank: c.rank,
     ease_class: c.easeClass,
+    // What the counts below are counts OF. Since 2026-07-27 corridors are
+    // normally derived from a simulated movement ensemble, so `route_count` is
+    // a count of SIMULATED MOVERS under a behaviour model with assumed
+    // parameters — not a count of computed optimal routes. A consumer opening
+    // this file in QGIS has no other way to know which it is, and the
+    // difference changes what the number means, so it travels with the data.
+    evidence,
+    evidence_note: evidence === 'simulated-movers'
+      ? 'Counts are simulated movers from a behaviour model with assumed parameters, not measured traffic.'
+      : 'Counts are computed cheapest-path routes assuming perfect knowledge of the terrain.',
     route_count: c.routeCount,
     route_total_analysed: totalRoutes,
     share_of_routes: round(c.shareOfRoutes, 2),
@@ -152,6 +162,7 @@ function placementProperties(
 
 export function toMobilityGeoJSON(input: ExportMobilityInput): string {
   const totalRoutes = input.corridorField?.routes.length ?? 0;
+  const corridorEvidence = input.corridorField?.evidence ?? 'optimiser-routes';
   const features: any[] = [
     // Mission-level metadata as a geometry-less Feature (valid per RFC 7946
     // §3.2) rather than a nonstandard top-level property — every consumer of
@@ -162,7 +173,7 @@ export function toMobilityGeoJSON(input: ExportMobilityInput): string {
   for (const c of input.corridorField?.corridors ?? []) {
     features.push({
       type: 'Feature',
-      properties: corridorProperties(c, totalRoutes),
+      properties: corridorProperties(c, totalRoutes, corridorEvidence),
       geometry: { type: 'MultiPolygon', coordinates: c.cells.map(cell => [ringCoords(cell.polygon)]) },
     });
   }
@@ -211,6 +222,7 @@ const corridorStyleId = (rank: number): string => `corridor-${rank}`;
 
 export function toMobilityKML(input: ExportMobilityInput): string {
   const totalRoutes = input.corridorField?.routes.length ?? 0;
+  const corridorEvidence = input.corridorField?.evidence ?? 'optimiser-routes';
   const mission = missionProperties(input);
 
   const missionDescription = `<![CDATA[
@@ -229,7 +241,7 @@ export function toMobilityKML(input: ExportMobilityInput): string {
     </Style>`).join('');
 
   const corridorPlacemarks = corridors.map(c => {
-    const p = corridorProperties(c, totalRoutes);
+    const p = corridorProperties(c, totalRoutes, corridorEvidence);
     const polys = c.cells
       .map(cell => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${kmlCoords(cell.polygon)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`)
       .join('');

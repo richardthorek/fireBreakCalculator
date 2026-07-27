@@ -161,6 +161,41 @@ const TERRAIN_SLOPE_CEILING: Record<TerrainLevel, number> = {
   very_steep: 90,
 };
 
+/**
+ * Sidehill (cross-slope, perpendicular to the line) safety limit, degrees — a
+ * DISTINCT constraint from `DEFAULT_MAX_SLOPE_DEGREES` above, which gates the
+ * ALONG-line gradient. NWCG guidance separates the two: avoid sidehill working
+ * > ~45% (≈24°) but straight uphill/downhill up to ~55% (≈29°) — a real
+ * machine can point straight up a pitch it would roll on if worked across.
+ * Before per-segment cross-slope existed (CALCULATION_REVIEW.md F2) the
+ * along-slope limit did double duty for both concerns; this is the second,
+ * genuinely different limit. Hand crews face a footing hazard on a sidehill,
+ * not a rollover one, so their default stays generous rather than reusing
+ * the machinery figure.
+ */
+export const DEFAULT_MAX_SIDE_SLOPE_DEGREES: Record<ResourceKind, number> = {
+  Machinery: 24, // ≈ 45% grade, NWCG sidehill limit
+  HandCrew: 40,
+  Aircraft: 90, // aircraft overfly terrain; cross-slope is not a work limit
+};
+
+/**
+ * Resolve the maximum workable SIDEHILL slope (degrees) for an equipment
+ * item: explicit `maxSideSlope` wins; otherwise the resource-kind default.
+ * Unlike `resolveMaxSlopeDegrees`, this does not derive from `allowedTerrain`
+ * — that coarse class describes overall difficulty, not a specific rollover
+ * limit, and conflating the two is exactly the gap this function closes.
+ */
+export function resolveMaxSideSlopeDegrees(
+  kind: ResourceKind,
+  explicitMaxSideSlope: number | undefined
+): number {
+  if (typeof explicitMaxSideSlope === 'number' && explicitMaxSideSlope > 0) {
+    return explicitMaxSideSlope;
+  }
+  return DEFAULT_MAX_SIDE_SLOPE_DEGREES[kind];
+}
+
 /** Linear interpolation over sorted [x, y] anchors, clamped beyond the ends. */
 function interpolateAnchors(anchors: SlopeAnchor[], x: number): number {
   if (x <= anchors[0][0]) return anchors[0][1];
