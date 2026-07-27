@@ -2202,11 +2202,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     };
     if (!corridors || corridors.length === 0) { remove(); return; }
 
-    // Rank-coded, using the mode's existing palette: rank 1 (most-used) reads
-    // hottest. Ease class is carried as a property for the legend rather than
-    // a second colour axis, so one visual channel = one meaning.
+    // Rank-coded — deliberately a BLUE/VIOLET family, entirely outside the
+    // red/amber/green the trafficability heatmap already owns (owner,
+    // 2026-07-27, live-testing: "the corridors need to be a colour other
+    // than red. The red, amber, green is used for the hex to show
+    // passability so the corridor in red makes it look like it's picking
+    // the hardest route!" — confirmed a real collision, not just taste:
+    // rank 1 was `#D8232A`, identical to the heatmap's own NO-GO red; rank
+    // 2 was `#F6A609`, identical to its SLOW-GO amber). Ease class is
+    // carried as a property for the legend rather than a second colour
+    // axis, so one visual channel = one meaning.
     const rankColor = (rank: number) =>
-      rank === 1 ? '#D8232A' : rank === 2 ? '#F6A609' : rank === 3 ? '#38bdf8' : '#94a3b8';
+      rank === 1 ? '#3B82F6' : rank === 2 ? '#8B5CF6' : rank === 3 ? '#06B6D4' : '#94a3b8';
 
     const cellFeatures = corridors.flatMap(c =>
       c.cells.map(cell => ({

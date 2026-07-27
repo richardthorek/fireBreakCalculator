@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 — distance-scaled cell budget + quick/standard/fine analysis-depth selector shipped; see Recent Updates for the dated history.
+**Last Updated**: July 27, 2026 — movement-corridor route-clustering fix (two shores of a lake now report as two corridors, not one) + corridor colour collision fixed; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -61,6 +61,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 23 | Slice B (scoped) — expand-and-retry, v1 (SUPERSEDED by step 24 — see below, the base quantity it scaled was still broken) | First attempt at the off-road fix: `boundsPadFactor` retry at escalating factors. Proven against a SYNTHETIC grid built directly from local coordinates, which is exactly why it missed that the real padding formula was still broken — see step 24 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 24 | Slice B (scoped) — square distance-based box + targeted frontier-edge growth (the actual fix) | Live-tested by the owner against the real Lake George, step 23 still failed. `computePaddedBounds` now targets a SQUARE box sized off the real origin↔objective distance (haversine), proven to clear the real 28km lake on attempt 1; `frontierTouchedEdges`/`growBoundsTowardFrontier` extend specifically the box edge the reachable frontier actually hit on any further retry, not a fresh uniform box. Also fixed the `nearestCellKey` seed-set fallback (was an arbitrary array index) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 25 | Distance-scaled cell budget + quick/standard/fine analysis-depth selector | `TARGET_CELL_COUNT`/`MAX_HEX_CELLS` were fixed constants regardless of AOI size — a continental run got the same budget as a 2km local one, just coarsened into huge hexes, with no user control. `computeCellBudget(spanM, fidelity)` scales the target sub-linearly (sqrt) with the real origin↔objective distance, per a `quick`/`standard`/`fine` tier each with its own base, growth rate and hard ceiling ('fine' allows up to 50,000 cells at continental range — a deliberate, bounded "few minutes is fine" choice, not an accident). New `ANALYSIS DEPTH` selector in the Terrain panel; re-running at a different tier IS the "more/fewer cells" control | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 26 | Movement corridors collapsing into one — route-clustering fix + corridor colour collision fix | Live-tested: a two-shore Lake George crossing with visibly distinct east/west detour tracks still reported only 1 corridor — every route sharing a compact origin/objective always shares cells at both ends, so old adjacency-based segmentation always found them "connected". Fixed by clustering routes BEFORE spatial segmentation (Jaccard cell-overlap tried first, proven inadequate on open terrain; replaced with spatial proximity at 3 sampled progress fractions, unanimous across all three, calibrated to a clean synthetic-fixture margin), then running density/smoothing/segmentation per cluster. Also fixed: corridor rank-1/2 colours were byte-identical to the NO-GO/SLOW-GO trafficability colours — moved corridors to a blue/violet palette | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 
 ### Next up
 
@@ -68,6 +69,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
+| Terrain progress bar accuracy + streaming path/corridor visualization | Owner: *"the 'progress' indicator stopped well before the result loaded in with a long 'nothing' time... the map [should start] getting visual results being loaded as it happens. I'd love to see pathways snaking across the landscape from the get go rather than waiting for the end."* Needs an audit of `onProgress` fraction mapping across every phase (grid build, search retries, ensemble, corridors, chokepoints, barrier) for dead zones, plus surfacing intermediate path/corridor data as it's found rather than only at the very end | M | step 26 (✅, corridors themselves now correct) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
@@ -103,6 +105,41 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Movement corridors collapsing into one + corridor colour
+  collision (step 26)**: owner, live-testing a west↔east Lake George
+  crossing with two visibly distinct east-shore/west-shore detour tracks on
+  the map: *"it only generated 1 corridor, we need two minimum...
+  Consider how corridors and alternative pathways are explored and
+  identified."* Root cause: every route between the same compact
+  origin/objective necessarily shares cells at both ends, so the old
+  single-pass adjacency segmentation always found the two shores'
+  routes "connected" through those shared endpoints and merged them.
+
+  Fix: cluster routes BEFORE spatial segmentation, then run
+  density/smoothing/segmentation per cluster. First attempt (Jaccard
+  cell-set overlap) proved inadequate on a synthetic two-gap test fixture —
+  same-avenue route pairs scored as low as 0.09-0.20 Jaccard, barely
+  separable from genuinely cross-avenue pairs (0.00-0.08). Replaced with
+  spatial proximity: sample each route's lat/lng at three progress
+  fractions (25/50/75%), require ALL THREE within `7 × hexWidthM` of the
+  corresponding sample on another route to cluster them together —
+  calibrated against the fixture to a clean, non-overlapping margin (worst
+  same-avenue pair ~273m, best-separated cross-avenue pair ~449m).
+
+  Also fixed: owner separately flagged *"the corridors need to be a colour
+  other than red. The red, amber, green is used for the hex to show pass
+  ability so the corridor in red makes it look like it's picking the
+  hardest route!"* — confirmed corridor rank-1/2 colours were byte-identical
+  to the NO-GO/SLOW-GO trafficability heatmap colours; moved corridors to a
+  blue/violet palette in `MapboxMapView.tsx` and `MobilityLegend.tsx`,
+  leaving chokepoint/barrier/restriction reds (a different semantic —
+  denial, not corridor identity) untouched.
+
+  4 new tests (`corridorClustering.test.ts`); full regression green (only
+  the pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
+  tsc/build clean. Not done this pass: the owner's separate progress-bar/
+  streaming-visualization request — tracked in Next up.
 
 - **2026-07-27 — Distance-scaled cell budget + analysis-depth selector
   (step 25)**: owner, after confirming the Lake George fix: *"Work out a

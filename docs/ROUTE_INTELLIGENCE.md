@@ -3701,9 +3701,10 @@ value stays flagged end to end.
   on the mapped trail network, matching owner's "roads or tracks over water
   have bridges or fords." A real road graph would sharpen this from a
   per-hex boolean to an actual road edge crossing water.
-- **Corridor clustering.** `corridorField.ts` ranks routes into bands and
+- **Corridor clustering.** ~~`corridorField.ts` ranks routes into bands and
   tracks `evidence`; feeding it north/south routes should produce the
-  two-corridor picture directly.
+  two-corridor picture directly.~~ **Wrong — this was live-tested and
+  disproven the same day; see "Movement corridors merging into one" below.**
 - **Streaming paint-in.** Frontier expansion is inherently incremental, so the
   owner's requested "hex grid painted in as pathways are identified" becomes
   *easier* than today's staged progress. Worker progress channel (§33) and
@@ -3777,6 +3778,91 @@ Tests: `cellBudgetScaling.test.ts` — short-range parity with the original
 constants, sub-linear growth, per-tier hard ceilings holding at continental
 distance, tier ordering at both short and long range, 'fine' giving a
 genuinely higher baseline (not just steeper scaling) even locally.
+
+### Movement corridors merging into one — the segmentation bug (§28 addendum, 2026-07-27)
+
+Owner, live-testing a real west↔east Lake George crossing with visibly
+distinct east-shore and west-shore detour tracks on the map: *"it only
+generated 1 corridor, we need two minimum... Consider how corridors and
+alternative pathways are explored and identified."* §35's "already shipped"
+note above claimed the existing pipeline should already produce this —
+disproven the same day.
+
+**Root cause.** Every route between the SAME compact origin and objective
+necessarily SHARES cells at both ends — they all start inside the origin AOI
+and end inside the objective AOI. `buildCorridorField`'s old segmentation
+built ONE global density field from all k routes, then found connected
+components over raw hex adjacency. That always finds the west-shore and
+east-shore routes connected to EACH OTHER through their shared start/end
+cells, collapsing two genuinely distinct avenues of approach into one
+component. Not an edge case — the normal shape of the problem whenever
+origin/objective are compact areas, which is the usual case.
+
+**Fix — cluster routes before any spatial segmentation, then run
+density/smoothing/segmentation PER CLUSTER.** A cluster's shared start/end
+cells can then never bridge it to a different cluster's cells, since they
+were never part of that cluster's density source to begin with. The
+field's overall peak density is still taken across ALL clusters (not each
+cluster's own), so a minor corridor still reads dimmer than the primary
+one — the cross-corridor relative-importance signal survives the split.
+
+**How routes are clustered — two attempts, one worked:**
+
+1. *Jaccard cell-set overlap* (`|A∩B| / |A∪B|` over each route's full cell
+   key set) was tried first — the obvious "do these routes retrace each
+   other" measure. Tested against a synthetic two-gap grid
+   (`corridorClustering.test.ts`, a barrier strip with a north gap and a
+   south gap, forcing any crossing to detour through one or the other):
+   same-avenue route pairs scored as low as 0.09–0.20 Jaccard, barely
+   distinguishable from genuinely cross-avenue pairs (0.00–0.08). No single
+   threshold separated them — on open terrain, routes have huge freedom to
+   wiggle through unconstrained ground even while representing the same
+   real avenue, which dilutes cell-overlap similarity past usefulness. This
+   produced two visible failures: a single real detour over-fragmented into
+   6 "corridors", and the top-2 ranked corridors both landing on the same
+   side of a two-avenue grid.
+2. *Spatial proximity at sampled progress fractions* (the fix that shipped)
+   — sample each route's actual lat/lng at three normalised progress
+   fractions (25% / 50% / 75% of its own path), and compare GEOGRAPHIC
+   distance between corresponding points on two routes. Two routes join the
+   same cluster only if EVERY one of the three sampled points is within
+   `ROUTE_CLUSTER_DISTANCE_HEX_MULTIPLIER × hexWidthM` (7 hex-widths). A
+   single fraction was not tried alone deliberately — a route's start/end
+   are always near the shared origin/objective AOIs regardless of which
+   avenue it takes, so a majority-vote rule risks being won by two
+   agreeing endpoint samples even when the middle (where the real
+   divergence is) disagrees; requiring all three closes that gap. Measured
+   against the same synthetic fixture: the worst same-avenue pair never
+   exceeded ~273 m at any sampled fraction; the best-separated cross-avenue
+   pair was never under ~449 m at every fraction simultaneously — a clean,
+   non-overlapping margin, unlike Jaccard's. `clusterRoutes` (union-find
+   over this pairwise test) is otherwise unchanged in shape from the
+   Jaccard attempt — same O(n²) pairwise cost, trivial at
+   `DEFAULT_CORRIDOR_ROUTE_COUNT` (14).
+
+**Also fixed — corridor colour collided with the trafficability heatmap.**
+Owner: *"the corridors need to be a colour other than red. The red, amber,
+green is used for the hex to show pass ability so the corridor in red makes
+it look like it's picking the hardest route!"* Confirmed exact, not just
+similar: corridor rank-1's colour (`#D8232A`) was IDENTICAL to the
+NO-GO heatmap colour, and rank-2's (`#F6A609`) IDENTICAL to SLOW-GO.
+Corridors moved to a blue/violet family entirely outside the red/amber/
+green trafficability palette (`#3B82F6` / `#8B5CF6` / `#06B6D4` / `#94a3b8`,
+`MapboxMapView.tsx`'s `rankColor` and `MobilityLegend.tsx`'s matching
+swatches) — chokepoint/barrier/restriction reds were deliberately left
+unchanged, since those mean "act here" (denial), a different semantic from
+"this is corridor 1".
+
+Tests: `corridorClustering.test.ts` — at least two corridors from a
+two-real-detour fixture, the two busiest genuinely spatially distinct (not
+the same band counted twice), and a CONTROL (sealing one gap) collapsing
+back toward a single corridor.
+
+**Not yet done** (separate, not started this pass): the owner's paired
+request that the progress indicator track actual work and the map start
+showing pathways as they're found, rather than a long idle gap before the
+result appears — tracked in master_plan.md's roadmap, not folded into this
+fix.
 
 ---
 

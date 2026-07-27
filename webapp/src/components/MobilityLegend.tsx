@@ -162,9 +162,9 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             <section>
               <h4>Movement corridors</h4>
               <ul>
-                <Swatch color="#D8232A" kind="line">Corridor 1 — carries the most movement</Swatch>
-                <Swatch color="#F6A609" kind="line">Corridor 2</Swatch>
-                <Swatch color="#38bdf8" kind="line">Corridor 3</Swatch>
+                <Swatch color="#3B82F6" kind="line">Corridor 1 — carries the most movement</Swatch>
+                <Swatch color="#8B5CF6" kind="line">Corridor 2</Swatch>
+                <Swatch color="#06B6D4" kind="line">Corridor 3</Swatch>
                 <Swatch color="#94a3b8" kind="line">Corridor 4+</Swatch>
                 {present.corridorRoutes && (
                   <Swatch color="#e2e8f0" kind="line">
