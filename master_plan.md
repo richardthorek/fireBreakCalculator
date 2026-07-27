@@ -63,6 +63,26 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-27 — Terrain Mobility Pass 6 follow-up: end-to-end review (code,
+  UI wiring, mobile)**: full read-through of the hydrology pass (§34) below,
+  the movement-simulation engine, restriction planner, worker, and the App/
+  MapboxMapView/MobilityPanel/MobilityLegend wiring. Found and fixed two real
+  logic gaps in `mobilityGrid.ts`: (1) `inWaterBody` was centre-only while
+  `waterDistanceM` already sampled centre+corners, so a cell whose hex CORNER
+  (not centre) clipped a lake edge got no fording gate at all; now checks all
+  sample points. (2) `usedEstimatedData` only OR'd elevation/vegetation
+  estimation, so a run entirely shaped by an assumed fording depth (always
+  Tier 0) could show no "CAUTION — ESTIMATED DATA" warning; now folds in
+  whether any cell carries a water signal. Also found and fixed a mobile
+  layout bug in `styles-tactical.css`: the run-progress HUD and the map key
+  were both pinned to the same `bottom: 12px` full-width position on narrow
+  viewports, so they overlapped whenever both were on-screen (legend can show
+  as soon as an area is painted; the HUD appears the moment a run starts) —
+  now split left/right. UI wiring (prop interfaces vs. call sites, simulation-
+  controller handlers, touch/pinch painting) reviewed and confirmed correct,
+  no further gaps. `tsc --noEmit`/`npm run build` clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 follow-up.
+
 - **2026-07-27 — Terrain Mobility Pass 6: hydrology — waterways as a real
   barrier (§34)**: owner, reviewing the shipped mode: "I can see substantial
   waterways in my sample area but they don't seem to form a 'barrier' in the

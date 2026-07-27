@@ -3082,6 +3082,40 @@ reaction to a real waterway on the live preview.**
   not fetched — only `way`-tagged features, matching the existing trail
   fetcher's own way-only scope.
 
+### §34 follow-up: end-to-end review fixes (2026-07-27)
+
+A full read-through of the PR (logic, UI wiring, mobile usability) turned up
+two real gaps in the hydrology pass above, both fixed in `mobilityGrid.ts`:
+
+- **Lake-edge cells were missing the gate.** `inWaterBody` was computed at the
+  hex CENTRE only, while `waterDistanceM`/`nearestWaterwayKind` already used
+  centre+corners. A cell whose CORNER (not centre) clipped a lake got
+  `waterDistanceM = 0` (correctly detected) but `inWaterBody = false` AND
+  `nearestWaterwayKind = null` (the corner search deliberately skips `'water'`-
+  kind features, by design — see the fix above), so `estimateFordingRequirement`
+  returned `null` and the gate silently never fired for that cell. Fixed:
+  `inWaterBody` now checks all sample points (centre + six corners) against
+  water-body features, not the centre alone.
+- **`usedEstimatedData` didn't know about hydrology.** The top-level honesty
+  flag on `MobilityGridResult` only OR'd elevation/vegetation estimation —
+  a run entirely shaped by an assumed fording depth (always Tier 0 by design)
+  could show no "CAUTION — ESTIMATED DATA" warning at all. Fixed: it now also
+  ORs in whether any cell carries a water signal (in a body, near a mapped
+  linear watercourse, or above the WOfS frequency threshold) — the same
+  predicate `mobilityAppreciation.ts`'s log line already computed for its own
+  count, now also driving the honesty flag itself.
+
+Also fixed, mobile usability: on a narrow viewport the run-progress HUD and
+the map key were BOTH pinned to `bottom: 12px` and stretched full-width —
+directly contradicting the comment above that rule ("must not fight for the
+same corner on a phone"). Since the legend can be visible as soon as an area
+is painted and the HUD appears the moment a run starts, both can legitimately
+be on-screen together; they now split the bottom edge left/right on mobile
+instead of overlapping.
+
+UI wiring (`MapboxMapView`/`MobilityPanel` prop interfaces vs. their call
+sites in `App.tsx`, the simulation-controller handlers, touch/pinch painting)
+was reviewed and found correctly connected — no further gaps found.
 
 ---
 

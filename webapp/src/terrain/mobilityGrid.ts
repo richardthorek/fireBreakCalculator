@@ -176,7 +176,13 @@ export async function buildMobilityGrid(
         if (d < waterDistanceM) waterDistanceM = d;
         if (waterDistanceM <= 0) break;
       }
-      inWaterBody = distanceToNearestWater(center, waterways.trails.filter(f => f.kind === 'water'), 0) === 0;
+      // Any sample point — not just the centre — landing inside a water BODY
+      // is enough: a lake's edge clipping a hex corner is still the lake, and
+      // a centre-only check missed that cell entirely.
+      const waterBodyFeatures = waterways.trails.filter(f => f.kind === 'water');
+      if (waterBodyFeatures.length > 0) {
+        inWaterBody = samplePoints.some(p => distanceToNearestWater(p, waterBodyFeatures, 0) === 0);
+      }
       if (waterDistanceM <= WATER_SNAP_M) {
         // Representative severity label: the nearest LINEAR watercourse class
         // (river/canal/stream) within snap distance of the cell centre. A
@@ -233,13 +239,21 @@ export async function buildMobilityGrid(
 
   onProgress?.(0.7);
 
+  // Fording depth is always a Tier 0 assumption (estimateFordingRequirement
+  // in mobilityCost.ts), so a run whose only estimated ingredient is "this
+  // cell needed a fording judgement" must still trip the honesty flag — not
+  // just elevation/vegetation fallback.
+  const usedHydrologyEstimate = cells.some(
+    c => c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15)
+  );
+
   return {
     cells,
     hexSize: size,
     proj,
     originKeys: originKeys.length > 0 ? originKeys : [cells[0].key], // never an empty seed set
     objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys : [cells[cells.length - 1].key],
-    usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated),
+    usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated) || usedHydrologyEstimate,
     infrastructureAvailable: infra.available,
     hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
     waterFeatures: waterways.trails,

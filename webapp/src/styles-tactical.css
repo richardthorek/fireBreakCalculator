@@ -845,11 +845,15 @@
 }
 .mobility-legend-opacity input[type='range'] { width: 100%; accent-color: var(--tac-accent, #38bdf8); }
 
-/* Legend and progress HUD must not fight for the same corner on a phone. */
+/* Legend and progress HUD must not fight for the same corner on a phone.
+   Both can be on-screen together (legend appears as soon as an area is
+   painted; the HUD appears the moment a run starts) so on narrow viewports
+   they split the bottom edge left/right instead of both going full-width,
+   which would stack them on top of each other at identical coordinates. */
 @media (max-width: 640px) {
-  .mobility-legend { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
-  .mobility-legend-body { max-height: 40vh; }
-  .mobility-progress-hud { left: 12px; right: 12px; bottom: 12px; width: auto; }
+  .mobility-legend { right: 8px; bottom: 8px; width: min(200px, 48vw); }
+  .mobility-legend-body { max-height: 38vh; }
+  .mobility-progress-hud { left: 8px; right: auto; bottom: 8px; width: min(200px, 48vw); }
 }
 
 /* ---------- Corridor map labels ---------- */
