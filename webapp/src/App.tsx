@@ -679,6 +679,14 @@ const App: React.FC = () => {
     }));
   }, [mobilityResult]);
 
+  /** The real mapped watercourse/water-body geometry (docs §34), for the
+   *  map's own reference layer — separate from any gated cell, so the user
+   *  can see the actual river/lake shape the analysis is reacting to. */
+  const waterFeaturesForMap = useMemo(() => {
+    if (!mobilityResult || mobilityResult.waterFeatures.length === 0) return null;
+    return mobilityResult.waterFeatures.map(f => ({ kind: f.kind, coords: f.coords }));
+  }, [mobilityResult]);
+
   const mobilityHeatmapForMap = useMemo(() => {
     if (!mobilityResult) return mobilityPreviewCells;
     return mobilityResult.results.map(r => {
@@ -1351,6 +1359,7 @@ const App: React.FC = () => {
             mobilityTransitCells={transitCellsForMap}
             ensembleMovers={ensembleMovers}
             restrictions={restrictionsForMap}
+            waterFeatures={waterFeaturesForMap}
           />
           {mobilityModeActive && (
             <MobilityLegend
@@ -1368,6 +1377,7 @@ const App: React.FC = () => {
                 chokepoints: (mobilityResult?.chokepoints.length ?? 0) > 0,
                 barrier: (mobilityResult?.barrier?.segments.length ?? 0) > 0,
                 restrictions: (restrictionsForMap?.length ?? 0) > 0,
+                water: (waterFeaturesForMap?.length ?? 0) > 0,
                 unitPath: !!unitSimPath,
                 movers: !!ensembleMovers && ensembleMovers.length > 0,
               }}

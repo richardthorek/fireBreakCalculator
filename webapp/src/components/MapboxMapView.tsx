@@ -253,6 +253,12 @@ interface MapboxMapViewProps {
     from: { lat: number; lng: number };
     to: { lat: number; lng: number };
   }[] | null;
+  /** Real mapped watercourse/water-body geometry the last run fetched (docs
+   *  §34) — a reference layer showing the actual river/lake shape the
+   *  hydrology gate is reacting to, independent of any cell it influenced.
+   *  `kind === 'water'` (OSM natural=water) renders as a filled polygon;
+   *  anything else (river/canal/stream) renders as a line. */
+  waterFeatures?: { kind: string; coords: { lat: number; lng: number }[] }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -321,7 +327,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   mobilityOverlayOpacity = 1,
   mobilityTransitCells = null,
   ensembleMovers = null,
-  restrictions = null
+  restrictions = null,
+  waterFeatures = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -1836,6 +1843,95 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
     return () => remove();
   }, [mobilityTransitCells, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Hydrology reference layer (docs §34) ---------------------------------
+  // Owner, 2026-07-27: "I can see substantial waterways in my sample area but
+  // they don't seem to form a barrier in the overlay analysis. If they are
+  // being considered then we need to show more of that." The GO/SLOW-GO/
+  // NO-GO cell colouring now DOES react to water (mobilityCost.ts's fording
+  // gate), but a coloured hex alone doesn't tell a reviewer "that's because of
+  // THIS river" — this layer draws the actual mapped watercourse/water-body
+  // geometry the gate is reacting to, as its own visible reference, separate
+  // from any cell it influenced. Lines (river/canal/stream) get a bold casing
+  // + core so a substantial waterway reads unmistakably as a real linear
+  // feature; `natural=water` bodies get a filled polygon.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['mobility-water-body', 'mobility-water-line-casing', 'mobility-water-line']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        if (map.getSource('mobility-water-body')) map.removeSource('mobility-water-body');
+        if (map.getSource('mobility-water-line')) map.removeSource('mobility-water-line');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!waterFeatures || waterFeatures.length === 0) { remove(); return; }
+
+    const bodyFeatures = waterFeatures
+      .filter(f => f.kind === 'water' && f.coords.length >= 4)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'Polygon' as const, coordinates: [f.coords.map(p => [p.lng, p.lat])] },
+      }));
+    const lineFeatures = waterFeatures
+      .filter(f => f.kind !== 'water' && f.coords.length >= 2)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: { kind: f.kind },
+        geometry: { type: 'LineString' as const, coordinates: f.coords.map(p => [p.lng, p.lat]) },
+      }));
+
+    const apply = () => {
+      try {
+        const bodyData = { type: 'FeatureCollection' as const, features: bodyFeatures };
+        const lineData = { type: 'FeatureCollection' as const, features: lineFeatures };
+        if (map.getSource('mobility-water-body')) {
+          (map.getSource('mobility-water-body') as any).setData(bodyData);
+          (map.getSource('mobility-water-line') as any)?.setData(lineData);
+        } else {
+          map.addSource('mobility-water-body', { type: 'geojson', data: bodyData } as any);
+          map.addLayer({
+            id: 'mobility-water-body',
+            type: 'fill',
+            source: 'mobility-water-body',
+            paint: { 'fill-color': '#1e88e5', 'fill-opacity': 0 },
+          } as any);
+          map.addSource('mobility-water-line', { type: 'geojson', data: lineData } as any);
+          map.addLayer({
+            id: 'mobility-water-line-casing',
+            type: 'line',
+            source: 'mobility-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#0a3d62',
+              'line-width': ['match', ['get', 'kind'], 'stream', 4, 6],
+              'line-opacity': 0,
+            },
+          } as any);
+          map.addLayer({
+            id: 'mobility-water-line',
+            type: 'line',
+            source: 'mobility-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#4fc3f7',
+              'line-width': ['match', ['get', 'kind'], 'stream', 2, 3],
+              'line-opacity': 0,
+            },
+          } as any);
+        }
+        registerOverlayOpacity('mobility-water-body', 'fill-opacity', 0.4);
+        registerOverlayOpacity('mobility-water-line-casing', 'line-opacity', 0.9);
+        registerOverlayOpacity('mobility-water-line', 'line-opacity', 0.95);
+      } catch (e) { logger.warn('Failed to render hydrology reference layer', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [waterFeatures, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // --- Recommended restrictions (docs §32) ---------------------------------
   // The actionable output of the whole mode: block HERE. Drawn as a heavy bar

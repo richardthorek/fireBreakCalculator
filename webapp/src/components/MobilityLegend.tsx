@@ -36,6 +36,7 @@ export interface MobilityLegendProps {
     chokepoints: boolean;
     barrier: boolean;
     restrictions: boolean;
+    water: boolean;
     unitPath: boolean;
     movers: boolean;
   };
@@ -120,6 +121,22 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
               <p className="mobility-legend-note">
                 A property of the ground for the selected profile. Tier 0 data: vegetation
                 structure is estimated from its class, not measured per cell.
+              </p>
+            </section>
+          )}
+
+          {present.water && (
+            <section>
+              <h4>Waterways &amp; water bodies</h4>
+              <ul>
+                <Swatch color="#4fc3f7" kind="line">Mapped river, canal or stream</Swatch>
+                <Swatch color="#1e88e5">Standing water body (lake, dam, reservoir)</Swatch>
+              </ul>
+              <p className="mobility-legend-note">
+                The actual mapped watercourse — real OSM/DEA data, not a derived line. Cells
+                near it are gated by the mover's fording capability: too deep for the
+                profile reads NO-GO, within capability reads SLOW-GO. A mapped trail/road
+                crossing is assumed to be a bridge or ford already and is not gated.
               </p>
             </section>
           )}

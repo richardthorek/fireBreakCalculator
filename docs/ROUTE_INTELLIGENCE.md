@@ -2857,5 +2857,233 @@ live preview**.
 
 ---
 
+## 34. Hydrology — waterways as a real barrier, not silently invisible (2026-07-27)
+
+Owner, reviewing the shipped Terrain Mobility mode:
+
+> "I can see substantial waterways in my sample area but they don't seem to
+> form a 'barrier' in the overlay analysis. If they are being considered then
+> we need to show more of that. This is an initial planning aid and
+> considerations tool, not necessarily down to the specific plan being spit
+> out. I need to get credible buy-in for the analysis early."
+
+And, in the same round:
+
+> "Do we need smaller grid sample areas for specifics along corridors etc. At
+> the moment the cells are very large so elevation specifics and smaller but
+> significant landscape is being lost."
+
+### The finding, before any fix
+
+Investigation (not guesswork) turned up four independent facts, each verified
+by reading the actual code and, where a new endpoint was needed, by live
+`curl` against the real service — this project's standing discipline for a new
+data source:
+
+1. **NVIS actively mislabels water as the EASIEST terrain.**
+   `nvisVegetationService.ts`'s MVG code 24 ("Inland Aquatic — freshwater, salt
+   lakes, lagoons") and any label matching `water|lake|sea|estuar|salt lake`
+   resolved to `vegetation: 'grassland'` — the same bucket as open, fast,
+   easy-to-cross ground. A river read to the cost model as GO terrain, not an
+   obstacle. Not a gap — an active mislabel, and the actual mechanism behind
+   the symptom reported.
+2. **A live-verified DEA Water Observations client existed and was never
+   called.** `deaWaterObservationsService.ts`'s point-query function was
+   built, tested, cited — and never wired into `mobilityGrid.ts`'s sampling.
+3. **`fordingDepthM` — real, sourced figures on every mover profile — was
+   never read anywhere.** Declared on the profile schema, populated (0.7 m for
+   a light 4WD, 1.2 m for a tracked IFV, …), and dead: no caller of
+   `edgeMobilityCost` ever consulted it.
+4. **No linear watercourse geometry was fetched at all.** The Overpass query
+   in `infrastructureService.ts` only ever asked for `highway=*`.
+
+The panel's own limitations footer already half-admitted this ("surface-water
+(Tier 1)... built but not yet sampled per cell") — but a footnote nobody reads
+undersold how bad it actually was: a river wasn't unsampled ground, it was
+coded as *easier* than the vegetation on either bank.
+
+### Why this did NOT need a finer grid (answering the second question first)
+
+The grid-resolution question is real and worth its own numbers: at
+`TARGET_CELL_COUNT = 2200`, a typical 4 km × 2 km two-AOI run produces hexes
+roughly **65 m flat-to-flat**; an 8 km × 4 km AOI coarsens to roughly **130 m**.
+A 10–30 m river sits well inside a single hex alongside dry land on both
+sides — genuinely too coarse to resolve as an AREAL classification.
+
+But a watercourse is not an areal property, it's a **linear barrier**, and the
+existing per-cell architecture (classify the ground a hex sits on) was never
+going to represent that well at ANY affordable resolution — uniformly
+shrinking the grid to catch a 20 m river would blow the 2200–2800 cell compute
+budget this mode is deliberately capped at (docs §8). The right fix is
+resolution-INDEPENDENT: test proximity to the real vector geometry at multiple
+points per cell (its centre AND its six hex corners — not centre alone, which
+is what `onTrail` already accepts as adequate for the identical problem with
+roads), so a narrow feature clipping a hex's edge is still caught even when
+the hex's centre sits on dry land. This is the same order-of-magnitude
+resolution improvement a full grid refinement would have bought, without the
+compute-budget cost or the risk of touching the hot-path search's core
+tiling assumptions. **Uniform grid refinement for fine elevation detail (a
+genuinely separate ask — gullies, knolls, micro-terrain) remains open**, and
+is recorded under "Still open" below rather than folded into this pass.
+
+### The fix
+
+**`waterInfrastructure` (via `infrastructureService.ts`, both API and
+webapp)**: the existing Overpass proxy/direct-endpoint machinery generalised
+with a `kind: 'highway' | 'water'` parameter rather than a second endpoint —
+`waterway=river|canal|stream` and `natural=water` queried the same way roads
+already are. `distanceToNearestWater` extends the existing polyline-distance
+test with a point-in-polygon check (`@turf/boolean-point-in-polygon`, already
+a project dependency) for `natural=water` bodies — a lake's EDGE-distance
+alone would say a point in the middle of a large lake is far from "the trail",
+which is backwards for a filled body; a mover standing in the middle of a lake
+IS water, not near it.
+
+**`deaWaterObservationsService.ts` gained an area-raster path
+(`fetchSurfaceWaterFrequencyArea`)** for AOIs where OSM tagging is sparse —
+ONE request regardless of grid size, matching the discipline `mobilityGrid.ts`
+already holds every other sampling call to. LIVE-VERIFIED this session that
+this could NOT reuse NAFI's WCS `GetCoverage` pattern: `ga_ls_wo_fq_myear_3`'s
+`DescribeCoverage` advertises only GeoTIFF/netCDF, and a live `FORMAT=PNG`
+WCS request is rejected outright (confirmed by `curl`) — there is no
+browser-native GeoTIFF decoder in this project and one was deliberately not
+added to work around a single layer. WMS `GetMap` with `FORMAT=image/png`,
+by contrast, IS live-verified to return a real styled PNG. The trade-off
+that choice buys: what comes back is a STYLED 8-bit image, not the exact
+`frequency` float the existing point-query function reads directly off the
+data band, so the area path reconstructs an approximate frequency via
+colour-ramp matching against `mysummary_wofs_frequency_blue_3`'s own
+`legend.png` (sampled live this session, 23 control points, the same
+technique `nvisVegetationService.ts`/`nafiFireHistoryService.ts` already use
+for their own legend-coded rasters) — always reported `confidence:
+'estimated'`, never conflated with the point function's `'published'` figure.
+Sanity-checked against two real scenes this session: Lake Argyle (a known
+near-permanent reservoir) matched at frequency ≈0.91 at its centre; a Sydney
+Harbour-area bbox correctly left 363/400 sampled land pixels unmatched
+(transparent) while matching real water pixels near the harbour/river.
+
+**`MobilityGridCell` gained four hydrology fields** (`waterDistanceM`,
+`inWaterBody`, `nearestWaterwayKind`, `waterFrequency`), sampled once per grid
+build alongside elevation/vegetation/trail — never per-cell network calls.
+
+**`mobilityCost.ts` gained `estimateFordingRequirement`** — the same class of
+Tier 0 engineering assumption `estimateStructureFromVegetation` already makes
+for vegetation gap width, held to the same honesty rule (always `estimated:
+true`, a class-representative figure, never a measured per-crossing depth,
+because no source in this app measures actual river depth at a point). OSM
+tag class wins when present (a human classification of what the feature IS)
+over WOfS frequency (only a symptom of it being wet): body > river/canal >
+stream > high-frequency-untagged > moderate-frequency-untagged > nothing.
+
+**`edgeMobilityCost` gates on it** exactly where every other hard constraint
+in that function already gates — NO-GO when the assumed depth exceeds the
+profile's `fordingDepthM` (finally live), SLOW-GO with a genuine speed penalty
+when it's within capability (a passable ford is never as fast as the same
+distance on dry ground). **Skipped when both ends of the edge are on the
+mapped trail/road network** — the exact same "ground here is already broken"
+idiom the vegetation gate already uses for `onTrail`, on the reasoning that a
+road crossing a mapped watercourse implies a bridge/causeway/ford the network
+already accounts for. `classifyCellTerrain`'s direct terrain-only
+classification got the identical gate, so the GO/SLOW-GO/NO-GO overlay agrees
+with what the search would actually do arriving into that cell.
+
+**Every call site that builds an edge's `from`/`to` sample now goes through
+one new function, `toMobilitySample` (`accumulatedCost.ts`)**, rather than
+each hand-writing the object literal — `accumulatedCost.ts` itself,
+`corridorField.ts`, `minCutBarrier.ts`, `movementSimulation.ts`. This exists
+specifically so a field added to the hydrology (or any future) extension can't
+silently go stale at one call site while every other caller picks it up —
+exactly the failure mode a hand-audited grep for `vegEstimated:` across the
+codebase turned up before this refactor (8 near-identical object literals,
+already drifting from each other's exact field lists).
+
+**Map + panel**: the real OSM waterway/water-body geometry now travels through
+`MobilityGridResult` → `MobilityAppreciationResult` → the map as its own
+reference layer (`mobility-water-line`/`mobility-water-body`) — a bold blue
+line/casing for a river/canal/stream, a filled polygon for a standing body —
+independent of any hex cell it influenced, so a reviewer sees the actual
+mapped river the gate is reacting to, not just scattered red hexes near it.
+The map key gained a "Waterways & water bodies" section. The run log reports a
+real computed count (`N/M CELLS CARRY A WATER SIGNAL`), not a claim — the
+single most direct way to answer "is this actually being considered" without
+having to trust the model's word for it.
+
+### Honesty boundary
+
+The water GEOMETRY (OSM tags) is real, human-mapped data — as reliable as the
+trail data this mode already leans on, with the identical "OSM completeness
+varies in remote areas" caveat. The WOfS frequency is REAL MEASUREMENT
+(satellite-observed, not modelled) but reconstructed through a colour-ramp
+approximation, `estimated`, not `published`. The DEPTH assumed for the
+fording gate is entirely engineering judgement — no source in this app
+measures actual crossing depth — held to the identical Tier 0 discipline
+`estimateStructureFromVegetation` already established for vegetation
+structure: always flagged, a class-representative figure, never silently
+upgraded to a measurement.
+
+### Verification
+
+`tsc --noEmit`/`npm run build` clean on both `webapp/` and `api/`;
+`npm run test:unit` unaffected (no API-side behaviour changed beyond the
+`kind` query param, itself backward-compatible — omitted `kind` defaults to
+the existing `highway` behaviour, verified by re-running the full existing
+suite green).
+
+A 29-check standalone smoke test over the real modules (disposable vite
+lib-mode entry, deleted before commit) covered: `estimateFordingRequirement`'s
+severity ordering (body > river > stream, WOfS frequency as a fallback signal,
+no false positives on trace-frequency damp ground); `edgeMobilityCost`
+genuinely NO-GOing a vehicle at a mapped river beyond its fording limit while
+passing a shallow stream as SLOW-GO with a real speed penalty; the `onTrail`
+bridge exemption; a foot profile gated identically to a vehicle;
+`distanceToNearestWater`'s point-in-polygon correctness for a lake vs a plain
+line for a river; and the WOfS colour-ramp matcher against its own live-derived
+control points, including correctly REJECTING an unrelated colour rather than
+force-matching it.
+
+**The test that matters most**, and the one that directly answers the field
+report: a synthetic AOI with a real river band (wide enough to span multiple
+hex columns — narrower bands leave gaps a route can weave through between
+staggered rows, a property of hex tiling caught and fixed while building this
+test) severing an origin from an objective, with one bridge crossing.
+Confirmed: (a) a route is found and it genuinely uses the bridge, never
+crossing the river off it; (b) remove the bridge, and the SAME river now
+**actually severs the AOI** — `extractPath` returns null, no route exists; (c)
+as a control, the identical river with its water signal stripped (the
+pre-fix state) does NOT block movement — proving the test exercises the fix,
+not something else.
+
+Live map rendering is unverifiable in this sandbox (no Mapbox token) —
+**confirm the water reference layer and the GO/SLOW-GO/NO-GO overlay's
+reaction to a real waterway on the live preview.**
+
+### Still open
+
+- **Road/water CLASS is a single OSM tag with no further nuance** — `waterway=
+  river` always assumes 1.2 m regardless of whether it's a wide lowland river
+  or a modest highland one; there is no per-crossing measured depth anywhere
+  in this stack, and none exists in open Australian data at the resolution
+  this mode operates at.
+- **Uniform fine-grained elevation resolution remains open** (the second half
+  of the owner's question) — this pass fixed the LINEAR-barrier case
+  (resolution-independent by construction), not areal micro-terrain
+  (gullies, knolls) which genuinely needs either a finer grid within the
+  existing compute budget or an adaptive/corridor-focused tiling scheme —
+  a materially larger architecture change (hex adjacency, `demDerivatives.ts`'s
+  neighbour-based plane fit, and `corridorField.ts`'s smoothing all currently
+  assume a UNIFORM hex size) than this pass, deliberately not attempted here.
+- GIS export (`mobilityGisExport.ts`) and the AI assistant payload
+  (`mobilityAssistantApi.ts`) do not yet carry hydrology-specific attributes —
+  the water reference layer and gate are visible on the map/panel/log, but a
+  downloaded GIS pack or an AI briefing doesn't yet name which cells were
+  water-gated specifically (it inherits the general
+  `estimated`/`blockedReason` fields, just not a dedicated hydrology summary).
+- Relations (multipolygon lakes, common for larger water bodies in OSM) are
+  not fetched — only `way`-tagged features, matching the existing trail
+  fetcher's own way-only scope.
+
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

@@ -119,9 +119,15 @@ On upstream failure returns `502` and the client falls back to calling Overpass
 directly; a `404` (endpoint not deployed) makes the client stop probing the
 proxy for the session and use the direct path.
 
+**`kind` param (added docs §34):** `highway` (default) fetches reusable trails/
+roads; `water` fetches waterway/water-body geometry (`waterway=river|canal|
+stream`, `natural=water`) for the Terrain Mobility hydrology gate. Same proxy,
+same resilience, same cache — one extra query branch rather than a second
+endpoint.
+
 | Endpoint | Method | Purpose | Request | Response | Auth Required |
 |----------|--------|---------|---------|----------|---------------|
-| `/api/infrastructure` | GET | Reusable trails/roads within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°) | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
+| `/api/infrastructure` | GET | Reusable trails/roads (or waterways, see `kind`) within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°), optional `kind=highway\|water` | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
 
 ## AI Assistant Endpoints
 

@@ -31,6 +31,7 @@
  */
 
 import { buildMobilityGrid } from './mobilityGrid';
+import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
 import { runMobilitySearchInWorker, runMovementEnsembleInWorker } from './mobilityWorkerClient';
@@ -54,6 +55,14 @@ export interface MobilityAppreciationResult {
   profile: MoverProfile;
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
+  /** True when EITHER hydrology source (OSM waterway/water-body geometry, DEA
+   *  WOfS frequency) returned real data for this AOI (docs §34). False means
+   *  the fording gate had nothing to work from — stated, not silently absent. */
+  hydrologyAvailable: boolean;
+  /** The raw OSM waterway/water-body geometry this run fetched (docs §34) —
+   *  for drawing the actual mapped river/lake shape on the map, not just the
+   *  hex cells it influenced. */
+  waterFeatures: InfrastructureTrail[];
   cellCount: number;
   reachableCount: number;
   noGoCount: number;
@@ -196,6 +205,25 @@ export async function runMobilityAppreciation(
   onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
   if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
+  // Hydrology (docs §34) — a real, computed count, not a claim: this is what
+  // makes "is water actually being considered" answerable by looking at the
+  // log rather than taking the model's word for it.
+  if (!grid.hydrologyAvailable) {
+    onLog?.('NO WATERWAY/WATER-BODY DATA FOR THIS AREA — HYDROLOGY GATE INACTIVE');
+  } else {
+    const waterCellCount = grid.cells.filter(
+      c => c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15)
+    ).length;
+    if (waterCellCount > 0) {
+      const bodyCount = grid.cells.filter(c => c.inWaterBody).length;
+      onLog?.(
+        `HYDROLOGY — ${waterCellCount}/${grid.cells.length} CELLS CARRY A WATER SIGNAL` +
+        (bodyCount > 0 ? ` (${bodyCount} STANDING WATER BODY)` : '')
+      );
+    } else {
+      onLog?.('HYDROLOGY — NO WATERCOURSES OR WATER BODIES DETECTED IN THIS AREA');
+    }
+  }
   if (grid.usedCoarseGrid) {
     onLog?.('CAUTION — AOI IS LARGE, GRID COARSENED TO STAY WITHIN COMPUTE BUDGET (RESOLUTION REDUCED)');
   }
@@ -401,6 +429,8 @@ export async function runMobilityAppreciation(
     profile,
     usedEstimatedData: grid.usedEstimatedData,
     infrastructureAvailable: grid.infrastructureAvailable,
+    hydrologyAvailable: grid.hydrologyAvailable,
+    waterFeatures: grid.waterFeatures,
     cellCount: grid.cells.length,
     reachableCount,
     noGoCount,

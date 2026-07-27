@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 (Step 10 Passes 1–4 shipped and integrated; **Pass 5 — probabilistic movement** now the engine behind Terrain mode's corridors and its new recommended-restriction set; Step 11 first UI slice + a Terrain-mode UI clarity pass)
+**Last Updated**: July 27, 2026 (Step 10 Passes 1–4 shipped and integrated; **Pass 5 — probabilistic movement** now the engine behind Terrain mode's corridors and its new recommended-restriction set; **Pass 6 — hydrology**: waterways now gate movement as a real barrier instead of silently reading as easy grassland; Step 11 first UI slice + a Terrain-mode UI clarity pass)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -51,6 +51,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). **First slice shipped 2026-07-26**: hero readout (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as instrument-scale tabular-nums figures, replacing the old plain text spans) with count-up tweening (`useCountUp.ts`, ease-out cubic, `prefers-reduced-motion`-aware); the map's per-segment slope colouring now sweeps in over `REVEAL_DURATION_MS` (`revealTiming.ts`) via Mapbox GL feature-state instead of snapping to a finished state, in sync with the panel's count-up; move (3)'s map-control re-skin done for fire-break mode, and **a real root-cause bug fixed along the way**: a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was silently winning the cascade over the intended dark theme (equal `!important` specificity, later source order wins) — this was the actual reason controls rendered as plain white squares, not just a stale screenshot; removed rather than patched around. Moves (4) and (5) (shared type/confidence discipline across modes; fire-break mobile floating controls) not yet started. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 🚧 first slice shipped (moves 1–3 partial); moves 4–5 still 📋 |
 | 12 | **Terrain Mobility Pass 5 — probabilistic movement as the engine** | The movement simulation is now the crux, not a bonus: an ensemble of independent, **road-preferring**, imperfectly-informed movers replaces the single optimal line as the answer to "where will they go". Corridors are built from where movers ACTUALLY went, at their observed frequency. On top of it, a ranked set of **recommended restrictions** (road blocks first), each chosen by re-running the ensemble against the world the previous ones created — so blocking a road visibly displaces movement onto the next road and then into the bush, where vegetation and slope start to bind. Behaviour parameters are ASSUMED and flagged as such end to end (panel, map key, GIS attributes, AI briefing). Remaining 📋: road **class** (OSM `highway=*` is fetched and discarded, so a highway and a farm track are identical to the mover — the largest remaining fidelity gap); restriction siting is hex-resolution, not a surveyed point; the recommended set is not costed against `delayLedger.ts` | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 | ✅ core, PR TBD |
 | 13 | **Terrain-mode UI clarity pass** | Eight field-reported items: size-appropriate brush cursor; painting guidance + a real fix for paint lagging the drag (quadratic geometry replay); hold-Space to pan while a paint tool is armed; run progress (staged bar + on-map HUD + the grid painting in as soon as sampling finishes — progress was never wired up at all); a map key that lists only what is drawn and marks what is modelled; one overlay-opacity slider applied as a multiplier so encoded meanings survive; corridors made legible (dissolved outlines, spine, labels, click-to-isolate) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §33 | ✅ PR TBD |
+| 14 | **Terrain Mobility Pass 6 — hydrology, waterways as a real barrier** | Investigation found NVIS was actively mislabelling water as `grassland` — the LOWEST-friction class — so a river read as easy ground, not an obstacle; a live-verified DEA Water Observations client and every mover profile's own sourced `fordingDepthM` both existed and were never wired in; no linear watercourse geometry was fetched at all. Fixed: Overpass generalised to also fetch `waterway=*`/`natural=water`; a new WMS-based DEA WOfS area raster (WCS/GeoTIFF confirmed live NOT to work for this layer — colour-ramp reconstruction from the styled PNG instead, live-derived and sanity-checked against Lake Argyle and Sydney Harbour); a Tier 0 `estimateFordingRequirement` gate wired into `edgeMobilityCost` exactly like the existing vegetation gate (NO-GO beyond the profile's fording capability, SLOW-GO with a real speed penalty within it, exempted on a mapped trail/bridge crossing). Deliberately resolution-INDEPENDENT (samples each cell's centre + six hex corners against real vector geometry) rather than needing a finer grid — answers the companion "cells are very large, small landscape features are lost" question for the LINEAR-barrier case specifically; uniform fine-grained resolution for areal micro-terrain remains open, a materially larger architecture change. Real OSM water geometry now renders as its own map reference layer, plus a map-key section and a real computed per-run log count. Remaining 📋: GIS export/AI briefing don't yet carry hydrology-specific attributes; OSM relations (multipolygon lakes) aren't fetched, only ways; assumed fording depth is a single figure per OSM class, no per-crossing measurement exists | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 | ✅ PR TBD |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -61,6 +62,66 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Terrain Mobility Pass 6: hydrology — waterways as a real
+  barrier (§34)**: owner, reviewing the shipped mode: "I can see substantial
+  waterways in my sample area but they don't seem to form a 'barrier' in the
+  overlay analysis. If they are being considered then we need to show more of
+  that... I need to get credible buy-in for the analysis early." Investigation
+  (not guesswork) found the actual mechanism: `nvisVegetationService.ts`
+  mapped MVG code 24 ("Inland Aquatic") and any water/lake/estuary label to
+  `vegetation: 'grassland'` — the LOWEST-friction class, so a river read as
+  fast, easy ground, the functional opposite of a barrier. Three more signals
+  existed and were dead code: a live-verified DEA Water Observations client,
+  never called from grid sampling; `fordingDepthM` — real sourced figures on
+  every mover profile — never read by the cost model; and no linear
+  watercourse geometry fetched at all (Overpass only ever asked for
+  `highway=*`). **Fixed end to end**: Overpass generalised (`kind: 'highway' |
+  'water'`, one query branch, not a second endpoint) to fetch
+  `waterway=river|canal|stream` and `natural=water`; `distanceToNearestWater`
+  added point-in-polygon handling for lake bodies (edge-distance alone is
+  backwards for a filled area — the middle of a lake IS water, not near it);
+  a new DEA WOfS area-raster path was needed, but WCS `GetCoverage` — the
+  path NAFI's own area raster uses — was LIVE-VERIFIED this session to reject
+  PNG output for this layer (GeoTIFF/netCDF only, no browser decoder for
+  that), so it uses WMS `GetMap` instead, decoded via the SAME colour-ramp
+  technique already used for NVIS/NAFI's legend-coded rasters, with its
+  control points sampled live from the style's own `legend.png` and
+  sanity-checked against Lake Argyle (~0.91 at centre, plausible) and Sydney
+  Harbour (363/400 land pixels correctly unmatched, real water pixels
+  correctly matched). New `estimateFordingRequirement` (Tier 0, same honesty
+  discipline as the existing vegetation-structure estimate) feeds a gate in
+  `edgeMobilityCost` at the same severity as every other hard constraint
+  there: NO-GO beyond the profile's fording capability, SLOW-GO with a real
+  speed penalty within it, exempted where both ends of an edge are on the
+  mapped trail network (assumed bridge/ford, the same idiom the vegetation
+  gate already uses for `onTrail`). **Also answered, in the same round**: "do
+  we need smaller grid cells... elevation specifics and smaller but
+  significant landscape is being lost" — real numbers (a typical AOI's hexes
+  run ~65–130 m flat-to-flat against `TARGET_CELL_COUNT`) confirmed the
+  complaint, but the water fix specifically did NOT need a finer grid: it
+  samples each cell's centre AND its six hex corners against the real vector
+  geometry, which is resolution-INDEPENDENT for a linear barrier by
+  construction — the same order-of-magnitude improvement a refined grid would
+  buy, without the compute-budget cost. Uniform fine-grained resolution for
+  AREAL micro-terrain (gullies, knolls) remains a separate, larger,
+  deliberately-deferred architecture question (hex adjacency, DEM-derivative
+  plane fits and corridor smoothing all assume a uniform hex size). One
+  cross-cutting refactor fell out along the way: every place that built an
+  edge's `from`/`to` sample for `edgeMobilityCost` was hand-writing a near-
+  identical object literal (8 call sites across 4 files, already drifting
+  from each other's exact field lists) — now one shared `toMobilitySample`.
+  Verified: `tsc --noEmit`/`npm run build` clean on both packages,
+  `npm run test:unit` unaffected. A 29-check standalone smoke test proved the
+  claim that matters: a synthetic AOI with a real river band and one bridge
+  finds a route that genuinely uses the bridge and never crosses off it;
+  remove the bridge and the SAME river actually severs the AOI (`extractPath`
+  returns null); as a control, the identical river with its water signal
+  stripped (the pre-fix state) does NOT block movement — proving the test
+  exercises the fix, not something else. Map rendering unverifiable in this
+  sandbox — confirm the water reference layer and the GO/SLOW-GO/NO-GO
+  overlay's reaction to a real waterway on the live preview. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34.
 
 - **2026-07-27 — Terrain Mobility Pass 5: the movement simulation becomes the
   engine (§32), plus a UI clarity pass (§33)**: owner asked for eight UI fixes

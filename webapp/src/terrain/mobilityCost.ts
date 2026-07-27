@@ -102,6 +102,81 @@ export function estimateStructureFromVegetation(vegetation: VegetationType): Str
 }
 
 // ---------------------------------------------------------------------------
+// Hydrology — fording (docs §34)
+// ---------------------------------------------------------------------------
+
+export interface FordingRequirement {
+  /** Assumed depth, metres, a mover must handle to cross — a TIER 0 estimate
+   *  keyed to which water signal fired, NOT a measured per-crossing depth. No
+   *  source in this app measures actual river/stream depth at a point; this
+   *  is the same class of engineering assumption `estimateStructureFromVegetation`
+   *  already makes for vegetation gap width, held to the same honesty rule:
+   *  always reported as estimated, never silently upgraded to "measured". */
+  assumedDepthM: number;
+  source: string;
+}
+
+/**
+ * What depth a mover must handle to cross water AT this sample, from
+ * whichever hydrology signal is present. Worst signal wins when more than one
+ * fires (a cell can be near both a tagged waterway and a high WOfS frequency;
+ * the OSM tag is preferred when present — it is a human-mapped classification
+ * of what the feature actually IS, where WOfS is only a symptom of it being
+ * wet). Returns null when nothing indicates water here at all — the gate in
+ * `edgeMobilityCost` must never invent a crossing that isn't there.
+ */
+export function estimateFordingRequirement(sample: MobilitySample): FordingRequirement | null {
+  if (sample.inWaterBody) {
+    return {
+      assumedDepthM: 2.5,
+      source: 'standing water body (OSM natural=water) — assumed genuinely deep; not a measured bathymetry, but no catalogued profile here is amphibious so the exact figure rarely changes the outcome',
+    };
+  }
+  if (sample.nearestWaterwayKind === 'river' || sample.nearestWaterwayKind === 'canal') {
+    return {
+      assumedDepthM: 1.2,
+      source: `mapped ${sample.nearestWaterwayKind} (OSM waterway=${sample.nearestWaterwayKind}) — Tier 0 class-representative assumed depth, not a measured crossing`,
+    };
+  }
+  if (sample.nearestWaterwayKind === 'stream') {
+    return {
+      assumedDepthM: 0.4,
+      source: 'mapped stream (OSM waterway=stream) — Tier 0 assumed depth; typically shallow, but this is an engineering assumption, not a survey',
+    };
+  }
+  // No OSM tag reached this cell (sparse mapping, or the AOI's Overpass query
+  // failed) — DEA WOfS's measured wet-frequency is the fallback signal. High
+  // frequency (wet more than half of clear observations, 1986-present) reads
+  // as a likely permanent watercourse the map just doesn't have tagged;
+  // moderate frequency reads as seasonal/intermittent. Both bands are
+  // deliberately less confident (smaller assumed depth) than an actual OSM
+  // tag, because "detected wet sometimes" is weaker evidence than "someone
+  // mapped this as a river".
+  if (sample.waterFrequency !== null && sample.waterFrequency !== undefined) {
+    if (sample.waterFrequency >= 0.5) {
+      return {
+        assumedDepthM: 1.0,
+        source: `no mapped waterway, but DEA Water Observations measured wet ${Math.round(sample.waterFrequency * 100)}% of clear observations (1986–near present) — treated as a likely unmapped permanent watercourse, Tier 0 assumed depth`,
+      };
+    }
+    if (sample.waterFrequency >= 0.15) {
+      return {
+        assumedDepthM: 0.4,
+        source: `DEA Water Observations measured wet ${Math.round(sample.waterFrequency * 100)}% of clear observations — a seasonal/intermittent water signature, Tier 0 assumed depth`,
+      };
+    }
+  }
+  return null;
+}
+
+/** Fording speed multiplier applied when a crossing is passable but present
+ *  (i.e. within the profile's fordingDepthM) — crossing water is always
+ *  slower and more hazardous than the same distance on dry, passable ground,
+ *  regardless of profile. ASSUMED, not sourced: no citable figure exists for
+ *  "how much slower is a ford" across this catalogue's profile range. */
+const FORDING_SPEED_FACTOR = 0.4;
+
+// ---------------------------------------------------------------------------
 // Vehicle gradient speed curve
 // ---------------------------------------------------------------------------
 
@@ -130,6 +205,14 @@ export interface MobilitySample {
   vegetation: VegetationType;
   vegEstimated: boolean;
   onTrail: boolean;
+  /** Hydrology (docs §34) — optional so a caller/fixture built before this
+   *  gate existed still compiles without threading water data through.
+   *  `edgeMobilityCost` treats an absent field as "no water signal", never as
+   *  "definitely dry" — see `estimateFordingRequirement`. */
+  waterDistanceM?: number;
+  inWaterBody?: boolean;
+  nearestWaterwayKind?: string | null;
+  waterFrequency?: number | null;
 }
 
 export interface EdgeMobilityOptions {
@@ -199,6 +282,30 @@ export function edgeMobilityCost(
     };
   }
 
+  // --- Hydrology: fording (docs §34). Skipped when both ends are on the
+  // mapped trail/road network — a road crossing a mapped watercourse implies
+  // a bridge/causeway/ford the network already accounts for, exactly the
+  // same "ground here is already broken" exemption the vegetation gate below
+  // uses for onTrail. Gates on the ARRIVAL cell (`to`), matching every other
+  // gate in this function. -----------------------------------------------
+  let ford: FordingRequirement | null = null;
+  if (!from.onTrail || !to.onTrail) {
+    ford = estimateFordingRequirement(to);
+  }
+  if (ford) {
+    const capability = profile.fordingDepthM;
+    if (capability === undefined || ford.assumedDepthM > capability) {
+      return {
+        timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
+        trafficability: 'NO-GO',
+        blockedReason: capability === undefined
+          ? `${profile.label} has no stated fording capability and this crossing is ${ford.source}`
+          : `assumed water depth ~${ford.assumedDepthM.toFixed(1)} m exceeds ${profile.label} unprepared fording limit (${capability.toFixed(1)} m) — ${ford.source}`,
+        estimated: true, dataTier: 0,
+      };
+    }
+  }
+
   // --- Vegetation passability (wheeled = gap-width limited, tracked =
   // override-force limited — two different queries against the same
   // structure data, per docs §11.4). Skipped on a mapped trail — the ground
@@ -264,6 +371,7 @@ export function edgeMobilityCost(
   }
   if (profile.loadPenaltyFactor) speedKmh *= profile.loadPenaltyFactor;
   if (nightMode) speedKmh *= profile.nightFactor;
+  if (ford) speedKmh *= FORDING_SPEED_FACTOR; // passable (didn't hit the NO-GO gate above), but a ford is always slower
   speedKmh = Math.max(0.1, speedKmh);
 
   const timeSeconds = (distM / 1000 / speedKmh) * 3600;
@@ -275,7 +383,10 @@ export function edgeMobilityCost(
   const gapRatio = profile.kind === 'wheeled' ? profile.widthM / Math.max(0.1, struct.gapWidthEstimateM) : 0;
   const nearLimit = climbRatio > SLOW_GO_MARGIN || sideRatio > SLOW_GO_MARGIN || gapRatio > SLOW_GO_MARGIN;
   const heavyVeg = (to.vegetation === 'heavyforest' || to.vegetation === 'mediumscrub') && !to.onTrail;
-  const trafficability: TrafficabilityClass = nearLimit || heavyVeg ? 'SLOW-GO' : 'GO';
+  // A passable ford is always at least SLOW-GO — fording a real profile's
+  // full unprepared limit is not the same experience as flat dry ground even
+  // when it isn't NO-GO.
+  const trafficability: TrafficabilityClass = nearLimit || heavyVeg || ford ? 'SLOW-GO' : 'GO';
 
   return {
     timeSeconds,
@@ -284,7 +395,7 @@ export function edgeMobilityCost(
     crossSlopeDeg,
     speedKmh,
     trafficability,
-    estimated: estimatedBase || structureEstimated,
+    estimated: estimatedBase || structureEstimated || !!ford,
     dataTier: 0,
   };
 }

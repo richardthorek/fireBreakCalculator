@@ -49,7 +49,7 @@
 
 import { LatLng } from '../utils/chainage';
 import {
-  MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions,
+  MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions, toMobilitySample,
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors } from '../utils/hexGrid';
@@ -273,8 +273,8 @@ function computeCellFacts(
       const dist = calculateDistance(cell.center.lat, cell.center.lng, n.center.lat, n.center.lng);
       const r = edgeMobilityCost(
         profile,
-        { lat: cell.center.lat, lng: cell.center.lng, elevation: cell.elevation, vegetation: cell.vegetation, vegEstimated: cell.vegEstimated, onTrail: cell.onTrail },
-        { lat: n.center.lat, lng: n.center.lng, elevation: n.elevation, vegetation: n.vegetation, vegEstimated: n.vegEstimated, onTrail: n.onTrail },
+        toMobilitySample(cell),
+        toMobilitySample(n),
         dist,
         { nightMode, crossSlopeDeg: cell.crossSlopeDeg }
       );

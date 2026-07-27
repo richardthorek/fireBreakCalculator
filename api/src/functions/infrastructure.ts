@@ -3,7 +3,7 @@ import { enforceRateLimit } from '../services/rateLimit';
 import { fetchCorridorInfrastructure } from '../services/infrastructureService';
 
 /**
- * GET /api/infrastructure?s={south}&w={west}&n={north}&e={east}
+ * GET /api/infrastructure?s={south}&w={west}&n={north}&e={east}&kind={highway|water}
  *
  * Server-side Overpass proxy (see infrastructureService for the why). The
  * browser calls this same-origin endpoint instead of the public Overpass
@@ -11,6 +11,11 @@ import { fetchCorridorInfrastructure } from '../services/infrastructureService';
  * their rate-limited/error responses and pools every user behind one server IP
  * with a shared cache. The client falls back to its direct-to-Overpass path
  * when this endpoint is unreachable.
+ *
+ * `kind` (default `highway`, added docs §34): `water` fetches waterway/
+ * water-body geometry for the Terrain Mobility hydrology gate instead of
+ * roads/tracks — same endpoint, same resilience, one extra query branch,
+ * rather than a second proxy route.
  */
 async function infrastructure(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   try {
@@ -29,8 +34,10 @@ async function infrastructure(req: HttpRequest, ctx: InvocationContext): Promise
     if (n - s > 3 || e - w > 3) {
       return { status: 400, jsonBody: { error: 'bounding box too large (max 3° per side)' } };
     }
+    const kindParam = req.query.get('kind');
+    const kind = kindParam === 'water' ? 'water' : 'highway';
 
-    const result = await fetchCorridorInfrastructure(s, w, n, e);
+    const result = await fetchCorridorInfrastructure(s, w, n, e, kind);
     if (!result.available) {
       // Upstream (not us) failed — the client falls back to its direct path.
       return { status: 502, jsonBody: { error: 'Upstream infrastructure service unavailable' } };

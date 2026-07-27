@@ -114,10 +114,10 @@
 import { LatLng } from '../utils/chainage';
 import { calculateDistance } from '../utils/slopeCalculation';
 import {
-  MobilityGridCell, runCostToGoSearch,
+  MobilityGridCell, runCostToGoSearch, toMobilitySample,
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { edgeMobilityCost, irmischerClarkeSpeedKmh, toblerSpeedKmh, MobilitySample } from './mobilityCost';
+import { edgeMobilityCost, irmischerClarkeSpeedKmh, toblerSpeedKmh } from './mobilityCost';
 import {
   LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors,
 } from '../utils/hexGrid';
@@ -344,9 +344,7 @@ export function createEdgeCostCache(
       const hit = cache.get(ck);
       if (hit !== undefined) return hit;
       const dist = calculateDistance(from.center.lat, from.center.lng, to.center.lat, to.center.lng);
-      const a: MobilitySample = { lat: from.center.lat, lng: from.center.lng, elevation: from.elevation, vegetation: from.vegetation, vegEstimated: from.vegEstimated, onTrail: from.onTrail };
-      const b: MobilitySample = { lat: to.center.lat, lng: to.center.lng, elevation: to.elevation, vegetation: to.vegetation, vegEstimated: to.vegEstimated, onTrail: to.onTrail };
-      const r = edgeMobilityCost(profile, a, b, dist, { nightMode, crossSlopeDeg: from.crossSlopeDeg });
+      const r = edgeMobilityCost(profile, toMobilitySample(from), toMobilitySample(to), dist, { nightMode, crossSlopeDeg: from.crossSlopeDeg });
       cache.set(ck, r.timeSeconds);
       return r.timeSeconds;
     },
