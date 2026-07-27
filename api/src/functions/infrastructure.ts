@@ -12,10 +12,12 @@ import { fetchCorridorInfrastructure } from '../services/infrastructureService';
  * with a shared cache. The client falls back to its direct-to-Overpass path
  * when this endpoint is unreachable.
  *
- * `kind` (default `highway`, added docs §34): `water` fetches waterway/
- * water-body geometry for the Terrain Mobility hydrology gate instead of
- * roads/tracks — same endpoint, same resilience, one extra query branch,
- * rather than a second proxy route.
+ * `kind` (default `highway`): `water` fetches waterway/water-body geometry
+ * for the Terrain Mobility hydrology gate (docs §34); `highway-mobility`
+ * fetches the wider movement/denial road set — including motorway/trunk/
+ * primary, each way carrying surface/tracktype/smoothness — for the road
+ * network graph (docs §35). Same endpoint, same resilience, one extra query
+ * branch each, rather than a second/third proxy route.
  */
 async function infrastructure(req: HttpRequest, ctx: InvocationContext): Promise<HttpResponseInit> {
   try {
@@ -35,7 +37,10 @@ async function infrastructure(req: HttpRequest, ctx: InvocationContext): Promise
       return { status: 400, jsonBody: { error: 'bounding box too large (max 3° per side)' } };
     }
     const kindParam = req.query.get('kind');
-    const kind = kindParam === 'water' ? 'water' : 'highway';
+    const kind =
+      kindParam === 'water' ? 'water' :
+      kindParam === 'highway-mobility' ? 'highway-mobility' :
+      'highway';
 
     const result = await fetchCorridorInfrastructure(s, w, n, e, kind);
     if (!result.available) {

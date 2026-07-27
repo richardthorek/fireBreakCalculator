@@ -26,7 +26,7 @@ const okJson = (body: any) => Promise.resolve({ ok: true, status: 200, json: asy
 // filtered out (not a way / no geometry).
 const overpassBody = {
   elements: [
-    { type: 'way', tags: { highway: 'track', name: 'Old Mill Rd' }, geometry: [
+    { type: 'way', tags: { highway: 'track', name: 'Old Mill Rd', surface: 'gravel', tracktype: 'grade3' }, geometry: [
       { lat: -35.30, lon: 148.00 }, { lat: -35.29, lon: 148.01 }, { lat: -35.28, lon: 148.02 },
     ] },
     { type: 'node', lat: -35.3, lon: 148.0 },
@@ -45,6 +45,10 @@ async function run() {
   check('maps OSM lon→lng and keeps name/kind',
     r1.trails[0].kind === 'track' && r1.trails[0].name === 'Old Mill Rd' &&
     r1.trails[0].coords.length === 3 && r1.trails[0].coords[0].lng === 148.00);
+  check('surface/tracktype tags pass through for the road-speed model (docs §35)',
+    (r1.trails[0] as any).surface === 'gravel' && (r1.trails[0] as any).tracktype === 'grade3');
+  check('untagged smoothness stays undefined, not fabricated',
+    (r1.trails[0] as any).smoothness === undefined);
 
   // --- cache: identical bbox does not re-hit the network ---
   const callsBefore = calls;
@@ -73,6 +77,28 @@ async function run() {
   setFetch(async () => { after++; return okJson(overpassBody); });
   const r5 = await fetchCorridorInfrastructure(-34.0, 150.0, -33.9, 150.1);
   check('failure not cached — retried and now succeeds', after > 0 && r5.available === true);
+
+  // --- 'highway-mobility' queries the wider set (motorway/trunk/primary),
+  //     deliberately different from the default fire-break REUSABLE_HIGHWAYS
+  //     query (docs §35) — verified by inspecting the actual Overpass query
+  //     body sent, not just the response. ---
+  _clearInfrastructureCache();
+  let lastBody = '';
+  setFetch(async (_url: string, init?: any) => {
+    lastBody = typeof init?.body === 'string' ? decodeURIComponent(init.body) : '';
+    return okJson(overpassBody);
+  });
+  await fetchCorridorInfrastructure(-35.0, 148.0, -34.9, 148.1, 'highway' as any);
+  const defaultQuery = lastBody;
+  _clearInfrastructureCache();
+  await fetchCorridorInfrastructure(-35.0, 148.0, -34.9, 148.1, 'highway-mobility' as any);
+  const mobilityQuery = lastBody;
+  check('default highway query excludes motorway (fire-break reusable set)',
+    !defaultQuery.includes('motorway'));
+  check("'highway-mobility' query includes motorway/trunk/primary",
+    mobilityQuery.includes('motorway') && mobilityQuery.includes('trunk') && mobilityQuery.includes('primary'));
+  check("'highway-mobility' still includes track (rural AU coverage)",
+    mobilityQuery.includes('track'));
 
   setFetch(origFetch as any);
   if (failures > 0) {

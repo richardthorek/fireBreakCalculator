@@ -29,6 +29,15 @@
  *  the same set. */
 const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential';
 
+/** Highway classes for Terrain Mobility / counter-mobility (docs §35) —
+ *  MUST match the webapp's MOBILITY_HIGHWAYS. Deliberately a separate, wider
+ *  set from REUSABLE_HIGHWAYS: motorway/trunk/primary aren't realistically
+ *  "reusable broken ground" for a fire break, but are exactly the
+ *  highest-value roads to identify for movement/denial planning. */
+const MOBILITY_HIGHWAYS =
+  'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
+  'tertiary|tertiary_link|unclassified|residential|living_street|service|track|path|road';
+
 /** Waterway/water-body classes queried for the Terrain Mobility hydrology gate
  *  (docs/ROUTE_INTELLIGENCE.md §34) — linear watercourses plus standing water
  *  bodies. MUST match the webapp's WATER_WATERWAYS/WATER_NATURAL so proxied and
@@ -38,7 +47,7 @@ const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|seconda
 const WATER_WATERWAYS = 'river|canal|stream';
 const WATER_NATURAL = 'water';
 
-export type InfrastructureKind = 'highway' | 'water';
+export type InfrastructureKind = 'highway' | 'highway-mobility' | 'water';
 
 const OVERPASS_ENDPOINTS: string[] = (process.env.OVERPASS_URLS
   ? String(process.env.OVERPASS_URLS).split(',').map(s => s.trim()).filter(Boolean)
@@ -59,6 +68,12 @@ export interface InfrastructureTrail {
   /** OSM highway value, e.g. "track", "path", "service". */
   kind: string;
   coords: { lat: number; lng: number }[];
+  /** OSM `surface` tag — road-class speed model (docs §35). Undefined when untagged. */
+  surface?: string;
+  /** OSM `tracktype` tag — only meaningful on `highway=track`. Undefined when untagged. */
+  tracktype?: string;
+  /** OSM `smoothness` tag. Undefined when untagged. */
+  smoothness?: string;
 }
 
 export interface InfrastructureResult {
@@ -87,7 +102,8 @@ function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e
       `out geom;`
     );
   }
-  return `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${s},${w},${n},${e});out geom;`;
+  const highways = kind === 'highway-mobility' ? MOBILITY_HIGHWAYS : REUSABLE_HIGHWAYS;
+  return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
 }
 
 function getCached(key: string): InfrastructureResult | null {
@@ -151,6 +167,9 @@ export async function fetchCorridorInfrastructure(
           name: el.tags?.name,
           kind: kind === 'water' ? (el.tags?.waterway ?? el.tags?.natural ?? 'water') : (el.tags?.highway ?? 'track'),
           coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+          surface: el.tags?.surface,
+          tracktype: el.tags?.tracktype,
+          smoothness: el.tags?.smoothness,
         }));
       const data: InfrastructureResult = { trails, available: true };
       setCached(key, data);
