@@ -2335,6 +2335,90 @@ verified in this sandbox (no Mapbox token, no GIS desktop tooling here) —
 **confirm on the live preview / a real GIS client** before relying on the
 exported files operationally.
 
+## 30. AI assistant narrative for Terrain Mobility results (2026-07-27)
+
+Closes the "assistant narrative through the grounding gate" backlog item: a
+ground commander gets a plain-language appreciation, not just panels of
+corridor/chokepoint/barrier/ledger numbers. Wires into the **existing**
+grounding gate (`api/src/services/aiGrounding.ts`) rather than building a
+second one — `buildSystemPrompt`/`validateGroundedResponse`/
+`flattenPayloadNumbers` already operate on `unknown`/any-shaped payload, so
+the fire-break assistant's own anti-hallucination contract ("the model
+narrates and cites, it never computes, never estimates, never fills gaps",
+docs/AI_ASSISTANT.md's prime directive) applies to mobility results with no
+changes to that module beyond one backward-compatible addition:
+`buildSystemPrompt(citations, audience?)` — an optional `audience` string
+(defaults to the existing fire-break wording, so no existing caller changes)
+so the same contract rules can be stated for "a ground commander appreciating
+terrain mobility and siting counter-mobility measures" instead.
+
+**New pieces, one per existing counterpart** (api-side, mirroring
+`assistant.ts`/`briefingTemplate.ts`/`assistantBriefing.ts` exactly):
+- `api/src/types/mobilityAssistant.ts` — `MobilityAssistantPayload`: mover
+  profile + confidence, cell/reachable/NO-GO/SLOW-GO counts, the
+  `unconstrained` flag and coverage percent, up to 3 top corridors (rank,
+  ease, route share, median time, bottleneck width/abreast/frontage, GO
+  fraction), chokepoint/barrier summary, and scored counter-measure
+  placements (delay imposed, bypass delay, egress-safe) — the exact same
+  figures the panels already render, never a second computation. Its
+  validator (`isMobilityAssistantPayload`) is the same untrusted-boundary
+  shape check `isAssistantPayload` does for the fire-break payload.
+- `api/src/services/mobilityBriefingTemplate.ts` —
+  `buildTemplateMobilityBriefing(payload)`: the deterministic, no-AI
+  fallback, and the piece that actually delivers "plain-language briefing"
+  unconditionally, since it needs no model deployed at all (this sandbox
+  cannot exercise a live Foundry call either — same documented limitation as
+  the fire-break assistant, docs/AI_ASSISTANT.md §1). Leads with the
+  `unconstrained` finding when present (never buries it under corridor
+  detail that would overstate structure the terrain doesn't have), and
+  **refuses** to report delay figures for an egress-unsafe placement — it
+  states the refusal instead, mirroring the panel's own refusal-not-warning
+  treatment of that gate (§ counter-mobility panel notes above).
+- `api/src/functions/assistantMobilityBriefing.ts` — `POST
+  /api/assistant/mobility-briefing`, same always-200 shape as
+  `assistantBriefing.ts`: rate-limited, validates the payload, retrieves
+  doctrine via the existing keyword-overlap `retrieveDoctrine` (same
+  11-chunk KB — `route-optimizer-corridor`'s tags already cover
+  corridor/route/pathfinding), attempts a grounded AI call under the
+  mobility audience string, falls back to the template on any failure or
+  grounding-check rejection.
+- Frontend: `webapp/src/utils/mobilityAssistantApi.ts` builds the payload
+  straight from `MobilityAppreciationResult` + the counter-mobility ledger
+  (reuses `assistantApi.ts`'s `postAssistant`/`AssistantResponse` directly —
+  both already generic over payload shape, so no duplicated fetch plumbing),
+  and `MobilityAssistantCard.tsx` is a briefing-only sibling of
+  `AiAssistantCard.tsx` (same CSS classes/source-badge/citation-chip
+  presentation), wired into `MobilityPanel.tsx` after the chokepoints/barrier
+  section.
+
+**Deliberately scoped out**: grounded chat (open-ended Q&A) over the
+mobility payload — the fire-break assistant's chat endpoint isn't mirrored
+here. A one-shot briefing directly answers what was asked ("a plain-language
+briefing, not just panels of numbers"); chat is a natural follow-up, not
+built in this pass so as not to expand scope past the actual ask.
+
+**Verification**: `tsc --noEmit`/`npm run build` clean on both `api/` and
+`webapp/`. New `api/src/test/mobilityAssistant.test.ts` (plain node+assert,
+matches the project's framework-free convention, wired into
+`npm run test:unit`) — 17 checks: payload validator accepts a well-formed
+payload and rejects a missing field, a non-finite corridor number, a
+placement missing `egressSafe`, and non-objects (`null`/string/number)
+outright (a real bug caught here: the validator's `v && ...` chain returned
+`v` itself — e.g. `null` — instead of a boolean on early rejection, fixed
+with an explicit `!!(...)` wrap); accepts the legitimate null cases (no
+barrier found, bypass meaningless because baseline was already unreachable);
+template briefing checks mention the mover profile and reachability figures,
+report the primary corridor OR the `unconstrained` finding correctly
+(never both), report a scored placement's delay/bypass figures, **refuse**
+an egress-unsafe placement's figures instead of reporting them, carry the
+estimated-data caution, never fabricate a corridor when none formed, and
+always state the "appreciation, not a tasking" caveat; system-prompt checks
+confirm the `audience` parameter is backward-compatible (existing fire-break
+wording by default) and correctly substituted when passed. Actually exercising
+a live Foundry deployment remains unverified in this sandbox, same as the
+rest of the AI assistant feature (docs/AI_ASSISTANT.md §1) — **sanity-check a
+real briefing once `deployAiAssistant=true` is provisioned**.
+
 ---
 
 ## Update policy

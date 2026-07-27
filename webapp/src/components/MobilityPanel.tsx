@@ -22,6 +22,8 @@ import { AssessmentLog } from './AssessmentLog';
 import { DataConfidenceBadge, ConfidenceTier } from './DataConfidenceBadge';
 import { MobilityExportControls } from './MobilityExportControls';
 import { ExportMobilityInput } from '../utils/mobilityGisExport';
+import { MobilityAssistantCard } from './MobilityAssistantCard';
+import { buildMobilityAssistantPayload } from '../utils/mobilityAssistantApi';
 import { COUNTER_MEASURES } from '../terrain/counterMeasures';
 import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
 
@@ -101,6 +103,11 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       ledger: cmLedger,
     };
   }, [result, nightMode, cmPlacements, cmLedger]);
+
+  const assistantPayload = useMemo(
+    () => (result ? buildMobilityAssistantPayload(result, nightMode, cmLedger) : null),
+    [result, nightMode, cmLedger]
+  );
 
   return (
     <div className="tac-panel mobility-panel">
@@ -280,6 +287,12 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
           ) : (
             <div className="mobility-caveat tac-mono">NO SEPARATING CUT FOUND FOR THIS PROFILE</div>
           )}
+        </div>
+      )}
+
+      {assistantPayload && (
+        <div className="tac-panel mobility-section">
+          <MobilityAssistantCard payload={assistantPayload} />
         </div>
       )}
 

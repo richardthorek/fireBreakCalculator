@@ -79,7 +79,10 @@ export function buildAssistantPayload(params: {
   };
 }
 
-async function postAssistant(path: string, body: unknown): Promise<AssistantResponse | null> {
+// Exported so other assistant payload types — e.g. mobilityAssistantApi.ts's
+// Terrain Mobility briefing — can reuse the exact same fetch/degrade contract
+// rather than a second copy of this network plumbing.
+export async function postAssistant(path: string, body: unknown): Promise<AssistantResponse | null> {
   try {
     const resp = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
