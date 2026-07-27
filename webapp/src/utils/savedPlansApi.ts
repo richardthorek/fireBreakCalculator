@@ -10,7 +10,7 @@
 
 // Same base as the other API utils: relative /api by default so the Vite dev
 // proxy forwards to the Functions host.
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface SavedPlanApi {
   id: string;

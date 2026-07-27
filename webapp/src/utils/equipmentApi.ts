@@ -13,7 +13,7 @@ import { STANDARD_EQUIPMENT } from '../config/standardEquipment';
 
 // Use relative /api by default so Vite dev server proxy (configured in vite.config.ts)
 // can forward requests to the Functions host and avoid CORS during development.
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -39,7 +39,7 @@ const mockEquipment: EquipmentApi[] = STANDARD_EQUIPMENT;
 //   aircraft or hand crews) are ever recommended.
 // - WRITES only fall back in development. In production a failed write must
 //   surface as an error, never silently pretend to succeed (data honesty).
-const isDevelopment = import.meta.env.DEV;
+const isDevelopment = (import.meta as any).env?.DEV;
 async function withFallback<T>(
   apiCall: () => Promise<T>,
   fallback: T,

@@ -3630,28 +3630,66 @@ subtly broke one of those invariants — worse than shipping a smaller, fully
 verified fix. Recorded here as real, still-open work (master_plan.md
 Next-up), not silently dropped.
 
-**What shipped instead — expand-and-retry (12/15 above):**
-`buildMobilityGrid` now takes a `boundsPadFactor` parameter (still the
-original 0.2 by default). `mobilityAppreciation.ts` retries the ENTIRE
-build-grid-then-search sequence at escalating factors — `[0.2, 0.6, 1.5, 4.0]`
-— stopping the moment a route is found. This reuses the existing, already-
-proven search machinery unchanged (zero new invariant risk) and directly
-fixes the reported MECHANISM: padding that was a fixed fraction of the
-origin↔objective span regardless of whether a route was ever found, unable
-to tell "there is no way" from "I wasn't allowed to look far enough" (the
-owner's own framing of the bug). A run that succeeds at the default padding
-pays nothing extra; only a genuinely Lake-George-shaped run pays for wider
-resampling, and the log says so explicitly (`NO ROUTE AT THE PREVIOUS EXTENT
-— WIDENING THE SEARCH…`), plus a final honest failure line
-(`NO ROUTE FOUND AFTER N ATTEMPT(S)…`) if even the widest attempt fails.
+**v1 (12/15 above) — expand-and-retry at escalating `boundsPadFactor`:**
+`buildMobilityGrid` took a `boundsPadFactor` parameter (0.2 default);
+`mobilityAppreciation.ts` retried the whole build-grid-then-search sequence
+at escalating factors `[0.2, 0.6, 1.5, 4.0]`. Proven with a SYNTHETIC grid
+built directly from local coordinates (`expandingSearchLakeGeorge.test.ts`)
+— which is exactly why the proof missed what was still broken: it validated
+"a wide-enough box finds the route" but never validated "does the padding
+formula actually PRODUCE a wide-enough box".
 
-Proven at the engine level (`expandingSearchLakeGeorge.test.ts`, matching
-`lakeGeorgeRoadRouting.test.ts`'s own precedent — the orchestration itself is
-network-coupled and not unit-testable without mocking every upstream fetch):
-a synthetic water barrier that completely blocks a narrow box but has a real
-gap only visible once the box widens, plus a control (seal the gap too — the
-wide box then correctly finds nothing either, proving the mechanism isn't
-just "wider boxes always find something").
+**v1 was STILL broken — caught live against the real Lake George
+(2026-07-27):** owner tested the exact west→east crossing and got a corridor
+of ~227 m before stopping. Root cause: `padLat = (maxLat - minLat) *
+boundsPadFactor`. For a due-EAST crossing, origin and objective sit at
+nearly the SAME latitude, so `maxLat - minLat` is just the two painted
+blobs' own thickness (tens of metres) — multiplying a near-zero number by
+any factor from 0.2 to 4.0 stays near-zero. The retry mechanism was scaling
+the WRONG base quantity and reproduced the exact original defect it was
+built to fix.
+
+**v2 (the actual fix) — square, distance-based box + targeted frontier-edge
+growth:** two owner-guided refinements, live, in one session:
+
+1. `computePaddedBounds` (now a standalone, exported, pure function —
+   extracted specifically so the FORMULA is unit-testable without going
+   through `buildMobilityGrid`'s network calls) targets a SQUARE box: side
+   = `spanM * (1 + 2*boundsPadFactor)`, where `spanM` is the REAL haversine
+   distance between the origin and objective centroids — not either axis's
+   own incidental span. Owner: *"a 'more' square ratio could be a good way
+   to start. So that one axis of loaded data is more similar to the linear
+   distance so we have a proportionate area of data to work with."* Proven
+   against the actual Lake George coordinates (lat -35.15 to -34.90): the
+   box clears the full 28 km extent on the FIRST attempt at the default
+   `INITIAL_PAD_FACTOR = 0.3` — no retry needed for the reported scenario.
+2. `frontierTouchedEdges`/`growBoundsTowardFrontier` (new) — if a search
+   still fails, reads back which edge of the box the REACHABLE frontier
+   (finite `timeSeconds`, not a NO-GO/unreached cell) actually touched, and
+   extends specifically that side for the next attempt, leaving edges the
+   frontier never reached untouched. Owner: *"I think we need both, a large
+   uniform box... and then the ability to extend out when we hit edges...
+   if it still hits the edge then it loads a new [area] from the point of
+   where it hit. Repeat until we get there."* Falls back to symmetric
+   growth only when NO edge was touched at all (a genuinely terrain-boxed
+   attempt, not a box-limited one) — matches `computePaddedBounds`'s own
+   symmetric behaviour for that case. Two consecutive fully-terrain-blocked
+   attempts stops the retry early (real evidence of enclosure) rather than
+   spending the remaining budget on growth that already isn't the limiting
+   factor. Capped at `MAX_ATTEMPTS = 6`.
+
+Also fixed in the same pass: `nearestCellKey` — `mobilityGrid.ts`'s "never
+an empty seed set" fallback (when a small paint patch clears NO analysis
+cell's 15% area-overlap threshold on a coarse grid) used to pick an
+arbitrary array-index cell (`cells[0]`/`cells[last]`), not the cell nearest
+where the user actually painted.
+
+Proven: `paddedBoundsLakeGeorge.test.ts` (including a test using the exact
+real Lake George coordinates, proving first-attempt clearance) and
+`frontierEdgeGrowth.test.ts`. `expandingSearchLakeGeorge.test.ts` (the v1
+proof) still passes and still has real value — it proves the SEARCH ENGINE
+finds a route when given room; the new tests prove the BOX-SIZING actually
+gives it that room, closing the exact gap v1's proof missed.
 
 **Throughout:** `npm run build` (webapp) and `npm run test:unit` (api) must
 pass; TypeScript strict, no unjustified `any`; every estimated or overridden

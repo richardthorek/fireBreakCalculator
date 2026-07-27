@@ -58,7 +58,8 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 20 | Paint↔analysis grid reconciliation | `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` now test real geodesic area overlap (`@turf/intersect`/`@turf/area`) between each analysis hex and the resolved painted polygon, not just the cell centre — a coarse analysis hex only seeds as origin/objective when a real (≥15%) share of it is actually painted, faithful regardless of the fixed 100m paint-hex size vs. the analysis grid's own `chooseHexSize` result | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | 21 | Slice A — road-speed config UI + user-override plumbing | `RoadSpeedOverridePanel.tsx` (editable table, per-row/global reset, `localStorage`), threaded as a set-once global (`setRoadSpeedOverrides`) rather than a parameter chased through 9 files, set on BOTH sides of the `mobilityWorker.ts` Worker boundary since a Worker shares no memory with the main thread | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 22 | Slice A.9 — road-network routing wired into the LIVE app (found + fixed) | Discovered mid-step-21: `roadGraph.ts`/`roadRouting.ts` were correct in isolation (Lake George synthetic test) but never called by the running app — only the hex-grid search ever ran, so Lake George was still genuinely unfixed for vehicles in the product. `roadRouteSearch.ts` (new) wires a box-free road route into `mobilityAppreciation.ts` for vehicle profiles, additive alongside the hex-grid search, drawn on the map as its own amber line. Re-proven end to end with `PaintedArea` inputs (what the app actually has), not raw graph node IDs | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 23 | Slice B (scoped) — expand-and-retry replaces the fixed-fraction pad, off-road/foot half of the Lake George fix | The FULL lazy-grid/tile-streaming/cost-budget-ellipse/corridor-termination architecture §35 designs is a large rearchitecture (would touch 5+ interacting modules, several of which assume a COMPLETE, finished cell array); deliberately not attempted whole. Shipped instead: `buildMobilityGrid` takes a `boundsPadFactor`; `mobilityAppreciation.ts` retries the full grid-build-then-search at escalating factors (`[0.2, 0.6, 1.5, 4.0]`) when a search finds no route, stopping the moment one is found, with an honest "widening the search" / final "no route after N attempts" log either way. Reuses 100% of existing, already-proven search machinery — zero new invariant risk. Proven at the engine level (mirrors `lakeGeorgeRoadRouting.test.ts`'s own precedent): a synthetic barrier that fully blocks a narrow box but has a real gap only visible once widened, plus a control. Full lazy-grid design remains genuinely open, tracked below, not silently dropped | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 23 | Slice B (scoped) — expand-and-retry, v1 (SUPERSEDED by step 24 — see below, the base quantity it scaled was still broken) | First attempt at the off-road fix: `boundsPadFactor` retry at escalating factors. Proven against a SYNTHETIC grid built directly from local coordinates, which is exactly why it missed that the real padding formula was still broken — see step 24 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 24 | Slice B (scoped) — square distance-based box + targeted frontier-edge growth (the actual fix) | Live-tested by the owner against the real Lake George, step 23 still failed. `computePaddedBounds` now targets a SQUARE box sized off the real origin↔objective distance (haversine), proven to clear the real 28km lake on attempt 1; `frontierTouchedEdges`/`growBoundsTowardFrontier` extend specifically the box edge the reachable frontier actually hit on any further retry, not a fresh uniform box. Also fixed the `nearestCellKey` seed-set fallback (was an arbitrary array index) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 
 ### Next up
 
@@ -102,6 +103,45 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Slice B (scoped) was STILL broken; found and fixed live
+  against the real Lake George (step 24)**: owner live-tested step 23's
+  expand-and-retry fix against the actual Lake George and got a ~227 m
+  corridor that stopped short. Root cause: the retry only scaled the
+  MULTIPLIER (0.2→4.0), but the base quantity it multiplied — `(axis span)
+  * factor` — was still broken exactly like the original defect. For a
+  due-EAST crossing, origin and objective sit at nearly the same latitude,
+  so `maxLat - minLat` is just the two painted blobs' own thickness (tens of
+  metres); multiplying a near-zero number by any factor stays near-zero. The
+  retry mechanism never actually gave the search real north–south room.
+
+  Fixed properly this time, via three owner-guided iterations in one
+  session: (1) `computePaddedBounds` now targets a SQUARE box whose side is
+  a multiple of the REAL distance between origin and objective centroids
+  (haversine), not either axis's own incidental span — proven against the
+  actual Lake George coordinates to clear the full 28 km extent on the
+  FIRST attempt, no retry needed. (2) `frontierTouchedEdges`/
+  `growBoundsTowardFrontier` (new) — if a search still fails, the retry now
+  reads back WHICH edge of the box the reachable frontier actually touched
+  and extends specifically that side, rather than a fresh uniform box each
+  time ("if it still hits the edge then it loads a new tile from the point
+  of where it hit. Repeat until we get there" — owner). (3) Confirmed via
+  code trace (not assumed) that the primary path already blends road and
+  cross-country by actual cost (every vehicle profile has a nonzero
+  `crossCountryFactor`), a separate road-only route exists for vehicles
+  (step 22), and up to 14 distinct routes get bundled into ranked corridor
+  bands via the existing iterative-penalty k-dissimilar search.
+
+  Also fixed: `mobilityGrid.ts`'s "never an empty seed set" fallback used to
+  pick an arbitrary array-index cell when a small paint patch failed the
+  15% area-overlap threshold on a coarse grid — now picks the cell nearest
+  the painted area's own centroid. Also patched `import.meta.env` crashing
+  outside Vite in 9 more modules (same guard pattern as before) so the new
+  tests can actually run standalone.
+
+  13 new tests (`paddedBoundsLakeGeorge.test.ts` including the exact real
+  Lake George coordinates, `frontierEdgeGrowth.test.ts`); full regression
+  green; `tsc`/`npm run build` clean.
 
 - **2026-07-27 — Slice B (scoped) shipped: the Lake George defect fixed for
   off-road/foot movement too (step 23)**: owner: "Keep going with slice a

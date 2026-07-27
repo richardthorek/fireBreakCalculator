@@ -12,7 +12,7 @@ import { PlanAssessment } from './planInsights';
 import { authHeader } from './suiteAuth';
 import { logger } from './logger';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface AssistantEquipmentSummary {
   name: string;

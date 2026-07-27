@@ -26,6 +26,7 @@ import { intersect } from '@turf/intersect';
 import { area as turfArea } from '@turf/area';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import { LatLng } from '../utils/chainage';
+import { calculateDistance } from '../utils/slopeCalculation';
 import {
   makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
   LocalProjection, LocalPoint,
@@ -103,6 +104,14 @@ export interface MobilityGridResult {
    *  attempt wasn't allowed to look far enough" (the exact framing of the
    *  original field report). */
   boundsPadFactor: number;
+  /** The actual box this attempt searched, in lat/lng — kept so a failed
+   *  attempt's caller (`mobilityAppreciation.ts`'s retry loop) can work out
+   *  WHICH edge(s) the reachable frontier actually touched, rather than
+   *  growing the box uniformly on the next attempt (owner, 2026-07-27: "if
+   *  it still hits the edge then it loads a new tile from the point of
+   *  where it hit"). */
+  boundsSw: LatLng;
+  boundsNe: LatLng;
 }
 
 /** Real overlap fraction (0..1) between one hex cell's actual polygon and a
@@ -137,47 +146,249 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
   return paintedOverlapFraction(cellCorners, geom) >= PAINTED_OVERLAP_THRESHOLD;
 }
 
+/** The cell whose centre is closest to `point` — the "never an empty seed
+ *  set" fallback below needs an actual NEAREST cell, not an arbitrary array
+ *  index. A small brush dab on a coarse (large-AOI) grid can legitimately
+ *  clear the 15% overlap threshold on NO cell at all (the painted patch is
+ *  smaller than any single analysis hex), and `cells[0]`/`cells[last]` are
+ *  whatever `generateBoxHexes` happened to emit first/last — typically a
+ *  corner of the bounding box, nowhere near where the user actually
+ *  painted. Squared distance only (comparison, not a real length). */
+function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
+  let bestKey = cells[0].key;
+  let bestD = Infinity;
+  for (const c of cells) {
+    const dLat = c.center.lat - point.lat;
+    const dLng = c.center.lng - point.lng;
+    const d = dLat * dLat + dLng * dLng;
+    if (d < bestD) { bestD = d; bestKey = c.key; }
+  }
+  return bestKey;
+}
+
 /**
  * Build and sample a hex grid covering `origin`, `objective` (padded so the
  * search has room either side to route around obstacles) and everything
  * between them.
  *
  * `boundsPadFactor` (docs §35 — the Lake George defect): the AOI is padded by
- * this fraction of the origin↔objective span. Defaults to the original 0.2,
- * but the caller (`mobilityAppreciation.ts`'s escalating retry) passes a
- * LARGER value when a search at a smaller pad found no route, so an obstacle
- * that genuinely needs more room to detour around gets it on retry, instead
- * of every run paying for maximum padding up front. This is a scoped
- * response to §35's root defect — expand-and-retry, not the full lazy-grid/
- * cost-budget/corridor-termination architecture that section also designs
- * (still open, tracked separately) — but it directly fixes the reported
- * mechanism: padding that was proportional to the span regardless of whether
- * a route was actually found.
+ * this fraction of the REAL distance between the origin and objective
+ * centroids (not either axis's own incidental span — see the padding code's
+ * own comment for the bug that distinction fixes). Defaults to 0.2, but the
+ * caller (`mobilityAppreciation.ts`'s escalating retry) passes a LARGER
+ * value when a search at a smaller pad found no route, so an obstacle that
+ * genuinely needs more room to detour around gets it on retry, instead of
+ * every run paying for maximum padding up front. This is a scoped response
+ * to §35's root defect — expand-and-retry, not the full lazy-grid/cost-
+ * budget/corridor-termination architecture that section also designs (still
+ * open, tracked separately) — but it directly fixes the reported mechanism:
+ * padding that didn't actually grow with the real scale of the obstacle,
+ * regardless of whether a route was found.
  */
-export async function buildMobilityGrid(
-  origin: PaintedArea,
-  objective: PaintedArea,
-  options: { signal?: AbortSignal; onProgress?: (fraction: number) => void; boundsPadFactor?: number } = {}
-): Promise<MobilityGridResult | null> {
-  const { signal, onProgress, boundsPadFactor = 0.2 } = options;
+/** Minimum absolute padding, metres — floors the degenerate case where
+ *  origin and objective are painted close together (spanM near 0) but the
+ *  search still needs SOME room to route around a small local obstacle. */
+const MIN_PAD_M = 200;
 
-  const originBounds = paintedAreaBounds(origin);
-  const objectiveBounds = paintedAreaBounds(objective);
-  if (!originBounds || !objectiveBounds) return null;
+export interface PaddedBounds {
+  boundsSw: LatLng;
+  boundsNe: LatLng;
+}
 
+/**
+ * The padded search box for one attempt — a pure, unit-testable function
+ * separated out specifically so the padding FORMULA can be tested without
+ * going through `buildMobilityGrid`'s network calls.
+ *
+ * FIELD-CONFIRMED BUG (2026-07-27, live test against the real Lake George):
+ * padding used to be `(axis span) * boundsPadFactor` — for a due-EAST
+ * crossing, origin and objective sit at nearly the SAME latitude, so
+ * `maxLat - minLat` is just the two painted blobs' own thickness (tens to
+ * low hundreds of metres), not the scale of the obstacle between them.
+ * Multiplying a near-zero number by any factor — 0.2 or 4.0 — stays
+ * near-zero: the retry mechanism was scaling the WRONG base quantity and
+ * never actually gave the search meaningful north–south room, exactly
+ * reproducing the original defect it was built to fix. (Symmetric failure
+ * for a due-NORTH/SOUTH crossing, where `maxLng - minLng` would be the
+ * near-zero one instead.) The earlier `expandingSearchLakeGeorge.test.ts`
+ * proof did not catch this: it built its synthetic grid directly from raw
+ * local coordinates, bypassing this function entirely, so it validated
+ * "a wide-enough box finds the route" but never validated "does the retry
+ * mechanism actually PRODUCE a wide-enough box" — exactly where the bug was.
+ *
+ * Fix: pad by a fraction of the REAL distance between the origin and
+ * objective centroids (haversine, metres), applied EQUALLY to both lat and
+ * lng, regardless of which axis the crossing happens to run along. A
+ * due-east 25 km crossing at boundsPadFactor=0.2 now gets ~5 km of room on
+ * every side (10 km total north–south) — a real, geometry-independent
+ * budget, not an accident of which axis the two paint blobs happened to
+ * differ on.
+ */
+export function computePaddedBounds(
+  originBounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+  objectiveBounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+  boundsPadFactor: number
+): PaddedBounds | null {
   const minLat = Math.min(originBounds.minLat, objectiveBounds.minLat);
   const maxLat = Math.max(originBounds.maxLat, objectiveBounds.maxLat);
   const minLng = Math.min(originBounds.minLng, objectiveBounds.minLng);
   const maxLng = Math.max(originBounds.maxLng, objectiveBounds.maxLng);
   if (maxLat - minLat < 1e-6 || maxLng - minLng < 1e-6) return null;
 
+  const originCentroid: LatLng = { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 };
+  const objectiveCentroid: LatLng = { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 };
+  const spanM = calculateDistance(originCentroid.lat, originCentroid.lng, objectiveCentroid.lat, objectiveCentroid.lng);
+
+  // A SQUARE box, not independent per-axis padding (owner, 2026-07-27,
+  // refining the fix live: "a 'more' square ratio could be a good way to
+  // start. So that one axis of loaded data is more similar to the linear
+  // distance so we have a proportionate area of data to work with"). Padding
+  // each axis by "the same delta" still leaves a due-east crossing's
+  // north-south extent far short of its east-west one, because the
+  // near-zero own latitude span only gets the delta ADDED to it, never
+  // brought up to the same SCALE as the travel distance. Targeting a square
+  // side directly fixes that: side = spanM * (1 + 2*boundsPadFactor),
+  // centred on the origin/objective midpoint, giving the perpendicular axis
+  // genuinely comparable room from the FIRST attempt, not just after a
+  // targeted retry.
+  const targetSideM = Math.max(spanM * (1 + 2 * boundsPadFactor), MIN_PAD_M * 2);
+  const halfSideM = targetSideM / 2;
+  const midLat = (minLat + maxLat) / 2;
+  const midLng = (minLng + maxLng) / 2;
+  const halfLatDeg = halfSideM / 111320;
+  const halfLngDeg = halfSideM / (111320 * Math.max(0.05, Math.cos((midLat * Math.PI) / 180)));
+
+  // Never clip below the origin/objective areas' OWN footprint — a large
+  // painted blob wider than the target square must still be fully covered.
+  return {
+    boundsSw: { lat: Math.min(midLat - halfLatDeg, minLat), lng: Math.min(midLng - halfLngDeg, minLng) },
+    boundsNe: { lat: Math.max(midLat + halfLatDeg, maxLat), lng: Math.max(midLng + halfLngDeg, maxLng) },
+  };
+}
+
+/** Real distance (metres) between the origin and objective painted areas'
+ *  bounding-box centroids — the SAME base quantity `computePaddedBounds`
+ *  scales from. Exported so `mobilityAppreciation.ts`'s retry loop can size
+ *  its own growth steps off the identical number, rather than a second,
+ *  possibly-inconsistent calculation. */
+export function originObjectiveDistanceM(origin: PaintedArea, objective: PaintedArea): number | null {
+  const originBounds = paintedAreaBounds(origin);
+  const objectiveBounds = paintedAreaBounds(objective);
+  if (!originBounds || !objectiveBounds) return null;
+  const originCentroid: LatLng = { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 };
+  const objectiveCentroid: LatLng = { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 };
+  return calculateDistance(originCentroid.lat, originCentroid.lng, objectiveCentroid.lat, objectiveCentroid.lng);
+}
+
+/** How close to a box edge (as a fraction of that edge's own dimension) a
+ *  reachable cell must sit to count as "the frontier touched this edge" —
+ *  loose enough to survive hex-grid jitter near the boundary, tight enough
+ *  not to count cells that were nowhere near actually being edge-blocked. */
+const EDGE_BAND_FRACTION = 0.1;
+
+export interface FrontierEdges {
+  north: boolean;
+  south: boolean;
+  east: boolean;
+  west: boolean;
+}
+
+/**
+ * Which edges of `bounds` the reachable frontier actually touched, from the
+ * RESULTS of a failed search attempt over that exact box (owner, 2026-07-27,
+ * live-testing the real Lake George: "the path finding didn't continue
+ * seeking the destination once it hit an edge... if it still hits the edge
+ * then it loads a new tile from the point of where it hit"). Only cells with
+ * a finite `timeSeconds` (genuinely reached from the origin) count — a
+ * NO-GO/unreached cell sitting at the edge says nothing about whether
+ * extending that direction would help; it means the search was stopped by
+ * TERRAIN before it ever got there, not by the box.
+ */
+export function frontierTouchedEdges(
+  bounds: PaddedBounds,
+  results: { center: LatLng; timeSeconds: number }[]
+): FrontierEdges {
+  const latSpan = bounds.boundsNe.lat - bounds.boundsSw.lat;
+  const lngSpan = bounds.boundsNe.lng - bounds.boundsSw.lng;
+  const latBand = latSpan * EDGE_BAND_FRACTION;
+  const lngBand = lngSpan * EDGE_BAND_FRACTION;
+
+  const edges: FrontierEdges = { north: false, south: false, east: false, west: false };
+  for (const r of results) {
+    if (!isFinite(r.timeSeconds)) continue;
+    if (r.center.lat >= bounds.boundsNe.lat - latBand) edges.north = true;
+    if (r.center.lat <= bounds.boundsSw.lat + latBand) edges.south = true;
+    if (r.center.lng >= bounds.boundsNe.lng - lngBand) edges.east = true;
+    if (r.center.lng <= bounds.boundsSw.lng + lngBand) edges.west = true;
+  }
+  return edges;
+}
+
+/**
+ * The next attempt's box — grows ONLY the edges the frontier actually
+ * touched (`frontierTouchedEdges`), by `growM` metres, rather than
+ * re-deriving a fresh uniform box from a bigger `boundsPadFactor`. An edge
+ * the frontier never reached (blocked by terrain well before the boundary,
+ * or simply not the useful direction) gains nothing from being pushed
+ * further out, so it is left alone — this is what makes a retry TARGETED
+ * (chase the direction the search itself was actually trying to go)
+ * instead of an ever-larger square that burns compute/resolution growing
+ * directions that were never going to help.
+ *
+ * Falls back to growing EVERY edge when none were touched at all — a fully
+ * terrain-boxed attempt (blocked by immediate water/slope on every side
+ * before reaching any boundary) gives no directional hint, so the safest
+ * default is the same symmetric growth `computePaddedBounds` itself uses.
+ */
+export function growBoundsTowardFrontier(
+  bounds: PaddedBounds,
+  edges: FrontierEdges,
+  growM: number
+): PaddedBounds {
+  const midLat = (bounds.boundsSw.lat + bounds.boundsNe.lat) / 2;
+  const growLat = growM / 111320;
+  const growLng = growM / (111320 * Math.max(0.05, Math.cos((midLat * Math.PI) / 180)));
+  const growAny = edges.north || edges.south || edges.east || edges.west;
+
+  return {
+    boundsSw: {
+      lat: bounds.boundsSw.lat - (!growAny || edges.south ? growLat : 0),
+      lng: bounds.boundsSw.lng - (!growAny || edges.west ? growLng : 0),
+    },
+    boundsNe: {
+      lat: bounds.boundsNe.lat + (!growAny || edges.north ? growLat : 0),
+      lng: bounds.boundsNe.lng + (!growAny || edges.east ? growLng : 0),
+    },
+  };
+}
+
+export async function buildMobilityGrid(
+  origin: PaintedArea,
+  objective: PaintedArea,
+  options: {
+    signal?: AbortSignal;
+    onProgress?: (fraction: number) => void;
+    boundsPadFactor?: number;
+    /** Bypasses `computePaddedBounds` entirely when supplied — the targeted-
+     *  retry path (`mobilityAppreciation.ts`'s `growBoundsTowardFrontier`):
+     *  grow the box specifically toward whichever edge the reachable
+     *  frontier actually touched on a failed attempt, rather than
+     *  re-deriving a fresh symmetric box from `boundsPadFactor`. */
+    explicitBounds?: PaddedBounds;
+  } = {}
+): Promise<MobilityGridResult | null> {
+  const { signal, onProgress, boundsPadFactor = 0.2, explicitBounds } = options;
+
+  const originBounds = paintedAreaBounds(origin);
+  const objectiveBounds = paintedAreaBounds(objective);
+  if (!originBounds || !objectiveBounds) return null;
+
   // Pad either side so the search has room to route around obstacles rather
-  // than being boxed in exactly between the two AOIs — see boundsPadFactor's
-  // own doc comment above for why this is a parameter, not a fixed 0.2.
-  const padLat = (maxLat - minLat) * boundsPadFactor;
-  const padLng = (maxLng - minLng) * boundsPadFactor;
-  const boundsSw: LatLng = { lat: minLat - padLat, lng: minLng - padLng };
-  const boundsNe: LatLng = { lat: maxLat + padLat, lng: maxLng + padLng };
+  // than being boxed in exactly between the two AOIs — see
+  // `computePaddedBounds`'s own doc comment for the bug this formula fixes.
+  const padded = explicitBounds ?? computePaddedBounds(originBounds, objectiveBounds, boundsPadFactor);
+  if (!padded) return null;
+  const { boundsSw, boundsNe } = padded;
 
   const center: LatLng = { lat: (boundsSw.lat + boundsNe.lat) / 2, lng: (boundsSw.lng + boundsNe.lng) / 2 };
   const proj = makeProjection(center);
@@ -348,14 +559,22 @@ export async function buildMobilityGrid(
     cells,
     hexSize: size,
     proj,
-    originKeys: originKeys.length > 0 ? originKeys : [cells[0].key], // never an empty seed set
-    objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys : [cells[cells.length - 1].key],
+    // Never an empty seed set — but the fallback must be the cell NEAREST to
+    // where the user actually painted (originBounds/objectiveBounds centroid),
+    // not an arbitrary array index, or a tiny brush dab on a coarse grid could
+    // silently seed the search from a random corner of the AOI.
+    originKeys: originKeys.length > 0 ? originKeys
+      : [nearestCellKey(cells, { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 })],
+    objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys
+      : [nearestCellKey(cells, { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 })],
     usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated) || usedHydrologyEstimate,
     infrastructureAvailable: infra.available,
     hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
     waterFeatures: waterways.trails,
     roadWays: infra.trails,
     boundsPadFactor,
+    boundsSw,
+    boundsNe,
     usedCoarseGrid: tries > 0,
   };
 }

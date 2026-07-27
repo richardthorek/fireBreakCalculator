@@ -30,7 +30,9 @@
  * the ensemble produced anything.
  */
 
-import { buildMobilityGrid, MobilityGridResult } from './mobilityGrid';
+import {
+  buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
+} from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
@@ -215,49 +217,75 @@ export async function runMobilityAppreciation(
   onLog?.('LAYING OUT SURVEY GRID OVER AREA OF INTEREST…');
   onStage?.({ key: 'grid', label: 'Laying out survey grid', fraction: 0 });
 
-  // docs §35 — the Lake George defect: a search boxed in at a fixed 20%-of-
-  // span pad could not distinguish "there is no way" from "I wasn't allowed
-  // to look far enough". Rather than the full lazy-grid/cost-budget-ellipse
-  // architecture §35 also designs (tracked separately, genuinely larger and
-  // higher-risk than this run has room for), this is the scoped fix that
-  // directly addresses the reported MECHANISM: retry at escalating padding
-  // when a search finds no route, instead of paying maximum padding (and
-  // maximum resolution loss — chooseHexSize coarsens a bigger box) on every
-  // single run regardless of need. Each factor after the first is a genuine
-  // "look further" attempt, not a cosmetic retry — 0.6/1.5/4.0 roughly
-  // triple the searchable radius each step.
-  const EXPANDING_PAD_FACTORS = [0.2, 0.6, 1.5, 4.0];
+  // docs §35 — the Lake George defect, and its full fix (2026-07-27,
+  // confirmed live against the real Lake George: a first, uniform-only-pad
+  // fix still fell short). Owner, after watching that: "I think we need
+  // both, a large uniform box covering the origin and destination and then
+  // the ability to extend out when we hit edges. We need enough padding so
+  // the algorithm can identify the best routes and thus the handful of
+  // possible corridors for movement." Two things compose:
+  //
+  //  1. INITIAL PASS — a generous uniform box, sized off the REAL distance
+  //     between origin and objective (`computePaddedBounds`), not either
+  //     axis's own incidental span (the earlier bug: a due-east crossing has
+  //     almost no north–south span of its own, so padding stayed near-zero
+  //     regardless of multiplier). Generous on purpose, per the owner's own
+  //     "enough padding to identify a HANDFUL of corridors" requirement, not
+  //     just the single cheapest thread through.
+  //  2. TARGETED RETRY — if that still finds no route, `frontierTouchedEdges`
+  //     reads back WHICH side of the box the reachable frontier actually hit
+  //     (genuinely stopped by running out of box, not by terrain), and
+  //     `growBoundsTowardFrontier` extends specifically that side for the
+  //     next attempt — owner: "if it still hits the edge then it loads a new
+  //     [area] from the point of where it hit. Repeat until we get there."
+  //     An edge the frontier never reached gains nothing from being pushed
+  //     further out, so retries stay targeted instead of an ever-larger
+  //     uniform square burning resolution in directions that were never
+  //     going to help.
+  const INITIAL_PAD_FACTOR = 0.3;
+  const MAX_ATTEMPTS = 6;
+  const spanM = originObjectiveDistanceM(origin, objective) ?? 1000;
 
   let grid: MobilityGridResult | null = null;
   let results: MobilityCellResult[] = [];
   let path: SimPathNode[] | null = null;
   let attemptsUsed = 0;
+  let noEdgeTouchedStreak = 0; // consecutive attempts genuinely terrain-blocked, not box-limited
 
-  for (let i = 0; i < EXPANDING_PAD_FACTORS.length; i++) {
-    const padFactor = EXPANDING_PAD_FACTORS[i];
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
     attemptsUsed = i + 1;
     let samplingAnnounced = false;
-    const attemptGrid = await buildMobilityGrid(origin, objective, {
-      signal,
-      boundsPadFactor: padFactor,
-      // Sampling owns the first 45% of the run's progress bar; the simulation
-      // stages that follow are real work of comparable length, and a bar that
-      // sat at 70% for most of the wall-clock time would be a worse lie than
-      // no bar at all.
-      onProgress: f => {
-        onProgress?.((f / 0.7) * 0.45);
-        // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
-        // elevation/vegetation/trail sampling begins — the long part.
-        if (f > 0.05 && !samplingAnnounced) {
-          samplingAnnounced = true;
-          onStage?.({
-            key: 'sampling',
-            label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
-            fraction: (f / 0.7) * 0.45,
-          });
-        }
-      },
-    });
+
+    const buildOptions: Parameters<typeof buildMobilityGrid>[2] = { signal };
+    if (grid) {
+      // Targeted growth from the PREVIOUS attempt's own box + where its
+      // frontier actually got to — not a fresh symmetric box.
+      const edges = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
+      buildOptions.explicitBounds = growBoundsTowardFrontier(
+        { boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, edges, spanM * 0.3
+      );
+    } else {
+      buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
+    }
+    // Sampling owns the first 45% of the run's progress bar; the simulation
+    // stages that follow are real work of comparable length, and a bar that
+    // sat at 70% for most of the wall-clock time would be a worse lie than
+    // no bar at all.
+    buildOptions.onProgress = f => {
+      onProgress?.((f / 0.7) * 0.45);
+      // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
+      // elevation/vegetation/trail sampling begins — the long part.
+      if (f > 0.05 && !samplingAnnounced) {
+        samplingAnnounced = true;
+        onStage?.({
+          key: 'sampling',
+          label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
+          fraction: (f / 0.7) * 0.45,
+        });
+      }
+    };
+
+    const attemptGrid = await buildMobilityGrid(origin, objective, buildOptions);
     if (signal?.aborted) return null;
     if (!attemptGrid) {
       // Degenerate span (near-identical origin/objective points) — no amount
@@ -270,13 +298,14 @@ export async function runMobilityAppreciation(
     if (i === 0) {
       onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
     } else {
-      // docs §35 — the escalating-retry response to the Lake George defect:
-      // a search that found no route at a smaller pad tries again wider
-      // rather than concluding "no route" from a box that was never allowed
-      // to look far enough. Logged plainly so this is visible, not silent.
+      // docs §35 — the targeted-retry response to the Lake George defect: a
+      // search that found no route tries again, extended specifically
+      // toward whichever edge its own frontier actually reached, rather
+      // than concluding "no route" from a box that was never allowed to
+      // look far enough. Logged plainly so this is visible, not silent.
       onLog?.(
-        `NO ROUTE AT THE PREVIOUS EXTENT — WIDENING THE SEARCH (ATTEMPT ${attemptsUsed}/${EXPANDING_PAD_FACTORS.length}, ` +
-        `${padFactor}× PADDING, ${grid.cells.length} CELLS)`
+        `NO ROUTE AT THE PREVIOUS EXTENT — WIDENING THE SEARCH TOWARD WHERE IT WAS STOPPED ` +
+        `(ATTEMPT ${attemptsUsed}/${MAX_ATTEMPTS}, ${grid.cells.length} CELLS)`
       );
     }
 
@@ -304,6 +333,16 @@ export async function runMobilityAppreciation(
     path = outcome.path;
 
     if (path) break; // found it — stop expanding, this is the decisive attempt
+
+    // Two consecutive attempts where the frontier never even reached an
+    // edge (blocked by terrain everywhere it could reach, not by running
+    // out of box) is real evidence of a genuine enclosure — stop early
+    // rather than spending the remaining attempts on growth that has
+    // already shown it isn't the limiting factor.
+    const edgesThisAttempt = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
+    const touchedAny = edgesThisAttempt.north || edgesThisAttempt.south || edgesThisAttempt.east || edgesThisAttempt.west;
+    noEdgeTouchedStreak = touchedAny ? 0 : noEdgeTouchedStreak + 1;
+    if (noEdgeTouchedStreak >= 2) break;
   }
   if (!grid) return null; // unreachable (the loop above always assigns or returns), keeps TS satisfied
   onProgress?.(0.5);
