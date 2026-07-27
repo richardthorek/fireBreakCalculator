@@ -1,6 +1,6 @@
 # Component Register
 
-**Last Updated**: July 11, 2026
+**Last Updated**: July 27, 2026
 **Purpose**: Machine-readable catalog of all React components
 **Update Policy**: MUST update when components are added, modified, or removed
 
@@ -43,6 +43,8 @@ This is a **living document** that should be kept synchronized with the codebase
 | AdvisorPanel | `webapp/src/components/AdvisorPanel.tsx` | `{ assessment, optimizerStatus/result, onOptimize/Apply/Dismiss, onLocate }` | Plan Assistant: ranked insight cards + route optimizer compare/apply | planInsights, routeOptimizer |
 | ExportImportControls | `webapp/src/components/ExportImportControls.tsx` | `{ exportInput, onImportAsPlan, onAddOverlay, overlayCount, onClearOverlays }` | GIS export menu (GeoJSON/KML/KMZ/SHP/GPX) + file import dialog | gisExport, gisImport, fflate, @mapbox/shp-write |
 | AiAssistantCard | `webapp/src/components/AiAssistantCard.tsx` | `{ payload: AssistantPayload \| null }` | AI briefing generator + grounded chat, source-badged (ai/template/unavailable), citation chips | assistantApi |
+| MobilityExportControls | `webapp/src/components/MobilityExportControls.tsx` | `{ exportInput: ExportMobilityInput \| null }` | GIS export menu (GeoJSON/KML/KMZ) for a Terrain Mobility appreciation — corridors, chokepoints, min-cut barrier, counter-measure placements | mobilityGisExport, gisExport (downloadBlob), planSharing (downloadFile) |
+| MobilityAssistantCard | `webapp/src/components/MobilityAssistantCard.tsx` | `{ payload: MobilityAssistantPayload \| null }` | One-shot AI appreciation briefing for Terrain Mobility results, source-badged, briefing-only (no chat) — reuses AiAssistantCard's CSS/presentation | mobilityAssistantApi |
 
 Supporting logic: `webapp/src/utils/chainage.ts` (chainage ↔ coordinate), `webapp/src/utils/segmentJoin.ts` (shared slope×fuel join), `webapp/src/utils/planInsights.ts` (rule-based assessment), `webapp/src/utils/hexGrid.ts` (pointy-top axial hex math), `webapp/src/utils/routeOptimizer.ts` (hexagonal 3-pass least-cost pathfinding over DEM + NVIS/NSW samples + OSM trails), `webapp/src/utils/infrastructureService.ts` (Overpass corridor query), `webapp/src/utils/gisExport.ts` / `gisImport.ts` (GIS interop), `webapp/src/utils/xmlScan.ts` (bounded XML scanner for KML/GPX import — not DOMParser), `webapp/src/utils/assistantApi.ts` (AI assistant client, payload builder, graceful degrade).
 

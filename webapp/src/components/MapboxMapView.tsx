@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { LngLat } from 'mapbox-gl';
 import { TrackAnalysis, AircraftSpec, VegetationAnalysis } from '../types/config';
 import { analyzeTrackSlopes, getSlopeColor, calculateDistance } from '../utils/slopeCalculation';
+import { REVEAL_DURATION_MS } from '../utils/revealTiming';
 import { analyzeTrackVegetation } from '../utils/vegetationAnalysis';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { isTouchDevice } from '../utils/deviceDetection';
@@ -14,6 +15,7 @@ import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
+import { brushRadiusMeters, resolvePaintedAreaGeometry, BrushSize, PaintStrokeMode, PaintedArea } from '../terrain/paintedArea';
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -123,6 +125,71 @@ interface MapboxMapViewProps {
   onViewBoundsChange?: (bounds: ViewBounds | null) => void;
   /** Live feed data to render on the map. */
   liveFeedData?: LiveFeedMapData;
+
+  // --- Terrain Mobility mode (docs/ROUTE_INTELLIGENCE.md "Terrain Mobility &
+  // Counter-Mobility") — additive, only active while the mode is armed from
+  // App.tsx. Switches the initial basemap to a dark tactical style.
+  /** Dark tactical basemap + chrome, decided once at map init (mirrors the
+   *  mode's URL-gated, load-time nature — not a live runtime toggle). */
+  tacticalMode?: boolean;
+  /** Which area is currently armed for painting (press-drag over the map
+   *  lays down dabs while armed — see terrain/paintedArea.ts). */
+  mobilityBoxRole?: 'origin' | 'objective' | null;
+  onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
+  /** Fired for every dab painted (or erased — see mobilityPaintMode) while a
+   *  role is armed. The caller tags the stroke's mode itself. */
+  onMobilityPaintDab?: (role: 'origin' | 'objective', dab: { lat: number; lng: number; radiusM: number }) => void;
+  /** Persistent painted areas — ordered paint/erase stroke sequences,
+   *  resolved to one shape and rendered until cleared. */
+  mobilityOriginPaint?: PaintedArea;
+  mobilityObjectivePaint?: PaintedArea;
+  /** On-screen brush radius class — ground radius is derived from this and
+   *  the map's zoom/latitude at the moment each dab is painted. */
+  mobilityBrushSize?: BrushSize;
+  onMobilityBrushSizeChange?: (size: BrushSize) => void;
+  /** Paint vs erase — which kind of stroke the brush lays down next. */
+  mobilityPaintMode?: PaintStrokeMode;
+  onMobilityPaintModeChange?: (mode: PaintStrokeMode) => void;
+  /** Movement corridors (smoothed bands) from the last appreciation run, plus
+   *  the individual routes they were derived from. The bands are the
+   *  presentation; the routes render faintly INSIDE them so the analysis
+   *  underneath stays visible rather than being hidden by the abstraction
+   *  (docs §28). */
+  corridors?: {
+    rank: number;
+    easeClass: string;
+    cells: { polygon: { lat: number; lng: number }[]; density: number }[];
+  }[] | null;
+  corridorRoutes?: { path: { lat: number; lng: number }[] }[] | null;
+  /** Result cells from the last terrain appreciation run. */
+  mobilityHeatmap?: {
+    polygon: { lat: number; lng: number }[];
+    trafficability: 'GO' | 'SLOW-GO' | 'NO-GO';
+    timeSeconds: number;
+    bandIndex: number;
+  }[] | null;
+  /** 'trafficability' colours by GO/SLOW-GO/NO-GO (a terrain property,
+   *  independent of reachability); 'isochrone' colours by arrival-time band
+   *  (a reachability property from the origin AOI). */
+  mobilityDisplayMode?: 'trafficability' | 'isochrone';
+  /** Live cursor position, for the tactical coordinate readout. */
+  onCursorMove?: (point: { lat: number; lng: number } | null) => void;
+  /** Unit simulation — current animated position (moved via a plain
+   *  mapboxgl.Marker so per-frame updates never touch React state). */
+  unitSimPosition?: { lat: number; lng: number } | null;
+  /** Unit simulation — the intended path currently being followed (redrawn
+   *  whenever a mid-course replan splices a new remainder onto it). */
+  unitSimPath?: { lat: number; lng: number }[] | null;
+  /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
+  chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
+  /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
+  barrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
+  /** Owner feedback (2026-07-26): primary Terrain-mode actions must be
+   *  reachable as floating map buttons, not buried in a side panel the user
+   *  has to scroll/expand to reach on mobile. */
+  onRunAppreciation?: () => void;
+  onCancelAppreciation?: () => void;
+  mobilityRunning?: boolean;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -160,7 +227,29 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   areaReconStatus = 'idle',
   onClearAreaRecon,
   onViewBoundsChange,
-  liveFeedData: externalLiveFeedData
+  liveFeedData: externalLiveFeedData,
+  tacticalMode = false,
+  mobilityBoxRole = null,
+  onMobilityBoxRoleChange,
+  onMobilityPaintDab,
+  mobilityOriginPaint = [],
+  mobilityObjectivePaint = [],
+  mobilityBrushSize = 'medium',
+  onMobilityBrushSizeChange,
+  mobilityPaintMode = 'paint',
+  onMobilityPaintModeChange,
+  corridors = null,
+  corridorRoutes = null,
+  mobilityHeatmap = null,
+  mobilityDisplayMode = 'trafficability',
+  onCursorMove,
+  unitSimPosition = null,
+  unitSimPath = null,
+  chokepoints = null,
+  barrierSegments = null,
+  onRunAppreciation,
+  onCancelAppreciation,
+  mobilityRunning = false
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -194,6 +283,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
+  const unitSimMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const locationMarkerRef = useRef<any | null>(null);
   const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
   // Ensure we only signal initial location settled once to avoid duplicate
@@ -215,6 +305,11 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => {
     try { reducedMotionRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* ignore */ }
   }, []);
+  // "The reveal is the demo" (2026-07-26 UI review, master_plan.md Step 11):
+  // increments on every renderSlopeSegments call so an in-flight reveal loop
+  // from a superseded analysis recognises it's stale and stops touching
+  // feature-state on the next frame.
+  const slopeRevealTokenRef = useRef(0);
   // WP3: the sweep eases toward this every frame instead of a fixed clock.
   const optimizerProgressRef = useRef(0);
   useEffect(() => { optimizerProgressRef.current = optimizerProgress; }, [optimizerProgress]);
@@ -229,6 +324,47 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const onAreaReconBoxDrawnRef = useRef(onAreaReconBoxDrawn);
   useEffect(() => { onAreaReconBoxDrawnRef.current = onAreaReconBoxDrawn; }, [onAreaReconBoxDrawn]);
   const areaReconStartRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Terrain Mobility mode — origin/objective PAINT tool (owner feedback
+  // 2026-07-26: press-drag to paint circular dabs, not a two-click
+  // rectangle — see terrain/paintedArea.ts). Refs so the once-registered
+  // map listeners always read the latest prop values.
+  const mobilityBoxRoleRef = useRef(mobilityBoxRole);
+  const mobilityBrushSizeRef = useRef(mobilityBrushSize);
+  useEffect(() => { mobilityBrushSizeRef.current = mobilityBrushSize; }, [mobilityBrushSize]);
+  const mobilityPaintingRef = useRef(false);
+  const mobilityLastDabRef = useRef<{ lat: number; lng: number } | null>(null);
+  useEffect(() => {
+    mobilityBoxRoleRef.current = mobilityBoxRole;
+    // Arming, disarming, or switching role always ends any in-progress
+    // stroke and disables map drag-pan only while a role is actually armed
+    // (touch-drag must paint, not pan, while a tool is selected).
+    mobilityPaintingRef.current = false;
+    mobilityLastDabRef.current = null;
+    const map = mapRef.current;
+    if (map?.dragPan) {
+      if (mobilityBoxRole) map.dragPan.disable(); else map.dragPan.enable();
+    }
+  }, [mobilityBoxRole]);
+  // MapboxDraw's mode is only read from `tacticalMode` once, at construction
+  // (see the "load-time decision" note where `new MapboxDraw(...)` is built
+  // below) — fine for a fresh page load with the mode already active, but the
+  // in-app "Terrain mode" header toggle flips `tacticalMode` on an
+  // ALREADY-MOUNTED map without remounting it, so MapboxDraw was staying
+  // armed in `draw_line_string` (or vice-versa) regardless of the toggle
+  // (field-reported: "paint origin still drawing a fire break line" after
+  // switching modes mid-session). This keeps it in sync on every toggle.
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    try { draw.changeMode(tacticalMode ? 'simple_select' : 'draw_line_string'); } catch { /* draw not ready yet */ }
+  }, [tacticalMode]);
+  const onMobilityBoxRoleChangeRef = useRef(onMobilityBoxRoleChange);
+  useEffect(() => { onMobilityBoxRoleChangeRef.current = onMobilityBoxRoleChange; }, [onMobilityBoxRoleChange]);
+  const onMobilityPaintDabRef = useRef(onMobilityPaintDab);
+  useEffect(() => { onMobilityPaintDabRef.current = onMobilityPaintDab; }, [onMobilityPaintDab]);
+  const onCursorMoveRef = useRef(onCursorMove);
+  useEffect(() => { onCursorMoveRef.current = onCursorMove; }, [onCursorMove]);
 
   // Live context feeds (hotspots, fire boundaries, incidents) — the control
   // panel owns fetching/refresh; this component just tracks the current map
@@ -264,7 +400,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       return;
     }
   mapboxgl.accessToken = token;
-  const styleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+  // Owner, 2026-07-26: "bring back the satellite as the default map, seeing
+  // the terrain is the key." §13.1's original tactical-mode design called
+  // for a dark vector basemap (a restrained "ops HUD" look) — reasonable for
+  // a chrome aesthetic, wrong for a tool whose whole analytical premise is
+  // reading real ground (vegetation density, tracks, gaps) off the map.
+  // Terrain mode now defaults to the SAME satellite imagery fire-break mode
+  // already uses, not a separate basemap — one real view of the ground in
+  // both modes. VITE_MAPBOX_TACTICAL_STYLE remains available as an explicit
+  // override for anyone who wants a different tactical-specific style later.
+  const satelliteStyleURL = (import.meta as any).env?.VITE_MAPBOX_SATELLITE_STYLE || 'mapbox://styles/richardbt/cmf7esv62000n01qw0khz891t';
+  const styleURL = tacticalMode
+    ? ((import.meta as any).env?.VITE_MAPBOX_TACTICAL_STYLE || satelliteStyleURL)
+    : satelliteStyleURL;
   logger.info(`Map init (hosted style only): ${styleURL}`);
   const map = new mapboxgl.Map({ container: mapContainerRef.current, style: styleURL, center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, accessToken: token });
   mapRef.current = map;
@@ -489,10 +637,17 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   
     // Initialize MapboxDraw for drawing functionality
     // Configure for optimal touch experience: tap-by-tap point placement with separate finalization
+  // Terrain mode has no fire-break line to draw — MapboxDraw must not sit
+  // armed in `draw_line_string` there, or its own click handling swallows
+  // every map click intended for the origin/objective AOI box tool before
+  // it ever reaches that tool's handler (field-reported: dropping a point
+  // while "Draw origin area" was selected ran the fire-break analysis
+  // instead). `tacticalMode` is a load-time decision here, same as the
+  // basemap style choice below.
   const draw = new MapboxDraw({
       displayControlsDefault: false,
-      controls: { line_string: true, trash: true },
-      defaultMode: 'draw_line_string',
+      controls: tacticalMode ? { line_string: false, trash: false } : { line_string: true, trash: true },
+      defaultMode: tacticalMode ? 'simple_select' : 'draw_line_string',
       // Touch-optimized options
       touchEnabled: true,
       touchBuffer: 25, // Larger touch target for mobile
@@ -507,13 +662,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // Position the drawing tools in the top right with spacing for better visibility
     map.addControl(draw, 'top-right');
 
-    // Add custom class to draw control container for enhanced styling and add labels
+    // Add labels to the draw control buttons for clarity. Hiding the whole
+    // control in Terrain mode is done in CSS against `.mapboxgl-ctrl-top-right`
+    // directly (see styles-tactical.css) — an earlier attempt added a wrapper
+    // class here via `.mapbox-gl-draw_ctrl`, a selector that doesn't exist in
+    // this MapboxDraw version's actual DOM output (its real classes are
+    // `mapboxgl-ctrl-group`/`mapbox-gl-draw_line`/`mapbox-gl-draw_trash` —
+    // see its bundled source), so that class was silently never applied and
+    // the pencil/trash controls kept showing in Terrain mode (field-reported).
     setTimeout(() => {
-      const drawContainer = document.querySelector('.mapboxgl-ctrl-top-right .mapbox-gl-draw_ctrl');
-      if (drawContainer && drawContainer.parentElement) {
-        drawContainer.parentElement.classList.add('mapboxgl-ctrl-group-draw');
-      }
-      
       // Apply custom styling to the draw buttons to make them more visible
       const lineStringBtn = document.querySelector('.mapbox-gl-draw_line');
       if (lineStringBtn) {
@@ -652,6 +809,81 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         casing: { type: 'line', paint: { 'line-color': '#38bdf8', 'line-width': 2, 'line-dasharray': [2, 2] } },
       });
     });
+
+    // Terrain Mobility mode — press-drag-to-paint AOI tool (owner feedback
+    // 2026-07-26): while a role is armed, mousedown starts a stroke and every
+    // subsequent mousemove (throttled by distance so a slow drag doesn't
+    // flood dabs) lays down another dab at the map's CURRENT zoom/latitude —
+    // the whole reason a fixed on-screen brush paints a bigger real area when
+    // zoomed out. mouseup ends the stroke; the role stays armed so the user
+    // can paint several strokes to build up one irregular area, and
+    // dragPan is disabled/enabled by the role-change effect above so a
+    // touch-drag paints instead of panning the map.
+    const paintDabAt = (lngLat: { lat: number; lng: number }) => {
+      const role = mobilityBoxRoleRef.current;
+      if (!role) return;
+      const zoom = map.getZoom();
+      const radiusM = brushRadiusMeters(mobilityBrushSizeRef.current, lngLat.lat, zoom);
+      mobilityLastDabRef.current = { lat: lngLat.lat, lng: lngLat.lng };
+      onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng, radiusM });
+    };
+    // A pinch/two-finger-pan gesture must still reach Mapbox's own
+    // touchZoomRotate handler (owner feedback 2026-07-26: "a two finger
+    // movement... should move the map as intended") — dragPan is disabled
+    // while a role is armed so a ONE-finger drag paints instead of panning,
+    // but that must not swallow a second finger. `e.points` is Mapbox's own
+    // per-touch screen-point array (present on touch events, absent on
+    // mouse events, where a single pointer is implicitly assumed).
+    const touchCount = (e: any): number => e?.points?.length ?? 1;
+    const handlePaintStart = (e: any) => {
+      if (!mobilityBoxRoleRef.current) return;
+      if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; }
+      e.preventDefault?.();
+      mobilityPaintingRef.current = true;
+      paintDabAt({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    };
+    const handlePaintMove = (e: any) => {
+      if (!mobilityPaintingRef.current || !mobilityBoxRoleRef.current) return;
+      if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; } // a second finger joined mid-stroke — hand off to native pinch/pan
+      e.preventDefault?.();
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      const last = mobilityLastDabRef.current;
+      // Only add a new dab once the cursor has moved a meaningful fraction
+      // of the brush's on-screen size — an unthrottled drag would otherwise
+      // lay down dozens of near-identical dabs per second.
+      const point = map.project([pt.lng, pt.lat]);
+      const lastPoint = last ? map.project([last.lng, last.lat]) : null;
+      const movedPx = lastPoint ? Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) : Infinity;
+      const thresholdPx = { small: 10, medium: 18, large: 30 }[mobilityBrushSizeRef.current] ?? 18;
+      if (movedPx >= thresholdPx) paintDabAt(pt);
+    };
+    const handlePaintEnd = () => { mobilityPaintingRef.current = false; };
+    // Mapbox GL fires distinct event types for mouse vs. touch input —
+    // 'mousedown'/'mousemove'/'mouseup' never fire from a touch tap, so a
+    // mouse-only registration here silently did nothing on phones/tablets
+    // (field-reported: "paint destination does nothing" on mobile). Both
+    // event families share the same MapMouseEvent/MapTouchEvent `.lngLat`
+    // shape, so the same handlers cover both.
+    map.on('mousedown', handlePaintStart);
+    map.on('mousemove', handlePaintMove);
+    map.on('mouseup', handlePaintEnd);
+    map.on('mouseleave', handlePaintEnd);
+    map.on('touchstart', handlePaintStart);
+    map.on('touchmove', handlePaintMove);
+    map.on('touchend', handlePaintEnd);
+    map.on('touchcancel', handlePaintEnd);
+    // Live cursor position for the tactical coordinate readout — independent
+    // of any drawing tool. Throttled (~10 Hz): an unthrottled mousemove would
+    // fire a React state update (and a UTM re-projection) on every pixel of
+    // mouse travel, which is unnecessary jank for a read-only display.
+    let lastCursorEmit = 0;
+    map.on('mousemove', (e: any) => {
+      const now = performance.now();
+      if (now - lastCursorEmit < 100) return;
+      lastCursorEmit = now;
+      onCursorMoveRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    });
+    map.on('mouseout', () => onCursorMoveRef.current?.(null));
 
     return () => {
       // Drop the map-backed trail provider so a stale map instance is never
@@ -1186,6 +1418,357 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     return () => remove();
   }, [areaReconHeatmap, heatmapColorMode]);
 
+  // Terrain Mobility mode — persistent painted origin (cyan) / objective
+  // (amber) areas, rendered until cleared from App.tsx. Real ground size
+  // (not a fixed screen radius) so the painted area reads as a stable patch
+  // of ground at any zoom. The dabs are unioned into one continuous polygon
+  // (paintedAreaToUnionGeometry, real @turf/union geometry — owner feedback
+  // 2026-07-26: "a continuous shape, not a series of overlapping circles")
+  // rather than rendered as independent overlapping circles.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-origin-paint-outline')) map.removeLayer('mobility-origin-paint-outline');
+        if (map.getLayer('mobility-origin-paint')) map.removeLayer('mobility-origin-paint');
+        if (map.getSource('mobility-origin-paint')) map.removeSource('mobility-origin-paint');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (mobilityOriginPaint.length === 0) { remove(); return; }
+    const geometry = resolvePaintedAreaGeometry(mobilityOriginPaint);
+    if (!geometry) { remove(); return; }
+    const data = { type: 'Feature' as const, properties: {}, geometry };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-origin-paint');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-origin-paint', { type: 'geojson', data } as any);
+        map.addLayer({ id: 'mobility-origin-paint', type: 'fill', source: 'mobility-origin-paint', paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.22 } });
+        map.addLayer({ id: 'mobility-origin-paint-outline', type: 'line', source: 'mobility-origin-paint', paint: { 'line-color': '#38bdf8', 'line-width': 1.5 } });
+      } catch (e) { logger.warn('Failed to render painted origin area', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [mobilityOriginPaint]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-objective-paint-outline')) map.removeLayer('mobility-objective-paint-outline');
+        if (map.getLayer('mobility-objective-paint')) map.removeLayer('mobility-objective-paint');
+        if (map.getSource('mobility-objective-paint')) map.removeSource('mobility-objective-paint');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (mobilityObjectivePaint.length === 0) { remove(); return; }
+    const geometry = resolvePaintedAreaGeometry(mobilityObjectivePaint);
+    if (!geometry) { remove(); return; }
+    const data = { type: 'Feature' as const, properties: {}, geometry };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-objective-paint');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-objective-paint', { type: 'geojson', data } as any);
+        map.addLayer({ id: 'mobility-objective-paint', type: 'fill', source: 'mobility-objective-paint', paint: { 'fill-color': '#F6A609', 'fill-opacity': 0.22 } });
+        map.addLayer({ id: 'mobility-objective-paint-outline', type: 'line', source: 'mobility-objective-paint', paint: { 'line-color': '#F6A609', 'line-width': 1.5 } });
+      } catch (e) { logger.warn('Failed to render painted objective area', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [mobilityObjectivePaint]);
+
+  // Terrain Mobility mode — result heatmap. Two independently switchable
+  // colourings over the SAME cells (docs "Terrain Mobility & Counter-
+  // Mobility" §3/§4): 'trafficability' is a terrain property (GO/SLOW-GO/
+  // NO-GO, independent of reachability), 'isochrone' is a reachability
+  // property (arrival-time band from the origin AOI's super-source search).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const cells = mobilityHeatmap;
+
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-heatmap-outline')) map.removeLayer('mobility-heatmap-outline');
+        if (map.getLayer('mobility-heatmap')) map.removeLayer('mobility-heatmap');
+        if (map.getSource('mobility-heatmap')) map.removeSource('mobility-heatmap');
+      } catch (e) { /* style may already be gone */ }
+    };
+
+    if (!cells || cells.length === 0) {
+      remove();
+      return;
+    }
+
+    const maxBand = Math.max(1, ...cells.map(c => c.bandIndex));
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: cells.map(c => ({
+        type: 'Feature' as const,
+        properties: {
+          trafficability: c.trafficability,
+          bandIndex: c.bandIndex,
+          reached: c.bandIndex >= 0 ? 1 : 0,
+        },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-heatmap');
+        if (existing) {
+          existing.setData(data);
+        } else {
+          map.addSource('mobility-heatmap', { type: 'geojson', data } as any);
+          map.addLayer({
+            id: 'mobility-heatmap',
+            type: 'fill',
+            source: 'mobility-heatmap',
+            paint: { 'fill-color': '#1E9E62', 'fill-opacity': 0.5 },
+          });
+          map.addLayer({
+            id: 'mobility-heatmap-outline',
+            type: 'line',
+            source: 'mobility-heatmap',
+            paint: { 'line-color': 'rgba(56,189,248,0.3)', 'line-width': 0.5 },
+          });
+        }
+        if (mobilityDisplayMode === 'isochrone') {
+          map.setPaintProperty('mobility-heatmap', 'fill-color', [
+            'case',
+            ['==', ['get', 'reached'], 0], '#1c2733',
+            ['interpolate', ['linear'], ['get', 'bandIndex'], 0, '#38bdf8', maxBand, '#0b2a3f'],
+          ]);
+          map.setPaintProperty('mobility-heatmap', 'fill-opacity', ['case', ['==', ['get', 'reached'], 0], 0.06, 0.55]);
+        } else {
+          map.setPaintProperty('mobility-heatmap', 'fill-color', [
+            'match', ['get', 'trafficability'],
+            'GO', '#1E9E62',
+            'SLOW-GO', '#F6A609',
+            'NO-GO', '#D8232A',
+            '#55607A',
+          ]);
+          map.setPaintProperty('mobility-heatmap', 'fill-opacity', 0.5);
+        }
+      } catch (e) {
+        logger.warn('Failed to render mobility heatmap', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) {
+      map.once('idle', apply);
+    } else {
+      apply();
+    }
+
+    return () => remove();
+  }, [mobilityHeatmap, mobilityDisplayMode]);
+
+  // Unit simulation — intended path line (redrawn whenever a mid-course
+  // replan splices a new remainder onto it).
+  useEffect(() => {
+    const coords = unitSimPath && unitSimPath.length >= 2 ? unitSimPath.map(p => [p.lng, p.lat]) : null;
+    setOverlay('unit-sim-path', coords ? { type: 'LineString', coordinates: coords } : null, {
+      main: {
+        type: 'line',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-opacity': 0.85, 'line-dasharray': [1.5, 1] },
+      },
+    });
+  }, [unitSimPath]);
+
+  // Unit simulation — the moving unit itself. A plain mapboxgl.Marker moved
+  // via setLngLat on every animation frame (see App.tsx's UnitSimulationController)
+  // so per-frame updates never touch React state / re-render this component.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    if (!map || !mapboxgl) return;
+
+    if (!unitSimPosition) {
+      unitSimMarkerRef.current?.remove();
+      unitSimMarkerRef.current = null;
+      return;
+    }
+
+    if (!unitSimMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'unit-sim-marker';
+      unitSimMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat([unitSimPosition.lng, unitSimPosition.lat]).addTo(map);
+    } else {
+      unitSimMarkerRef.current.setLngLat([unitSimPosition.lng, unitSimPosition.lat]);
+    }
+  }, [unitSimPosition]);
+
+  // Movement corridors — the presentation layer (docs §28). Two paired
+  // layers, deliberately in this order so the abstraction never hides its
+  // own evidence:
+  //   1. `mobility-corridors` — smoothed bands, per-cell opacity driven by
+  //      the cell's own density so edges FADE rather than stopping at a hard
+  //      line. That soft edge is the honest spatial statement ("movement is
+  //      somewhere in here"), not a styling flourish.
+  //   2. `mobility-corridor-routes` — the individual analysed pathways, as
+  //      faint hairlines on top. The corridors are what you read; the routes
+  //      are what they were computed from, left visible on purpose.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-corridor-routes')) map.removeLayer('mobility-corridor-routes');
+        if (map.getSource('mobility-corridor-routes')) map.removeSource('mobility-corridor-routes');
+        if (map.getLayer('mobility-corridors')) map.removeLayer('mobility-corridors');
+        if (map.getSource('mobility-corridors')) map.removeSource('mobility-corridors');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!corridors || corridors.length === 0) { remove(); return; }
+
+    // Rank-coded, using the mode's existing palette: rank 1 (most-used) reads
+    // hottest. Ease class is carried as a property for the popup/legend
+    // rather than a second colour axis, so one visual channel = one meaning.
+    const rankColor = (rank: number) =>
+      rank === 1 ? '#D8232A' : rank === 2 ? '#F6A609' : rank === 3 ? '#38bdf8' : '#94a3b8';
+
+    const cellFeatures = corridors.flatMap(c =>
+      c.cells.map(cell => ({
+        type: 'Feature' as const,
+        properties: {
+          rank: c.rank,
+          ease: c.easeClass,
+          color: rankColor(c.rank),
+          // Floor the opacity so a low-density fringe cell is still faintly
+          // visible (it IS part of the corridor) without reading as strongly
+          // as the spine.
+          opacity: 0.12 + 0.34 * Math.min(1, Math.max(0, cell.density)),
+        },
+        geometry: { type: 'Polygon' as const, coordinates: [cell.polygon.map(p => [p.lng, p.lat])] },
+      }))
+    );
+    const routeFeatures = (corridorRoutes ?? []).map(r => ({
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
+    }));
+
+    const apply = () => {
+      try {
+        const cellData = { type: 'FeatureCollection' as const, features: cellFeatures };
+        const routeData = { type: 'FeatureCollection' as const, features: routeFeatures };
+        const existing = map.getSource('mobility-corridors');
+        if (existing) {
+          existing.setData(cellData);
+          map.getSource('mobility-corridor-routes')?.setData(routeData);
+          return;
+        }
+        map.addSource('mobility-corridors', { type: 'geojson', data: cellData } as any);
+        map.addLayer({
+          id: 'mobility-corridors',
+          type: 'fill',
+          source: 'mobility-corridors',
+          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'opacity'] },
+        });
+        map.addSource('mobility-corridor-routes', { type: 'geojson', data: routeData } as any);
+        map.addLayer({
+          id: 'mobility-corridor-routes',
+          type: 'line',
+          source: 'mobility-corridor-routes',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#e2e8f0', 'line-width': 0.8, 'line-opacity': 0.35 },
+        });
+      } catch (e) { logger.warn('Failed to render movement corridors', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [corridors, corridorRoutes]);
+
+  // Pass 2 — chokepoint markers, sized/coloured by how many of the
+  // dissimilar routes cross each cell (docs §4: "the ground everything
+  // funnels through").
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-chokepoints')) map.removeLayer('mobility-chokepoints');
+        if (map.getSource('mobility-chokepoints')) map.removeSource('mobility-chokepoints');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!chokepoints || chokepoints.length === 0) { remove(); return; }
+    const maxCount = Math.max(1, ...chokepoints.map(c => c.passCount));
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: chokepoints.map(c => ({
+        type: 'Feature' as const,
+        properties: { passCount: c.passCount, weight: c.passCount / maxCount },
+        geometry: { type: 'Point' as const, coordinates: [c.center.lng, c.center.lat] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-chokepoints');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-chokepoints', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-chokepoints',
+          type: 'circle',
+          source: 'mobility-chokepoints',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'weight'], 0, 5, 1, 14],
+            'circle-color': '#D8232A',
+            'circle-opacity': 0.55,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
+          },
+        });
+      } catch (e) {
+        logger.warn('Failed to render chokepoints', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [chokepoints]);
+
+  // Pass 2 — min-cut barrier plan: the cheapest set of segments severing the
+  // origin AOI from the objective AOI for the selected profile.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-barrier')) map.removeLayer('mobility-barrier');
+        if (map.getSource('mobility-barrier')) map.removeSource('mobility-barrier');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!barrierSegments || barrierSegments.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: barrierSegments.map(s => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates: [[s.from.lng, s.from.lat], [s.to.lng, s.to.lat]] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-barrier');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-barrier', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-barrier',
+          type: 'line',
+          source: 'mobility-barrier',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#D8232A', 'line-width': 5, 'line-opacity': 0.85 },
+        });
+      } catch (e) {
+        logger.warn('Failed to render barrier plan', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [barrierSegments]);
+
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
   // this just syncs it onto the map whenever it changes.
@@ -1339,11 +1922,58 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.getSource('slope-segments')) map.removeSource('slope-segments');
     const features = analysis.segments.map((seg,i)=>({
       type:'Feature' as const,
+      id: i, // stable per-segment id — required for setFeatureState in the reveal below
       properties:{ slope:seg.slope, category:seg.category, distance:seg.distance, elevationChange:Math.abs(seg.endElevation-seg.startElevation), color:getSlopeColor(seg.category), index:i },
       geometry:{ type:'LineString' as const, coordinates:(seg.coords && seg.coords.length>=2? seg.coords.map(c=>[c[1],c[0]]): [[seg.start[1],seg.start[0]],[seg.end[1],seg.end[0]]]) }
     }));
     map.addSource('slope-segments',{ type:'geojson', data:{ type:'FeatureCollection', features } } as any);
-    map.addLayer({ id:'slope-segments', type:'line', source:'slope-segments', layout:{ 'line-join':'round','line-cap':'round'}, paint:{ 'line-color':['get','color'], 'line-width':6, 'line-opacity':0.8 } });
+    // Unrevealed segments render as a faint neutral preview line (so the
+    // route's shape is visible immediately) — feature-state flips each one
+    // to its real slope colour as startSlopeReveal sweeps through, with a
+    // short paint transition so each arrival fades in rather than popping.
+    map.addLayer({
+      id:'slope-segments', type:'line', source:'slope-segments',
+      layout:{ 'line-join':'round','line-cap':'round' },
+      paint:{
+        'line-color': ['case', ['boolean', ['feature-state','revealed'], false], ['get','color'], 'rgba(148,163,184,0.4)'],
+        'line-width': ['case', ['boolean', ['feature-state','revealed'], false], 6, 3],
+        'line-opacity': ['case', ['boolean', ['feature-state','revealed'], false], 0.85, 0.5],
+        'line-color-transition': { duration: 240 },
+        'line-width-transition': { duration: 240 },
+        'line-opacity-transition': { duration: 240 },
+      } as any,
+    });
+    startSlopeReveal(features.length);
+  };
+
+  /** Sweeps `revealed` feature-state across the slope-segments source over
+   *  REVEAL_DURATION_MS, left-to-right along the drawn line — "the reveal is
+   *  the demo" (2026-07-26 UI review, master_plan.md Step 11), the same
+   *  moment AnalysisPanel's hero-readout numbers count up in. Reduced-motion
+   *  users get every segment revealed on the first frame instead. */
+  const startSlopeReveal = (count: number) => {
+    const map = mapRef.current;
+    if (!map || count === 0) return;
+    const token = ++slopeRevealTokenRef.current;
+    if (reducedMotionRef.current) {
+      for (let i = 0; i < count; i++) map.setFeatureState({ source: 'slope-segments', id: i }, { revealed: true });
+      return;
+    }
+    const start = performance.now();
+    let revealed = 0;
+    const step = (now: number) => {
+      if (slopeRevealTokenRef.current !== token) return; // superseded by a newer analysis
+      const m = mapRef.current;
+      if (!m || !m.getSource('slope-segments')) return;
+      const elapsed = now - start;
+      const target = Math.min(count, Math.ceil((elapsed / REVEAL_DURATION_MS) * count));
+      for (let i = revealed; i < target; i++) {
+        m.setFeatureState({ source: 'slope-segments', id: i }, { revealed: true });
+      }
+      revealed = target;
+      if (revealed < count) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   };
 
   // Handle location selection from search
@@ -1406,13 +2036,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           {error}
         </div>
       )}
-      {showTouchHint && (
+      {!tacticalMode && showTouchHint && (
         <div className="touch-hint-overlay">
           Tap to add points, double‑tap to finish.
           <button onClick={() => setShowTouchHint(false)}>×</button>
         </div>
       )}
-      {isAnalyzing && (
+      {!tacticalMode && isAnalyzing && (
         <div className="analyzing-badge">Analyzing…</div>
       )}
       {/* Optimizer progress ON the map: on phones the analysis panel is
@@ -1432,10 +2062,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       {locationError && (
         <div className="location-error-badge">{locationError}</div>
       )}
-      {fireBreakDistance!=null && (
+      {!tacticalMode && fireBreakDistance!=null && (
         <div className="distance-badge">Distance: {Math.round(fireBreakDistance)} m</div>
       )}
-      {onAreaReconActiveChange && (
+      {!tacticalMode && onAreaReconActiveChange && (
         <button
           type="button"
           className={`area-recon-toggle-btn${areaReconActive ? ' active' : ''}`}
@@ -1445,16 +2075,75 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           {areaReconActive ? 'Click two corners…' : 'Scan area'}
         </button>
       )}
-      {areaReconStatus === 'running' && (
+      {!tacticalMode && areaReconStatus === 'running' && (
         <div className="area-recon-badge">Scanning area…</div>
       )}
-      {areaReconStatus === 'error' && (
+      {!tacticalMode && areaReconStatus === 'error' && (
         <div className="area-recon-badge error">Area scan failed</div>
       )}
-      {areaReconStatus === 'done' && onClearAreaRecon && (
+      {!tacticalMode && areaReconStatus === 'done' && onClearAreaRecon && (
         <button type="button" className="area-recon-clear-btn" onClick={onClearAreaRecon}>
           Clear scan
         </button>
+      )}
+      {tacticalMode && (
+        <div className="mobility-overlay-controls">
+          <button
+            type="button"
+            className={`mobility-overlay-btn mobility-overlay-btn--origin${mobilityBoxRole === 'origin' ? ' active' : ''}`}
+            onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'origin' ? null : 'origin')}
+          >
+            {mobilityBoxRole === 'origin' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityOriginPaint.length > 0 ? `Origin (${mobilityOriginPaint.length})` : 'Paint origin')}
+          </button>
+          <button
+            type="button"
+            className={`mobility-overlay-btn mobility-overlay-btn--objective${mobilityBoxRole === 'objective' ? ' active' : ''}`}
+            onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'objective' ? null : 'objective')}
+          >
+            {mobilityBoxRole === 'objective' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityObjectivePaint.length > 0 ? `Objective (${mobilityObjectivePaint.length})` : 'Paint objective')}
+          </button>
+          {mobilityBoxRole && (
+            <div className="mobility-brush-row">
+              {(['small', 'medium', 'large'] as const).map(size => (
+                <button
+                  key={size}
+                  type="button"
+                  className={`mobility-brush-btn${mobilityBrushSize === size ? ' active' : ''}`}
+                  onClick={() => onMobilityBrushSizeChange?.(size)}
+                >
+                  {size[0].toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
+          {mobilityBoxRole && (
+            <button
+              type="button"
+              className={`mobility-overlay-btn mobility-overlay-btn--erase${mobilityPaintMode === 'erase' ? ' active' : ''}`}
+              onClick={() => onMobilityPaintModeChange?.(mobilityPaintMode === 'erase' ? 'paint' : 'erase')}
+            >
+              {mobilityPaintMode === 'erase' ? 'Erasing — tap to paint' : 'Erase'}
+            </button>
+          )}
+          {!mobilityRunning ? (
+            <button
+              type="button"
+              className="mobility-overlay-btn mobility-overlay-btn--run"
+              disabled={mobilityOriginPaint.length === 0 || mobilityObjectivePaint.length === 0}
+              onClick={() => onRunAppreciation?.()}
+            >
+              Run appreciation
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mobility-overlay-btn mobility-overlay-btn--cancel"
+              onClick={() => onCancelAppreciation?.()}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

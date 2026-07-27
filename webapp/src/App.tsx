@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Settings2 } from 'lucide-react';
+import { Settings2, Radar } from 'lucide-react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
@@ -29,6 +29,17 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
+import { PaintDab, PaintedArea, PaintStrokeMode, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
+import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
+import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
+import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
+import { MobilityPanel } from './components/MobilityPanel';
+import { CounterMobilityPanel } from './components/CounterMobilityPanel';
+import { COUNTER_MEASURES } from './terrain/counterMeasures';
+import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
+import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from './terrain/corridorField';
+import { UnitSimulationController } from './terrain/unitSimulation';
+import './styles-tactical.css';
 
 // Site logo/favicon is in the public directory and served at /favicon-96x96.png.
 const logo96 = '/favicon-96x96.png';
@@ -365,6 +376,293 @@ const App: React.FC = () => {
     setAreaReconStatus('idle');
     setAreaReconHeatmap(null);
   }, []);
+
+  // --- Terrain Mobility mode (Pass 1, POC) -----------------------------------
+  // Owner decision 2026-07-26: gated by a URL query param for the demo (a
+  // subtle toggle on current infrastructure, open data only — NOT a real
+  // entitlement; see docs/ROUTE_INTELLIGENCE.md §14 for the residual-risk
+  // note and the requirement to convert to a real gate before any release
+  // beyond demo use). Computed once — this is a load-time decision, not a
+  // live runtime toggle, matching how the mode's basemap style is chosen.
+  const mobilityModeAvailable = useMemo(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ops') === '1',
+    []
+  );
+  // Owner, 2026-07-26: "?ops=1 should default to the new mode" — start
+  // directly in Terrain mode when the URL flag is present, fire-break mode
+  // otherwise (absent, or set to anything other than "1"). The toggle
+  // button still works normally after that initial choice — this only
+  // changes which mode the app lands in on load.
+  const [mobilityModeActive, setMobilityModeActive] = useState(() => mobilityModeAvailable);
+
+  // Full identity swap (owner, 2026-07-26): the app must not read as "Fire
+  // Break Calculator" anywhere while Terrain mode is active — browser tab
+  // title and favicon included, not just in-page chrome.
+  useEffect(() => {
+    const originalTitle = document.title;
+    const iconLink = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const originalIconHref = iconLink?.href;
+    if (mobilityModeActive) {
+      document.title = 'Terrain Mobility — POC';
+      if (iconLink) {
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+          <rect width='32' height='32' rx='6' fill='#05070a'/>
+          <circle cx='16' cy='16' r='10' fill='none' stroke='#38bdf8' stroke-width='2'/>
+          <circle cx='16' cy='16' r='3' fill='#38bdf8'/>
+          <line x1='16' y1='2' x2='16' y2='7' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='16' y1='25' x2='16' y2='30' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='2' y1='16' x2='7' y2='16' stroke='#38bdf8' stroke-width='2'/>
+          <line x1='25' y1='16' x2='30' y2='16' stroke='#38bdf8' stroke-width='2'/>
+        </svg>`;
+        iconLink.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+      }
+    }
+    return () => {
+      document.title = originalTitle;
+      if (iconLink && originalIconHref) iconLink.href = originalIconHref;
+    };
+  }, [mobilityModeActive]);
+  const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
+  const [mobilityNightMode, setMobilityNightMode] = useState(false);
+  const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
+  // Cross-mode cleanup (2026-07-26 UI review: "ensure everything switches...
+  // and back again"). Hiding a mode's controls isn't enough on its own — an
+  // "armed" tool's state can outlive the switch and keep intercepting clicks
+  // meant for the OTHER mode's tool, since the click handlers for both tools
+  // are registered unconditionally and only check their own armed-state ref,
+  // not which mode is active. Disarm the other mode's tool on every switch,
+  // in both directions.
+  useEffect(() => {
+    if (mobilityModeActive) {
+      setAreaReconActive(false); // fire-break's own box-scan tool
+    } else {
+      setMobilityBoxRole(null); // Terrain mode's paint/erase tool
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobilityModeActive]);
+  // Painted areas (owner feedback 2026-07-26): a union of circular dabs laid
+  // down by dragging over the map, not a drawn rectangle — see
+  // terrain/paintedArea.ts. Brush size is a fixed on-screen radius, so it
+  // paints a bigger ground area when zoomed out and a more precise one
+  // zoomed in.
+  const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
+  const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
+  const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
+  // Paint vs erase (owner feedback 2026-07-26: "add an erase function") —
+  // which kind of stroke the next dab lays down, tagged onto the stroke
+  // itself so resolvePaintedAreaGeometry can replay paint/erase in the
+  // order they actually happened (see terrain/paintedArea.ts).
+  const [mobilityPaintMode, setMobilityPaintMode] = useState<PaintStrokeMode>('paint');
+  const [mobilityRunning, setMobilityRunning] = useState(false);
+  const [mobilityLogLines, setMobilityLogLines] = useState<string[]>([]);
+  const [mobilityResult, setMobilityResult] = useState<MobilityAppreciationResult | null>(null);
+  const [mobilityDisplayMode, setMobilityDisplayMode] = useState<'trafficability' | 'isochrone'>('trafficability');
+  const [mobilityCursor, setMobilityCursor] = useState<{ lat: number; lng: number } | null>(null);
+  const mobilityAbortRef = useRef<AbortController | null>(null);
+
+  // Counter-mobility planner — Pass 4 (docs/ROUTE_INTELLIGENCE.md §5, §15.4).
+  // Shares the appreciation run's own sampled grid/min-cut segments rather
+  // than resampling — see mobilityAppreciation.ts's `cells`/`originKeys`/
+  // `objectiveKeys` note.
+  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility'>('appreciation');
+  const [cmPendingSegmentIndex, setCmPendingSegmentIndex] = useState<number | null>(null);
+  const [cmPlacements, setCmPlacements] = useState<CounterMeasurePlacement[]>([]);
+  const [cmLedger, setCmLedger] = useState<DelayLedgerEntry[] | null>(null);
+  const [cmRunning, setCmRunning] = useState(false);
+  const [cmAddedMeasureIds, setCmAddedMeasureIds] = useState<string[]>([]);
+  // The iterative scenario: corridors re-derived with every emplaced measure
+  // applied together, and the diff against the baseline picture.
+  const [cmCorridorComparison, setCmCorridorComparison] = useState<CorridorComparison | null>(null);
+  const [cmAfterField, setCmAfterField] = useState<CorridorField | null>(null);
+  /** Which corridor picture the map draws: the baseline appreciation, or the
+   *  scenario with counter-measures emplaced. */
+  const [corridorView, setCorridorView] = useState<'baseline' | 'scenario'>('baseline');
+
+  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
+    const stroke = { mode: mobilityPaintMode, dab };
+    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, stroke]);
+    else setMobilityObjectivePaint(prev => [...prev, stroke]);
+    setMobilityResult(null); // a stale result over a changed AOI would mislead
+  }, [mobilityPaintMode]);
+
+  const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
+    mobilityAbortRef.current?.abort();
+    if (!role || role === 'origin') setMobilityOriginPaint([]);
+    if (!role || role === 'objective') setMobilityObjectivePaint([]);
+    setMobilityResult(null);
+    setMobilityLogLines([]);
+    setMobilityRunning(false);
+  }, []);
+
+  const handleRunMobilityAppreciation = useCallback(async () => {
+    if (mobilityOriginPaint.length === 0 || mobilityObjectivePaint.length === 0) return;
+    mobilityAbortRef.current?.abort();
+    const controller = new AbortController();
+    mobilityAbortRef.current = controller;
+    setMobilityRunning(true);
+    setMobilityLogLines([]);
+    setMobilityResult(null);
+    // A fresh run resamples the grid, so any prior min-cut segment indices/
+    // placements/ledger no longer refer to real cells — clear rather than
+    // let them silently go stale.
+    setCmPendingSegmentIndex(null);
+    setCmPlacements([]);
+    setCmLedger(null);
+    setCmAddedMeasureIds([]);
+    setCmCorridorComparison(null);
+    setCmAfterField(null);
+    setCorridorView('baseline');
+    try {
+      const result = await runMobilityAppreciation(mobilityOriginPaint, mobilityObjectivePaint, {
+        profileId: mobilityProfileId,
+        nightMode: mobilityNightMode,
+        signal: controller.signal,
+        onLog: line => setMobilityLogLines(prev => [...prev, line]),
+      });
+      if (controller.signal.aborted) return;
+      if (!result) {
+        setMobilityLogLines(prev => [...prev, 'RUN FAILED — SEE ABOVE']);
+        return;
+      }
+      setMobilityResult(result);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      logger.error('Terrain mobility appreciation failed', error);
+      setMobilityLogLines(prev => [...prev, `ERROR — ${error instanceof Error ? error.message : 'unknown failure'}`]);
+    } finally {
+      if (!controller.signal.aborted) setMobilityRunning(false);
+    }
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode]);
+
+  const handleCancelMobilityAppreciation = useCallback(() => {
+    mobilityAbortRef.current?.abort();
+    setMobilityRunning(false);
+  }, []);
+
+  const handleRunCounterMobilityLedger = useCallback(() => {
+    if (!mobilityResult || cmPlacements.length === 0) return;
+    setCmRunning(true);
+    try {
+      const entries = computeDelayLedger(
+        mobilityResult.cells,
+        mobilityResult.originKeys,
+        mobilityResult.objectiveKeys,
+        mobilityResult.profile,
+        mobilityNightMode,
+        COUNTER_MEASURES,
+        cmPlacements
+      );
+      setCmLedger(entries);
+
+      // Iterative scenario view (owner 2026-07-26: "once countermeasures are
+      // in place, show how that affects the corridor and the relative
+      // difficulty it adds at those points... this analysis may need to be
+      // iterative"). Re-derives the WHOLE corridor picture with every
+      // emplaced measure applied together — not the sum of the per-measure
+      // ledger rows above, because blocking two of three corridors pushes
+      // everything onto the third, which only a combined re-run shows.
+      if (mobilityResult.corridorField) {
+        const scenarioPenalties = buildScenarioEdgePenalties(COUNTER_MEASURES, cmPlacements);
+        const afterField = buildCorridorField(
+          mobilityResult.cells,
+          mobilityResult.originKeys,
+          mobilityResult.objectiveKeys,
+          mobilityResult.profile,
+          mobilityNightMode,
+          mobilityResult.hexSize,
+          mobilityResult.proj,
+          { edgePenalties: scenarioPenalties }
+        );
+        setCmCorridorComparison(compareCorridorFields(mobilityResult.corridorField, afterField));
+        setCmAfterField(afterField);
+      }
+    } catch (error) {
+      logger.error('Delay ledger computation failed', error);
+    } finally {
+      setCmRunning(false);
+    }
+  }, [mobilityResult, mobilityNightMode, cmPlacements]);
+
+  /** Which corridor field the map draws. Falls back to the baseline whenever
+   *  no scenario has been computed yet, so the toggle can never leave the map
+   *  blank. */
+  const displayedCorridorField = useMemo(
+    () => (corridorView === 'scenario' && cmAfterField ? cmAfterField : mobilityResult?.corridorField ?? null),
+    [corridorView, cmAfterField, mobilityResult]
+  );
+
+  const handleAddCounterMeasureToPlan = useCallback((measureId: string) => {
+    setCmAddedMeasureIds(prev => (prev.includes(measureId) ? prev : [...prev, measureId]));
+  }, []);
+
+  const mobilityHeatmapForMap = useMemo(() => {
+    if (!mobilityResult) return null;
+    return mobilityResult.results.map(r => {
+      let bandIndex = -1;
+      if (isFinite(r.timeSeconds)) {
+        const minutes = r.timeSeconds / 60;
+        bandIndex = DEFAULT_ISOCHRONE_MINUTES.findIndex(t => minutes <= t);
+        if (bandIndex === -1) bandIndex = DEFAULT_ISOCHRONE_MINUTES.length - 1;
+      }
+      return { polygon: r.polygon, trafficability: r.trafficability, timeSeconds: r.timeSeconds, bandIndex };
+    });
+  }, [mobilityResult]);
+
+  // --- Unit movement simulation (owner "bonus feature", 2026-07-26) ----------
+  // An RTS-style animated unit following the real computed path, with a real
+  // mid-course replan (not simulated) once it's covered half the estimated
+  // travel time — see terrain/unitSimulation.ts.
+  const [unitSimPosition, setUnitSimPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const [unitSimPath, setUnitSimPath] = useState<{ lat: number; lng: number }[] | null>(null);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState(20);
+  const [simElapsedSeconds, setSimElapsedSeconds] = useState<number | null>(null);
+  const unitSimControllerRef = useRef<UnitSimulationController | null>(null);
+
+  const stopUnitSimulation = useCallback(() => {
+    unitSimControllerRef.current?.stop();
+    unitSimControllerRef.current = null;
+    setSimRunning(false);
+  }, []);
+
+  const handleStartSimulation = useCallback(() => {
+    if (!mobilityResult?.path || mobilityObjectivePaint.length === 0) return;
+    unitSimControllerRef.current?.stop();
+    setSimElapsedSeconds(0);
+    const controller = new UnitSimulationController(
+      mobilityResult.path,
+      mobilityObjectivePaint,
+      mobilityProfileId,
+      mobilityNightMode,
+      {
+        onPosition: (pos, elapsed) => { setUnitSimPosition(pos); setSimElapsedSeconds(elapsed); },
+        onPathChange: path => setUnitSimPath(path.map(p => ({ lat: p.lat, lng: p.lng }))),
+        onLog: line => setMobilityLogLines(prev => [...prev, line]),
+        onArrived: () => setSimRunning(false),
+      }
+    );
+    controller.setSpeedMultiplier(simSpeedMultiplier);
+    unitSimControllerRef.current = controller;
+    controller.start();
+    setSimRunning(true);
+  }, [mobilityResult, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, simSpeedMultiplier]);
+
+  const handleSpeedMultiplierChange = useCallback((x: number) => {
+    setSimSpeedMultiplier(x);
+    unitSimControllerRef.current?.setSpeedMultiplier(x);
+  }, []);
+
+  // A stale simulation over a changed AOI/result would mislead — clear it
+  // whenever the boxes are cleared or a fresh run starts.
+  useEffect(() => {
+    stopUnitSimulation();
+    setUnitSimPosition(null);
+    setUnitSimPath(null);
+    setSimElapsedSeconds(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityRunning]);
+
+  useEffect(() => () => unitSimControllerRef.current?.stop(), []);
 
   // --- GIS import: overlays + import-as-plan ---------------------------------
   const [contextOverlays, setContextOverlays] = useState<{ id: string; name: string; geojson: any }[]>([]);
@@ -787,13 +1085,26 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${mobilityModeActive ? ' tactical-mode' : ''}`}>
       <header className="app-header">
         <div className="header-left">
-          <img src={logo96} alt="App logo" className="app-logo" />
+          {mobilityModeActive ? (
+            <Radar size={40} strokeWidth={1.6} aria-hidden className="app-logo app-logo--tactical" />
+          ) : (
+            <img src={logo96} alt="App logo" className="app-logo" />
+          )}
           <div className="header-titles">
-            <h1 className="app-title">Fire Break Calculator</h1>
-            <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
+            {mobilityModeActive ? (
+              <>
+                <h1 className="app-title">Terrain Mobility</h1>
+                <span className="app-subtitle">Area Mobility &amp; Counter-Mobility Appreciation — POC</span>
+              </>
+            ) : (
+              <>
+                <h1 className="app-title">Fire Break Calculator</h1>
+                <span className="app-subtitle">Easy Geospatial Fire Break & Trail Planning Tool</span>
+              </>
+            )}
           </div>
         </div>
         <div className="header-center">
@@ -810,15 +1121,27 @@ const App: React.FC = () => {
             plansVersion={plansVersion}
             openSignal={signInSignal}
           />
-          <button
-            className="config-panel-toggle"
-            onClick={() => setIsConfigOpen(v => !v)}
-            title="Open Configuration Panel"
-            aria-label="Open configuration panel for equipment and vegetation mappings"
-          >
-            <Settings2 size={20} strokeWidth={2} aria-hidden className="config-icon" />
-            <span className="config-label">Configuration</span>
-          </button>
+          {!mobilityModeActive && (
+            <button
+              className="config-panel-toggle"
+              onClick={() => setIsConfigOpen(v => !v)}
+              title="Open Configuration Panel"
+              aria-label="Open configuration panel for equipment and vegetation mappings"
+            >
+              <Settings2 size={20} strokeWidth={2} aria-hidden className="config-icon" />
+              <span className="config-label">Configuration</span>
+            </button>
+          )}
+          {mobilityModeAvailable && (
+            <button
+              className="config-panel-toggle"
+              onClick={() => setMobilityModeActive(v => !v)}
+              title="Terrain appreciation mode (POC)"
+              aria-label="Toggle terrain appreciation mode"
+            >
+              <span className="config-label">{mobilityModeActive ? 'Fire break mode' : 'Terrain mode'}</span>
+            </button>
+          )}
         </div>
       </header>
       <main className="app-main" id="main-content">
@@ -859,13 +1182,102 @@ const App: React.FC = () => {
             onClearAreaRecon={handleClearAreaRecon}
             onViewBoundsChange={setViewBounds}
             liveFeedData={liveFeedData}
+            tacticalMode={mobilityModeActive}
+            mobilityBoxRole={mobilityBoxRole}
+            onMobilityBoxRoleChange={setMobilityBoxRole}
+            onMobilityPaintDab={handleMobilityPaintDab}
+            mobilityOriginPaint={mobilityOriginPaint}
+            mobilityObjectivePaint={mobilityObjectivePaint}
+            mobilityBrushSize={mobilityBrushSize}
+            onMobilityBrushSizeChange={setMobilityBrushSize}
+            mobilityPaintMode={mobilityPaintMode}
+            onMobilityPaintModeChange={setMobilityPaintMode}
+            mobilityHeatmap={mobilityHeatmapForMap}
+            mobilityDisplayMode={mobilityDisplayMode}
+            onCursorMove={setMobilityCursor}
+            unitSimPosition={unitSimPosition}
+            unitSimPath={unitSimPath}
+            corridors={displayedCorridorField?.corridors ?? null}
+            corridorRoutes={displayedCorridorField?.routes ?? null}
+            chokepoints={mobilityResult?.chokepoints ?? null}
+            barrierSegments={mobilityResult?.barrier?.segments ?? null}
+            onRunAppreciation={handleRunMobilityAppreciation}
+            onCancelAppreciation={handleCancelMobilityAppreciation}
+            mobilityRunning={mobilityRunning}
           />
-          <MapEmptyState 
+          <MapEmptyState
+            key={mobilityModeActive ? 'terrain' : 'firebreak'}
             initialLocationSettled={initialLocationSettled}
             distance={fireBreakDistance}
+            tacticalMode={mobilityModeActive}
+            mobilityStarted={mobilityOriginPaint.length > 0 || mobilityObjectivePaint.length > 0}
           />
         </div>
         <div className={`analysis-section${isAnalysisPanelExpanded ? ' expanded' : ' collapsed'}`}>
+          {mobilityModeActive ? (
+            <>
+            <div className="mobility-mode-tabs">
+              <button
+                className={mobilityActiveTab === 'appreciation' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('appreciation')}
+              >
+                Terrain appreciation
+              </button>
+              <button
+                className={mobilityActiveTab === 'counterMobility' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('counterMobility')}
+              >
+                Counter-mobility planner
+              </button>
+            </div>
+            {mobilityActiveTab === 'appreciation' ? (
+            <MobilityPanel
+              profileId={mobilityProfileId}
+              onProfileChange={setMobilityProfileId}
+              nightMode={mobilityNightMode}
+              onNightModeChange={setMobilityNightMode}
+              boxRole={mobilityBoxRole}
+              onBoxRoleChange={setMobilityBoxRole}
+              originPaint={mobilityOriginPaint}
+              objectivePaint={mobilityObjectivePaint}
+              brushSize={mobilityBrushSize}
+              onBrushSizeChange={setMobilityBrushSize}
+              onClearPaint={handleClearMobilityPaint}
+              running={mobilityRunning}
+              logLines={mobilityLogLines}
+              result={mobilityResult}
+              displayMode={mobilityDisplayMode}
+              onDisplayModeChange={setMobilityDisplayMode}
+              cursor={mobilityCursor}
+              hasPath={!!mobilityResult?.path}
+              simRunning={simRunning}
+              onStartSimulation={handleStartSimulation}
+              onStopSimulation={stopUnitSimulation}
+              speedMultiplier={simSpeedMultiplier}
+              onSpeedMultiplierChange={handleSpeedMultiplierChange}
+              simElapsedSeconds={simElapsedSeconds}
+              cmPlacements={cmPlacements}
+              cmLedger={cmLedger}
+            />
+            ) : (
+              <CounterMobilityPanel
+                barrierSegments={mobilityResult?.barrier?.segments ?? []}
+                pendingSegmentIndex={cmPendingSegmentIndex}
+                onPendingSegmentIndexChange={setCmPendingSegmentIndex}
+                placements={cmPlacements}
+                onPlacementsChange={setCmPlacements}
+                onRunLedger={handleRunCounterMobilityLedger}
+                running={cmRunning}
+                ledger={cmLedger}
+                addedMeasureIds={cmAddedMeasureIds}
+                onAddToPlan={handleAddCounterMeasureToPlan}
+                corridorComparison={cmCorridorComparison}
+                corridorView={corridorView}
+                onCorridorViewChange={setCorridorView}
+              />
+            )}
+            </>
+          ) : (
           <AnalysisPanel
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
@@ -907,11 +1319,18 @@ const App: React.FC = () => {
             anonymousLimited={anonymousLimited}
             onRequestSignIn={requestSignIn}
           />
+          )}
         </div>
-        <IntegratedConfigPanel 
-          isOpen={isConfigOpen}
+        <IntegratedConfigPanel
+          // Fire-break-only panel — its own open button is already hidden in
+          // Terrain mode (header, above), but `isConfigOpen` itself survives
+          // a mode switch, so if it was left open before switching it would
+          // otherwise still render on top of the Terrain UI (2026-07-26 UI
+          // review: "ensure everything switches... instead of sitting on
+          // top" applies here too, not just the map overlay controls).
+          isOpen={isConfigOpen && !mobilityModeActive}
           onToggle={() => setIsConfigOpen(v => !v)}
-          
+
           // Equipment props
           equipment={equipment}
           loadingEquipment={loadingEquip}

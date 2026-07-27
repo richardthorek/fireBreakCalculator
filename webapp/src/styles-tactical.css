@@ -1,0 +1,577 @@
+/**
+ * Tactical Mode — dark GIS/defence skin.
+ *
+ * Scoped entirely under `.tactical-mode` so it never touches the existing
+ * fire-break UI. Palette deliberately reuses the app's existing
+ * green/amber/red heatmap hexes (--tac-go/--tac-slowgo/--tac-nogo) and the
+ * existing #38bdf8 cyan accent, just against a near-black background —
+ * restrained and dense, a real capability rather than sci-fi chrome.
+ */
+
+.tactical-mode {
+  --tac-bg: #05070a;
+  --tac-panel-bg: #0c1118;
+  --tac-border: #1c2733;
+  --tac-text: #d7e4ee;
+  --tac-text-dim: #6b7f8f;
+  --tac-accent: #38bdf8;
+  --tac-go: #1E9E62;
+  --tac-slowgo: #F6A609;
+  --tac-nogo: #D8232A;
+  --tac-mono-font: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  background: var(--tac-bg);
+  color: var(--tac-text);
+}
+
+.app-logo--tactical {
+  color: var(--tac-accent, #38bdf8);
+  flex-shrink: 0;
+}
+
+/* Fire-break's pencil/trash MapboxDraw control is a construction-time
+ * `controls: {...}` option — it can't be toggled after the fact, and the
+ * in-app "Terrain mode" header button doesn't remount the map, so those
+ * buttons kept showing (and, before the changeMode fix in
+ * MapboxMapView.tsx, kept swallowing taps) whenever tacticalMode became
+ * true after the map had already mounted in fire-break mode. Hidden here
+ * via CSS instead, which works regardless of which mode the map happened
+ * to construct in. Targets Mapbox's OWN top-right control-position
+ * container directly (nothing else in this app is ever added to
+ * top-right — see MapboxMapView.tsx) rather than a wrapper class: an
+ * earlier version tried adding one via a `.mapbox-gl-draw_ctrl` selector
+ * that doesn't exist in this MapboxDraw version's real DOM output, so it
+ * silently never matched anything and the controls kept showing
+ * (field-reported). This selector can't have that failure mode. */
+.tactical-mode .mapboxgl-ctrl-top-right {
+  display: none !important;
+}
+
+.tactical-mode ::selection {
+  background: var(--tac-accent);
+  color: var(--tac-bg);
+}
+
+/* ---------- Panels ---------- */
+.tactical-mode .tac-panel {
+  position: relative;
+  background: var(--tac-panel-bg);
+  border: 1px solid var(--tac-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* Restrained corner brackets, not chrome — two opposing corners only. */
+.tactical-mode .tac-panel::before,
+.tactical-mode .tac-panel::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--tac-accent);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.tactical-mode .tac-panel::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.tactical-mode .tac-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* ---------- Text ---------- */
+.tactical-mode .tac-mono {
+  font-family: var(--tac-mono-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.tactical-mode .tac-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--tac-text-dim);
+}
+
+/* ---------- Coordinate readout ---------- */
+.tactical-mode .tac-readout-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.tactical-mode .tac-readout-grid .tac-label {
+  align-self: center;
+}
+
+/* ---------- Assessment log ---------- */
+.tactical-mode .tac-log {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-right: 4px;
+}
+
+.tactical-mode .tac-log-line {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--tac-text);
+  border-left: 2px solid var(--tac-border);
+  padding-left: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: tac-log-fade-in 180ms ease-out;
+}
+
+.tactical-mode .tac-log-line--placeholder {
+  color: var(--tac-text-dim);
+  border-left-color: transparent;
+}
+
+@keyframes tac-log-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tactical-mode .tac-log-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--tac-accent);
+  vertical-align: text-bottom;
+  animation: tac-blink 1s steps(1, start) infinite;
+}
+
+@keyframes tac-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tactical-mode .tac-log-line {
+    animation: none;
+  }
+  .tactical-mode .tac-log-cursor {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- Confidence badges ---------- */
+.tactical-mode .tac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: var(--tac-mono-font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* measured — cool cyan solid: highest trust */
+.tactical-mode .tac-badge--measured {
+  background: var(--tac-accent);
+  border: 1px solid var(--tac-accent);
+  color: #04212f;
+}
+
+/* published — green-ish, agency/published-source data */
+.tactical-mode .tac-badge--published {
+  background: rgba(30, 158, 98, 0.18);
+  border: 1px solid var(--tac-go);
+  color: #7be0ae;
+}
+
+/* estimated — amber outline: model/inferred value */
+.tactical-mode .tac-badge--estimated {
+  background: transparent;
+  border: 1px solid var(--tac-slowgo);
+  color: var(--tac-slowgo);
+}
+
+/* generic-fallback — dashed grey outline: least trust */
+.tactical-mode .tac-badge--generic {
+  background: transparent;
+  border: 1px dashed var(--tac-text-dim);
+  color: var(--tac-text-dim);
+}
+
+/* ---------- Terrain mode tab switcher (appreciation / counter-mobility) ---------- */
+.mobility-mode-tabs { display: flex; gap: 6px; padding: 8px 8px 0; flex-shrink: 0; }
+.mobility-mode-tabs button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text-dim);
+  border-radius: 3px;
+  padding: 8px 6px;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-mode-tabs button.active { border-color: var(--tac-accent); color: var(--tac-accent); }
+
+/* ---------- MobilityPanel layout ---------- */
+.mobility-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.mobility-section { display: flex; flex-direction: column; gap: 8px; }
+.mobility-select {
+  background: var(--tac-bg);
+  color: var(--tac-text);
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+}
+.mobility-profile-meta { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.mobility-profile-source, .mobility-profile-notes { color: var(--tac-text-dim); font-size: 0.75em; line-height: 1.4; }
+.mobility-night-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85em; color: var(--tac-text-dim); }
+.mobility-aoi-row { display: flex; gap: 8px; }
+.mobility-aoi-detail { display: flex; flex-direction: column; gap: 2px; font-size: 0.8em; color: var(--tac-text-dim); }
+.tac-hint { font-size: 0.78em; color: var(--tac-text-dim); line-height: 1.5; }
+.tac-hint .mobility-clear-button { display: inline; padding: 2px 6px; margin-left: 4px; }
+.mobility-aoi-button, .mobility-run-button, .mobility-clear-button, .mobility-sim-button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 0.85em;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-aoi-button--origin.active { border-color: var(--tac-accent); color: var(--tac-accent); }
+.mobility-aoi-button--objective.active { border-color: var(--tac-slowgo); color: var(--tac-slowgo); }
+.mobility-run-button {
+  background: var(--tac-accent);
+  color: #04212f;
+  border: none;
+  font-weight: 600;
+}
+.mobility-run-button:disabled { background: var(--tac-border); color: var(--tac-text-dim); cursor: not-allowed; }
+.mobility-run-button--cancel { background: var(--tac-nogo); color: #2a0505; }
+.mobility-clear-button { align-self: flex-start; padding: 4px 8px; font-size: 0.78em; }
+.mobility-result-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.85em; }
+.mobility-stat-nogo { color: var(--tac-nogo); }
+.mobility-stat-slowgo { color: var(--tac-slowgo); }
+.mobility-caveat { color: var(--tac-slowgo); font-size: 0.78em; }
+.mobility-display-toggle, .mobility-speed-toggle { display: flex; gap: 6px; }
+.mobility-display-toggle button, .mobility-speed-toggle button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--tac-border);
+  color: var(--tac-text-dim);
+  border-radius: 3px;
+  padding: 6px 4px;
+  font-size: 0.78em;
+  cursor: pointer;
+  font-family: var(--tac-mono-font);
+}
+.mobility-display-toggle button.active, .mobility-speed-toggle button.active {
+  border-color: var(--tac-accent);
+  color: var(--tac-accent);
+}
+.mobility-limitation-panel {
+  font-size: 0.72em;
+  color: var(--tac-text-dim);
+  border-top: 1px dashed var(--tac-border);
+  padding-top: 8px;
+  line-height: 1.5;
+}
+.mobility-eta {
+  font-size: 0.85em;
+  color: var(--tac-text);
+}
+
+/* Unit simulation marker — a small pulsing dot, mirrors the accent colour
+ * used for the intended-path line. Pulse disabled under reduced motion. */
+.unit-sim-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--tac-accent, #38bdf8);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 10px rgba(56, 189, 248, 0.8);
+  border: 2px solid #04212f;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .unit-sim-marker { animation: unit-sim-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes unit-sim-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 10px rgba(56, 189, 248, 0.8); }
+  50% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0.12), 0 0 14px rgba(56, 189, 248, 1); }
+}
+
+/* ---------- CounterMobilityPanel (Pass 2) ---------- */
+.cm-placement-select {
+  background: var(--tac-bg);
+  color: var(--tac-text);
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+}
+.cm-measure-card {
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cm-measure-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.cm-effect-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-family: var(--tac-mono-font);
+}
+.cm-effect-disrupt { border: 1px solid var(--tac-text-dim); color: var(--tac-text-dim); }
+.cm-effect-turn { border: 1px solid var(--tac-accent); color: var(--tac-accent); }
+.cm-effect-fix { border: 1px solid var(--tac-slowgo); color: var(--tac-slowgo); }
+.cm-effect-block { border: 1px solid var(--tac-nogo); color: var(--tac-nogo); background: rgba(216, 35, 42, 0.12); }
+.cm-legal-list { margin: 0; padding-left: 1.1em; font-size: 0.72em; color: var(--tac-text-dim); line-height: 1.5; }
+.cm-placement-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.8em; }
+.cm-ledger-row {
+  border-top: 1px dashed var(--tac-border);
+  padding-top: 8px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-ledger-row--refused { opacity: 0.6; }
+.cm-ledger-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.78em; }
+.cm-refused-banner { color: var(--tac-nogo); font-size: 0.78em; font-weight: 600; line-height: 1.5; }
+
+/* ---------- Floating map overlay controls (primary actions, mobile-first) ----------
+ * Owner feedback (2026-07-26): the AOI/run controls must be reachable without
+ * expanding or scrolling the side panel — the panel is for options/detail
+ * only. Owner follow-up, same day: general map navigation (zoom, compass,
+ * fullscreen, geolocate) must stay top-left in every mode, unobstructed —
+ * app-specific tools belong top-right instead, matching where fire-break
+ * mode's own draw/trash tool already lives (and where its "Scan area" tool
+ * was moved to, in the same pass, for the same reason — see styles.css).
+ * MapboxDraw's pencil/trash control is hidden entirely in Terrain mode (see
+ * the `.mapboxgl-ctrl-top-right` rule above), so this doesn't need to dodge
+ * it the way fire-break mode's Scan-area button dodges the draw control. */
+.mobility-overlay-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 990;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 200px;
+}
+.mobility-overlay-btn {
+  background: rgba(12, 17, 24, 0.92);
+  color: var(--tac-text, #d7e4ee);
+  border: 1px solid var(--tac-border, #1c2733);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--tac-mono-font, monospace);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.mobility-overlay-btn--origin.active,
+.mobility-overlay-btn--origin:hover {
+  border-color: var(--tac-accent, #38bdf8);
+  color: var(--tac-accent, #38bdf8);
+}
+.mobility-overlay-btn--objective.active,
+.mobility-overlay-btn--objective:hover {
+  border-color: var(--tac-slowgo, #F6A609);
+  color: var(--tac-slowgo, #F6A609);
+}
+.mobility-overlay-btn--run {
+  background: var(--tac-accent, #38bdf8);
+  color: #04212f;
+  border-color: var(--tac-accent, #38bdf8);
+}
+.mobility-overlay-btn--run:disabled {
+  background: var(--tac-border, #1c2733);
+  color: var(--tac-text-dim, #6b7f8f);
+  cursor: not-allowed;
+}
+.mobility-overlay-btn--cancel {
+  background: var(--tac-nogo, #D8232A);
+  color: #2a0505;
+  border-color: var(--tac-nogo, #D8232A);
+}
+/* Paint/erase toggle (owner feedback 2026-07-26: "add an erase function") —
+ * a distinct danger-red active state so it reads clearly as "you are about
+ * to remove area", not just another equal-weight mode button. */
+.mobility-overlay-btn--erase.active {
+  background: var(--tac-nogo, #D8232A);
+  color: #fff;
+  border-color: var(--tac-nogo, #D8232A);
+}
+/* ---------- Movement corridor cards (docs §28) ----------
+ * Rank is carried by a left border in the same colour the map uses for that
+ * corridor's band, so panel and map read as one object. Ease class is a
+ * separate chip, not a second colour on the same element — one visual
+ * channel per meaning. */
+.corridor-card {
+  border: 1px solid var(--tac-border);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.corridor-card--rank1 { border-left-color: var(--tac-nogo); }
+.corridor-card--rank2 { border-left-color: var(--tac-slowgo); }
+.corridor-card--rank3 { border-left-color: var(--tac-accent); }
+.corridor-card--rank4 { border-left-color: var(--tac-text-dim); }
+
+/* Unconstrained-movement callout: deliberately prominent. "This terrain has
+ * no chokepoints to deny" is a headline finding for a commander, not a
+ * footnote — and suppressing it would be the exact over-claim of fidelity
+ * this panel exists to avoid. */
+.corridor-unconstrained {
+  border: 1px solid var(--tac-slowgo);
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: rgba(246, 166, 9, 0.08);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.corridor-unconstrained-head {
+  color: var(--tac-slowgo);
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.corridor-unconstrained p { margin: 0; font-size: 0.78em; line-height: 1.5; color: var(--tac-text); }
+.corridor-unconstrained strong { color: var(--tac-slowgo); }
+
+.corridor-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.corridor-rank { font-size: 0.8em; font-weight: 700; letter-spacing: 0.04em; }
+.corridor-ease {
+  font-family: var(--tac-mono-font);
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.corridor-ease--open { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
+.corridor-ease--restricted { background: rgba(246, 166, 9, 0.18); color: var(--tac-slowgo); }
+.corridor-ease--severely-restricted { background: rgba(216, 35, 42, 0.18); color: var(--tac-nogo); }
+
+.corridor-figures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  font-size: 0.72em;
+  color: var(--tac-text-dim);
+}
+
+/* ---------- Counter-measure effect on corridors ---------- */
+.cm-corridor-effect {
+  border: 1px solid var(--tac-border);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-corridor-effect--collapsed { border-left-color: var(--tac-go); }
+.cm-corridor-effect--degraded { border-left-color: var(--tac-slowgo); }
+.cm-corridor-effect--displaced-into { border-left-color: var(--tac-nogo); }
+.cm-corridor-effect--unchanged { border-left-color: var(--tac-border); }
+
+.cm-effect-status {
+  font-family: var(--tac-mono-font);
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* Deliberate colour semantics from the PLANNER's point of view, not the
+ * mover's: a collapsed corridor is a good outcome for the commander siting
+ * the obstacle, a corridor traffic was displaced INTO is the warning. */
+.cm-effect-status--collapsed { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
+.cm-effect-status--degraded { background: rgba(246, 166, 9, 0.18); color: var(--tac-slowgo); }
+.cm-effect-status--displaced-into { background: rgba(216, 35, 42, 0.18); color: var(--tac-nogo); }
+.cm-effect-status--unchanged { background: rgba(107, 127, 143, 0.18); color: var(--tac-text-dim); }
+.cm-effect-collapsed { color: var(--tac-go); }
+.cm-effect-degraded { color: var(--tac-slowgo); }
+.cm-effect-displaced { color: var(--tac-nogo); }
+
+.mobility-export-row { margin-top: 10px; }
+.mobility-export-wrap .plan-export-btn {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--tac-text, #d7e4ee);
+}
+.mobility-export-wrap .plan-export-btn:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: var(--tac-accent, #38bdf8);
+}
+
+.mobility-brush-row { display: flex; gap: 6px; }
+.mobility-brush-btn {
+  flex: 1;
+  background: rgba(12, 17, 24, 0.92);
+  color: var(--tac-text-dim, #6b7f8f);
+  border: 1px solid var(--tac-border, #1c2733);
+  border-radius: 6px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--tac-mono-font, monospace);
+  cursor: pointer;
+}
+.mobility-brush-btn.active {
+  border-color: var(--tac-accent, #38bdf8);
+  color: var(--tac-accent, #38bdf8);
+}

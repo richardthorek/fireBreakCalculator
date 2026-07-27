@@ -1,0 +1,212 @@
+/**
+ * Top-level orchestration for one "terrain appreciation" run: sample the
+ * grid, run the multi-source search in a worker, bucket into isochrones.
+ * Emits real, computed log lines as it goes — every line corresponds to an
+ * actual number from this run, never decorative theatre (docs §13.2).
+ */
+
+import { buildMobilityGrid } from './mobilityGrid';
+import { LocalProjection } from '../utils/hexGrid';
+import { PaintedArea } from './paintedArea';
+import { runMobilitySearchInWorker } from './mobilityWorkerClient';
+import { MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell } from './accumulatedCost';
+import { getMoverProfile, MoverProfile } from './moverProfiles';
+import { SimPathNode } from './mobilityWorker';
+import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
+import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
+import { buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT } from './corridorField';
+
+export interface MobilityAppreciationResult {
+  results: MobilityCellResult[];
+  bands: IsochroneBand[];
+  profile: MoverProfile;
+  usedEstimatedData: boolean;
+  infrastructureAvailable: boolean;
+  cellCount: number;
+  reachableCount: number;
+  noGoCount: number;
+  slowGoCount: number;
+  /** The single cheapest origin→objective path this run found — what the
+   *  unit-simulation animation follows (docs "Terrain Mobility &
+   *  Counter-Mobility": null only if no objective cell was reachable). */
+  path: SimPathNode[] | null;
+  /** The genuinely distinct origin→objective routes this run analysed. These
+   *  are the ANALYSIS substrate; `corridorField` below is what gets
+   *  presented (owner 2026-07-26: "use the individual pathways to analyse,
+   *  corridors for likely results"). */
+  dissimilarRoutes: DissimilarRoute[];
+  /** Smoothed movement-density field segmented into ranked corridors — the
+   *  presentation-layer answer to "where will they move", replacing a single
+   *  confident polyline with bands whose fuzzy edges are the honest
+   *  statement of what Tier 0/1 data can resolve (docs §10, §27). Null when
+   *  no route existed to form a corridor from. */
+  corridorField: CorridorField | null;
+  /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
+  chokepoints: ChokepointCell[];
+  /** Pass 2 — cheapest severing cut for this profile (null if the objective
+   *  was already unreachable, since there is nothing left to sever). */
+  barrier: MinCutResult | null;
+  /** The exact sampled grid this run searched over — kept so a later
+   *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
+   *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
+   *  resampling (which risks a different hex layout for a near-identical
+   *  bounds calculation). */
+  cells: MobilityGridCell[];
+  originKeys: string[];
+  objectiveKeys: string[];
+  /** Grid geometry, kept alongside `cells` so a counter-measure scenario can
+   *  re-derive corridors over the IDENTICAL grid rather than resampling (a
+   *  fresh sample could land a different hex layout and make the before/after
+   *  comparison meaningless). */
+  hexSize: number;
+  proj: LocalProjection;
+}
+
+export interface MobilityAppreciationOptions {
+  profileId: string;
+  nightMode?: boolean;
+  signal?: AbortSignal;
+  onProgress?: (fraction: number) => void;
+  onLog?: (line: string) => void;
+}
+
+export async function runMobilityAppreciation(
+  origin: PaintedArea,
+  objective: PaintedArea,
+  options: MobilityAppreciationOptions
+): Promise<MobilityAppreciationResult | null> {
+  const { profileId, nightMode = false, signal, onProgress, onLog } = options;
+  const profile = getMoverProfile(profileId);
+  if (!profile) {
+    onLog?.(`ERROR — unknown mover profile "${profileId}"`);
+    return null;
+  }
+
+  onLog?.(`PROFILE ${profile.label.toUpperCase()} · ${profile.confidence.toUpperCase()} CONFIDENCE (${profile.source.slice(0, 72)}${profile.source.length > 72 ? '…' : ''})`);
+  onLog?.('LAYING OUT SURVEY GRID OVER AREA OF INTEREST…');
+
+  const grid = await buildMobilityGrid(origin, objective, {
+    signal,
+    onProgress: f => onProgress?.(f * 0.7),
+  });
+  if (!grid || signal?.aborted) {
+    if (grid === null) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
+    return null;
+  }
+
+  onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
+  if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
+  if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
+  if (grid.usedCoarseGrid) {
+    onLog?.('CAUTION — AOI IS LARGE, GRID COARSENED TO STAY WITHIN COMPUTE BUDGET (RESOLUTION REDUCED)');
+  }
+  // Edge case, stated plainly rather than left to look like a bug: a
+  // painted origin and objective that overlap or touch share at least one
+  // cell, so the cheapest route between them is genuinely ~0 seconds — the
+  // search is correct, the AOIs are just not disjoint.
+  const overlapKeys = grid.originKeys.filter(k => grid.objectiveKeys.includes(k));
+  if (overlapKeys.length > 0) {
+    onLog?.(`ORIGIN AND OBJECTIVE OVERLAP — ${overlapKeys.length} SHARED CELL(S), ROUTE IS TRIVIAL BY DESIGN`);
+  }
+
+  onProgress?.(0.72);
+  onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
+
+  const { results, path } = await runMobilitySearchInWorker(
+    grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode
+  );
+  if (signal?.aborted) return null;
+  onProgress?.(0.95);
+
+  const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
+  const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
+  const noGoCount = results.filter(r => r.trafficability === 'NO-GO').length;
+  const slowGoCount = results.filter(r => r.trafficability === 'SLOW-GO').length;
+
+  const fastestBand = bands.find(b => b.cells.length > 0);
+  if (fastestBand) {
+    onLog?.(`FIRST ARRIVALS WITHIN ${fastestBand.thresholdMinutes} MIN — ${fastestBand.cells.length} CELLS`);
+  }
+  if (path) {
+    const etaMin = path[path.length - 1].cumulativeSeconds / 60;
+    onLog?.(`ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN`);
+  } else {
+    onLog?.('NO ROUTE FOUND — OBJECTIVE UNREACHABLE FOR THIS PROFILE');
+  }
+
+  // --- Pass 2: corridors, chokepoints, min-cut barrier (main-thread — cheap
+  // at this grid size relative to the sampling+search already done). ------
+  let dissimilarRoutes: DissimilarRoute[] = [];
+  let chokepoints: ChokepointCell[] = [];
+  let barrier: MinCutResult | null = null;
+  let corridorField: CorridorField | null = null;
+  if (path) {
+    onProgress?.(0.96);
+    onLog?.(`DERIVING UP TO ${DEFAULT_CORRIDOR_ROUTE_COUNT} DISTINCT ROUTES (BLOCKING THE BEST ONE JUST MOVES TRAFFIC)…`);
+    corridorField = buildCorridorField(
+      grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj
+    );
+    dissimilarRoutes = corridorField?.routes ?? [];
+    onLog?.(`${dissimilarRoutes.length} DISTINCT ROUTE(S) FOUND`);
+
+    if (corridorField) {
+      onLog?.('SMOOTHING ROUTES INTO MOVEMENT CORRIDORS…');
+      onLog?.(
+        `${corridorField.corridors.length} CORRIDOR(S) FORMED · ${corridorField.routedCellCount} CELLS ROUTED, ` +
+        `${corridorField.cellCount} IN BAND AFTER SMOOTHING`
+      );
+      if (corridorField.unconstrained) {
+        onLog?.(
+          `MOVEMENT UNCONSTRAINED — BANDS COVER ${Math.round(corridorField.coverageFraction * 100)}% OF THE AREA. ` +
+          'THIS GROUND DOES NOT CANALISE MOVEMENT: THERE ARE NO REAL CHOKEPOINTS TO DENY.'
+        );
+      }
+      for (const c of corridorField.corridors.slice(0, 4)) {
+        onLog?.(
+          `CORRIDOR ${c.rank} — ${c.routeCount}/${dissimilarRoutes.length} ROUTES · ${c.easeClass.toUpperCase()} · ` +
+          `BOTTLENECK ~${c.bottleneckWidthM.toFixed(0)} M (${c.bottleneckAbreast} ABREAST) · ` +
+          `MEDIAN ${(c.medianTravelSeconds / 60).toFixed(0)} MIN`
+        );
+      }
+    }
+
+    chokepoints = computeChokepoints(grid.cells, grid.hexSize, grid.proj, dissimilarRoutes).slice(0, 12);
+    if (chokepoints.length > 0) {
+      onLog?.(`TOP CHOKEPOINT CROSSED BY ${chokepoints[0].passCount}/${dissimilarRoutes.length} ROUTES`);
+    }
+
+    onProgress?.(0.98);
+    onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
+    barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
+    if (barrier) {
+      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/TRAIL-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
+    } else {
+      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
+    }
+  }
+
+  onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
+  onProgress?.(1);
+
+  return {
+    results,
+    bands,
+    profile,
+    usedEstimatedData: grid.usedEstimatedData,
+    infrastructureAvailable: grid.infrastructureAvailable,
+    cellCount: grid.cells.length,
+    reachableCount,
+    noGoCount,
+    slowGoCount,
+    path,
+    dissimilarRoutes,
+    corridorField,
+    chokepoints,
+    barrier,
+    cells: grid.cells,
+    originKeys: grid.originKeys,
+    objectiveKeys: grid.objectiveKeys,
+    hexSize: grid.hexSize,
+    proj: grid.proj,
+  };
+}

@@ -393,8 +393,11 @@ export function rasterCodeAt(raster: NVISAreaRaster, lat: number, lng: number): 
 }
 
 /** Decode an image blob to raw RGBA via canvas. Browser-only; returns null in
- *  environments without canvas (tests) so callers fall back gracefully. */
-async function decodeImageBytes(blob: Blob): Promise<{ width: number; height: number; data: Uint8ClampedArray } | null> {
+ *  environments without canvas (tests) so callers fall back gracefully.
+ *  Exported (not just used locally) so other area-raster fetchers — e.g.
+ *  `nafiFireHistoryService.ts`'s time-since-fire area query — reuse the same
+ *  canvas-decode plumbing rather than a second copy of it. */
+export async function decodeImageBytes(blob: Blob): Promise<{ width: number; height: number; data: Uint8ClampedArray } | null> {
   try {
     if (typeof createImageBitmap !== 'function') return null;
     const bmp = await createImageBitmap(blob);

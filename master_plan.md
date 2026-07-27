@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 12, 2026 (Step 7 shipped)
+**Last Updated**: July 27, 2026 (Step 10 Passes 1–4 shipped, plus **movement corridors** closing Pass 2's unfinished half — route-preference surface, avenues sized by echelon, baseline-vs-scenario; a **GIS export pack for the Terrain Mobility appreciation** closing the MCOO/scouting-handoff item; an **AI assistant narrative** for Terrain Mobility results through the existing grounding gate; multiple field-feedback rounds; Step 11 first UI slice shipped)
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -46,6 +46,9 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 | 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
 | 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
 | 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
+| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–28 = as-built) | ✅ Passes 1–4 shipped + integrated, plus multiple field-feedback rounds (painted-area AOI, mobile controls, mode-switch audit, `?ops=1` default) and an analytical-depth pass: **cross-slope is now a live, real gate** in the search/classifier/min-cut (was permanently inert — always `null` — since Pass 1); grid budget raised (1400/1800 → 2200/2800 cells) for larger AOIs, argued from the sampling pipeline's real area-batching limits, not an arbitrary bump; two honesty flags added (`usedCoarseGrid`, origin/objective-overlap log line). **Movement corridors shipped** (§28) — closes Pass 2's route-preference-surface / avenues-sized-by-echelon / baseline-vs-scenario items: routes are smoothed into ranked corridor bands with real per-corridor ease/bottleneck/frontage metrics, counter-measures are re-scored against the whole corridor picture iteratively (collapsed/degraded/displaced-into), and terrain that does not canalise movement is reported as `unconstrained` rather than dressed up as corridors. **MCOO overlay + GIS export shipped** (§29) — the "then scouted and planned in more detail" handoff: corridors, chokepoints, min-cut barrier and counter-measure placements now export as GeoJSON/KML/KMZ, every feature carrying provenance stamps and its own honesty flags (per-corridor `estimated_data`, per-placement `ledger_status`/delay/bypass/egress figures), mirroring the fire-break line's existing export pattern. **Assistant narrative shipped** (§30) — a plain-language commander appreciation now runs through the *existing* AI grounding gate (`aiGrounding.ts`, made mode-agnostic via one backward-compatible `audience` parameter rather than a second contract), with its own deterministic template fallback that works with no model deployed at all; grounded chat is deliberately not mirrored (briefing-only, scoped to what was asked). **NAFI's area-query mechanism shipped** (§31) — `fetchNAFITimeSinceFireArea` resolves a whole AOI's time-since-fire from 2 upstream WCS requests total (not one per cell), live-verified against the real GeoServer including a genuine source-side ambiguity (a 5-year colour tie in the long-term layer's palette, resolved conservatively). Deliberately not yet wired into `MobilityGridCell`/the cost model (a separate calibration decision) or extended to DEA (a different server, not yet investigated). Remaining 📋, prioritized: **(1)** wire the now-available NAFI years-since-fire into `MobilityGridCell` and decide how it modulates structure/trafficability alongside vegetation type (the mechanism exists; the calibration doesn't yet); **(2)** DEA fractional-cover/water-observations area-query — its own server/contract, needs its own live-verification pass; **(3)** VCI/RCI-weighted min-cut capacity, needs Pass 3's soil layers (not yet sampled either); **(4)** real entitlement/backend gating — **feasibility assessed (§14.1)**: the `suiteAuthService` pattern is reusable and now applied to `assistant/mobility-briefing`, but the entitlement source of truth (`terrainDenialEnabled`) lives in the separate Station Manager repo, no server endpoint hosts the actual corridor/min-cut/delay-ledger compute today (it's a fully client-side Web Worker engine), and code-splitting alone raises the discovery bar without providing a hard boundary — moving the compute server-side would fix that but trades away the offline/interactive properties the field tool depends on, so it's deliberately not being built speculatively ahead of a release decision |
+
+| 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). **First slice shipped 2026-07-26**: hero readout (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as instrument-scale tabular-nums figures, replacing the old plain text spans) with count-up tweening (`useCountUp.ts`, ease-out cubic, `prefers-reduced-motion`-aware); the map's per-segment slope colouring now sweeps in over `REVEAL_DURATION_MS` (`revealTiming.ts`) via Mapbox GL feature-state instead of snapping to a finished state, in sync with the panel's count-up; move (3)'s map-control re-skin done for fire-break mode, and **a real root-cause bug fixed along the way**: a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was silently winning the cascade over the intended dark theme (equal `!important` specificity, later source order wins) — this was the actual reason controls rendered as plain white squares, not just a stale screenshot; removed rather than patched around. Moves (4) and (5) (shared type/confidence discipline across modes; fire-break mobile floating controls) not yet started. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 🚧 first slice shipped (moves 1–3 partial); moves 4–5 still 📋 |
 
 Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
 
@@ -57,6 +60,669 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
 
 ## Recent Updates
 
+- **2026-07-27 — Terrain Mobility: NAFI time-since-fire area-query mechanism
+  (§31)**: last backlog item from the "keep going, all scope" pass. Closes
+  `nafiFireHistoryService.ts`'s own stated scope cut ("POINT query only...
+  flagged as the concrete next step"). Live-verified against the real
+  `firenorth.org.au` GeoServer via `curl`+Pillow before writing any resolution
+  logic (matching this project's existing NAFI/DEA verification discipline):
+  the module header's original guess (`WCS GetCoverage` as a raw GeoTIFF grid)
+  was tried and rejected once the served GeoTIFF turned out to be **tiled**,
+  not simply-stripped — real tile-decode risk not worth taking. Switched to
+  **PNG**, decoded via the exact same `decodeImageBytes` canvas helper NVIS's
+  own area raster already uses (now exported for reuse). Confirmed live: a
+  1×1-pixel WCS request matches the trusted point-query's own value at the
+  same coordinate; WCS 1.0.0's BBOX axis order for EPSG:4326 on this server is
+  **(lng,lat)** — the opposite of WMS 1.3.0's convention for the same code,
+  an easy silent-mirroring trap if assumed rather than checked; "no plausible
+  answer" renders as PNG alpha=0, reusing NVIS's own NoData convention rather
+  than inventing a new one; and a genuine **source-side ambiguity** — the
+  long-term layer's own palette renders years 22-26 in one identical colour
+  (confirmed from the raw GeoTIFF ColorMap tag, not a decode bug) — resolved
+  to the conservative high end (26) and flagged `coarseBand` rather than
+  silently picking one. New `fetchNAFITimeSinceFireArea`/`sampleNAFIAreaRaster`
+  fetch BOTH windows as 2 requests total for a whole AOI (not one per cell) and
+  return the same result shape the existing point-query function already
+  uses. Deliberately **not** wired into `MobilityGridCell`/the cost model in
+  this pass (the mechanism existing is what was asked for; deciding how
+  years-since-fire should modulate trafficability alongside vegetation type is
+  its own calibration decision) and DEA's own layers are untouched (different
+  server, not investigated). Verified: `tsc --noEmit`/`npm run build` clean; a
+  standalone smoke test covers every pure function (colour legend matching
+  incl. the 22-26 tie, URL axis order, raster point-sampling) — the actual
+  fetch+canvas-decode path is browser-only and unverified in this sandbox,
+  same accepted limitation as NVIS's own equivalent.
+- **2026-07-27 — Terrain Mobility: real entitlement/backend gating — feasibility
+  assessed, not built (§14.1)**: last item on the "keep going on the backlog, all
+  scope" pass. Checked §14's original plan ("server-side entitlement + route-level
+  code-splitting, a known quantity") against what Passes 1–4 actually built.
+  Four findings, in order: **(1)** the entitlement source of truth
+  (`entitlements.fireBreakEnabled`, the existing precedent) lives in Station
+  Manager — a separate sibling repo this app calls but doesn't own — so a new
+  `terrainDenialEnabled` field is a cross-repo dependency, not a same-PR task;
+  **(2)** there is no mobility-specific backend endpoint to gate — the entire
+  corridor/min-cut/delay-ledger engine (~5,000 lines) runs client-side in a Web
+  Worker, calling only the same shared, unauthenticated elevation/vegetation
+  endpoints fire-break mode already uses; the ONE mobility-specific endpoint that
+  now exists (`assistant/mobility-briefing`, added this session) genuinely can be
+  gated the same way the saved-plans endpoints already are, but that alone
+  doesn't protect the analysis itself; **(3)** code-splitting the counter-mobility
+  modules behind a runtime entitlement check would raise the casual-discovery bar
+  but is not a hard boundary in a pure SPA — a fetched chunk is still fetched, in
+  the visitor's own browser; **(4)** the only way to make the logic genuinely
+  inaccessible is to run it server-side, which is a real, deliberate architecture
+  trade-off (it would reintroduce network latency per iteration and drop the
+  offline-tolerant operation the product's field-use premise depends on), not a
+  gating detail — so it needs its own scoped design decision, not implementation
+  folded into this assessment. Recommendation: gate the one real endpoint now
+  reusable pattern-wise once Station Manager exposes the entitlement; keep the
+  `?ops=1` POC toggle and its existing residual-risk framing (unconditional
+  disclaimer/egress-gate/fire-default-copy) until a release decision justifies
+  the server-side move. No code changed for this item — the deliverable was the
+  assessment itself. Full details: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §14.1.
+- **2026-07-27 — Terrain Mobility: AI assistant narrative (closes Step 10's
+  remaining backlog item on this front)**: continuing "keep going on the
+  backlog, all scope" — a ground commander now gets a plain-language
+  appreciation of the corridor/chokepoint/barrier/counter-measure results,
+  not just panels of numbers. Wired into the **existing** grounding gate
+  (`api/src/services/aiGrounding.ts` — "the model narrates and cites, it
+  never computes, never estimates, never fills gaps") rather than a second
+  contract: `buildSystemPrompt` gained one backward-compatible optional
+  `audience` parameter (defaults to the existing fire-break wording, so no
+  existing caller changes) so the same anti-hallucination rules can address
+  "a ground commander appreciating terrain mobility and siting
+  counter-mobility measures" instead. New `MobilityAssistantPayload` (api +
+  webapp) is the mobility-mode counterpart to the fire-break `AssistantPayload`
+  — mover profile, cell/reachable/NO-GO/SLOW-GO counts, the `unconstrained`
+  finding, top corridors, chokepoint/barrier summary, and scored
+  counter-measure placements, straight from the same results the panels
+  already render. New endpoint `POST /api/assistant/mobility-briefing`
+  mirrors `assistant/briefing`'s always-200 contract exactly (validated AI
+  narration when grounded, deterministic template fallback otherwise). The
+  template (`mobilityBriefingTemplate.ts`) is the piece that actually
+  delivers the plain-language briefing unconditionally — it needs no model
+  deployed at all, same as the fire-break assistant's own fallback, which
+  matters because this sandbox cannot exercise a live Foundry call either
+  (documented limitation, docs/AI_ASSISTANT.md §1). It leads with the
+  `unconstrained` finding when present rather than burying it under corridor
+  detail, and **refuses** to report delay figures for an egress-unsafe
+  placement — states the refusal instead, mirroring the counter-mobility
+  panel's own refusal-not-warning treatment of that gate. New
+  `MobilityAssistantCard.tsx` is a briefing-only sibling of
+  `AiAssistantCard.tsx` (same CSS/presentation), wired into
+  `MobilityPanel.tsx`; grounded chat is deliberately not mirrored — scoped
+  to what was actually asked. Verified: `tsc --noEmit`/`npm run build` clean
+  on both `api/` and `webapp/`; a new 17-check test file
+  (`api/src/test/mobilityAssistant.test.ts`, wired into `npm run test:unit`)
+  caught one real bug along the way — the payload validator's `v && ...`
+  short-circuit chain returned `v` itself (e.g. `null`) instead of a boolean
+  on early rejection, fixed with an explicit `!!(...)` wrap. Full details:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §30.
+- **2026-07-27 — Terrain Mobility: GIS export pack (MCOO/scouting handoff,
+  closes Step 10's item 0)**: "keep going on the backlog, all scope" — the
+  first backlog item, ranked opportunity #1 in the corridors review, was the
+  concrete mechanism for "this will then be scouted and planned in more
+  detail." New `utils/mobilityGisExport.ts`, mirroring `gisExport.ts`'s exact
+  GeoJSON/KML/KMZ + provenance-stamp pattern rather than inventing a second
+  one: **movement corridors** export as one `MultiPolygon` Feature per
+  corridor (built from its own hex cells, deliberately undissolved — same
+  "band not a line" honesty argument as the on-map render), each carrying its
+  own `estimated_data` flag and the panel's own metrics (rank, ease, route
+  share, median/fastest time, bottleneck width/abreast/frontage, GO/SLOW/NO-GO
+  fractions); **chokepoints** and the **min-cut barrier** export as
+  Polygon/LineString features; **counter-measure placements** export as a
+  `LineString` between the two real cell centres the obstacle sits between
+  (never an invented point along an edge), carrying that measure's own
+  delay-ledger figures (delay imposed, bypass delay, egress-safe/warning) so
+  the exported course of action is backed by the same bypass-rule and
+  egress-gate numbers the Counter-Mobility panel shows — a placement not yet
+  scored exports flagged `ledger_status: "not_scored"` with null figures
+  rather than a stale or invented one, and a placement whose cell keys don't
+  resolve against the current grid is skipped rather than mislocated.
+  Shapefile deliberately **not** offered for this pack (mixed
+  MultiPolygon/Polygon/LineString geometry needs `@mapbox/shp-write`'s
+  per-type file-splitting confirmed for MultiPolygon specifically, which
+  wasn't verified — left out rather than shipped untested; GeoJSON/KML/KMZ
+  already cover the stated QGIS/FireMapper/Google Earth consumers). New
+  `MobilityExportControls` component mirrors `ExportImportControls`'s dropdown
+  UI exactly, wired into `MobilityPanel.tsx`'s RESULT section. Verified:
+  `tsc --noEmit`/`npm run build` clean; a standalone Node smoke test (real
+  modules, disposable vite lib-mode entry, deleted before commit) built a
+  synthetic grid, ran the real corridor/chokepoint/min-cut/delay-ledger
+  functions over it, and asserted feature counts match source data 1:1,
+  honesty flags are present and correctly typed, the unscored/stale-key edge
+  cases behave as above, and the KML carries all four folders. Full details:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §29. Live import into a
+  real GIS client is not verified in this sandbox — **confirm on the live
+  preview / a real GIS client** before relying on the exported files
+  operationally.
+- **2026-07-26 — Terrain mode default basemap: satellite, not dark vector**:
+  owner: "bring back the satellite as the default map, seeing the terrain is
+  the key." §13.1's original tactical-mode design called for a dark vector
+  basemap for a restrained "ops HUD" look — the wrong trade for a tool whose
+  whole analytical premise is reading real vegetation density, tracks and
+  gaps off the ground. `MapboxMapView.tsx` now defaults Terrain mode to the
+  SAME satellite imagery fire-break mode already uses, rather than a
+  separate dark style — one real view of the ground in both modes. The dark
+  panel/badge/log tactical theme is unaffected (separate overlaid DOM
+  elements, not dependent on the basemap). `VITE_MAPBOX_TACTICAL_STYLE`
+  remains available as an explicit override, just no longer the default.
+  Verified: `tsc --noEmit`/`npm run build` clean; live rendering
+  unverifiable in this sandbox (no Mapbox token) — confirm on the live
+  preview.
+- **2026-07-26 — Terrain Mobility: movement CORRIDORS (closes Pass 2's
+  unfinished half)**: owner asked for the potential paths to be smoothed and
+  presented as **corridors of possible movement** rather than a single optimal
+  path, with individual pathways used for analysis and corridors for
+  results/ease of movement; plus, once counter-measures are placed, the effect
+  ON those corridors, iteratively. Framed by the intended user: a ground
+  commander getting a rapid appreciation to propose a deter-and-deny course of
+  action, before detailed scouting. **Checked against the roadmap first (as
+  asked): this request WAS the roadmap** — Pass 2 (§15.2) scoped
+  "route-preference surface … avenues of approach sized by echelon …
+  baseline-vs-scenario swipe" and only the k-route/chokepoint/min-cut half was
+  ever built, so these are the same work and this closes those items rather
+  than adding a parallel feature. New `corridorField.ts`: 14 distinct routes
+  (was 3) → weighted density (weight = bestTime/thisRouteTime, a real ratio)
+  → Laplacian smoothing over hex adjacency → connected-component
+  segmentation → per-corridor metrics, with width/bottleneck measured from
+  iso-arrival-time cross-sections (the same principle the isochrones already
+  use). **Corridors are an honesty improvement, not decoration**: a single
+  polyline implies survey precision Tier 0/1 data cannot support, a band with
+  fading edges states the uncertainty visually — which is exactly the owner's
+  "UI must not communicate too high a fidelity, but the fidelity of ANALYSIS
+  must be visible" constraint. The analysed routes render as faint hairlines
+  *inside* the bands so the evidence stays visible under the abstraction.
+  "Avenues sized by echelon" delivered only as far as data allows: `abreast`
+  count is real arithmetic; doctrinal echelon labels, column throughput and
+  VCI verdicts are explicitly **not** claimed (unsourced frontage/spacing,
+  unsampled soil) and the caveat is stated in-panel. **Two findings worth
+  noting, both caught by testing rather than assumed**: (1) on terrain that
+  doesn't canalise movement, 14 routes covered 304/305 cells and
+  segmentation reported "one corridor = the whole AOI" — arithmetically
+  right, operationally useless; this is now a *reported finding*
+  (`unconstrained`), prominently surfaced, because terrain with no chokepoints
+  cannot be denied by siting obstacles and needs a different, costlier COA —
+  something a commander needs told early. (2) Testing coverage alone for that
+  was itself a bug: a ridge with one genuine gap still covered 80% of the
+  area, so a coverage-only rule dismissed the most important chokepoint on the
+  map; the test now also requires the busiest corridor to never actually pinch
+  (`pinchRatio`). Counter-mobility is now **iterative**:
+  `buildScenarioEdgePenalties` applies a whole placement set at once and
+  `compareCorridorFields` diffs baseline vs scenario into collapsed /
+  degraded / unchanged / **displaced-into** per corridor — the bypass rule
+  asked spatially rather than as a single number — with a map-level
+  Baseline/With-measures toggle. Panel colour semantics are from the
+  planner's point of view (collapsed = green, displaced-into = red).
+  Verified: `tsc --noEmit`/`npm run build` clean; a 40-check standalone smoke
+  test over two deliberately different terrains (open plain vs ridge-with-gap)
+  covering metric consistency, the routed-vs-smoothed distinction, both
+  degeneracy conditions, and that empty/unknown/null inputs never fabricate
+  an effect. Map rendering unverifiable in this sandbox — **confirm on the
+  live preview**. Still open and stated: MCOO GIS export (the scouting
+  handoff — corridors are now the right shape for it), assistant narrative,
+  VCI capacity, Tier-1 per-cell wiring. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28.
+- **2026-07-26 — Terrain Mobility: analytical depth pass (cross-slope wired
+  live, larger AOIs, edge cases)**: owner asked to re-read the original
+  intent against what's been built and "take this up a notch... consider
+  more factors, think about a larger area... ensure edge cases are thought
+  about, and that the basic is not missed." The honest gap, on inspection,
+  wasn't a missing capability — it was that real, already-verified Pass 3
+  work (`demDerivatives.ts`) had never actually been wired into the search
+  that needed it. Finishing verified work over fabricating new "10x"
+  features: **cross-slope is now a real, live gate** — `MobilityGridCell`
+  carries a genuine per-cell `crossSlopeDeg` (from the already-sampled
+  elevation grid, no new network source), wired into all three places that
+  call `edgeMobilityCost` directly (the main search, the terrain-only
+  classifier, min-cut barrier siting) — previously always `null`, so the
+  hard side-slope NO-GO gate (real roll-over-risk safety factor) had never
+  fired in any run since Pass 1. The in-app disclaimer that said "cross-
+  slope is not evaluated" is corrected. **Larger areas**: grid budget raised
+  1400/1800 → 2200/2800 cells, justified specifically by the fact that both
+  upstream sampling calls this depends on are already area-batched (not
+  per-point) — the risk that keeps something like NAFI's point queries
+  capped small doesn't apply here. **Two edge cases**: a grid that had to
+  coarsen for a large AOI now says so (`usedCoarseGrid` flag + log line,
+  instead of silently trusting a lower-resolution grid at full confidence);
+  overlapping origin/objective areas now get an explicit log line
+  explaining why the route is ~0 seconds, instead of looking like a bug.
+  **Stated plainly, not silently dropped**: NAFI/DEA Tier-1 layers, VCI/
+  RCI-weighted min-cut capacity, and imagery CV remain real, scoped,
+  un-started next steps (see Step 10 above) — none of them a quick wire-up
+  like cross-slope was. Verified: `tsc --noEmit`/`npm run build` clean; a
+  10-check standalone Node smoke test against the real modules, centred on
+  proving the exact documented contract ("crossSlopeDeg is evaluated at the
+  FROM cell") rather than just "something got blocked somewhere" — a
+  multi-hop-away objective is correctly unreachable once every approach is
+  side-slope-blocked, while a flat origin's own immediate neighbours
+  correctly remain reachable. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §27.
+- **2026-07-26 — Terrain Mobility: mode-switch audit, control scheme,
+  `?ops=1` default**: owner reported fire-break UI (Getting Started card,
+  the pencil/trash draw control) still showing in Terrain mode, and asked
+  for a full audit ("ensure everything switches... and back again") plus a
+  consistent control scheme (general nav top-left, app-specific tools
+  top-right, matching fire-break's own layout). Root-caused three real
+  bugs, not just the one reported: **(1)** the §22 pencil/trash hide never
+  actually worked — it targeted a wrapper class added via a
+  `.mapbox-gl-draw_ctrl` selector that doesn't exist in this MapboxDraw
+  version's real DOM (checked against its bundled source), so the class was
+  silently never applied; replaced with a positional selector
+  (`.tactical-mode .mapboxgl-ctrl-top-right { display:none }`) that can't
+  have that failure mode. **(2)** `MapEmptyState` ("Get Started") was
+  completely unconditional — now mode-aware, with Terrain-appropriate copy
+  and its own "started" signal. **(3)** Armed-tool state (the paint role,
+  the area-recon box tool) survived a mode switch and kept intercepting
+  clicks meant for the other mode — new cleanup effect disarms the other
+  mode's tool on every switch, in both directions; the Configuration panel
+  had the same bug for a different reason, fixed by gating its `isOpen`
+  with the current mode. **Control scheme**: fire-break's own "Scan area"
+  button turned out to have the identical top-left-over-zoom-controls
+  problem the owner flagged for Terrain mode, just never reported — moved
+  both it and Terrain mode's overlay to top-right, stacked below each
+  mode's own draw-style tool, so top-left is general navigation only, in
+  either mode. Separately, owner asked `?ops=1` default straight into
+  Terrain mode instead of just unlocking the toggle button — one-line fix
+  reusing the existing `ops === '1'` check as the initial state. Verified:
+  `tsc --noEmit`/`npm run build` clean; a live Playwright screenshot
+  confirmed the mode toggle correctly swaps everything in both directions,
+  the Terrain overlay sits top-right without overlapping where zoom
+  controls belong, and `?ops=1`/no-param/`?ops=2` land in the right mode
+  respectively. The map canvas itself still can't render pixel-for-pixel in
+  this sandbox (no Mapbox token) — **confirm on the live preview**. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §25–§26.
+- **2026-07-26 — Terrain Mobility: two-finger map gestures, continuous
+  painted shape, erase function**: owner asked for three refinements on the
+  painted-area AOI tool in one round. **(1)** Two-finger pinch/pan was being
+  read as a paint stroke instead of reaching the map — `MapboxMapView.tsx`'s
+  paint handlers now check the touch point count and get out of the way
+  (no painting, no `preventDefault()`) the moment a second finger joins,
+  letting Mapbox's own (separate, never-disabled) `touchZoomRotate` handler
+  take the gesture. **(2)** The painted area rendered as a cluster of
+  overlapping circles, not one shape — replaced with a real geometric union
+  (`@turf/union`, new dependency — chosen over a hand-rolled polygon-clip
+  algorithm for the same correctness reasons §17 gives for standard
+  max-flow/min-cut) via a new `resolvePaintedAreaGeometry` in
+  `paintedArea.ts`. **(3)** Added an actual erase function, not just
+  "clear everything": `PaintedArea` is now an ORDERED sequence of
+  paint/erase strokes (`PaintStroke[]`), replayed via union (paint) /
+  `@turf/difference` (erase) — the only model that gets "erase a mistake,
+  then paint back over it" right, since a naive "painted set minus erased
+  set" would keep that spot erased forever. A new "Erase" toggle button
+  sits in the map's floating overlay controls (danger-red, matches this
+  app's existing delete/danger colour). Grid-cell membership testing
+  (`mobilityGrid.ts`) now resolves each area's geometry once and does a
+  real point-in-polygon test (`@turf/boolean-point-in-polygon`) against it,
+  replacing the old "distance to nearest dab centre" check, which would
+  have been wrong the moment erase strokes exist. Verified: `tsc --noEmit`/
+  `npm run build` clean; two standalone smoke tests against the real
+  modules — one proving the union is a real merge (overlapping dabs sum to
+  ~one circle's area, not double; disjoint dabs correctly stay a
+  MultiPolygon), one proving the paint/erase replay's key property
+  (erase then repaint the same spot brings it back; partial erase leaves
+  the untouched side of a circle intact; erasing nothing yet is a safe
+  no-op). Live touch-gesture testing remains blocked by this sandbox's lack
+  of a real device/touch emulator — **confirm on a real phone against the
+  live preview**. Full detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §23–§24.
+- **2026-07-26 — Terrain Mobility: paint tool actually broken on mobile,
+  two real bugs found and fixed**: owner reported that on a phone, "paint
+  origin" was still drawing a fire-break line and "paint objective" did
+  nothing at all. Root-caused, not patched around: **(1)** MapboxDraw's
+  drawing mode was only ever read from `tacticalMode` once, at construction
+  — correct for a fresh page load already in Terrain mode, but the in-app
+  "Terrain mode" header toggle doesn't remount the map, so a session that
+  starts in fire-break mode and then switches left MapboxDraw permanently
+  armed to draw lines, eating every tap regardless of which paint role was
+  selected. Fixed with a reactive `useEffect` that calls `draw.changeMode()`
+  on every toggle; the pencil/trash control buttons (which can't be
+  reconfigured post-construction at all) are now hidden via a
+  `.tactical-mode` CSS rule instead. **(2)** The paint tool's
+  mousedown/mousemove/mouseup handlers were mouse-only — Mapbox GL fires
+  genuinely distinct event types for touch, so a phone tap never fired
+  `mousedown` and the paint tool silently did nothing on touch devices at
+  all (bug 1 was masking this for the origin role specifically, since
+  MapboxDraw ate those taps first). Fixed by registering the same handler
+  logic against `touchstart`/`touchmove`/`touchend`/`touchcancel` too.
+  Verified: `tsc --noEmit`/`npm run build` clean; live touch-interaction
+  testing itself remains blocked by this sandbox's lack of a real
+  device/touch emulator — **confirm on a real phone against the live
+  preview**. Full detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §22.
+- **2026-07-26 — Step 11 first slice shipped**: owner said "build the next
+  step" against the design review below. Shipped the three highest-impact,
+  lowest-risk moves from that review, fire-break mode only: **hero readout**
+  (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as
+  large tabular-nums figures with small captions, replacing the old
+  same-weight text spans) that **counts up** into place via a new
+  `useCountUp` hook (ease-out cubic, `prefers-reduced-motion`-aware,
+  exported pure `tweenCountUp`/`easeOutCubic` verified with a standalone
+  smoke test); the map's per-segment slope colouring (`slope-segments` layer
+  in `MapboxMapView.tsx`) now **sweeps in** over a shared `REVEAL_DURATION_MS`
+  via Mapbox GL feature-state (unrevealed segments show as a faint neutral
+  preview line so the route's shape is visible immediately) instead of
+  snapping to a finished state the instant analysis completes — timed to
+  finish alongside the hero-readout's count-up, both driven off one shared
+  constant so they can't drift apart; and the **map controls were re-skinned**
+  onto the app's actual signal-red/hi-vis-amber brand. That last one turned
+  up a genuine bug, not just a stale-screenshot impression: a second,
+  later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was
+  silently winning the cascade over the intended dark theme (equal
+  `!important` specificity, later source order wins in a tie) — the literal
+  reason draw/zoom controls rendered as plain white squares. Removed rather
+  than patched around. Verified: `tsc --noEmit`/`npm run build` clean; a
+  standalone Node smoke test against the real exported tween math; a
+  Playwright screenshot of the live dev server confirmed no header/onboarding
+  regression (the map canvas itself doesn't render in this sandbox — no
+  Mapbox token available here — so the reveal animation and re-skinned
+  control chrome couldn't be exercised pixel-for-pixel end-to-end; **confirm
+  live** on the deployed preview). Remaining from the review: shared type/
+  confidence discipline across both modes, and fire-break mode's own
+  floating mobile controls (moves 4–5, still 📋).
+- **2026-07-26 — UI/UX 10x design review (Step 11, new)**: owner asked for an
+  honest assessment of both modes against a single bar — "instant buy on first
+  demo" — and a concrete improvement direction, form and function. Reviewed
+  the shipped fire-break panel (via its own `messagePreview.png`, annotated
+  with six specific callouts) and the terrain-mobility tactical skin.
+  Verdict: functionally solid, visually flat — no hierarchy, no sense of the
+  engine computing in real time, and the map still wears Mapbox's factory-
+  default control chrome. One thing already works and should spread further:
+  the in-place machinery icon riding the planned line. Five prioritized moves
+  recorded as **Step 11** in the table above, ranked by demo impact per hour
+  of build time; all are CSS/motion/layout only — **no change to the
+  calculation engine or any data-honesty flag**. Delivered as an illustrated
+  Claude Code artifact (annotated screenshot + live CSS specimens of the
+  "after" direction, including a working reveal-animation demo) rather than a
+  new repo file, per this doc's own "no new planning docs" discipline — the
+  roadmap row above is the durable record if the artifact link lapses.
+  Reviewed and recorded only; **no code changed**, awaiting go-ahead to build
+  the first slice (hero readout + reveal animation + re-skinned map controls).
+- **2026-07-26 — Terrain Mobility: Pass 3/4 integrated + field-feedback round**
+  (same branch/PR, following the Pass 1/2 entry below): two parts of work.
+  **(1) Integration** of the two background agents' Pass 3/4 output, which had
+  landed as new files not yet wired up: `dataLayers/structureTable.ts` (a
+  cited, per-row-confidence vegetation structure table — Wood et al. 2015
+  AusPlots figures for heavyforest, an NSW regulatory stem-retention floor for
+  mediumscrub) now backs `mobilityCost.ts`'s `estimateStructureFromVegetation`
+  in place of the hand-picked Tier 0 numbers (still Tier 0 per the doc's own
+  tiering — a better-cited class-level figure applied to one cell is still an
+  estimate, not a measurement); `counterMeasures.ts`/`delayLedger.ts`/
+  `CounterMobilityPanel.tsx` (12-measure catalogue, the bypass rule, the
+  egress-safety refusal gate) are now wired into `App.tsx` as a second tab
+  alongside the terrain-appreciation panel, reusing the appreciation run's own
+  sampled grid rather than resampling. The other four Pass 3 data-layer files
+  (DEM derivatives, NAFI time-since-fire, DEA water/fractional-cover) were
+  reviewed and committed but are **not yet** called from `mobilityGrid.ts`'s
+  per-cell sampling — stated as a real next step, not silently dropped.
+  **(2) Field feedback**, from the owner actually using the live preview on a
+  phone: two critical bugs fixed (drawing an AOI was triggering the fire-break
+  line tool, because `MapboxDraw` was unconditionally armed to draw lines; the
+  objective-area tool stopped accepting clicks after the origin tool had been
+  used, from a stale ref not reset on role change) and a full mobile-UX/
+  interaction rework requested in the same round: primary controls (paint
+  origin/objective, run/cancel) moved off the scrollable panel onto floating
+  map-overlay buttons ("the scroll panel should only need to be expanded to
+  change options or find detail"), and the AOI-selection gesture itself was
+  replaced end to end — from a two-click rectangle to painting circular
+  brush dabs whose on-screen size stays fixed across zoom while their real
+  ground size scales with it ("zooming out effectively paints a larger area,
+  zooming in gets more specific"), a new `paintedArea.ts` module. Verified:
+  `npm run build`/`tsc --noEmit` clean; three rounds of standalone Node smoke
+  tests against the real (not reimplemented) modules — 13 checks proving the
+  brush's zoom-consistency property directly (same brush at zoom 10 covers
+  exactly 64× the ground radius of zoom 16, the expected Mercator relationship)
+  plus integration checks that the new structure table and delay ledger
+  produce real, non-fabricated numbers. Live map-canvas interaction remains
+  subject to the same sandbox proxy limitation recorded below — flagged for
+  the owner to confirm outside this sandbox. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §19–§21.
+- **2026-07-26 — Terrain Mobility Pass 2 shipped + Pass 3/4 in progress** (same
+  branch/PR, same day as Pass 1 below): owner asked to run all four passes as
+  parallel as possible, testing against the PR's live Azure Static Web Apps
+  preview deployment. Pass 2 built solo (tightly coupled to Pass 1's search
+  internals, kept centralized to avoid conflicting edits): `corridorAnalysis.ts`
+  (k-dissimilar routes via iterative-penalty re-search — blocking the best route
+  just pushes traffic to the second-best; betweenness chokepoints fall out of
+  that route set) and `minCutBarrier.ts` (the cheapest cell set severing origin
+  from objective — **the doc's own "hero" claim that a fire break and a movement
+  barrier are the same object**). Implementation note recorded plainly: shipped
+  via standard max-flow/min-cut (Edmonds-Karp) rather than the doc's original
+  planar-dual-shortest-path framing, since getting that construction right for a
+  HEX grid (whose dual is triangular, not square) under time pressure risked a
+  subtly wrong answer — worse than a plainer, verifiably-correct algorithm.
+  Verified with an 8-check smoke test on a synthetic single-cell-gap bottleneck,
+  including the rigorous proof: penalising the returned cut's own edges to
+  near-infinity and re-running the search confirms the objective genuinely
+  becomes unreachable. Also shipped: provider-agnostic imagery interfaces
+  (§12) — `ImageryProvider`/`MapboxImageryProvider`/`StructureAnalysisEngine`,
+  the latter an honest `NotYetImplementedEngine` that reports its own absence
+  rather than fabricate crown-detection output, since that's gated on a lidar
+  calibration set no later pass has built yet. **In progress via two parallel
+  background agents** on entirely new files (zero overlap with each other or
+  with the above, to avoid merge conflicts): Pass 3's trafficability data layers
+  (DEM derivatives, an AusPlots-cited structure table to replace the Tier 0
+  vegetation placeholder, NAFI/fractional-cover/surface-water service modules)
+  and Pass 4's counter-mobility catalogue + delay ledger + UI (doctrinal
+  disrupt/turn/fix/block effects, the bypass rule, the egress-safety gate, all
+  built against the real min-cut/search primitives above). **Live-preview
+  testing attempted per the owner's request, conclusively blocked, root-caused
+  precisely**: the identical sandbox proxy limitation already flagged for
+  Mapbox also hit the PR's real deployed Azure Static Web Apps preview URL —
+  confirmed NOT host-specific (same `ERR_CONNECTION_RESET` in headless
+  Chromium against a genuine public HTTPS site, across multiple proxy
+  configurations, while `curl` against the identical URL succeeded every
+  time) — a Chromium-vs-policy-proxy incompatibility in this sandbox, not
+  something further flag iteration was going to fix. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §17–§18.
+- **2026-07-26 — Terrain Mobility Pass 1 shipped** (same branch, first code on top of
+  the design work below): owner said "go, implement it all" and asked for a bonus
+  RTS-style unit-movement simulation along the way. Built the Pass 1 vertical slice
+  from `docs/ROUTE_INTELLIGENCE.md` §15: `webapp/src/terrain/` core (mover profile
+  catalogue across all three requested families — foot done properly, AU
+  agency/civilian fleet, ADF generic classes; injectable directional
+  profile-parameterised cost model; multi-source area-to-area Dijkstra seeded from
+  the whole origin AOI; a Web Worker for the search per the §8 CPU-vs-network
+  reversal), a tactical UI skin (built in parallel by a background agent against a
+  fixed prop contract — zero merge conflicts), `MobilityPanel.tsx`, and map wiring
+  for AOI drawing + a GO/SLOW-GO/NO-GO ↔ isochrone-band heatmap toggle. **Plus the
+  bonus**: `terrain/unitSimulation.ts` animates a unit along the real computed path
+  in real time with a speed multiplier, and once it's covered half the estimated
+  travel time triggers a **genuine second search** from its current position
+  (not scripted) and splices the refined remainder onto the path it already walked —
+  "the path may change as the unit gets more local fidelity" implemented for real.
+  **Follow-up same day (owner):** the mode now swaps the *entire* app identity when
+  active — header title/subtitle/icon (a `Radar` glyph replaces the fire-break logo),
+  browser tab title, and favicon (inline SVG, no new asset), plus the fire-break-only
+  Configuration button is hidden — nothing reads "Fire Break Calculator" while
+  Terrain mode is on. Gate is still the §14 POC toggle (`?ops=1` URL query); the
+  backend entitlement split stays a Pass 4 exit condition, deliberately deferred per
+  the owner's explicit instruction to demo off current infrastructure with open data.
+  **Verified two ways** since the build sandbox couldn't fully exercise the live map
+  (see below): a strict-TS `npm run build` clean throughout, plus a 29-check
+  standalone Vite-bundled Node smoke test against the REAL (not reimplemented)
+  terrain modules — profile catalogue shape, signed-slope direction, both individual
+  foot speed models, the wheeled-gap-width-vs-tracked-override-force NO-GO
+  distinction (§11.4), multi-source seeding, path backtracking, isochrone banding,
+  time-based simulation interpolation. Live-browser-verified separately: URL gate,
+  mode toggle, full identity swap, tactical skin, mover-profile catalogue with
+  sourced confidence badges, coordinate readout, assessment log — all confirmed
+  rendering correctly via Playwright against a real dev server. **Root-caused and
+  documented, not just observed:** the actual map-canvas interaction (drawing AOI
+  boxes, running a live search) couldn't be verified live in this session — this
+  sandbox's egress proxy only accepts HTTPS CONNECT tunnels, which `curl` handles
+  transparently but which a Playwright-launched headless Chromium's own proxy path
+  failed against even when explicitly configured (confirmed both the Mapbox token
+  and custom style resolve fine over `curl` through the identical proxy) — flagged in
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §16 as **confirm live**, the
+  same pattern this doc has used before when the sandbox couldn't reach Mapbox.
+  Passes 2–4 (corridors/MCOO/min-cut, trafficability data uplift, counter-mobility
+  planner + imagery CV) remain design-only, staged in §15.2.
+- **2026-07-26 — Secondary use case analysed: terrain mobility & counter-mobility**
+  (branch `claude/terrain-movement-analysis-xf1r3q`, docs only — no code): owner
+  raised an alternative framing — instead of "where do I cut a break", use the same
+  sampled terrain to answer "how do I move through this ground most efficiently,
+  area to area, for a given mover" and its inverse "which ways will someone else
+  move, and what engineering slows them down". Full design recorded as a new
+  section in [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) (that doc already
+  owns the cost surface; no new doc created) and added as **Step 10** above.
+  Headline findings: (1) it's a **mode, not a fork** — the whole sampling substrate
+  (DEM cache, area-query NVIS/SVTM, three-tier trail lookup, honesty flags,
+  exports) is reused unchanged, and the 2026-07-14 area-query + retention work is
+  what makes an AOI-scale product feasible on free upstream services at all;
+  (2) the **area-to-area** constraint is solved by seeding Dijkstra with every
+  origin-polygon cell (super-source) and, run to exhaustion from both areas and
+  summed, yields a **route-preference surface** whose low band *is* the movement
+  corridor — so you never have to guess an exact route; (3) `edgeCost` must become
+  an **injectable, directional, profile-parameterised** cost strategy — the same
+  refactor the "equipment-aware heatmap" follow-on already needs; (4) because the
+  grid is planar, **min-cut = shortest path in the dual graph**, i.e. the cheapest
+  counter-mobility barrier is found by the Dijkstra already in the repo — *a fire
+  break and a movement barrier are the same object*, a line severing a plane;
+  (5) the metric is **delay-per-dollar**, priced by the existing production engine,
+  with a non-negotiable **bypass rule** (never report a measure's delay without
+  re-running the search and reporting the bypass it creates) and an **egress-safety
+  gate** (a barrier that blocks your own crews' way out is refused, not scored).
+  Two integrity risks flagged as gating: obstacle **breach/delay values** must be
+  sourced-and-cited or visibly user-entered, or M4's output is fabricated
+  operational advice; and the "where will they go" half is tiered so the product
+  models **terrain, not people** (no individuals, no personal data). Also noted:
+  hazard-reduction burning *increases* cross-country mobility, which nothing else
+  in the agency toolkit will tell a planner. Staged M1–M5.
+  **Second pass same day, after owner feedback** (audience = defence /
+  secure-facility / land managers; "blocking roads is easy, working out trenches and
+  pushed-up scrub is hard"; "some vegetation is effectively grassland if the trees
+  are spaced far enough apart"): added **§10, the fidelity problem**, now the
+  analytical core of the mode, plus a throughput section (§6a) and a revised audience
+  section (§7). Key conclusions: **NVIS cannot answer trafficability** — canopy cover
+  ≠ stem spacing (a 10–30% cover woodland with stems 8–15 m apart *is* grassland for
+  mobility, and the current fuel mapping gets this exactly backwards), multi-stemmed
+  mallee/tea-tree/wattle thickets read as open while being a wall of stems, NVIS has
+  no concept of **condition or time-since-fire** (young regrowth can be an order of
+  magnitude denser than the mature stand of the same class), and its ~100 m raster
+  cannot see a 30 m drivable lane. Trafficability is a **percolation** problem on the
+  gap network, not a mean density, and it splits into **passability / pace / capacity
+  / reliability** — with **VCI₁ vs VCI₅₀** (one-pass vs fifty-pass cone index, NRMM
+  lineage) as the citable framing for "drivable vs drivable at scale". That reframes
+  counter-mobility as achievable: denying one motorbike is prohibitive, denying
+  *twenty wheeled vehicles inside two hours* is cheap, because you only have to break
+  pace and capacity — so measures are scored against a **specified threat package**,
+  not "anyone ever". On the three options asked about: **(a) current data** is worth
+  more than we're extracting (a structural NVIS mapping table with a multi-stem flag,
+  reusing the existing curated vegetation-mappings mechanism, plus unused DEM
+  derivatives — cross-slope, roughness, topographic position, wetness index) but is
+  **structurally incapable of tactical gap-finding**; **(b) Mapbox imagery CV** is
+  feasible for crown delineation → gap-network percolation, plantation rows and
+  unmapped "natural roadways", but hits three hard limits — **it cannot see the
+  understorey at all** (so it is biased *optimistic*, dangerous for own-movement),
+  remote-AU resolution/vintage must be probed per AOI rather than assumed, and
+  **Mapbox derivative-works licensing is a gate, likely excluding defence use** (the
+  defensible posture is client-side, ephemeral, nothing persisted, mirroring
+  `mapboxTrails.ts`); **(c) other datasets** hold most of the win and most of it is
+  **free** — the biggest fidelity gain per unit effort is **time-since-fire +
+  fractional cover + surface-water frequency**, *not* computer vision, with airborne
+  lidar (DSM−DEM canopy height model, and point-cloud 0.5–3 m return fraction =
+  understorey density *measured*) as the gold-standard overlay where coverage
+  permits. Recorded as a **5-tier trafficability stack** where every cell reports
+  which tier answered it, its confidence and its vintage, and where **bias direction
+  follows the question** — pessimistic for own movement, optimistic for adversary
+  mobility, same data, opposite rounding. Two things flagged as required-before-CV:
+  the **stem density research task** (field-plot-derived density/basal area/diameter
+  distributions per NVIS MVS *with variance*, plus an analytic gap-width derivation —
+  we do **not** have this today and it cannot be invented) and the lidar calibration
+  set. Also noted: a stand's stem density is simultaneously **the obstacle and the
+  construction material**, so the same structure layer prices pushed-up windrows and
+  abatis siting; soil type determines whether a trench survives; and fences are an
+  acknowledged blind spot invisible in every dataset. M3 re-staged as M3a–M3f,
+  cheapest-and-most-defensible first.
+  **Third pass same day** (owner: back every assumption with research; assume imagery
+  licensing for the POC but architect for any provider; add tactical/defence UI for a
+  funding demo; assess gating and pricing against the StationKit fire audience) —
+  added **§11 research basis**, **§12 provider-agnostic imagery**, **§13 tactical UI**,
+  **§14 gating and pricing**. Research findings that changed the design rather than
+  just citing it: (1) **individual and unit foot movement are two different models** —
+  Tobler (`6·exp(−3.5·|s+0.05|)`, peak 5.04 km/h at −2.86°, on-path/unladen/no
+  vegetation term) and Irmischer & Clarke 2018 (`0.11 + exp(−(100s+2)²/1800)`, four
+  functions by sex × on/off-path, measured on USMA cadets off-path in wooded terrain —
+  the only military off-path-calibrated function found, so it becomes primary) cover
+  the individual, while US Army foot-march doctrine covers a *unit* (roads 4.0 km/h
+  day / 3.2 night; cross-country 2.4–2.6 day / 1.6 night; 20–32 km per 24 h) — and
+  those doctrinal rates yield a **cross-country factor ~0.6 and night factor ~0.67**,
+  so the profile catalogue's defaults are now doctrinally anchored instead of invented;
+  (2) **wheeled and tracked vehicles are limited by different variables** — the
+  literature states that trees large enough to stop wheeled vehicles are usually too
+  closely spaced to pass, so **wheeled is gap-width-limited (percolation)** while
+  **tracked is override-force-limited (stem-diameter threshold, per Mason et al. 2012:
+  stem diameter × pushbar height × root stability; recent robotic work demonstrates
+  override to ~82 mm)** — two queries against the same structure data, not one blended
+  vegetation factor; (3) doctrine's **UNRESTRICTED class explicitly permits widely
+  spaced trees**, independently confirming the "spaced trees behave as grassland"
+  point, and its slope anchors (**≥7% slows most vehicles and counts as an
+  obstruction**, ≥45% impedes) are far stricter than the current fire-calibrated
+  `slopeCost` ramp — direct evidence for the profile-parameterised cost strategy;
+  (4) adopt the closed doctrinal obstacle-effect set **disrupt / turn / fix / block**
+  with intent = target + effect + location ("channel, don't seal" is doctrinally
+  *turn*), **plus its caveat** — doctrine is explicit that obstacle effects come from
+  obstacles *and fires* together, so an unobserved barrier must never be reported as
+  **block**, at best *disrupt*, which closes the largest overclaim available to this
+  tool; (5) **the AU structure data exists** — TERN AusPlots (442 × 1 ha plots, 22
+  vegetation types, basal area by wedge sweep, programmatic access) plus 48 tall-forest
+  plots, and those plots measure that **non-eucalypt understorey is ~60% of stems**,
+  which is someone else's measured proof that canopy-only imagery analysis cannot
+  stand alone; (6) confirmed free sources: **ELVIS** 1 m DEM/DSM + point clouds
+  (15 cm vertical accuracy) and specifically **NSW state-forest lidar 2022–23 over
+  ~250,000 ha / 27 state forests — the natural POC area of interest**, plus DEA WOfS
+  and Fractional Cover at 25 m. Also carried: the VCI/RCI worked example (105 mm
+  howitzer VCI₁ 21 / VCI₅₀ 49, trafficable at RCI 43 for one pass, **not** at RCI 48
+  for fifty) is the one-slide demo of "drivable ≠ drivable at scale"; and Pandolf load
+  carriage is retained only for endurance/relative comparison because it is published
+  as 12–33% in error and under-predicting modern military loads. **Gating decision
+  recorded:** the mobility half ships plainly to the fire audience as access/egress
+  (genuinely useful, no defence vocabulary); the counter-mobility half is
+  **server-gated on a new entitlement AND route-level code-split so the licensed build
+  is the only bundle containing it** — a hidden client toggle is not a control, and
+  discovering barrier planning inside a volunteer firefighting app is a reputational
+  problem. Pricing follows that split, with the data uplift (commissioned lidar,
+  licensed imagery, field validation) as a services line. *(Superseded for the POC only
+  — see the fourth pass below.)*
+  **Fourth pass same day** — owner answered the four blocking questions: **build
+  everything**, split into 2–4 passes with assumption gates; real AOI is **most of
+  northern Australia**, demo on best-available open data with **no custom lidar**; ship
+  **all three mover-profile families** (foot done properly + AU agency fleet + ADF
+  classes, the last with per-figure confidence and a generic width/weight fallback where
+  a spec can't be sourced); and for the POC the gate is a **subtle toggle or URL query**
+  on the existing infrastructure rather than an entitlement (recorded in §14 with its
+  residual risk — a client flag is discoverable, so the counter-mobility surface is
+  effectively public for the POC; the unconditional disclaimer/authority/egress-safety
+  gates and defence-vocabulary-free default copy are the substantive protection, and
+  conversion to a real entitlement + code-split is a Pass 4 exit condition). Added
+  **§15: POC build plan** — recommended demo AOI is **Litchfield NP / Darwin hinterland,
+  NT**, which beats the earlier NSW state-forest suggestion because it is *inside* the
+  real theatre: representative frequently-burnt tropical savanna, and the **TERN
+  Litchfield Savanna SuperSite** is a 5×5 km block with **airborne + terrestrial + UAV
+  lidar, hyperspectral, SLATS transects and measured tree structure/LAI** — so Tier 2 is
+  demonstrable *and* the imagery-CV calibration set is solved by site selection rather
+  than budget. **NAFI** (fire scars 2000→present, 250 m with 20 m HiRes in places,
+  ground-validated north of 20°S) supplies the top free understorey predictor for the
+  actual theatre, and Top End wet/dry seasonality turns the trafficability toggle into
+  the demo's strongest moment. Four passes, each independently demoable: (1) terrain
+  core + mobility + isochrones + tactical skin + Web Worker; (2) corridors, capacity
+  (VCI₁/VCI₅₀), chokepoints, min-cut, **MCOO** — the hero screenshot; (3) trafficability
+  data uplift (Tier 0 structural NVIS + DEM derivatives, Tier 1 free layers, Tier 2
+  lidar, AusPlots stem table, tier/confidence/vintage plumbing) — the defensibility
+  pass; (4) counter-mobility planner + provider-agnostic imagery CV + entitlement
+  conversion. Min-cut lands in Pass 2, so the distinctive analytic ships early while the
+  parts depending on uncitable breach values sit behind the credibility pass.
+  Per-boundary assumption-confirmation lists recorded in §15.3 (notably: **echelon
+  width-per-corridor figures were NOT obtained in research and must be read off the
+  source before coding**, same for the VCI probability banding table).
+  **Also produced `docs/PITCH_TERRAIN_DENIAL.md`** — an owner-requested 2–3 page external
+  pitch in Australian Defence terminology, aligned to the 2026 NDS Strategy of Denial and
+  northern-approaches framing, the 2026 IIP northern-bases ($13–16bn) and
+  theatre-logistics ($14–21bn) lines, with RFSG/NORFORCE, 1 CER, northern base force
+  protection and Bradshaw training-area management as named users. A deliberate exception
+  to the no-new-docs rule: it is an external commercial artefact, not planning or
+  as-built content, and duplicates nothing here. It carries a standing note to verify
+  NDS/IIP wording against the published documents before external use and to state
+  plainly that the mobility mode is designed, not built.
 - **2026-07-19 — Docs audit: fixed a badly stale root README** (cross-repo docs
   coverage pass, alongside Station Manager's in-app wiki work and Fire Santa
   Run's docs cleanup): `README.md` was dated January 2025 and pointed "For

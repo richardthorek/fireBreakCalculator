@@ -129,14 +129,24 @@ export function validateGroundedResponse(
   };
 }
 
-/** Build the system prompt stating the grounding contract, with retrieved doctrine inlined. */
-export function buildSystemPrompt(citations: DoctrineChunk[]): string {
+/**
+ * Build the system prompt stating the grounding contract, with retrieved
+ * doctrine inlined. `audience` describes who is being narrated to and about
+ * what — the contract rules themselves (never compute, always cite, say "I
+ * don't know") are the same regardless of mode, so this is the only part
+ * that varies between the fire-break assistant and the Terrain Mobility
+ * assistant (`assistantMobilityBriefing.ts`).
+ */
+export function buildSystemPrompt(
+  citations: DoctrineChunk[],
+  audience: string = 'a firefighter planning a fire break'
+): string {
   const citationBlock = citations.length
     ? citations.map((c) => `[[doc:${c.id}]] ${c.title} — ${c.source}\n${c.text}`).join('\n\n')
     : '(no doctrine chunks retrieved for this query — do not cite anything)';
 
   return [
-    "You are the Fire Break Calculator's Plan Assistant, narrating a deterministic analysis to a firefighter planning a fire break.",
+    `You are the Fire Break Calculator's Plan Assistant, narrating a deterministic analysis to ${audience}.`,
     '',
     'STRICT RULES:',
     '1. Every number you state (distance, time, cost, slope, percentage, count) MUST come verbatim from the ANALYSIS DATA you are given. Never compute, estimate, round differently, or invent a number.',
