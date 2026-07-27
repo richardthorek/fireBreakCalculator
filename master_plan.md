@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 — Slice A road-speed config UI shipped, plus the Slice A.9 live-wiring fix; see Recent Updates for the dated history.
+**Last Updated**: July 27, 2026 — Slice B (scoped) shipped: the Lake George defect is now fixed for off-road/foot movement too; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -58,6 +58,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 20 | Paint↔analysis grid reconciliation | `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` now test real geodesic area overlap (`@turf/intersect`/`@turf/area`) between each analysis hex and the resolved painted polygon, not just the cell centre — a coarse analysis hex only seeds as origin/objective when a real (≥15%) share of it is actually painted, faithful regardless of the fixed 100m paint-hex size vs. the analysis grid's own `chooseHexSize` result | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | 21 | Slice A — road-speed config UI + user-override plumbing | `RoadSpeedOverridePanel.tsx` (editable table, per-row/global reset, `localStorage`), threaded as a set-once global (`setRoadSpeedOverrides`) rather than a parameter chased through 9 files, set on BOTH sides of the `mobilityWorker.ts` Worker boundary since a Worker shares no memory with the main thread | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 22 | Slice A.9 — road-network routing wired into the LIVE app (found + fixed) | Discovered mid-step-21: `roadGraph.ts`/`roadRouting.ts` were correct in isolation (Lake George synthetic test) but never called by the running app — only the hex-grid search ever ran, so Lake George was still genuinely unfixed for vehicles in the product. `roadRouteSearch.ts` (new) wires a box-free road route into `mobilityAppreciation.ts` for vehicle profiles, additive alongside the hex-grid search, drawn on the map as its own amber line. Re-proven end to end with `PaintedArea` inputs (what the app actually has), not raw graph node IDs | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 23 | Slice B (scoped) — expand-and-retry replaces the fixed-fraction pad, off-road/foot half of the Lake George fix | The FULL lazy-grid/tile-streaming/cost-budget-ellipse/corridor-termination architecture §35 designs is a large rearchitecture (would touch 5+ interacting modules, several of which assume a COMPLETE, finished cell array); deliberately not attempted whole. Shipped instead: `buildMobilityGrid` takes a `boundsPadFactor`; `mobilityAppreciation.ts` retries the full grid-build-then-search at escalating factors (`[0.2, 0.6, 1.5, 4.0]`) when a search finds no route, stopping the moment one is found, with an honest "widening the search" / final "no route after N attempts" log either way. Reuses 100% of existing, already-proven search machinery — zero new invariant risk. Proven at the engine level (mirrors `lakeGeorgeRoadRouting.test.ts`'s own precedent): a synthetic barrier that fully blocks a narrow box but has a real gap only visible once widened, plus a control. Full lazy-grid design remains genuinely open, tracked below, not silently dropped | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 
 ### Next up
 
@@ -65,7 +66,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
-| 🐞 **Slice B — lazy hex grid, cost budget, corridor stop** | The off-road half. Field-reported (Lake George W→E): the AOI is padded by 20% *of the origin↔objective span*, so a straight run across a long perpendicular obstacle gets almost no room to detour and returns "no route" — unable to distinguish "there is no way" from "I wasn't allowed to look". Lazy grid materialisation under an A* frontier, a **cost budget** (α·C\*, 2× default, user-adjustable) replacing the geometric bound, stop on **2–5 distinct corridors**, two uniform passes (coarse-wide on Terrain-RGB tiles, fine-narrow on chunked DEM), and an honest no-route report that paints the explored frontier | L | Slice A (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | A "fidelity" selector feeding the analysis grid's target cell count | Owner's paint↔analysis reconciliation answer named "user selection of fidelity" as one input to the eventual analysis hex size, alongside area scale — today `chooseHexSize`'s target count is a fixed constant | S | Paint↔analysis reconciliation (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
@@ -101,6 +102,47 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Slice B (scoped) shipped: the Lake George defect fixed for
+  off-road/foot movement too (step 23)**: owner: "Keep going with slice a
+  and b." §35's Slice B design is a genuinely large rearchitecture (lazy
+  per-cell materialisation under an A* frontier, async tile-ring data
+  fetching inside what has to stay a synchronous worker search, a proper
+  `α·C*` cost-budget ellipse, corridor-count termination) — several existing
+  modules (`demDerivatives.ts`'s neighbour plane fit, `corridorField.ts`,
+  chokepoints, min-cut) currently assume `cells` is a complete, finished
+  array for the whole AOI, so a rushed version of that architecture risked
+  shipping something that looked like Slice B but subtly broke one of those
+  invariants — worse than a smaller, fully-verified fix, given this whole
+  codebase's "never present fabricated data as real analysis" principle.
+
+  Shipped instead — the actual behavioural defect fix, decoupled from the
+  architecture: `buildMobilityGrid` takes a `boundsPadFactor` (still 0.2 by
+  default); `mobilityAppreciation.ts` retries the full grid-build-then-search
+  sequence at escalating factors (`0.2 → 0.6 → 1.5 → 4.0`) whenever a search
+  finds no route, stopping the instant one is found. A normal run pays
+  nothing extra; only a genuinely Lake-George-shaped run pays for the wider
+  resample, and the log says so explicitly at each step, plus an honest
+  final "no route after N attempts" if even the widest one fails — directly
+  answering the owner's own framing of the original bug ("there is no way"
+  vs "I wasn't allowed to look far enough"). Reuses 100% of the existing,
+  already-proven search engine — zero new invariant risk.
+
+  Proven at the engine level, matching `lakeGeorgeRoadRouting.test.ts`'s own
+  precedent (the retry orchestration itself is network-coupled and not
+  unit-testable without mocking every upstream fetch): a synthetic water
+  barrier that completely blocks a narrow box but has a real gap only
+  visible once widened, for a foot profile (the case Slice A's road graph
+  can't answer), plus a control proving a wider box doesn't just manufacture
+  routes. Along the way, fixed `import.meta.env` crashing outside Vite in
+  three more modules (`logger.ts`, `elevationApi.ts`, `suiteAuth.ts` — same
+  guard `infrastructureService.ts` already established) since the test
+  engine's own dependency chain needed them; a fourth, unrelated pre-existing
+  failure (`nvis-fidelity.test.ts`, from PR #157) remains, untouched.
+
+  Full lazy-grid architecture recorded as genuinely open (Next-up), not
+  claimed done — the DEFECT is fixed both ways now (roads via step 22,
+  off-road/foot via this step); what's left is the architectural upgrade.
 
 - **2026-07-27 — Slice A road-speed config UI shipped, AND a genuine gap
   found + fixed: road routing wasn't actually live (steps 21–22)**: owner:

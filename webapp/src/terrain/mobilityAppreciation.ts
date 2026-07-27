@@ -30,7 +30,7 @@
  * the ensemble produced anything.
  */
 
-import { buildMobilityGrid } from './mobilityGrid';
+import { buildMobilityGrid, MobilityGridResult } from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
@@ -82,6 +82,13 @@ export interface MobilityAppreciationResult {
    *  `path` above can still legitimately be null in that case while this
    *  isn't. */
   roadRoute: RoadRouteSearchResult | null;
+  /** docs §35 — true when the hex-grid search needed more than one attempt
+   *  (a wider `boundsPadFactor` retry) to find a route, or to conclude there
+   *  genuinely isn't one. False means the very first, smallest-padding
+   *  attempt already settled it. */
+  usedExpandedSearch: boolean;
+  /** How many `boundsPadFactor` attempts this run actually made (1..4). */
+  searchAttempts: number;
   /** The genuinely distinct origin→objective routes this run analysed. These
    *  are the ANALYSIS substrate; `corridorField` below is what gets
    *  presented (owner 2026-07-26: "use the individual pathways to analyse,
@@ -208,34 +215,106 @@ export async function runMobilityAppreciation(
   onLog?.('LAYING OUT SURVEY GRID OVER AREA OF INTEREST…');
   onStage?.({ key: 'grid', label: 'Laying out survey grid', fraction: 0 });
 
-  let samplingAnnounced = false;
-  const grid = await buildMobilityGrid(origin, objective, {
-    signal,
-    // Sampling owns the first 45% of the run's progress bar; the simulation
-    // stages that follow are real work of comparable length, and a bar that
-    // sat at 70% for most of the wall-clock time would be a worse lie than no
-    // bar at all.
-    onProgress: f => {
-      onProgress?.((f / 0.7) * 0.45);
-      // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
-      // elevation/vegetation/trail sampling begins — the long part.
-      if (f > 0.05 && !samplingAnnounced) {
-        samplingAnnounced = true;
-        onStage?.({ key: 'sampling', label: 'Sampling ground — elevation, vegetation, trails', fraction: (f / 0.7) * 0.45 });
-      }
-    },
-  });
-  if (!grid || signal?.aborted) {
-    if (grid === null) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
-    return null;
-  }
+  // docs §35 — the Lake George defect: a search boxed in at a fixed 20%-of-
+  // span pad could not distinguish "there is no way" from "I wasn't allowed
+  // to look far enough". Rather than the full lazy-grid/cost-budget-ellipse
+  // architecture §35 also designs (tracked separately, genuinely larger and
+  // higher-risk than this run has room for), this is the scoped fix that
+  // directly addresses the reported MECHANISM: retry at escalating padding
+  // when a search finds no route, instead of paying maximum padding (and
+  // maximum resolution loss — chooseHexSize coarsens a bigger box) on every
+  // single run regardless of need. Each factor after the first is a genuine
+  // "look further" attempt, not a cosmetic retry — 0.6/1.5/4.0 roughly
+  // triple the searchable radius each step.
+  const EXPANDING_PAD_FACTORS = [0.2, 0.6, 1.5, 4.0];
 
-  onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
+  let grid: MobilityGridResult | null = null;
+  let results: MobilityCellResult[] = [];
+  let path: SimPathNode[] | null = null;
+  let attemptsUsed = 0;
+
+  for (let i = 0; i < EXPANDING_PAD_FACTORS.length; i++) {
+    const padFactor = EXPANDING_PAD_FACTORS[i];
+    attemptsUsed = i + 1;
+    let samplingAnnounced = false;
+    const attemptGrid = await buildMobilityGrid(origin, objective, {
+      signal,
+      boundsPadFactor: padFactor,
+      // Sampling owns the first 45% of the run's progress bar; the simulation
+      // stages that follow are real work of comparable length, and a bar that
+      // sat at 70% for most of the wall-clock time would be a worse lie than
+      // no bar at all.
+      onProgress: f => {
+        onProgress?.((f / 0.7) * 0.45);
+        // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
+        // elevation/vegetation/trail sampling begins — the long part.
+        if (f > 0.05 && !samplingAnnounced) {
+          samplingAnnounced = true;
+          onStage?.({
+            key: 'sampling',
+            label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
+            fraction: (f / 0.7) * 0.45,
+          });
+        }
+      },
+    });
+    if (signal?.aborted) return null;
+    if (!attemptGrid) {
+      // Degenerate span (near-identical origin/objective points) — no amount
+      // of padding fixes this, so there is nothing to gain from retrying.
+      if (i === 0) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
+      return null;
+    }
+    grid = attemptGrid;
+
+    if (i === 0) {
+      onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
+    } else {
+      // docs §35 — the escalating-retry response to the Lake George defect:
+      // a search that found no route at a smaller pad tries again wider
+      // rather than concluding "no route" from a box that was never allowed
+      // to look far enough. Logged plainly so this is visible, not silent.
+      onLog?.(
+        `NO ROUTE AT THE PREVIOUS EXTENT — WIDENING THE SEARCH (ATTEMPT ${attemptsUsed}/${EXPANDING_PAD_FACTORS.length}, ` +
+        `${padFactor}× PADDING, ${grid.cells.length} CELLS)`
+      );
+    }
+
+    // Paint the surveyed ground NOW, before this attempt's search runs — the
+    // same assembly the final render uses, with an empty reachability map.
+    // On a retry this visibly redraws the WIDER area being surveyed.
+    if (onPreviewCells) {
+      onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
+    }
+
+    onProgress?.(0.46);
+    onStage?.({
+      key: 'search',
+      label: i === 0 ? 'Running multi-source search across the grid' : `Re-running search at wider extent (attempt ${attemptsUsed})`,
+      fraction: 0.46,
+    });
+    if (i === 0) onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
+
+    const outcome = await runMobilitySearchInWorker(
+      grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+      roadSpeedOverrides
+    );
+    if (signal?.aborted) return null;
+    results = outcome.results;
+    path = outcome.path;
+
+    if (path) break; // found it — stop expanding, this is the decisive attempt
+  }
+  if (!grid) return null; // unreachable (the loop above always assigns or returns), keeps TS satisfied
+  onProgress?.(0.5);
+
+  const usedExpandedSearch = attemptsUsed > 1;
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
   if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
   // Hydrology (docs §34) — a real, computed count, not a claim: this is what
   // makes "is water actually being considered" answerable by looking at the
-  // log rather than taking the model's word for it.
+  // log rather than taking the model's word for it. Reported for the FINAL
+  // (decisive) grid, since a retry resamples a different box.
   if (!grid.hydrologyAvailable) {
     onLog?.('NO WATERWAY/WATER-BODY DATA FOR THIS AREA — HYDROLOGY GATE INACTIVE');
   } else {
@@ -265,7 +344,7 @@ export async function runMobilityAppreciation(
   }
 
   // Box-free ROAD-NETWORK route (docs §35 Slice A) — independent of the
-  // hex-grid search below and the padded box it still runs inside. Vehicle
+  // hex-grid search above and the padded box it still runs inside. Vehicle
   // profiles only (roadRouteSearch.ts's own gate); cheap enough to run
   // synchronously on the main thread (a handful of OSM ways, not a grid).
   let roadRoute: RoadRouteSearchResult | null = null;
@@ -283,25 +362,6 @@ export async function runMobilityAppreciation(
     }
   }
 
-  // Paint the surveyed ground NOW, before the search runs. Same assembly the
-  // final render uses, with an empty reachability map — so every cell shows
-  // its real terrain classification and nothing shows an arrival time it has
-  // not earned yet.
-  if (onPreviewCells) {
-    onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
-  }
-
-  onProgress?.(0.46);
-  onStage?.({ key: 'search', label: 'Running multi-source search across the grid', fraction: 0.46 });
-  onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
-
-  const { results, path } = await runMobilitySearchInWorker(
-    grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
-    roadSpeedOverrides
-  );
-  if (signal?.aborted) return null;
-  onProgress?.(0.5);
-
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
   const noGoCount = results.filter(r => r.trafficability === 'NO-GO').length;
@@ -313,9 +373,16 @@ export async function runMobilityAppreciation(
   }
   if (path) {
     const etaMin = path[path.length - 1].cumulativeSeconds / 60;
-    onLog?.(`ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN`);
+    onLog?.(
+      `ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN` +
+      (usedExpandedSearch ? ` (NEEDED ${attemptsUsed} ATTEMPTS, FINAL PADDING ${grid.boundsPadFactor}×)` : '')
+    );
   } else {
-    onLog?.('NO ROUTE FOUND — OBJECTIVE UNREACHABLE FOR THIS PROFILE');
+    onLog?.(
+      `NO ROUTE FOUND AFTER ${attemptsUsed} ATTEMPT(S), UP TO ${grid.boundsPadFactor}× PADDING ` +
+      `(${grid.cells.length} CELLS AT WIDEST) — OBJECTIVE GENUINELY UNREACHABLE FOR THIS PROFILE AT THIS SEARCH CEILING, ` +
+      `NOT A BOX ARTEFACT AT THIS POINT`
+    );
   }
 
   // --- Pass 2 + the simulation (docs §32): corridors, chokepoints, min-cut
@@ -486,6 +553,8 @@ export async function runMobilityAppreciation(
     slowGoCount,
     path,
     roadRoute,
+    usedExpandedSearch,
+    searchAttempts: attemptsUsed,
     dissimilarRoutes,
     corridorField,
     optimiserCorridorField,

@@ -9,7 +9,8 @@
 import { logger } from './logger';
 import { authHeader } from './suiteAuth';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+// import.meta.env is undefined outside Vite — see logger.ts's own guard.
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface ElevationProfileResponse {
   elevations: number[];

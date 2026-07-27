@@ -3602,14 +3602,56 @@ the previous is green.
 
 **Slice B — lazy grid (off-road; everything in §35 above)**
 
-10. Lazy cell materialisation behind the existing `MobilityGridCell` interface.
-11. Tile-ring expansion (async at tile granularity, keeping the worker search
+10. ⏸️ Lazy cell materialisation behind the existing `MobilityGridCell` interface.
+11. ⏸️ Tile-ring expansion (async at tile granularity, keeping the worker search
     synchronous).
-12. Cost budget `α·C*`, α user-adjustable, 2× default.
-13. Corridor-count termination (2–5), reusing `corridorField.ts` bundling.
-14. Two-pass coarse→fine; Terrain-RGB tiles coarse, chunked DEM fine.
-15. Honest no-route reporting + frontier painting.
-16. Delete the bounding-box construction in `mobilityGrid.ts:101-112`.
+12. ✅ **(scoped alternative, 2026-07-27 — see below)** A budget that grows
+    the search when it fails, rather than a pre-computed cost-budget ellipse.
+13. ⏸️ Corridor-count termination (2–5), reusing `corridorField.ts` bundling.
+14. ⏸️ Two-pass coarse→fine; Terrain-RGB tiles coarse, chunked DEM fine.
+15. ✅ **(scoped)** Honest no-route reporting (attempt count, final padding,
+    cell count) — frontier painting NOT done (there is no frontier to paint;
+    see below).
+16. ❌ **NOT done** — the bounding-box construction in `mobilityGrid.ts` is
+    still there; the fix that shipped makes the box ADAPTIVE, not absent.
+
+**Why 10/11/13/14 are marked ⏸️, not done, not attempted as designed above:**
+Full lazy materialisation, async tile-ring streaming inside a *synchronous*
+worker search, and corridor-count termination are a genuinely large,
+interacting rearchitecture — they'd touch `mobilityGrid.ts`, `accumulatedCost.ts`,
+`mobilityWorker.ts`, `demDerivatives.ts` (which needs a COMPLETE neighbour set
+to fit its per-cell plane, not a partially-materialised one), and every
+consumer that currently assumes `cells` is the finished array for the whole
+AOI (`corridorField.ts`, `computeChokepoints`, `computeMinCutBarrier`). Given
+the honesty principle this whole codebase runs on (CLAUDE.md: "never present
+fabricated data as real analysis"), attempting that rewrite at the depth this
+pass had room for risked shipping something that LOOKED like Slice B but
+subtly broke one of those invariants — worse than shipping a smaller, fully
+verified fix. Recorded here as real, still-open work (master_plan.md
+Next-up), not silently dropped.
+
+**What shipped instead — expand-and-retry (12/15 above):**
+`buildMobilityGrid` now takes a `boundsPadFactor` parameter (still the
+original 0.2 by default). `mobilityAppreciation.ts` retries the ENTIRE
+build-grid-then-search sequence at escalating factors — `[0.2, 0.6, 1.5, 4.0]`
+— stopping the moment a route is found. This reuses the existing, already-
+proven search machinery unchanged (zero new invariant risk) and directly
+fixes the reported MECHANISM: padding that was a fixed fraction of the
+origin↔objective span regardless of whether a route was ever found, unable
+to tell "there is no way" from "I wasn't allowed to look far enough" (the
+owner's own framing of the bug). A run that succeeds at the default padding
+pays nothing extra; only a genuinely Lake-George-shaped run pays for wider
+resampling, and the log says so explicitly (`NO ROUTE AT THE PREVIOUS EXTENT
+— WIDENING THE SEARCH…`), plus a final honest failure line
+(`NO ROUTE FOUND AFTER N ATTEMPT(S)…`) if even the widest attempt fails.
+
+Proven at the engine level (`expandingSearchLakeGeorge.test.ts`, matching
+`lakeGeorgeRoadRouting.test.ts`'s own precedent — the orchestration itself is
+network-coupled and not unit-testable without mocking every upstream fetch):
+a synthetic water barrier that completely blocks a narrow box but has a real
+gap only visible once the box widens, plus a control (seal the gap too — the
+wide box then correctly finds nothing either, proving the mechanism isn't
+just "wider boxes always find something").
 
 **Throughout:** `npm run build` (webapp) and `npm run test:unit` (api) must
 pass; TypeScript strict, no unjustified `any`; every estimated or overridden

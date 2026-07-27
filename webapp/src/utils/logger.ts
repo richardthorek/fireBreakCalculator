@@ -48,5 +48,11 @@ class Logger {
 
 // Create a default logger instance
 // In production, this could be set to LogLevel.ERROR or LogLevel.WARN
-const isDevelopment = import.meta.env.MODE === 'development';
+//
+// `import.meta.env` is undefined outside Vite (e.g. a terrain/*.ts module
+// imported by a plain `npx tsx` test script, since several test-covered
+// modules transitively import this file) — same guard already established
+// in infrastructureService.ts for the identical reason.
+const env = (import.meta as any).env ?? {};
+const isDevelopment = env.MODE === 'development';
 export const logger = new Logger(isDevelopment ? LogLevel.DEBUG : LogLevel.WARN);

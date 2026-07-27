@@ -97,6 +97,12 @@ export interface MobilityGridResult {
    *  target, so a narrow gap or a short-radius obstacle may not survive
    *  being averaged into a bigger cell. */
   usedCoarseGrid: boolean;
+  /** The pad factor this attempt actually used (docs §35) — honesty field so
+   *  the log/UI can say plainly when a run needed a wider-than-default search
+   *  to find its route, distinguishing "there is no way" from "the first
+   *  attempt wasn't allowed to look far enough" (the exact framing of the
+   *  original field report). */
+  boundsPadFactor: number;
 }
 
 /** Real overlap fraction (0..1) between one hex cell's actual polygon and a
@@ -135,13 +141,25 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
  * Build and sample a hex grid covering `origin`, `objective` (padded so the
  * search has room either side to route around obstacles) and everything
  * between them.
+ *
+ * `boundsPadFactor` (docs §35 — the Lake George defect): the AOI is padded by
+ * this fraction of the origin↔objective span. Defaults to the original 0.2,
+ * but the caller (`mobilityAppreciation.ts`'s escalating retry) passes a
+ * LARGER value when a search at a smaller pad found no route, so an obstacle
+ * that genuinely needs more room to detour around gets it on retry, instead
+ * of every run paying for maximum padding up front. This is a scoped
+ * response to §35's root defect — expand-and-retry, not the full lazy-grid/
+ * cost-budget/corridor-termination architecture that section also designs
+ * (still open, tracked separately) — but it directly fixes the reported
+ * mechanism: padding that was proportional to the span regardless of whether
+ * a route was actually found.
  */
 export async function buildMobilityGrid(
   origin: PaintedArea,
   objective: PaintedArea,
-  options: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {}
+  options: { signal?: AbortSignal; onProgress?: (fraction: number) => void; boundsPadFactor?: number } = {}
 ): Promise<MobilityGridResult | null> {
-  const { signal, onProgress } = options;
+  const { signal, onProgress, boundsPadFactor = 0.2 } = options;
 
   const originBounds = paintedAreaBounds(origin);
   const objectiveBounds = paintedAreaBounds(objective);
@@ -153,10 +171,11 @@ export async function buildMobilityGrid(
   const maxLng = Math.max(originBounds.maxLng, objectiveBounds.maxLng);
   if (maxLat - minLat < 1e-6 || maxLng - minLng < 1e-6) return null;
 
-  // Pad ~20% either side so the search has room to route around obstacles
-  // rather than being boxed in exactly between the two AOIs.
-  const padLat = (maxLat - minLat) * 0.2;
-  const padLng = (maxLng - minLng) * 0.2;
+  // Pad either side so the search has room to route around obstacles rather
+  // than being boxed in exactly between the two AOIs — see boundsPadFactor's
+  // own doc comment above for why this is a parameter, not a fixed 0.2.
+  const padLat = (maxLat - minLat) * boundsPadFactor;
+  const padLng = (maxLng - minLng) * boundsPadFactor;
   const boundsSw: LatLng = { lat: minLat - padLat, lng: minLng - padLng };
   const boundsNe: LatLng = { lat: maxLat + padLat, lng: maxLng + padLng };
 
@@ -336,6 +355,7 @@ export async function buildMobilityGrid(
     hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
     waterFeatures: waterways.trails,
     roadWays: infra.trails,
+    boundsPadFactor,
     usedCoarseGrid: tries > 0,
   };
 }
