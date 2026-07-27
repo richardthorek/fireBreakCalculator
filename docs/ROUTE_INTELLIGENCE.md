@@ -3312,6 +3312,241 @@ but real at very fine resolution over very large areas.
 - **Mixed-size cells in one graph** — superseded by the two-pass approach
   above.
 
+---
+
+## Slice A — road network graph: full design
+
+Implementation-ready. Decisions below are settled; an implementer should not
+need to re-derive them.
+
+### What already exists (verified 2026-07-27)
+
+Two findings make this much smaller than it first appears:
+
+1. **The OSM highway class is ALREADY fetched.** `buildQuery` uses `out geom;`,
+   which returns every tag on the way, and the response mapper already reads
+   `el.tags?.highway` (`infrastructureService.ts:275`, and the API twin at
+   `:152`) — then collapses it into a single `kind` string that `onTrail`
+   reduces to a boolean. **No Overpass query change is needed to get road
+   class.** The data has been arriving all along and being discarded.
+2. **`surface`, `tracktype` and `smoothness` are also already in the
+   response** for the same reason (`out geom` returns all tags). They need
+   only to be *extracted* in the mapper — again, no query change.
+
+So Slice A is predominantly a mapping + cost-model change, not a data
+acquisition project.
+
+### The gap that would have bitten us
+
+`REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential'`
+(`infrastructureService.ts:30`, mirrored in the API).
+
+That set was chosen for the **fire-break** question — "which highway classes
+represent reusable broken ground". It **excludes `motorway`, `trunk` and
+`primary`**. For fire-break reuse that is defensible. For mobility and denial
+it is backwards: a motorway or primary road is the *fastest* route for an
+approaching force and therefore the *highest-value* thing to identify and
+deny. A Lake George approach could well run on a highway the query never
+returned.
+
+**Required change:** a mobility-specific highway set including
+`motorway|trunk|primary` and their `_link` variants. Add as a third
+`InfrastructureKind` (e.g. `'highway-mobility'`) rather than widening the
+fire-break set — the two use cases genuinely want different sets, and
+widening would change fire-break optimizer behaviour as a side effect.
+Both copies (`webapp/src/utils/infrastructureService.ts` and
+`api/src/services/infrastructureService.ts`) must stay in sync — the API
+copy's own comment already mandates this.
+
+### The speed model — sourced, then user-tunable
+
+Owner decision: find a real citation, and make it configurable for
+fine-grained adjustment. Both, in that order — sourced defaults the user can
+override, never invented numbers presented as fact.
+
+**Source: the OSRM car and foot routing profiles** (Project-OSRM/osrm-backend,
+`profiles/car.lua` and `profiles/foot.lua`, values read from the repository
+2026-07-27). Chosen because they are open, independently verifiable, in
+production use worldwide, and — decisively — keyed to the *exact OSM tags this
+app already fetches*, so no translation layer is needed.
+
+**Car — speed by `highway` tag (km/h):**
+
+| Tag | km/h | Tag | km/h |
+|---|---|---|---|
+| motorway | 90 | tertiary | 40 |
+| motorway_link | 45 | tertiary_link | 20 |
+| trunk | 85 | unclassified | 25 |
+| trunk_link | 40 | residential | 25 |
+| primary | 65 | living_street | 10 |
+| primary_link | 30 | service | 15 |
+| secondary | 55 | | |
+| secondary_link | 25 | | |
+
+**Car — `surface` cap (km/h):** asphalt/concrete/paved → uncapped;
+cement/compacted/fine_gravel → 80; paving_stones/metal/bricks → 60;
+grass/wood/sett/gravel/unpaved/ground/dirt/pebblestone → 40;
+cobblestone/clay → 30; earth/stone/rocky/sand → 20; laterite → 15; mud → 10;
+ice → 20; snow → 30.
+
+**Car — `tracktype` cap (km/h):** grade1 → 60, grade2 → 40, grade3 → 30,
+grade4 → 25, grade5 → 20.
+
+**Car — `smoothness` cap (km/h):** intermediate → 80, bad → 40, very_bad → 20,
+horrible → 10, very_horrible → 5, **impassable → 0**.
+
+`tracktype` and `surface` matter disproportionately in rural Australia, where
+`highway=track` is extremely common and the grade tag is what actually
+separates a graded farm road from a wheel-rut.
+
+**Foot — deliberately NOT class-modulated.** OSRM's foot profile is a flat
+5 km/h across *every* highway class, with only surface caps (gravel → 3.75,
+mud/sand → 2.5). That is a real finding, not an omission: road class barely
+affects walking speed. **Therefore foot profiles keep their existing
+Irmischer & Clarke (2018) slope-speed model unchanged**, and road-class
+modulation applies to `wheeled`/`tracked` movers only. Applying a car speed
+table to a foot mover would be a fabrication.
+
+### How it composes with the existing profiles — modulate, don't replace
+
+`moverProfiles.ts` already carries `roadSpeedKmh` (the vehicle's own capability
+on a road) and `crossCountryFactor`. The defect is that `roadSpeedKmh` is a
+*single* number — a light 4WD is 60 km/h whether it's on a motorway or a
+grade-5 track.
+
+Do **not** replace `roadSpeedKmh`. Compose, exactly as OSRM itself does (the
+tag speed capped by surface/tracktype/smoothness):
+
+```
+roadClassCeiling = min(
+  speedByHighwayTag[way.highway],
+  surfaceCap[way.surface]        ?? Infinity,
+  tracktypeCap[way.tracktype]    ?? Infinity,
+  smoothnessCap[way.smoothness]  ?? Infinity
+)
+
+effectiveRoadSpeed = min(profile.roadSpeedKmh, roadClassCeiling)
+```
+
+This preserves existing semantics and behaves correctly at both ends:
+
+| Mover | Way | Result |
+|---|---|---|
+| Light 4WD (60) | motorway (90) | 60 — vehicle-limited |
+| Light 4WD (60) | track, grade5 (20) | 20 — road-limited |
+| Tracked IFV (~40) | motorway (90) | 40 — vehicle-limited |
+| Any vehicle | smoothness=impassable (0) | NO-GO |
+
+`smoothness=impassable → 0` gives a genuine, *sourced* NO-GO — the first road
+gate in this app that isn't engineering judgement.
+
+### Honesty classification
+
+This matters and must not be glossed. The existing profile comment
+(`moverProfiles.ts:177`) already sets the standard: *"crossCountryFactor and
+nightFactor are ESTIMATED, not doctrinally sourced… Flagged rather than
+presented as published."*
+
+- **`published`** — the road-class ceiling. Real, citable, verifiable values
+  from a production open-source routing engine.
+- **`estimated`** — `crossCountryFactor` (unchanged, already flagged).
+- **Caveat to state plainly in the UI and the briefing:** OSRM's tables encode
+  *civilian driving* speeds — legal and practical road speeds, not military
+  off-road capability. For the denial use case that is arguably the *right*
+  model (you care how an approaching vehicle actually drives, not its spec
+  sheet), but it must be labelled as such and never presented as a
+  military-mobility figure.
+- **NOT implemented, and worth recording why:** the NATO Reference Mobility
+  Model (NRMM) is the doctrinal reference for off-road speed prediction, but
+  it is a *physics model* requiring vehicle-specific parameters (cone index,
+  power-to-weight, track/tyre geometry) this app has no source for. Citing it
+  as if we implemented it would be a fabrication. Referenced as prior art for
+  the approach only.
+
+### Configurability (owner requirement)
+
+Every table above ships as a **documented default the user can override**,
+following the precedent already set by `productionModel.ts`'s named,
+calibratable constants and the vegetation-override UI:
+
+- A road-speed profile object, defaults from the tables above, each entry
+  carrying its source string.
+- UI: an editable table in the Terrain panel's config area — per-class km/h,
+  reset-to-default per row and globally.
+- An edited row flips that class's confidence from `published` to
+  `user-override` (a third state — user values are neither our published
+  source nor our estimate). Surfaced in the panel and carried into GIS export
+  attributes and the AI briefing, matching how vegetation overrides already
+  behave.
+- Persist alongside existing config so a brigade or unit can calibrate once.
+
+### Files
+
+| File | Change |
+|---|---|
+| `webapp/src/utils/infrastructureService.ts` | Extract `surface`/`tracktype`/`smoothness` in the mapper; add `'highway-mobility'` kind with the wider highway set |
+| `api/src/services/infrastructureService.ts` | Mirror both changes exactly (comment at `:28` mandates parity) |
+| `webapp/src/terrain/roadSpeedModel.ts` *(new)* | The four sourced tables + `roadClassCeiling()`; pure, no I/O, unit-testable |
+| `webapp/src/terrain/roadGraph.ts` *(new)* | Build nodes/edges from OSM ways; shared-node topology; `buildRoadGraph(ways)` → `RoadGraph` |
+| `webapp/src/terrain/roadRouting.ts` *(new)* | A* over `RoadGraph`; k-alternatives by edge penalty, reusing `corridorField.ts`'s existing diversification idiom |
+| `webapp/src/terrain/moverProfiles.ts` | No table changes; document that `roadSpeedKmh` is now a *ceiling*, composed via `min()` |
+| `webapp/src/terrain/mobilityCost.ts` | `edgeMobilityCost` accepts an optional road-class ceiling |
+| Config UI + persistence | Editable speed table, per-row reset, `user-override` flagging |
+
+### Tests
+
+Framework-free `node:assert`, matching `api/src/test/analysis.test.ts`:
+
+- `roadClassCeiling` returns the min across tag/surface/tracktype/smoothness.
+- `smoothness=impassable` → 0 → NO-GO.
+- Composition: vehicle-limited and road-limited cases both bind correctly
+  (the 4-row table above makes good test cases).
+- Untagged `surface`/`tracktype` fall through to the highway-tag speed rather
+  than to zero or `NaN`.
+- Foot profiles are **unaffected** by road class — a regression guard on the
+  deliberate decision above.
+- A user override wins over the sourced default and flips confidence.
+- **The claim that matters:** a synthetic Lake George — origin west, objective
+  east, an impassable water body spanning well beyond the direct corridor, and
+  a road running around the northern end. The road route must be found. This
+  is the whole point of the slice and must fail before the fix.
+
+---
+
+## Implementation handoff checklist
+
+Ordered. Each step is independently verifiable; do not start the next until
+the previous is green.
+
+**Slice A — roads (fixes Lake George for vehicles, box-free by construction)**
+
+1. Extract `surface`/`tracktype`/`smoothness` in both `infrastructureService`
+   copies. Verify parity between the webapp and API sets.
+2. Add the `'highway-mobility'` kind with motorway/trunk/primary included.
+   Confirm the fire-break optimizer's behaviour is unchanged.
+3. `roadSpeedModel.ts` with the four sourced tables + tests.
+4. `roadGraph.ts` — build the network; test connectivity on a synthetic set.
+5. `roadRouting.ts` — A*, then k-alternatives by penalty.
+6. Compose into `mobilityCost.ts` via `min()`; regression-test that foot
+   profiles are untouched.
+7. Config UI + `user-override` flagging, carried into export and briefing.
+8. The Lake George synthetic test must pass.
+
+**Slice B — lazy grid (off-road; everything in §35 above)**
+
+9. Lazy cell materialisation behind the existing `MobilityGridCell` interface.
+10. Tile-ring expansion (async at tile granularity, keeping the worker search
+    synchronous).
+11. Cost budget `α·C*`, α user-adjustable, 2× default.
+12. Corridor-count termination (2–5), reusing `corridorField.ts` bundling.
+13. Two-pass coarse→fine; Terrain-RGB tiles coarse, chunked DEM fine.
+14. Honest no-route reporting + frontier painting.
+15. Delete the bounding-box construction in `mobilityGrid.ts:101-112`.
+
+**Throughout:** `npm run build` (webapp) and `npm run test:unit` (api) must
+pass; TypeScript strict, no unjustified `any`; every estimated or overridden
+value stays flagged end to end.
+
 ### Already shipped — not to be rebuilt
 
 - **Bridges/fords.** §34 already exempts the fording gate where an edge sits
