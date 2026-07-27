@@ -35,6 +35,12 @@ interface Equipment {
 }
 ```
 
+## Analysis Endpoint
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/analysis/calculate` | POST | Per-segment production-model estimate (time/cost/compatibility) for a drawn fire-break line against every equipment item — the sole calculation engine ([CALCULATION_REVIEW.md](CALCULATION_REVIEW.md)). Prefers a client-joined `segments[]` profile; degrades to marginal slope/vegetation distributions when absent. Segments crossing mapped water are excluded from every result (already a natural break); segments carry independent along-line and sidehill slope figures, gated separately. | `AnalysisRequest` (`distance`, `trackAnalysis`, `vegetationAnalysis`, `segments?: RouteSegment[]`, `breakWidthMeters?`, `parameters?`) | `AnalysisResponse` (`calculations: CalculationResult[]`, `metadata.analysisParameters` incl. `waterCrossingLength`) | No |
+
 ## Saved Plans Endpoints (suite subscription)
 
 All saved-plan endpoints require a Station Manager JWT (`Authorization: Bearer <token>`), validated server-side against SM `GET /api/auth/me`, and the org's `fireBreakEnabled` entitlement. Responses when not satisfied: `401` (no/invalid token), `403` (plan lacks the entitlement), `503` (`SUITE_AUTH_URL` unset on the deployment), `502` (Station Manager unreachable). Storage: Table Storage (`SAVED_PLANS_TABLE_NAME`, default `savedplans`), PartitionKey = SM user id.

@@ -126,6 +126,38 @@ async function main() {
       'clipping a gully must not cost like an all-steep route');
   });
 
+  console.log('Water as a natural break:');
+
+  await test('a water-crossing segment costs no build time — it is already a break, not ordinary grassland', async () => {
+    const dry = await svc.analyzeEquipment(
+      baseRequest([{ length: 1000, slopeDegrees: 3, vegetation: 'grassland' }]),
+      [dozer()]
+    );
+    const withCrossing = await svc.analyzeEquipment(
+      baseRequest([
+        { length: 1000, slopeDegrees: 3, vegetation: 'grassland' },
+        { length: 200, slopeDegrees: 3, vegetation: 'grassland', crossesWater: true },
+      ]),
+      [dozer()]
+    );
+    assert.strictEqual(
+      withCrossing.calculations[0].time, dry.calculations[0].time,
+      'the water segment must not add any build time — damp ground is already a break'
+    );
+    assert.strictEqual(withCrossing.metadata.analysisParameters.waterCrossingLength, 200);
+    assert.strictEqual(withCrossing.metadata.analysisParameters.segmentCount, 2,
+      'the water segment is still counted in segmentCount even though excluded from the estimate');
+  });
+
+  await test('a route that is ONLY a water crossing is genuinely free for every resource — nothing to build', async () => {
+    const res = await svc.analyzeEquipment(
+      baseRequest([{ length: 500, slopeDegrees: 3, vegetation: 'grassland', crossesWater: true }]),
+      [dozer()]
+    );
+    assert.strictEqual(res.calculations[0].time, 0);
+    assert.strictEqual(res.metadata.analysisParameters.waterCrossingLength, 500);
+  });
+
   console.log('Slope safety gating:');
 
   await test('machine limited to flat/medium is incompatible when much of route is steep', async () => {
@@ -151,6 +183,44 @@ async function main() {
     );
     assert.strictEqual(res.calculations[0].compatibilityLevel, 'partial');
     assert.ok(res.calculations[0].compatible);
+  });
+
+  console.log('Cross-slope (sidehill) safety gating:');
+
+  await test('a gentle along-line grade on a steep sidehill is still incompatible for machinery', async () => {
+    const res = await svc.analyzeEquipment(
+      // Along-line slope is trivial (3°, well under the ~25° default limit)
+      // but the line runs along a steep hillside (30° cross-slope, over the
+      // ~24° NWCG sidehill default) — the two are genuinely different checks.
+      baseRequest([
+        { length: 1000, slopeDegrees: 3, vegetation: 'grassland' },
+        { length: 1000, slopeDegrees: 3, vegetation: 'grassland', crossSlopeDegrees: 30 },
+      ]),
+      [dozer()]
+    );
+    assert.strictEqual(res.calculations[0].compatibilityLevel, 'incompatible');
+    assert.strictEqual(res.calculations[0].sideSlopeCompatible, false);
+    assert.strictEqual(res.calculations[0].slopeCompatible, true, 'along-line slope was never exceeded');
+    assert.ok(res.calculations[0].note?.includes('sidehill'));
+  });
+
+  await test('a gentle sidehill does not trip the sidehill gate', async () => {
+    const res = await svc.analyzeEquipment(
+      baseRequest([{ length: 1000, slopeDegrees: 3, vegetation: 'grassland', crossSlopeDegrees: 5 }]),
+      [dozer()]
+    );
+    assert.strictEqual(res.calculations[0].compatibilityLevel, 'full');
+    assert.strictEqual(res.calculations[0].sideSlopeCompatible, true);
+  });
+
+  await test('an explicit maxSideSlope overrides the resource-kind default', async () => {
+    const permissiveDozer = dozer({ maxSideSlope: 35 });
+    const res = await svc.analyzeEquipment(
+      baseRequest([{ length: 1000, slopeDegrees: 3, vegetation: 'grassland', crossSlopeDegrees: 30 }]),
+      [permissiveDozer]
+    );
+    assert.strictEqual(res.calculations[0].compatibilityLevel, 'full',
+      'an explicit, wider maxSideSlope must be respected instead of the default');
   });
 
   console.log('Aircraft coverage model:');

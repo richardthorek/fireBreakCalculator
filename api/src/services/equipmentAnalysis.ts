@@ -28,6 +28,7 @@ import {
   fuelFactor,
   handCrewWidthMultiplier,
   machineryWidthMultiplier,
+  resolveMaxSideSlopeDegrees,
   resolveMaxSlopeDegrees,
   slopeToTerrain,
 } from './productionModel';
@@ -59,6 +60,15 @@ export interface RouteSegment {
   vegetation: VegetationType;
   /** Detection confidence for the vegetation class (0..1), optional. */
   vegetationConfidence?: number;
+  /** True when this segment crosses a mapped waterway or water body — damp
+   *  ground doesn't carry fire, so it already IS a fire break. Excluded from
+   *  every equipment's time/cost estimate (nothing to construct); its length
+   *  is reported separately rather than costed as ordinary fuel. */
+  crossesWater?: boolean;
+  /** Cross-slope (side-slope) in degrees, perpendicular to the line's own
+   *  bearing — the rollover-risk figure, distinct from `slopeDegrees` (the
+   *  along-line gradient). See CALCULATION_REVIEW.md F2. */
+  crossSlopeDegrees?: number;
 }
 
 export interface EquipmentSpec {
@@ -71,6 +81,10 @@ export interface EquipmentSpec {
   costPerHour?: number;
   description?: string;
   maxSlope?: number;
+  /** Explicit sidehill (cross-slope) safety limit, degrees — distinct from
+   *  `maxSlope` (the along-line limit). Falls back to a resource-kind default
+   *  (productionModel.ts) when unset, same pattern as `maxSlope`. */
+  maxSideSlope?: number;
   /** Machinery blade cut width per pass (m). */
   cutWidthMeters?: number;
   // Aircraft specific
@@ -95,6 +109,10 @@ export interface CalculationResult {
   description?: string;
   slopeCompatible?: boolean;
   maxSlopeExceeded?: number;
+  /** True unless the steepest side-slope encountered exceeded this resource's
+   *  sidehill limit — a distinct check from `slopeCompatible` (along-line). */
+  sideSlopeCompatible?: boolean;
+  maxSideSlopeExceeded?: number;
   drops?: number;
   /** Machinery passes required to reach the requested break width. */
   passes?: number;
@@ -140,6 +158,12 @@ export interface AnalysisResponse {
       profileFromClient: boolean;
       /** Overall vegetation-detection confidence (0..1). */
       overallConfidence: number;
+      /** Metres of the route crossing mapped waterways/water bodies. Damp
+       *  ground doesn't carry fire, so this length already IS a fire break —
+       *  excluded from every equipment's time/cost estimate (there's nothing
+       *  to construct) and reported here rather than silently folded into
+       *  any total. */
+      waterCrossingLength: number;
     };
   };
 }
@@ -249,6 +273,7 @@ export class EquipmentAnalysisService {
     const refRate = this.referenceRate(equipment);
     const allowedVeg = new Set(equipment.allowedVegetation);
     const slopeLimit = resolveMaxSlopeDegrees(kind, equipment.maxSlope, equipment.allowedTerrain);
+    const sideSlopeLimit = resolveMaxSideSlopeDegrees(kind, equipment.maxSideSlope);
 
     // Break-width handling: published rates are single-pass; widen accordingly.
     let widthMultiplier = 1;
@@ -263,19 +288,37 @@ export class EquipmentAnalysisService {
 
     let totalLength = 0;
     let overLength = 0;
+    let sideSlopeOverLength = 0;
     let time = 0;
     let steepestOver = 0;
+    let steepestSideOver = 0;
     let confidenceWeighted = 0;
 
     for (const seg of segments) {
+      // Damp ground doesn't carry fire — a mapped waterway/water body is
+      // already a natural fire break, not ground that needs clearing.
+      // Excluded from every equipment's estimate entirely (not gated as
+      // "over limit", which would still count it toward total/over length)
+      // rather than costed as ordinary fuel. Its length is reported once,
+      // route-wide, in metadata.
+      if (seg.crossesWater) continue;
+
       totalLength += seg.length;
       confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
 
       const slopeOver = seg.slopeDegrees > slopeLimit;
+      // Sidehill is a DISTINCT safety constraint from along-line slope (see
+      // productionModel.ts's DEFAULT_MAX_SIDE_SLOPE_DEGREES) — a segment can
+      // be gentle along the line while running along a steep hillside.
+      const sideSlopeOver = (seg.crossSlopeDegrees ?? 0) > sideSlopeLimit;
       const vegOver = !allowedVeg.has(seg.vegetation);
-      if (slopeOver || vegOver) {
+      if (slopeOver || sideSlopeOver || vegOver) {
         overLength += seg.length;
         if (seg.slopeDegrees > steepestOver) steepestOver = seg.slopeDegrees;
+      }
+      if (sideSlopeOver) {
+        sideSlopeOverLength += seg.length;
+        if ((seg.crossSlopeDegrees ?? 0) > steepestSideOver) steepestSideOver = seg.crossSlopeDegrees ?? 0;
       }
 
       const rate = effectiveRate(refRate, kind, seg.vegetation, seg.slopeDegrees);
@@ -303,6 +346,7 @@ export class EquipmentAnalysisService {
     const compatible = level !== 'incompatible';
     const cost = compatible && equipment.costPerHour ? time * equipment.costPerHour : 0;
     const slopeCompatible = steepestOver === 0 || steepestOver <= slopeLimit;
+    const sideSlopeCompatible = steepestSideOver === 0 || steepestSideOver <= sideSlopeLimit;
     const confidence = totalLength > 0 ? confidenceWeighted / totalLength : undefined;
 
     const notes: string[] = [];
@@ -310,6 +354,10 @@ export class EquipmentAnalysisService {
       notes.push(`${Math.round(overFraction * 100)}% of route exceeds this resource's slope/fuel limits`);
     } else if (level === 'partial') {
       notes.push(`~${Math.round(overFraction * 100)}% of route over limits; time penalty applied`);
+    }
+    if (sideSlopeOverLength > 0) {
+      const sideFraction = totalLength > 0 ? sideSlopeOverLength / totalLength : 0;
+      notes.push(`~${Math.round(sideFraction * 100)}% on sidehill steeper than ${sideSlopeLimit}° — rollover risk, not just along-line grade`);
     }
     if (compatible && passes && passes > 1) {
       notes.push(`${passes} passes for ${Math.round(breakWidthMeters || 0)}m break`);
@@ -330,6 +378,8 @@ export class EquipmentAnalysisService {
       description: equipment.description,
       slopeCompatible,
       maxSlopeExceeded: steepestOver > slopeLimit ? steepestOver : undefined,
+      sideSlopeCompatible,
+      maxSideSlopeExceeded: steepestSideOver > sideSlopeLimit ? steepestSideOver : undefined,
       passes,
       overLimitPercent: overFraction > 0 ? overFraction : undefined,
       confidence,
@@ -352,6 +402,10 @@ export class EquipmentAnalysisService {
     let confidenceWeighted = 0;
 
     for (const seg of segments) {
+      // Same exclusion as evaluateLineResource — a mapped waterway/water body
+      // is already a natural break; there's no line to lay retardant along.
+      if (seg.crossesWater) continue;
+
       totalLength += seg.length;
       confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
       if (!allowedVeg.has(seg.vegetation)) overLength += seg.length;
@@ -443,12 +497,17 @@ export class EquipmentAnalysisService {
 
     const { segments, fromClient } = this.buildProfile(request);
 
-    // Route-level descriptive stats for metadata.
+    // Route-level descriptive stats for metadata. Water-crossing segments are
+    // excluded from these aggregates too (same reasoning as the per-equipment
+    // loops) — their slope/vegetation figures describe ground that isn't
+    // being built on, so folding them in would skew the reported route stats.
     let totalLength = 0;
     let slopeWeighted = 0;
     let maxSlope = 0;
     let confidenceWeighted = 0;
+    let waterCrossingLength = 0;
     for (const seg of segments) {
+      if (seg.crossesWater) { waterCrossingLength += seg.length; continue; }
       totalLength += seg.length;
       slopeWeighted += seg.slopeDegrees * seg.length;
       confidenceWeighted += (seg.vegetationConfidence ?? 0) * seg.length;
@@ -514,6 +573,7 @@ export class EquipmentAnalysisService {
           segmentCount: segments.length,
           profileFromClient: fromClient,
           overallConfidence,
+          waterCrossingLength,
         },
       },
     };

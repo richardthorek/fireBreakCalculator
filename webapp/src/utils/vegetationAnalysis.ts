@@ -12,6 +12,13 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchStateVegetation } from './stateVegetationRouter';
 import { logger } from './logger';
 import { mapFormationToVegetationType } from './vegetationMappingHelper';
+import { fetchCorridorWaterways, distanceToNearestWater, InfrastructureData } from './infrastructureService';
+import { fetchNAFITimeSinceFire } from '../terrain/dataLayers/nafiFireHistoryService';
+
+/** Same snap distance Terrain Mobility's hydrology gate uses (docs
+ *  ROUTE_INTELLIGENCE.md §34) — a mapped waterway/water-body within this of a
+ *  sample point is treated as actually crossing the line, not just nearby. */
+const WATER_SNAP_M = 30;
 
 /**
  * Helper function to get longitude from coordinate object that may use lng or lon
@@ -325,10 +332,10 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   }
 
   const token = MAPBOX_TOKEN;
-  
+
   // Generate sample points for vegetation analysis
   const samplePoints = generateVegetationSamplePoints(points, 200);
-  
+
   // Build segments between consecutive sample points
   const rawSegments: VegetationSegment[] = [];
   let totalDistance = 0;
@@ -352,10 +359,37 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
     });
   }
 
-  // Resolve every segment's vegetation with bounded concurrency. State/NVIS
-  // lookups are cached and deduped, so this only fans out real network work and
-  // keeps ordering stable for the merge step below.
-  const resolved = await mapWithConcurrency(segSpecs, 8, async (spec, i) => {
+  // Water-crossing check (mirrors Terrain Mobility's hydrology gate,
+  // ROUTE_INTELLIGENCE.md §34): NVIS/Mapbox landcover both fall back to
+  // mislabelling open water as low-confidence 'grassland', which would
+  // otherwise let a line crossing a river or lake get costed as ordinary,
+  // buildable ground. One corridor-wide fetch (not per-segment), checked at
+  // each segment's start/mid/end so a narrow crossing within a 200 m
+  // vegetation segment isn't missed by a single midpoint sample. Best-effort:
+  // an unavailable water layer degrades to "no water detected" rather than
+  // blocking vegetation analysis.
+  let waterways: InfrastructureData = { trails: [], available: false };
+  try {
+    let south = Infinity, west = Infinity, north = -Infinity, east = -Infinity;
+    for (const p of points) {
+      south = Math.min(south, p.lat); north = Math.max(north, p.lat);
+      west = Math.min(west, getLng(p)); east = Math.max(east, getLng(p));
+    }
+    waterways = await fetchCorridorWaterways(south, west, north, east);
+  } catch (err) {
+    logger.warn('Water-crossing check failed; proceeding without it:', err);
+  }
+  const crossesWaterAt = (spec: SegSpec): boolean => {
+    if (waterways.trails.length === 0) return false;
+    const pts = [
+      { lat: spec.start.lat, lng: getLng(spec.start) },
+      { lat: spec.midLat, lng: spec.midLng },
+      { lat: spec.end.lat, lng: getLng(spec.end) },
+    ];
+    return pts.some((p) => distanceToNearestWater(p, waterways.trails, WATER_SNAP_M) <= WATER_SNAP_M);
+  };
+
+  const resolveVegetation = async (spec: SegSpec, i: number) => {
     try {
       // Query state-based vegetation service (NSW, VIC, QLD, etc.) with NVIS fallback
       const stateVeg = await fetchStateVegetation(spec.midLat, spec.midLng);
@@ -392,6 +426,34 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
         displayLabel: fallbackClass + ' (fallback)',
       };
     }
+  };
+
+  // Fire history (NAFI) is informational context, not a cost-model input:
+  // there is no sourced fuel-age→clearing-rate curve to apply (the way the
+  // NWCG/Report 56 tables ground the fuel-CLASS factors), so fabricating a
+  // coefficient here would repeat exactly the "invented factor" problem
+  // CALCULATION_REVIEW.md F3 replaced. Surfaced instead as a fact the user
+  // can weigh themselves. `fetchNAFITimeSinceFire` short-circuits with no
+  // network call outside NAFI's northern/rangeland technical extent (most of
+  // NSW/VIC/southern SA), so this is a no-op there, not a wasted request.
+  const resolveFireHistory = async (
+    spec: SegSpec
+  ): Promise<{ yearsSinceFire?: number; fireHistoryConfidence?: 'published' | 'estimated' }> => {
+    try {
+      const r = await fetchNAFITimeSinceFire(spec.midLat, spec.midLng);
+      return r ? { yearsSinceFire: r.yearsSinceFire, fireHistoryConfidence: r.confidence } : {};
+    } catch {
+      return {};
+    }
+  };
+
+  // Resolve every segment's vegetation (and, alongside it, fire history) with
+  // bounded concurrency. State/NVIS lookups are cached and deduped, so this
+  // only fans out real network work and keeps ordering stable for the merge
+  // step below.
+  const resolved = await mapWithConcurrency(segSpecs, 8, async (spec, i) => {
+    const [veg, fire] = await Promise.all([resolveVegetation(spec, i), resolveFireHistory(spec)]);
+    return { ...veg, ...fire };
   });
 
   for (let j = 0; j < segSpecs.length; j++) {
@@ -408,16 +470,22 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       displayLabel: r.displayLabel,
       distance: spec.distance,
       isModifiedOrLowFidelity: r.isModifiedOrLowFidelity,
+      isWater: crossesWaterAt(spec),
+      yearsSinceFire: r.yearsSinceFire,
+      fireHistoryConfidence: r.fireHistoryConfidence,
     });
     totalDistance += spec.distance;
     totalConfidence += r.confidence;
   }
 
-  // Merge consecutive segments with the same vegetation type
+  // Merge consecutive segments with the same vegetation type — but never
+  // across a water-crossing boundary, so a narrow river/lake crossing inside
+  // a longer grassland run stays a distinct, separately-flagged segment
+  // rather than disappearing into the merge.
   const mergedSegments: VegetationSegment[] = [];
   for (const seg of rawSegments) {
     const last = mergedSegments[mergedSegments.length - 1];
-    if (!last || last.vegetationType !== seg.vegetationType) {
+    if (!last || last.vegetationType !== seg.vegetationType || !!last.isWater !== !!seg.isWater) {
       mergedSegments.push({ ...seg, coords: seg.coords ? [...seg.coords] : [seg.start, seg.end] });
     } else {
       // Merge segments
@@ -434,6 +502,13 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       last.distance = combinedDistance;
       if (seg.estimated) last.estimated = true;
       if (seg.isModifiedOrLowFidelity) last.isModifiedOrLowFidelity = true;
+      // Keep the MOST RECENT fire (smallest years-since-fire) across the
+      // merged run — the most fuel-hazard-notable fact, not an average.
+      if (seg.yearsSinceFire !== undefined &&
+          (last.yearsSinceFire === undefined || seg.yearsSinceFire < last.yearsSinceFire)) {
+        last.yearsSinceFire = seg.yearsSinceFire;
+        last.fireHistoryConfidence = seg.fireHistoryConfidence;
+      }
     }
   }
 

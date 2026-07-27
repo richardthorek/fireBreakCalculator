@@ -858,6 +858,31 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     setTimeout(() => setSaveStatus(null), 3000);
   };
 
+  // Metres of the line crossing mapped waterways/water bodies — not
+  // buildable ground, excluded from every equipment estimate (equipmentAnalysis.ts)
+  // rather than costed as ordinary fuel. Surfaced here so the user sees WHY a
+  // segment's length silently doesn't count toward any resource's total.
+  const waterCrossingMetres = useMemo(() => {
+    return (vegetationAnalysis?.segments ?? []).reduce(
+      (sum, seg) => (seg.isWater ? sum + seg.distance : sum), 0
+    );
+  }, [vegetationAnalysis]);
+
+  // Most recent fire NAFI recorded along the line (northern Australia/
+  // rangelands coverage only — usually absent for the app's core NSW/VIC
+  // userbase). Informational only, not folded into any time/cost figure —
+  // see VegetationSegment.yearsSinceFire.
+  const mostRecentFire = useMemo(() => {
+    let best: { years: number; confidence: 'published' | 'estimated' } | null = null;
+    for (const seg of vegetationAnalysis?.segments ?? []) {
+      if (seg.yearsSinceFire === undefined) continue;
+      if (!best || seg.yearsSinceFire < best.years) {
+        best = { years: seg.yearsSinceFire, confidence: seg.fireHistoryConfidence ?? 'estimated' };
+      }
+    }
+    return best;
+  }, [vegetationAnalysis]);
+
   // Payload for the GIS export pack — same joined segments the panel displays.
   const exportInput = useMemo<ExportPlanInput | null>(() => {
     if (!canExport || !distance) return null;
@@ -1072,6 +1097,31 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 .join(' and ')}{' '}
               could not be sourced from authoritative data for part of this line. Treat times and
               compatibility as indicative only and verify on the ground.
+            </div>
+          </div>
+        )}
+        {distance && waterCrossingMetres > 0 && (
+          <div className="data-quality-note" role="status">
+            <span className="data-quality-icon" aria-hidden="true">🌊</span>
+            <div>
+              <strong>Natural break: water.</strong>{' '}
+              ~{formatChainage(waterCrossingMetres)} of this line follows a mapped waterway or water
+              body. Damp ground doesn't carry fire, so this stretch already acts as a fire break —
+              no construction time or cost is included for it below. If the mapped water doesn't
+              match what's actually there (dry creek bed, seasonal only), re-check the line.
+            </div>
+          </div>
+        )}
+        {distance && mostRecentFire && (
+          <div className="data-quality-note" role="status">
+            <span className="data-quality-icon" aria-hidden="true">🔥</span>
+            <div>
+              <strong>Fire history available.</strong>{' '}
+              Part of this line was last burnt as recently as ~{mostRecentFire.years} year
+              {mostRecentFire.years === 1 ? '' : 's'} ago (NAFI{mostRecentFire.confidence === 'estimated' ? ', estimated coverage' : ''}).
+              Older, long-unburnt fuel typically means more clearing effort than the vegetation
+              class alone suggests — not factored into the estimates below, as there's no sourced
+              figure for how much. Use this as context alongside the numbers, not a correction to them.
             </div>
           </div>
         )}

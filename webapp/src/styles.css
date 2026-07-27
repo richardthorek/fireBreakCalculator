@@ -4707,6 +4707,25 @@ button:focus {
 .data-quality-warning strong { color: #7b5312; }
 .data-quality-icon { font-size: 1rem; line-height: 1.2; }
 
+/* Positive-toned sibling of .data-quality-warning — for informational notes
+ * that are good news (e.g. water already acting as a natural fire break),
+ * not a data-quality caveat. Same layout, blue instead of amber. */
+.data-quality-note {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #2b6cb0;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(43, 108, 176, 0.1);
+  color: #2c5282;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.data-quality-note strong { color: #2c5282; }
+
 .break-width-group { margin-bottom: 0.75rem; }
 .break-width-group select {
   width: 100%;
@@ -4727,6 +4746,12 @@ button:focus {
     border-color: #d69e2e;
   }
   .data-quality-warning strong { color: #f8e3bd; }
+  .data-quality-note {
+    background: rgba(66, 153, 225, 0.18);
+    color: #bee3f8;
+    border-color: #4299e1;
+  }
+  .data-quality-note strong { color: #ebf8ff; }
 }
 
 /* ------------------------------------------------------------------ */

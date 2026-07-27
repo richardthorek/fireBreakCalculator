@@ -1,14 +1,14 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 (Step 10 Passes 1–4 shipped and integrated; **Pass 5 — probabilistic movement** now the engine behind Terrain mode's corridors and its new recommended-restriction set; **Pass 6 — hydrology**: waterways now gate movement as a real barrier instead of silently reading as easy grassland; Step 11 first UI slice + a Terrain-mode UI clarity pass)
+**Last Updated**: July 27, 2026 — roadmap reorganised into Shipped / Next up / Blocked, sorted by effort; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
 
 ## ⚠️ MANDATORY WORKFLOW
 
-**Before starting:** read this document; find your step below; check the linked design doc for detail.
-**After finishing:** add a dated entry in Recent Updates, link the PR, flip the step status (📋 → ✅), and update the relevant design doc / register.
+**Before starting:** read this document; take the top item in "Next up" unless told otherwise; check the linked design doc for detail.
+**After finishing:** add a dated entry in Recent Updates, link the PR, move the item from "Next up" to "Shipped" (one line, per the existing style), and update the relevant design doc / register.
 **Never create** new planning/status/summary docs — planning lives here; technical detail lives in the linked docs; everything else is doc sprawl.
 
 ---
@@ -32,28 +32,58 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 
 ## The Plan
 
-| # | Step | Scope (one line) | Detail | Status |
-|---|------|-------------------|--------|--------|
-| 0 | **Route intelligence & analysis UI** | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ PR #163 |
-| 1 | **Universal GIS export pack** | GeoJSON/KML/KMZ/SHP export with provenance flags → covers FireMapper/QGIS/Earth; file import (perimeters, lines) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 | ✅ PR #163 |
-| 2 | **Infrastructure-aware optimizer** | Existing trails/roads as discounted edges (✅), unanchored-end insights (✅); water-point & cadastre advisory layers (📋 — licensing check pending) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR #163 |
-| 3 | **National live context** | National situational layers — DEA Hotspots + Digital Atlas NRT bushfire boundaries (both official, national, CORS-clean, ✅); jurisdictional incident/warning overlay, AWS-symbolised, 5/8 states (NSW/VIC/SA/WA/ACT ✅; QLD/TAS/NT documented blockers) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 | ✅ core, PR TBD |
-| 3a | **AFDRS fire danger** | Official fire danger rating + behaviour index for plan location/date; break-adequacy heuristics keyed to AFDRS, doctrine-cited — **display official product only, no spread rebuild** | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 | 🛑 **blocked — needs a sourcing decision, see 2026-07-12 update** |
-| 4 | **AI assistant** | Azure AI Foundry (OpenAI-spec API) via IaC (✅, off by default); grounded briefing + chat with hard grounding-validation gate (✅); keyword KB (✅), vector RAG via Azure AI Search (📋); live model verification + eval suite (📋 — needs a deployed endpoint) | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) | ✅ core, PR #163 |
-| 4b | **Operator briefing pack (SMEACS)** | SMEACS-structured briefing (RFS doctrine headings) → PDF + copy-as-text with static map; road-access entry point + approach summary; user-drawn access lines; heavy-plant safety doctrine chunks (NSW RFS OPG, manually transcribed) | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §5, [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Road access" | ✅ PR #167 |
-| 5 | **Agency hand-off** | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike (fallback: KMZ) | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 | 📋 |
-| 6 | **Field hardening** | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion, vegetation NoData uplift | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) | 📋 |
-| 7 | **Detailed-analysis experience uplift** | One route-wide hex grid (fixed layered heatmaps); streamed scan visualization (grid build-out → live colouring → live pathfinding); progress-synced sweep; plain-English progress; auto-run on draw; box "area recon" heatmap sharing sample caches with the optimizer; always-available accept button | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) | ✅ core, PR TBD |
-| 8 | **Operational hardening (run-the-service)** | Liability/disclaimer framing on every export+briefing+in-app; reproducibility stamping (engine version + data-source + cost basis) on exports/briefings; production observability (App Insights + fallback-rate KPI); anonymous single-break gating + per-IP rate limiting + budget alerts; upstream data-contract canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 | ✅ core, PR TBD |
-| 9 | **End-user guide** | There has never actually been one — `README.md` linked to `webapp/Documentation/USER_GUIDE.md`, which never existed, until the 2026-07-19 docs audit fixed the link (see Recent Updates). The in-app UI is currently the only "documentation." Consider whether this belongs as its own doc here, or as a page in Station Manager's new in-app wiki (`richardthorek/station-manager`, shipped 2026-07-19) if/when this app federates more tightly into the StationKit suite | docs/README.md (would live here if kept local) | 📋 |
-| 10 | **Terrain mobility & counter-mobility (secondary use case)** | Audience: defence, secure facilities, land managers. Inverts the cost surface: area→area movement planning per mover profile (foot/vehicle/plant, including where new trail must be cut), and the reverse — likely approach corridors *with throughput per vehicle class*, chokepoints, and counter-measure planning scored on delay-per-dollar. Staged M1–M5/Pass 1–4, with **trafficability fidelity as the analytical core** — NVIS cannot answer trafficability | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility & Counter-Mobility" (§10 = fidelity problem, §§16–28 = as-built) | ✅ Passes 1–4 shipped + integrated, plus multiple field-feedback rounds (painted-area AOI, mobile controls, mode-switch audit, `?ops=1` default) and an analytical-depth pass: **cross-slope is now a live, real gate** in the search/classifier/min-cut (was permanently inert — always `null` — since Pass 1); grid budget raised (1400/1800 → 2200/2800 cells) for larger AOIs, argued from the sampling pipeline's real area-batching limits, not an arbitrary bump; two honesty flags added (`usedCoarseGrid`, origin/objective-overlap log line). **Movement corridors shipped** (§28) — closes Pass 2's route-preference-surface / avenues-sized-by-echelon / baseline-vs-scenario items: routes are smoothed into ranked corridor bands with real per-corridor ease/bottleneck/frontage metrics, counter-measures are re-scored against the whole corridor picture iteratively (collapsed/degraded/displaced-into), and terrain that does not canalise movement is reported as `unconstrained` rather than dressed up as corridors. **MCOO overlay + GIS export shipped** (§29) — the "then scouted and planned in more detail" handoff: corridors, chokepoints, min-cut barrier and counter-measure placements now export as GeoJSON/KML/KMZ, every feature carrying provenance stamps and its own honesty flags (per-corridor `estimated_data`, per-placement `ledger_status`/delay/bypass/egress figures), mirroring the fire-break line's existing export pattern. **Assistant narrative shipped** (§30) — a plain-language commander appreciation now runs through the *existing* AI grounding gate (`aiGrounding.ts`, made mode-agnostic via one backward-compatible `audience` parameter rather than a second contract), with its own deterministic template fallback that works with no model deployed at all; grounded chat is deliberately not mirrored (briefing-only, scoped to what was asked). **NAFI's area-query mechanism shipped** (§31) — `fetchNAFITimeSinceFireArea` resolves a whole AOI's time-since-fire from 2 upstream WCS requests total (not one per cell), live-verified against the real GeoServer including a genuine source-side ambiguity (a 5-year colour tie in the long-term layer's palette, resolved conservatively). Deliberately not yet wired into `MobilityGridCell`/the cost model (a separate calibration decision) or extended to DEA (a different server, not yet investigated). Remaining 📋, prioritized: **(1)** wire the now-available NAFI years-since-fire into `MobilityGridCell` and decide how it modulates structure/trafficability alongside vegetation type (the mechanism exists; the calibration doesn't yet); **(2)** DEA fractional-cover/water-observations area-query — its own server/contract, needs its own live-verification pass; **(3)** VCI/RCI-weighted min-cut capacity, needs Pass 3's soil layers (not yet sampled either); **(4)** real entitlement/backend gating — **feasibility assessed (§14.1)**: the `suiteAuthService` pattern is reusable and now applied to `assistant/mobility-briefing`, but the entitlement source of truth (`terrainDenialEnabled`) lives in the separate Station Manager repo, no server endpoint hosts the actual corridor/min-cut/delay-ledger compute today (it's a fully client-side Web Worker engine), and code-splitting alone raises the discovery bar without providing a hard boundary — moving the compute server-side would fix that but trades away the offline/interactive properties the field tool depends on, so it's deliberately not being built speculatively ahead of a release decision |
+### Shipped
 
-| 11 | **UI/UX 10x uplift** | Design review found both modes functionally solid but visually flat/generic — no hierarchy, no sense of the engine computing, map still on Mapbox's factory-default chrome. Five moves, ranked by demo impact per hour: **(1)** the reveal is the demo — segments/numbers arrive as the search resolves rather than snapping to a finished state; **(2)** one hero readout (distance/time/cost, instrument-panel scale) above the existing detail, not a flatter table; **(3)** re-skin every Mapbox default control (zoom/draw/trash/attribution) into the app's own signal-red/hi-vis palette; **(4)** fire-break mode borrows Terrain mode's typographic/confidence-badge discipline so switching modes feels like one product changing register, not two eras of UI; **(5)** extend Terrain mode's just-shipped floating-overlay mobile pattern to fire-break mode. All CSS/motion/layout — **zero changes to the calculation engine or data-honesty flags** (a "Measured" chip only ever appears where the data actually is measured; the reveal animates real per-segment results arriving, never a number before the engine produced it). **First slice shipped 2026-07-26**: hero readout (`AnalysisPanel.tsx` — break length/max slope/primary equipment time as instrument-scale tabular-nums figures, replacing the old plain text spans) with count-up tweening (`useCountUp.ts`, ease-out cubic, `prefers-reduced-motion`-aware); the map's per-segment slope colouring now sweeps in over `REVEAL_DURATION_MS` (`revealTiming.ts`) via Mapbox GL feature-state instead of snapping to a finished state, in sync with the panel's count-up; move (3)'s map-control re-skin done for fire-break mode, and **a real root-cause bug fixed along the way**: a second, later-in-source `.mapboxgl-ctrl-group { background:#fff }` rule was silently winning the cascade over the intended dark theme (equal `!important` specificity, later source order wins) — this was the actual reason controls rendered as plain white squares, not just a stale screenshot; removed rather than patched around. Moves (4) and (5) (shared type/confidence discipline across modes; fire-break mobile floating controls) not yet started. | Full illustrated review (annotated screenshot critique + CSS specimens of the "after" direction) built as a Claude Code artifact 2026-07-26 — not committed to the repo as a file per the docs discipline above; this entry is the durable record. Ask in the next session to regenerate/extend it if the artifact link has expired. | 🚧 first slice shipped (moves 1–3 partial); moves 4–5 still 📋 |
-| 12 | **Terrain Mobility Pass 5 — probabilistic movement as the engine** | The movement simulation is now the crux, not a bonus: an ensemble of independent, **road-preferring**, imperfectly-informed movers replaces the single optimal line as the answer to "where will they go". Corridors are built from where movers ACTUALLY went, at their observed frequency. On top of it, a ranked set of **recommended restrictions** (road blocks first), each chosen by re-running the ensemble against the world the previous ones created — so blocking a road visibly displaces movement onto the next road and then into the bush, where vegetation and slope start to bind. Behaviour parameters are ASSUMED and flagged as such end to end (panel, map key, GIS attributes, AI briefing). Remaining 📋: road **class** (OSM `highway=*` is fetched and discarded, so a highway and a farm track are identical to the mover — the largest remaining fidelity gap); restriction siting is hex-resolution, not a surveyed point; the recommended set is not costed against `delayLedger.ts` | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 | ✅ core, PR TBD |
-| 13 | **Terrain-mode UI clarity pass** | Eight field-reported items: size-appropriate brush cursor; painting guidance + a real fix for paint lagging the drag (quadratic geometry replay); hold-Space to pan while a paint tool is armed; run progress (staged bar + on-map HUD + the grid painting in as soon as sampling finishes — progress was never wired up at all); a map key that lists only what is drawn and marks what is modelled; one overlay-opacity slider applied as a multiplier so encoded meanings survive; corridors made legible (dissolved outlines, spine, labels, click-to-isolate) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §33 | ✅ PR TBD |
-| 14 | **Terrain Mobility Pass 6 — hydrology, waterways as a real barrier** | Investigation found NVIS was actively mislabelling water as `grassland` — the LOWEST-friction class — so a river read as easy ground, not an obstacle; a live-verified DEA Water Observations client and every mover profile's own sourced `fordingDepthM` both existed and were never wired in; no linear watercourse geometry was fetched at all. Fixed: Overpass generalised to also fetch `waterway=*`/`natural=water`; a new WMS-based DEA WOfS area raster (WCS/GeoTIFF confirmed live NOT to work for this layer — colour-ramp reconstruction from the styled PNG instead, live-derived and sanity-checked against Lake Argyle and Sydney Harbour); a Tier 0 `estimateFordingRequirement` gate wired into `edgeMobilityCost` exactly like the existing vegetation gate (NO-GO beyond the profile's fording capability, SLOW-GO with a real speed penalty within it, exempted on a mapped trail/bridge crossing). Deliberately resolution-INDEPENDENT (samples each cell's centre + six hex corners against real vector geometry) rather than needing a finer grid — answers the companion "cells are very large, small landscape features are lost" question for the LINEAR-barrier case specifically; uniform fine-grained resolution for areal micro-terrain remains open, a materially larger architecture change. Real OSM water geometry now renders as its own map reference layer, plus a map-key section and a real computed per-run log count. Remaining 📋: GIS export/AI briefing don't yet carry hydrology-specific attributes; OSM relations (multipolygon lakes) aren't fetched, only ways; assumed fording depth is a single figure per OSM class, no per-crossing measurement exists | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 | ✅ PR TBD |
+One line each — history and rationale live in the linked as-built doc and in Recent Updates below, not here.
 
-Sequencing logic: exports first (highest reach per effort, unblocks real-world feedback), then make the optimizer street-smart, then live context so the assistant (step 4) has rich grounded payloads, then agency push, then hardening. Accessibility fixes and the small vegetation NVIS uplift ride inside steps as touched, with step 6 as the sweep.
+| # | Step | Scope | Detail |
+|---|------|-------|--------|
+| 0 | Route intelligence & analysis UI | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 1 | Universal GIS export pack | GeoJSON/KML/KMZ/SHP export + file import | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 |
+| 2 | Infrastructure-aware optimizer (core) | Existing trails/roads as discounted edges, unanchored-end insights | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 3 | National live context (core) | DEA Hotspots + Digital Atlas NRT boundaries; incident/warning overlay, 5/8 states | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 |
+| 4 | AI assistant (core) | Azure AI Foundry briefing + chat, hard grounding gate, keyword KB | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
+| 4b | Operator briefing pack (SMEACS) | PDF/text briefing, road-access entry point, plant safety doctrine chunks | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §5 |
+| 7 | Detailed-analysis experience uplift | Route-wide hex grid, streamed scan visualization, auto-run, area recon | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 8 | Operational hardening | Disclaimers, reproducibility stamping, observability, rate limiting, upstream canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 |
+| 10 | Terrain mobility & counter-mobility, Passes 1–4 | Area→area movement planning per mover profile; approach corridors, chokepoints, counter-measures | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility" §10, §§16–28 |
+| 12 | Terrain Mobility Pass 5 — probabilistic movement as the engine | Ensemble of imperfectly-informed movers replaces the single optimal line; ranked recommended restrictions | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| 13 | Terrain-mode UI clarity pass | Brush cursor, paint-lag fix, run progress HUD, map key, corridor legibility | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §33 |
+| 14 | Terrain Mobility Pass 6 — hydrology | Waterways/water bodies as a real movement barrier (was silently mislabelled as easy ground) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
+| 15 | Fire-break: water as a natural break edge | Damp ground doesn't carry fire — water-crossing segments cost zero build time instead of being priced as clearable fuel | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 16 | Fire-break: cross-slope (sidehill) safety gate | A distinct NWCG sidehill limit (~45% ≈ 24°) from the along-line uphill limit (~55% ≈ 29°, already gated) — DEM sampled either side of the line, gated independently | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) F2 |
+| 17 | Fire-break: fire history (NAFI) as informational context | Most-recent-fire figure surfaced per line (northern Australia/rangelands coverage); deliberately NOT folded into time/cost — no sourced fuel-age→clearing-rate curve exists to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+
+### Next up
+
+Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Size is rough shirt-sizing (S/M/L), not a time estimate. "Depends on" names a real prerequisite, not just a related area.
+
+| Item | Scope | Size | Depends on | Detail |
+|------|-------|------|------------|--------|
+| End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
+| Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
+| OSM water relations (multipolygon lakes) | Only `way`-tagged water features are fetched today; add relation support | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
+| Vegetation NVIS-first uplift | Explicit `NoData` handling; flag cleared/modified segments distinctly | S | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
+| Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
+| UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
+| Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
+| Restriction siting at a surveyed point | Currently hex-cell resolution, not a specific point — an architecture change to the placement model | L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
+| Agency hand-off | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike | L | — | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 |
+
+### Blocked
+
+Not next regardless of size — each needs something outside this codebase to resolve first.
+
+| Item | Blocked on |
+|------|------------|
+| AFDRS fire danger | BOM Registered User access — a sourcing decision, not effort (see 2026-07-12 update) |
+| Water-point & cadastre advisory layers | Licensing check pending |
+| AI live model verification + eval suite | Needs a deployed model endpoint |
+| VCI/RCI-weighted min-cut capacity | Needs Pass 3's soil layers, not yet sampled |
+| Real entitlement/backend gating for Terrain Mobility | Deliberately deferred pending a release decision — feasibility assessed (§14.1): entitlement source of truth lives in the separate Station Manager repo, and moving compute server-side trades away the offline/interactive properties the field tool depends on |
 
 ## Architecture snapshot
 
@@ -62,6 +92,51 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Fire history (NAFI) surfaced as context, deliberately not
+  wired into the cost model (step 17)**: a third lesson-porting pass from
+  Terrain Mobility. `nafiFireHistoryService.ts` (built for §31, live-verified)
+  is now also queried per fire-break vegetation segment — short-circuits with
+  zero network calls outside NAFI's northern-Australia/rangelands technical
+  extent, so it's a genuine no-op for most of the app's core NSW/VIC/southern-
+  SA userbase, not a wasted request. `AnalysisPanel.tsx` shows the most-
+  recently-burnt figure found along the line. Deliberately stopped short of
+  what the roadmap originally asked for ("wire fuel age into the fuel/time
+  model"): there is no sourced fuel-accumulation-vs-clearing-rate curve to
+  apply, unlike the NWCG/Report 56-grounded fuel-CLASS factors already in the
+  model — inventing one would repeat exactly the "plausible-looking guess"
+  problem `CALCULATION_REVIEW.md` F3 replaced. Surfaced as a fact for the
+  user's own judgement instead; the real numeric integration stays open,
+  blocked on finding a citable source, not on effort (see "Next up"). DEA
+  fractional-cover has the identical live-but-uncalibrated status and was not
+  touched this pass for the same reason.
+
+- **2026-07-27 — Two lessons ported from Terrain Mobility into the primary
+  fire-break calculator (steps 15–16), plus a roadmap cleanup**: reviewing
+  Terrain Mobility's hydrology (§34) and cross-slope work for anything the
+  primary use case was missing turned up two real gaps, both fixed. **(1)
+  Water as a natural break**: NVIS/Mapbox landcover mislabel open water as
+  low-confidence `grassland` — the same root cause §34 fixed for Terrain
+  Mobility's cost model was still live in `vegetationAnalysis.ts`, so a
+  fire-break line crossing a river or lake got costed as ordinary buildable
+  ground. Fixed the same way: real OSM waterway/water-body geometry fetched
+  once per line, crossing segments flagged and excluded from every resource's
+  time/cost — but reframed positively per owner correction: damp ground
+  doesn't carry fire, so this length already IS a break, not a capability
+  gap. `AnalysisPanel.tsx` shows this as a blue informational note, not an
+  amber warning. **(2) Cross-slope (sidehill) safety gate**: F2's along-line
+  slope gate reused NWCG's ~45% *sidehill* figure to justify its own ~25°
+  along-line default, conflating two different NWCG limits (sidehill ~45%/
+  24° vs straight uphill ~55%/29°). Now genuinely measured: DEM sampled
+  either side of the line's own bearing (batched into the existing one-request
+  elevation profile call, no second network round trip), gated independently
+  in `equipmentAnalysis.ts` via a new `resolveMaxSideSlopeDegrees`. Both
+  shipped with test coverage (`api/src/test/analysis.test.ts`) and both
+  packages building clean. **Also**: the roadmap below was reorganised from
+  one sprawling numbered table (several cells had run to a paragraph of
+  history) into Shipped / Next up / Blocked, "Next up" sorted smallest-effort-
+  first with real dependencies noted — the history that used to live in the
+  table itself is either already in an as-built doc or in this changelog.
 
 - **2026-07-27 — Terrain Mobility Pass 6 follow-up: end-to-end review (code,
   UI wiring, mobile)**: full read-through of the hydrology pass (§34) below,
