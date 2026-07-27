@@ -3564,5 +3564,119 @@ value stays flagged end to end.
 
 ---
 
+## 36. Painting is now real hex cells, not circles (2026-07-27)
+
+Owner: *"Instead of the currently very large arbitrary circle shapes. Make
+the small paint a single 100m hex. Medium is 10 and large is 100. Xl is
+1000!"* — followed by *"Ensure the hex grid is the SAME hex grid for
+analysis and the target painting."*
+
+### What changed
+
+`paintedArea.ts`'s `PaintDab` used to be a circle (`{lat, lng, radiusM}`),
+sized from a fixed ON-SCREEN pixel radius converted to ground metres via the
+map's zoom/latitude at paint time — the explicit design from the original
+2026-07-26 request ("options for size of brush that remain consistent as I
+zoom in and out"). Owner decided that design should be replaced outright,
+not layered on.
+
+A dab is now a real cluster of hex cells (`AxialCoord[]`) at a FIXED
+`PAINT_HEX_SIZE_M = 100` circumradius, using the exact same hex math
+(`hexGrid.ts` — `axialToLocal`, `hexCorners`, `localToAxial`) the mobility
+ANALYSIS grid already uses — two new primitives added there:
+- `hexRing(center, radius)` — the standard Red Blob Games hex-ring walk.
+- `hexSpiral(center, count)` — rings 0, 1, 2, … until exactly `count` cells
+  are collected, truncating the last ring deterministically. This is what
+  makes a brush "paint N hexes": `BRUSH_HEX_COUNT = { small: 1, medium: 10,
+  large: 100, xl: 1000 }`, matching the owner's spec exactly (small really is
+  ONE hex; the rest are ×10 jumps).
+
+`dabToTurfPolygon` now unions a dab's hex-cell polygons via ONE
+`@turf/union` call over the whole `FeatureCollection` (turf v7 accepts N
+polygons in one pass, not just 2) rather than a sequential pairwise loop —
+material for an XL dab's 1000 cells. Everything downstream of "a dab is a
+turf polygon" — `applyStrokes` (paint = union, erase = difference, replayed
+in stroke ORDER so erase-then-repaint behaves like a real eraser),
+`resolvePaintedAreaGeometry`, `isInsideResolvedArea` — is **unchanged**; the
+hex rework only touches how one dab's polygon is built, not what happens to
+it afterward.
+
+### Anchoring: why not one global hex tiling
+
+A single, fixed-origin hex tiling was considered and rejected: `toLocal`'s
+metres-per-degree-longitude conversion is only locally accurate near its own
+anchor latitude. A grid anchored at, say, -25° (roughly central Australia)
+would read the SAME nominal "100m" hex as ~20–25% too narrow east-west by
+the time a user is painting near Tasmania or Cape York — real, not
+cosmetic, distortion for something the owner specified as a concrete 100m
+figure.
+
+Fix: each `PaintedArea` (one continuous origin-or-objective blob) anchors
+its OWN local projection at its FIRST dab's raw click point. Every
+subsequent dab in that SAME area reuses that anchor — carried explicitly on
+every `PaintDab` (`anchor: LatLng`) rather than looked up from sibling
+state, so `paintedArea.ts`'s functions stay pure and self-contained, matching
+this module's own established design principle. Hexes within one blob tile
+consistently against each other and stay locally accurate near where the
+user is actually painting; a second, distant blob (e.g. the objective, far
+from the origin) gets its own independently-accurate anchor.
+
+### "Same hex grid" — what it means today, and what it doesn't yet
+
+The analysis grid's size is chosen AFTER painting finishes
+(`chooseHexSize`, adapted to the painted AOI's extent to stay inside the
+~2200–2800 cell compute budget) — a literal single shared SIZE between
+painting and analysis is circular until §35 Slice B's lazy grid removes the
+need to pre-materialise the whole analysis grid up front. Owner's resolution
+when this was raised:
+
+> "Use the newly suggested sizes for the initial paint. Once the system
+> determines compute budget for the scale of the area (combination of user
+> selection of fidelity and scale of area) rework the painted geography to
+> be a consistent hex size with the area. This should be mathematically
+> achievable by breaking down the cells or combining them."
+
+So, today: painting uses the fixed 100m hex tiling above; the analysis grid
+keeps its own independently-sized `chooseHexSize` tiling; membership between
+the two is reconciled by testing each ANALYSIS cell's overlap against the
+resolved PAINTED polygon (real area-overlap, not just a centre-point test —
+see `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` construction) — this
+is the "breaking down or combining cells" the owner described, done via
+geometry (the resolved polygon), not by literally resizing hex tiles.
+**Not yet built**: a "fidelity" selector the user can set that feeds
+`chooseHexSize`'s target cell count (today it's a fixed constant); and,
+longer-term once Slice B lands, making the analysis grid's own size
+configurable/fixed to genuinely match the painting grid rather than being
+independently chosen.
+
+### UI
+
+Cursor ring size is now derived from the brush's fixed ground radius
+(`brushApproxRadiusM`, an equivalent-area circle — not a precise hex shape,
+just enough for an honest "this much ground" preview) converted to on-screen
+pixels at the CURRENT zoom/latitude (`metersPerPixel`) — the inverse of the
+old relationship: the cursor now genuinely grows zooming in and shrinks
+zooming out, correct for a brush whose real-world size is fixed. Fourth
+brush button (`xl`) added to the existing S/M/L row; each button's tooltip
+states its real hex count and size.
+
+### Tests
+
+12 checks in `paintedArea.test.ts` (brush hex counts match spec exactly,
+anchor-sharing within one area, erase/repaint ordering, a far-south paint
+doesn't degrade, `singleDabArea`'s unit-sim replan caller still works), 9 in
+`hexRingSpiral.test.ts` (ring cell counts match the standard 6k formula,
+spiral truncates to an exact count, determinism). All run via `npx tsx`.
+
+`paintedOverlapFraction`/`isPaintedAreaMember` (`mobilityGrid.ts`) are
+exported for testability, but `mobilityGrid.ts` itself transitively imports
+`infrastructureService.ts` → `logger.ts`, which reads `import.meta.env` —
+undefined outside Vite, so it cannot be exercised via a bare `tsx` script the
+way the other terrain modules are. Verified instead via `tsc --noEmit` and a
+full `npm run build`, both clean; a standalone unit test for the pure overlap
+math is tracked as follow-up cleanup rather than blocking this change.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

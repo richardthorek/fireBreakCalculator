@@ -29,7 +29,7 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
-import { PaintDab, PaintedArea, PaintStrokeMode, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
+import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from './terrain/paintedArea';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
@@ -443,11 +443,11 @@ const App: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobilityModeActive]);
-  // Painted areas (owner feedback 2026-07-26): a union of circular dabs laid
-  // down by dragging over the map, not a drawn rectangle — see
-  // terrain/paintedArea.ts. Brush size is a fixed on-screen radius, so it
-  // paints a bigger ground area when zoomed out and a more precise one
-  // zoomed in.
+  // Painted areas (owner feedback 2026-07-26): a union of real hex-cell dabs
+  // laid down by dragging over the map, not a drawn rectangle — see
+  // terrain/paintedArea.ts. Brush size (docs §35) is a FIXED ground hex
+  // count (100m-circumradius hexes; small/medium/large/xl = 1/10/100/1000),
+  // not a screen-relative pixel radius.
   const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
   const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
   const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
@@ -502,12 +502,15 @@ const App: React.FC = () => {
    *  scenario with counter-measures emplaced. */
   const [corridorView, setCorridorView] = useState<'baseline' | 'scenario'>('baseline');
 
-  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
-    const stroke = { mode: mobilityPaintMode, dab };
-    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, stroke]);
-    else setMobilityObjectivePaint(prev => [...prev, stroke]);
+  // MapboxMapView reports only the raw click/drag point; the actual hex dab
+  // is built HERE (docs §35) because it needs the role's EXISTING strokes —
+  // specifically its first dab's anchor (paintedArea.ts's module header) —
+  // which live in this component's state, not the map view's.
+  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', point: { lat: number; lng: number }) => {
+    const setter = role === 'origin' ? setMobilityOriginPaint : setMobilityObjectivePaint;
+    setter(prev => [...prev, { mode: mobilityPaintMode, dab: createHexDab(prev, point, mobilityBrushSize) }]);
     setMobilityResult(null); // a stale result over a changed AOI would mislead
-  }, [mobilityPaintMode]);
+  }, [mobilityPaintMode, mobilityBrushSize]);
 
   const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
     mobilityAbortRef.current?.abort();

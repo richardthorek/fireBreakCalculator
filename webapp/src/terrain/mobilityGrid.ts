@@ -11,10 +11,20 @@
  * Origin/objective areas are PAINTED (docs owner feedback 2026-07-26) — an
  * ordered sequence of paint/erase dabs (paintedArea.ts), not a drawn
  * rectangle — resolved ONCE per area into a single polygon
- * (`resolvePaintedAreaGeometry`) and tested per cell via
- * `isInsideResolvedArea` rather than a simple bbox containment check.
+ * (`resolvePaintedAreaGeometry`) and tested per cell via a real area-overlap
+ * fraction (`isPaintedAreaMember`/`paintedOverlapFraction`), not a bbox or
+ * centre-point check: painting always tiles at a fixed 100m hex size
+ * (paintedArea.ts) while this grid's own hex size is chosen independently
+ * for the scale of the area (`chooseHexSize`), so the two tilings essentially
+ * never line up — "breaking down or combining cells" (docs owner feedback
+ * 2026-07-27), done geometrically rather than by literally re-tiling either
+ * grid.
  */
 
+import type { Polygon, MultiPolygon, Feature } from 'geojson';
+import { intersect } from '@turf/intersect';
+import { area as turfArea } from '@turf/area';
+import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import { LatLng } from '../utils/chainage';
 import {
   makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
@@ -26,7 +36,7 @@ import {
   InfrastructureTrail,
 } from '../utils/infrastructureService';
 import { MobilityGridCell } from './accumulatedCost';
-import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry, isInsideResolvedArea } from './paintedArea';
+import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './paintedArea';
 import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
 import { RoadWayTags } from './roadSpeedModel';
@@ -81,6 +91,38 @@ export interface MobilityGridResult {
    *  target, so a narrow gap or a short-radius obstacle may not survive
    *  being averaged into a bigger cell. */
   usedCoarseGrid: boolean;
+}
+
+/** Real overlap fraction (0..1) between one hex cell's actual polygon and a
+ *  resolved painted-area shape — geodesic area via `@turf/area`/
+ *  `@turf/intersect`, not a projected approximation, since both inputs are
+ *  already plain lng/lat rings. */
+export function paintedOverlapFraction(cellCorners: LatLng[], geom: Polygon | MultiPolygon | null): number {
+  if (!geom) return 0;
+  const ring = [...cellCorners, cellCorners[0]].map(p => [p.lng, p.lat] as [number, number]);
+  const cellPoly = turfPolygon([ring]);
+  const cellAreaM2 = turfArea(cellPoly);
+  if (cellAreaM2 <= 0) return 0;
+  const geomFeature: Feature<Polygon | MultiPolygon> = { type: 'Feature', properties: {}, geometry: geom };
+  let intersection;
+  try {
+    intersection = intersect(featureCollection([cellPoly, geomFeature]));
+  } catch {
+    return 0;
+  }
+  if (!intersection) return 0;
+  return Math.min(1, turfArea(intersection) / cellAreaM2);
+}
+
+/** Minimum area-overlap fraction for an analysis hex to count as part of a
+ *  painted area. Low enough that a patch painted off-centre (rather than
+ *  dead-centre of the cell) still registers, high enough that a cell merely
+ *  brushing the edge of a large painted region doesn't falsely seed the
+ *  whole cell as origin/objective. */
+export const PAINTED_OVERLAP_THRESHOLD = 0.15;
+
+export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | MultiPolygon | null): boolean {
+  return paintedOverlapFraction(cellCorners, geom) >= PAINTED_OVERLAP_THRESHOLD;
 }
 
 /**
@@ -264,8 +306,8 @@ export async function buildMobilityGrid(
   // work, membership testing against the already-resolved shape is cheap.
   const originGeom = resolvePaintedAreaGeometry(origin);
   const objectiveGeom = resolvePaintedAreaGeometry(objective);
-  const originKeys = cells.filter(c => isInsideResolvedArea(c.center, originGeom)).map(c => c.key);
-  const objectiveKeys = cells.filter(c => isInsideResolvedArea(c.center, objectiveGeom)).map(c => c.key);
+  const originKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], originGeom)).map(c => c.key);
+  const objectiveKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], objectiveGeom)).map(c => c.key);
 
   onProgress?.(0.7);
 

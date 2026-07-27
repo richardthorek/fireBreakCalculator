@@ -15,7 +15,10 @@ import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
-import { brushRadiusMeters, applyStrokes, BRUSH_PIXEL_RADIUS, BrushSize, PaintStrokeMode, PaintedArea } from '../terrain/paintedArea';
+import {
+  metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
+  BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
+} from '../terrain/paintedArea';
 import { union } from '@turf/union';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
@@ -23,6 +26,8 @@ import type { Feature, Polygon, MultiPolygon } from 'geojson';
 /** The cached, already-resolved painted shape (see the incremental note by
  *  `originPaintGeomRef`). */
 type PaintedFeature = Feature<Polygon | MultiPolygon> | null;
+
+const BRUSH_LABEL: Record<BrushSize, string> = { small: 'S', medium: 'M', large: 'L', xl: 'XL' };
 
 /**
  * Resolve a painted area against a cached accumulator: extend it when strokes
@@ -163,14 +168,18 @@ interface MapboxMapViewProps {
   mobilityBoxRole?: 'origin' | 'objective' | null;
   onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
   /** Fired for every dab painted (or erased — see mobilityPaintMode) while a
-   *  role is armed. The caller tags the stroke's mode itself. */
-  onMobilityPaintDab?: (role: 'origin' | 'objective', dab: { lat: number; lng: number; radiusM: number }) => void;
+   *  role is armed. This component reports only the raw click/drag POINT —
+   *  the caller (App.tsx) builds the actual hex dab via `createHexDab`,
+   *  since it holds the painted area's existing strokes (needed for the
+   *  area's anchor — see paintedArea.ts's module header) and the current
+   *  brush size. */
+  onMobilityPaintDab?: (role: 'origin' | 'objective', point: { lat: number; lng: number }) => void;
   /** Persistent painted areas — ordered paint/erase stroke sequences,
    *  resolved to one shape and rendered until cleared. */
   mobilityOriginPaint?: PaintedArea;
   mobilityObjectivePaint?: PaintedArea;
-  /** On-screen brush radius class — ground radius is derived from this and
-   *  the map's zoom/latitude at the moment each dab is painted. */
+  /** Brush size — a FIXED ground hex count (`BRUSH_HEX_COUNT`), not a
+   *  screen-relative pixel radius (docs §35). */
   mobilityBrushSize?: BrushSize;
   onMobilityBrushSizeChange?: (size: BrushSize) => void;
   /** Paint vs erase — which kind of stroke the brush lays down next. */
@@ -426,7 +435,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const panOverrideRef = useRef(false);
   const [panOverrideActive, setPanOverrideActive] = useState(false);
   // Live pointer position in SCREEN space, for the brush cursor ring.
-  const [brushCursorPoint, setBrushCursorPoint] = useState<{ x: number; y: number } | null>(null);
+  const [brushCursorPoint, setBrushCursorPoint] = useState<{ x: number; y: number; radiusPx: number } | null>(null);
   // The painting hint is a nudge, not a modal: dismissed by hand, and it
   // re-arms when a role is (re-)selected so it is there when it is useful and
   // gone once the user is clearly getting on with it.
@@ -957,19 +966,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // Terrain Mobility mode — press-drag-to-paint AOI tool (owner feedback
     // 2026-07-26): while a role is armed, mousedown starts a stroke and every
     // subsequent mousemove (throttled by distance so a slow drag doesn't
-    // flood dabs) lays down another dab at the map's CURRENT zoom/latitude —
-    // the whole reason a fixed on-screen brush paints a bigger real area when
-    // zoomed out. mouseup ends the stroke; the role stays armed so the user
-    // can paint several strokes to build up one irregular area, and
-    // dragPan is disabled/enabled by the role-change effect above so a
-    // touch-drag paints instead of panning the map.
+    // flood dabs) lays down another dab. Dabs are now real hex cells at a
+    // FIXED ground size (docs §35) — this component reports only the raw
+    // click point; App.tsx turns it into the actual hex stamp via
+    // `createHexDab`, since building that needs the painted area's existing
+    // strokes (for its anchor) which live in App.tsx's state, not here.
+    // mouseup ends the stroke; the role stays armed so the user can paint
+    // several strokes to build up one irregular area, and dragPan is
+    // disabled/enabled by the role-change effect above so a touch-drag
+    // paints instead of panning the map.
     const paintDabAt = (lngLat: { lat: number; lng: number }) => {
       const role = mobilityBoxRoleRef.current;
       if (!role) return;
-      const zoom = map.getZoom();
-      const radiusM = brushRadiusMeters(mobilityBrushSizeRef.current, lngLat.lat, zoom);
       mobilityLastDabRef.current = { lat: lngLat.lat, lng: lngLat.lng };
-      onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng, radiusM });
+      onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng });
     };
     // A pinch/two-finger-pan gesture must still reach Mapbox's own
     // touchZoomRotate handler (owner feedback 2026-07-26: "a two finger
@@ -996,14 +1006,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const last = mobilityLastDabRef.current;
       // Only add a new dab once the cursor has moved a meaningful fraction
       // of the brush's on-screen size — an unthrottled drag would otherwise
-      // lay down dozens of near-identical dabs per second. The thresholds are
-      // roughly a third of each brush's own on-screen radius, so a stroke
+      // lay down dozens of near-identical dabs per second. The threshold is
+      // ground-fixed now (docs §35: PAINT_HEX_SIZE_M-based, not a screen
+      // pixel constant), converted to on-screen pixels at the CURRENT
+      // zoom/latitude so it still throttles correctly whether zoomed in or
+      // out — roughly a third of the brush's on-screen radius, so a stroke
       // stays continuous (dabs overlap heavily) while a slow drag still does
       // not flood the stroke list.
       const point = map.project([pt.lng, pt.lat]);
       const lastPoint = last ? map.project([last.lng, last.lat]) : null;
       const movedPx = lastPoint ? Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) : Infinity;
-      const thresholdPx = Math.max(6, BRUSH_PIXEL_RADIUS[mobilityBrushSizeRef.current] * 0.45);
+      const brushRadiusPx = brushApproxRadiusM(mobilityBrushSizeRef.current) / metersPerPixel(pt.lat, map.getZoom());
+      const thresholdPx = Math.max(6, brushRadiusPx * 0.45);
       if (movedPx >= thresholdPx) paintDabAt(pt);
     };
     const handlePaintEnd = () => { mobilityPaintingRef.current = false; };
@@ -1029,9 +1043,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     map.on('mousemove', (e: any) => {
       // The brush ring follows the pointer at full frame rate — it IS the
       // cursor, and a throttled cursor reads as broken. Cheap: one screen-space
-      // state update, no projection or re-layout.
+      // state update, no projection or re-layout. Ring radius is now derived
+      // from the brush's FIXED ground size (docs §35) converted to pixels at
+      // this point's zoom/latitude — it genuinely grows zooming in and
+      // shrinks zooming out, the correct behaviour for a real-world-fixed
+      // brush (the old fixed-pixel cursor did the opposite).
       if (mobilityBoxRoleRef.current && e.point) {
-        setBrushCursorPoint({ x: e.point.x, y: e.point.y });
+        const radiusPx = brushApproxRadiusM(mobilityBrushSizeRef.current) / metersPerPixel(e.lngLat.lat, map.getZoom());
+        setBrushCursorPoint({ x: e.point.x, y: e.point.y, radiusPx });
       }
       const now = performance.now();
       if (now - lastCursorEmit < 100) return;
@@ -2731,20 +2750,22 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         </button>
       )}
       {/* Brush cursor (owner, 2026-07-27: "the mouse icon for painting needs
-          to be different, a size appropriate brush"). A ring drawn at the
-          brush's actual on-screen radius, so what you see is exactly the
-          ground the next dab covers — the brush is defined in screen pixels
-          (paintedArea.ts), which is what makes this an honest preview at any
-          zoom rather than an approximation. Pointer-events off so it never
-          intercepts the stroke it is previewing. */}
+          to be different, a size appropriate brush"). A ring approximating
+          the brush's real hex cluster (docs §35: a FIXED ground size —
+          100m-circumradius hexes, brush size sets how many), converted to
+          on-screen pixels at the cursor's own zoom/latitude
+          (`brushCursorPoint.radiusPx`) — genuinely bigger zoomed in, smaller
+          zoomed out, an honest preview of ground coverage at any zoom.
+          Pointer-events off so it never intercepts the stroke it is
+          previewing. */}
       {tacticalMode && mobilityBoxRole && brushCursorPoint && !panOverrideActive && (
         <div
           className={`paint-brush-cursor paint-brush-cursor--${mobilityPaintMode} paint-brush-cursor--${mobilityBoxRole}`}
           style={{
             left: brushCursorPoint.x,
             top: brushCursorPoint.y,
-            width: BRUSH_PIXEL_RADIUS[mobilityBrushSize] * 2,
-            height: BRUSH_PIXEL_RADIUS[mobilityBrushSize] * 2,
+            width: brushCursorPoint.radiusPx * 2,
+            height: brushCursorPoint.radiusPx * 2,
           }}
           aria-hidden
         >
@@ -2807,14 +2828,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           </button>
           {mobilityBoxRole && (
             <div className="mobility-brush-row">
-              {(['small', 'medium', 'large'] as const).map(size => (
+              {(['small', 'medium', 'large', 'xl'] as const).map(size => (
                 <button
                   key={size}
                   type="button"
                   className={`mobility-brush-btn${mobilityBrushSize === size ? ' active' : ''}`}
                   onClick={() => onMobilityBrushSizeChange?.(size)}
+                  title={`${BRUSH_HEX_COUNT[size]} hex${BRUSH_HEX_COUNT[size] === 1 ? '' : 'es'} (${PAINT_HEX_SIZE_M}m each)`}
                 >
-                  {size[0].toUpperCase()}
+                  {BRUSH_LABEL[size]}
                 </button>
               ))}
             </div>

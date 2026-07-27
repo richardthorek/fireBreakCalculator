@@ -53,6 +53,9 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 15 | Fire-break: water as a natural break edge | Damp ground doesn't carry fire — water-crossing segments cost zero build time instead of being priced as clearable fuel | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
 | 16 | Fire-break: cross-slope (sidehill) safety gate | A distinct NWCG sidehill limit (~45% ≈ 24°) from the along-line uphill limit (~55% ≈ 29°, already gated) — DEM sampled either side of the line, gated independently | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) F2 |
 | 17 | Fire-break: fire history (NAFI) as informational context | Most-recent-fire figure surfaced per line (northern Australia/rangelands coverage); deliberately NOT folded into time/cost — no sourced fuel-age→clearing-rate curve exists to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 18 | Slice A — road network graph + routing (core) | Real road graph (nodes/edges from OSM ways, A\* on a road edge set) — box-free by construction, fixes the Lake George "no route" defect for vehicle movement, closes the road-class gap. Speeds from the OSRM car/foot profiles, composed as a ceiling via `min()` with each mover profile's own `roadSpeedKmh`. Wired into BOTH the new road graph and the existing hex-grid onTrail bonus. Proven with a synthetic Lake-George-scale test (route found, genuine detour, control with the connector removed correctly fails) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 19 | Painting is real hex cells, not circles | Brush dabs are now actual hex-cell clusters (100m circumradius, `hexRing`/`hexSpiral` — the same hex math the analysis grid uses) instead of zoom-relative circles; small/medium/large/xl = 1/10/100/1000 hexes. Per-area local anchor avoids whole-country distortion a single global tiling would cause | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
+| 20 | Paint↔analysis grid reconciliation | `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` now test real geodesic area overlap (`@turf/intersect`/`@turf/area`) between each analysis hex and the resolved painted polygon, not just the cell centre — a coarse analysis hex only seeds as origin/objective when a real (≥15%) share of it is actually painted, faithful regardless of the fixed 100m paint-hex size vs. the analysis grid's own `chooseHexSize` result | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 
 ### Next up
 
@@ -60,8 +63,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
-| 🐞 **Slice A — road network graph + routing** | Roads are a *network*, hexes a *tessellation*; today `onTrail` is one per-cell boolean, which is why road class is discarded. A real road graph (nodes/edges from the OSM ways already fetched, A* on a different edge set) is **inherently box-free** — it fixes the Lake George "no route" bug for vehicle movement without any grid rewrite, closes the open road-class gap, and yields the actionable denial output (you block a road; engineering a barrier across open ground is far harder). Speeds from the OSRM car/foot profiles (open, verifiable, keyed to the OSM tags already fetched), composed as a ceiling via `min()` with each profile's existing `roadSpeedKmh`, and user-overridable per class. **Design complete and implementation-ready — see §35 "Slice A" and the handoff checklist** | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 🐞 **Slice B — lazy hex grid, cost budget, corridor stop** | The off-road half. Field-reported (Lake George W→E): the AOI is padded by 20% *of the origin↔objective span*, so a straight run across a long perpendicular obstacle gets almost no room to detour and returns "no route" — unable to distinguish "there is no way" from "I wasn't allowed to look". Lazy grid materialisation under an A* frontier, a **cost budget** (α·C\*, 2× default, user-adjustable) replacing the geometric bound, stop on **2–5 distinct corridors**, two uniform passes (coarse-wide on Terrain-RGB tiles, fine-narrow on chunked DEM), and an honest no-route report that paints the explored frontier | L | Slice A | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 🐞 **Slice B — lazy hex grid, cost budget, corridor stop** | The off-road half. Field-reported (Lake George W→E): the AOI is padded by 20% *of the origin↔objective span*, so a straight run across a long perpendicular obstacle gets almost no room to detour and returns "no route" — unable to distinguish "there is no way" from "I wasn't allowed to look". Lazy grid materialisation under an A* frontier, a **cost budget** (α·C\*, 2× default, user-adjustable) replacing the geometric bound, stop on **2–5 distinct corridors**, two uniform passes (coarse-wide on Terrain-RGB tiles, fine-narrow on chunked DEM), and an honest no-route report that paints the explored frontier | L | Slice A (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Slice A — user-configurable road-speed overrides | The four OSRM-sourced tables (highway/surface/tracktype/smoothness) are implemented and composed correctly, but not yet editable — an edited class should flip to a `user-override` confidence and carry into GIS export/AI briefing, matching the vegetation-override pattern | S/M | Slice A core (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| A "fidelity" selector feeding the analysis grid's target cell count | Owner's paint↔analysis reconciliation answer named "user selection of fidelity" as one input to the eventual analysis hex size, alongside area scale — today `chooseHexSize`'s target count is a fixed constant | S | Paint↔analysis reconciliation (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
 | OSM water relations (multipolygon lakes) | Only `way`-tagged water features are fetched today; add relation support | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
@@ -94,6 +98,58 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Paint↔analysis grid reconciliation shipped (step 20)**: the
+  Next-up item spawned by the painting rework above is now built.
+  `mobilityGrid.ts`'s `originKeys`/`objectiveKeys` used to test each analysis
+  hex's CENTRE point against the resolved painted polygon — coarse near a
+  boundary, since the fixed 100m paint-hex tiling essentially never lines up
+  with the analysis grid's own independently-chosen `chooseHexSize` result.
+  Replaced with a real geodesic area-overlap test (`paintedOverlapFraction`/
+  `isPaintedAreaMember`, using `@turf/intersect`+`@turf/area` on the actual
+  lng/lat rings, no local projection needed): an analysis cell only counts as
+  origin/objective once ≥15% of its own area is actually covered by the
+  painted shape — the "breaking down or combining cells" reconciliation the
+  owner asked for, done geometrically rather than by literally re-tiling
+  either grid. `tsc --noEmit` and `npm run build` both clean.
+
+- **2026-07-27 — Slice A shipped (step 18) and painting reworked to real hex
+  cells (step 19)**: the design recorded in §35 earlier the same day is now
+  built. Road graph (`roadGraph.ts`), A* routing with k-dissimilar
+  alternatives reusing `corridorAnalysis.ts`'s exact iterative-penalty idiom
+  (`roadRouting.ts`), and a sourced road-class speed model from the OSRM
+  car/foot profiles (`roadSpeedModel.ts`) — composed via `min()` with each
+  mover profile's own capability, wired into both the new road graph AND the
+  existing hex-grid `onTrail` bonus (which previously gave every road the
+  identical flat speed regardless of whether it was a motorway or a barely-
+  passable track). `mobilityGrid.ts` now fetches the wider `highway-mobility`
+  set (motorway/trunk/primary included) instead of the fire-break optimizer's
+  set, which excludes them. Proven with a synthetic Lake-George-scale test:
+  a road network with NO direct route, only a detour around the north end,
+  correctly finds it — plus a control proving the test would fail without
+  the connector, the same discipline the hydrology smoke test (§34)
+  established. 42 tests across 5 files, all executed via `tsx`, all passing;
+  webapp build and API suite both clean. Config UI for user-overridable
+  speeds (originally scoped as part of Slice A) is tracked separately in
+  Next-up — the correctness claim doesn't depend on it.
+
+  Mid-session, owner redirected the origin/objective painting brush: "make
+  the small paint a single 100m hex. Medium is 10 and large is 100. Xl is
+  1000!" — replacing the zoom-relative circular dabs from the 2026-07-26
+  design outright, not layering on top. `hexGrid.ts` gained `hexRing`/
+  `hexSpiral` (the same hex math the analysis grid uses, per owner: "ensure
+  the hex grid is the SAME hex grid for analysis and the target painting");
+  `paintedArea.ts` was reworked so a dab is a real cluster of hex cells, not
+  a circle, each `PaintedArea` anchoring its own local projection at its
+  first dab (a single global anchor would distort ~20–25% by the time you're
+  painting near Tasmania — real, not cosmetic). A literal single SIZE shared
+  between painting and the analysis grid stays circular until Slice B's lazy
+  grid removes the need to pre-materialise the whole analysis grid — owner's
+  resolution: paint at the fixed sizes now, reconcile onto the analysis
+  grid's own size by area overlap once it's chosen ("breaking down or
+  combining cells"), tracked as its own Next-up item. 21 more tests (hex
+  ring/spiral math, hex-cell painting incl. erase/repaint ordering and a
+  far-south distortion check), all passing.
 
 - **2026-07-27 — Fire history (NAFI) surfaced as context, deliberately not
   wired into the cost model (step 17)**: a third lesson-porting pass from
