@@ -3119,5 +3119,164 @@ was reviewed and found correctly connected — no further gaps found.
 
 ---
 
+## 35. The bounding box is the bug — lazy grid, cost budget, corridor-count stop (design, 2026-07-27)
+
+**Status: DESIGN ONLY. Not built.** Recorded here before implementation per
+CLAUDE.md's roadmap-first rule.
+
+### The field report
+
+Owner ran a west→east crossing of Lake George, NSW:
+
+> "It didn't find pathway because the lake was taller than the survey grid. If
+> the system had considered an extra bit of space to the north or south it may
+> have found a way."
+
+### The mechanism, confirmed in code
+
+`mobilityGrid.ts:101-112` builds the AOI as the union of the two painted
+areas, padded by **20% of that same span**:
+
+```js
+const padLat = (maxLat - minLat) * 0.2;   // proportional to the span
+```
+
+For a due-west→due-east run, `maxLat - minLat` is only the north–south
+*thickness of the two painted blobs* — perhaps 2 km, so the north–south pad is
+~400 m. Lake George is ~25 km north–south. Every cell in the crossing band is
+water → NO-GO → `extractPath` returns null.
+
+**The padding is proportional to the origin↔objective span, so the geometry
+that most needs room to detour receives the least.** A straight run across a
+long perpendicular obstacle is the worst case for this formula, and it is
+exactly the case a user is most likely to draw.
+
+The failure is not the search — it is that the search was walled in and then
+reported "no route" with no way to distinguish *"there is no way"* from *"I
+was not allowed to look."* That conflation is the real defect; the missing
+route is the symptom.
+
+### Why "just pad more" is not the fix
+
+`chooseHexSize` (line 124-131) sizes hexes to fit ~`TARGET_CELL_COUNT` cells
+*inside whatever box it is given*, coarsening up to 5× to stay under
+`MAX_HEX_CELLS`. Enlarging the box therefore silently **coarsens resolution** —
+firing `usedCoarseGrid` and making cells bigger, the opposite of the owner's
+standing "cells are very large, small landscape features are lost" feedback
+(§34). Padding trades the reported bug for a previously-reported one.
+
+### The design
+
+**1. Lazy grid materialisation — delete the box.**
+Today the entire grid is built first (line 125), then Dijkstra runs inside it.
+Invert that: materialise a hex only when the A* frontier reaches it. The
+explored region then grows organically into whatever shape the terrain
+dictates, and its bounds become an emergent property rather than a declared
+rectangle. The search algorithm was never the problem; the pre-materialised
+grid was.
+
+Owner's framing — *"every cell could spawn off a path finding direction on the
+surrounding cells toward the target… analysed cells organically spread out
+from the starting point based on what they find"* — is best-first search
+(A*). Implemented as a priority queue plus a visited set, not literal
+per-cell spawning (which is exponential).
+
+**2. A cost budget replaces the geometric bound.**
+Two phases:
+- Phase 1: A* to the objective with no geometric limit → best cost `C*`.
+- Phase 2: explore and diversify only within `α · C*`.
+
+That budget is a **travel-time ellipse, not a rectangle**, and it self-sizes:
+an easy run stays tight and cheap; Lake George forces a large `C*`, so the
+budget automatically opens wide enough to admit the north and south ways
+around. The right answer emerges *because* the terrain is hard.
+
+`α = 2.0` default, **user-adjustable** (owner: "2x default with a ui option to
+expand or contract"). Time-based, not distance-based, so a fast road detour
+correctly beats a short cross-country slog.
+
+**3. Stop on corridor count, not path count.**
+Owner: *"the intent is, for any given scenario, identify 2-5 possible travel
+'corridors' (noting dozens of adjacent paths form a corridor)."*
+
+This is the primary termination rule — search until 2–5 **distinct corridors**
+exist, with `α·C*` and a hard cell ceiling as safety bounds behind it. Routes
+staying within a corridor-width of each other are one corridor, not several;
+`corridorField.ts` already bundles on exactly this basis, so this is reuse
+rather than new clustering machinery.
+
+**4. Two passes, uniform hex size within each.**
+Owner asked for adaptive resolution (fine near routes, coarse elsewhere).
+Mixed hex sizes in a single graph break `demDerivatives.ts`'s neighbour plane
+fit, `corridorField.ts`'s smoothing, and `hexGrid.ts`'s adjacency — the
+larger architecture change deferred in §34's Still-open list. Two sequential
+passes deliver the same effect without that break:
+
+- **Pass 1 — coarse, wide.** Lazy A* on coarse hexes under the cost budget.
+  Answers "where can we get through at all?" and finds the corridor bundles.
+- **Pass 2 — fine, narrow.** Lazy A* on fine hexes, materialised only within a
+  band around pass-1's routes. Refines them.
+
+Each pass is internally uniform, so nothing downstream needs to change.
+
+**5. Eager coarse tiles, lazy fine cells.**
+Lazy cells need data on demand, but the search runs **synchronously** inside
+`mobilityWorker.ts`; awaiting a fetch per cell would wreck it. Owner's own
+point — *"load data in large bounding box cells but conduct the travel
+analysis on a much smaller scale"* — resolves this: fetch sample data in
+coarse area tiles (all upstream sampling is already area-batched, one request
+each regardless of cell count — see `mobilityGrid.ts`'s own comment at lines
+33-41) and expand the tile ring outward when the frontier nears an edge. The
+search then pauses at **tile** boundaries, not per cell — a handful of awaits
+rather than thousands.
+
+**6. Honest failure.**
+With no box, an unreachable objective would otherwise expand forever. A hard
+ceiling (max cells / max travel time, both user-configurable per owner) must
+produce *"no route found within N hours of travel, M cells explored"* — and
+paint the explored frontier on the map so the wall that stopped it is
+visible. This is the honesty half of the Lake George bug and matters as much
+as finding the route.
+
+### Compute
+
+Today: ~2200–2800 cells over a rectangle, sampled up front, most never
+usefully touched. Lazy A* materialises far fewer on a straightforward run and
+spends its budget where the terrain demands it — so typical runs should get
+**higher resolution and less total work simultaneously**. Worst case
+(unreachable objective, budget exhausted) is genuinely expensive, hence the
+ceiling above.
+
+### Deliberately NOT in this slice
+
+- **Road-first routing / hybrid road graph.** Owner's original proposal opened
+  with road-network routing (find roads near origin, run driving directions,
+  block and repeat). Correct and valuable — roads are a *network* while hexes
+  are a *tessellation*, and today `onTrail` is a single per-cell boolean,
+  which is precisely why road class is still discarded (§32's largest
+  remaining fidelity gap). A hybrid graph (road edges + hex off-road edges +
+  transfer edges) would close that item too. Scoped out of the first slice by
+  owner decision ("lazy grid only") — it fixes a different problem and is
+  independently shippable.
+- **Mixed-size cells in one graph** — superseded by the two-pass approach
+  above.
+
+### Already shipped — not to be rebuilt
+
+- **Bridges/fords.** §34 already exempts the fording gate where an edge sits
+  on the mapped trail network, matching owner's "roads or tracks over water
+  have bridges or fords." A real road graph would sharpen this from a
+  per-hex boolean to an actual road edge crossing water.
+- **Corridor clustering.** `corridorField.ts` ranks routes into bands and
+  tracks `evidence`; feeding it north/south routes should produce the
+  two-corridor picture directly.
+- **Streaming paint-in.** Frontier expansion is inherently incremental, so the
+  owner's requested "hex grid painted in as pathways are identified" becomes
+  *easier* than today's staged progress. Worker progress channel (§33) and
+  the water reference layer (§34) already exist; roads as a drawn layer are
+  new but the data is already fetched.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
