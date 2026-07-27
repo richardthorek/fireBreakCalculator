@@ -1250,6 +1250,85 @@ halves differently.**
   highest-value attach and the thing that converts the whole model from inference to
   measurement (§7), so it is a genuine deliverable rather than a markup.
 
+### 14.1 Feasibility check against the actual current codebase (2026-07-27)
+
+§14's plan ("server-side entitlement + route-level code-splitting, `suiteAuthService`
+is a known quantity") was written before any of Passes 1–4 existed. Now that they do,
+here is what a real gate concretely requires and what it can and cannot achieve —
+assessed, not built, per the backlog item asking for a feasibility check first.
+
+**Finding 1 — the entitlement source of truth is not in this repo.** `fireBreakEnabled`
+(the existing precedent) is a field on the JSON `GET /api/auth/me` returns from
+**Station Manager** — a separate, sibling repo this codebase calls but does not own
+(`api/src/services/suiteAuthService.ts`, `webapp/src/utils/suiteAuth.ts`). A
+`terrainDenialEnabled` entitlement would need to be added to Station Manager's own
+entitlements schema and org-plan admin UI first. This repo's half is genuinely small
+once that exists — `SuiteUser`/`MeResponse` gain one more boolean field, read exactly
+like `fireBreakEnabled` is today (a few lines in `suiteAuthService.ts` and
+`suiteAuth.ts`) — but **that half cannot ship before the Station Manager change does**,
+so "add a real gate" is a cross-repo dependency, not a same-PR task.
+
+**Finding 2 — there is no mobility-specific backend endpoint to gate.** Server-side
+entitlement enforcement protects a *server-side computation*. Checking `api/src/functions/`
+today: the entire terrain mobility & counter-mobility engine — grid sampling
+orchestration, the accumulated-cost search, `corridorField.ts`, `minCutBarrier.ts`,
+`delayLedger.ts`, the counter-measure catalogue — runs **client-side**, in-browser, via
+a Web Worker (`mobilityWorkerClient.ts`/`mobilityWorker.ts`), calling only the *same*
+shared, unauthenticated elevation/vegetation/infrastructure endpoints fire-break mode
+already uses. The one mobility-*specific* server endpoint that exists as of this pass —
+`POST /api/assistant/mobility-briefing` (§30) — **can** be gated the same way
+`planCreate.ts`'s saved-plans gate already is (require a valid bearer token, check
+`entitlements.terrainDenialEnabled`, 401/403 otherwise): that part is genuinely the
+"known quantity" §14 described. But gating that one endpoint does not protect the
+actual analysis — a client can still run the full corridor/min-cut/delay-ledger
+computation locally without ever calling it, because none of that logic makes a
+network call to anything mobility-specific in the first place.
+
+**Finding 3 — code-splitting raises the bar but is not a hard boundary in a pure SPA.**
+Dynamic `import()`-ing the counter-mobility modules (`counterMeasures.ts`,
+`delayLedger.ts`, `corridorField.ts`, `minCutBarrier.ts` — ~5,000 lines of
+`webapp/src/terrain/*`) behind a runtime entitlement check would stop the code from
+sitting in the main bundle everyone downloads, which is a real, worthwhile improvement
+over today (currently zero split — anyone who loads the page and finds `?ops=1` gets
+the whole engine, as §14 already flags as the accepted POC risk). But the check that
+decides whether to fetch that chunk still runs **in the visitor's own browser**: an
+entitled user's browser fetches the chunk over plain HTTP, and nothing stops that
+response from being saved, and nothing stops a modified client from requesting the
+chunk directly regardless of what the UI's own gate decided. Code-splitting protects
+against a casual "view page source" discovery; it does not protect against a
+motivated one. **The only way to make the counter-mobility logic genuinely
+inaccessible to an unentitled party is to run it server-side**, behind the same
+entitlement check that already protects saved plans.
+
+**Finding 4 — moving the engine server-side is a real architecture change, not a
+gating detail.** The search/corridor/min-cut pipeline runs in a Web Worker specifically
+so the iterative propose → assess → revise loop (§28's baseline/scenario toggle) stays
+interactive — sub-second, no round trip, works with patchy field connectivity. Moving
+it into an Azure Function reintroduces network latency on every "what if I move this
+obstacle" iteration and removes the offline-tolerant operation this product's whole
+premise (docs' opening line: "must work in the field with poor or no reception")
+depends on. That is a genuine, non-trivial trade-off to make deliberately, not a side
+effect of "adding a gate" — it would need its own design pass (what stays client-side
+for responsiveness vs. what moves server-side for protection; whether a hybrid, e.g.
+gating only the counter-measure catalogue/delay-ledger scoring while corridors stay
+client-side, is defensible) before implementation, not folded into this assessment.
+
+**Conclusion:** a real entitlement gate is feasible in the narrow sense §14 described
+(the `suiteAuthService` pattern genuinely is reusable, and IS now applied to the one
+mobility-specific endpoint that exists), but it is **not sufficient on its own** to
+protect the counter-mobility IP, because that IP is not behind any server endpoint
+today. Recommended sequencing, in order: (1) gate `assistant/mobility-briefing` on
+`terrainDenialEnabled` once Station Manager exposes it — cheap, real, and consistent
+with the existing pattern; (2) code-split the counter-mobility modules behind the same
+entitlement check — cheap, raises the casual-discovery bar, still not a hard boundary;
+(3) treat "move the compute server-side" as its own scoped design decision, made
+deliberately against the offline/latency trade-off above, only if the business case for
+a hard boundary (rather than a raised bar) justifies it. Continuing to ship as a
+`?ops=1` POC toggle with the existing residual-risk framing (disclaimer, egress gate
+and fire-product-default-copy unconditional regardless of the toggle) remains a
+legitimate choice until that business case is made — this assessment does not
+recommend building (1)–(3) speculatively ahead of a release decision.
+
 ---
 
 ## 15. POC build plan — 4 passes, on hold pending "go"
