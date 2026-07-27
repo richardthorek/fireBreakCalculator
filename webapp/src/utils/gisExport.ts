@@ -109,17 +109,20 @@ export function toGeoJSON(input: ExportPlanInput): string {
 
 // --- KML / KMZ ---------------------------------------------------------------
 
-const xmlEscape = (s: string): string =>
+// Exported (not just used locally) so other export packs — e.g.
+// mobilityGisExport.ts's KML output for Terrain Mobility results — reuse the
+// exact same escaping/colour/coordinate conventions rather than a second copy.
+export const xmlEscape = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Convert a #rrggbb CSS color to KML aabbggrr. */
-const kmlColor = (hex: string, alpha = 'ff'): string => {
+export const kmlColor = (hex: string, alpha = 'ff'): string => {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
   if (!m) return `${alpha}ffffff`;
   return `${alpha}${m[3]}${m[2]}${m[1]}`.toLowerCase();
 };
 
-const kmlCoords = (coords: LatLng[]): string => coords.map(c => `${c.lng},${c.lat},0`).join(' ');
+export const kmlCoords = (coords: LatLng[]): string => coords.map(c => `${c.lng},${c.lat},0`).join(' ');
 
 export function toKML(input: ExportPlanInput): string {
   const segments = resolveSegments(input);

@@ -1256,6 +1256,8 @@ const App: React.FC = () => {
               speedMultiplier={simSpeedMultiplier}
               onSpeedMultiplierChange={handleSpeedMultiplierChange}
               simElapsedSeconds={simElapsedSeconds}
+              cmPlacements={cmPlacements}
+              cmLedger={cmLedger}
             />
             ) : (
               <CounterMobilityPanel

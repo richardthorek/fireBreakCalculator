@@ -547,6 +547,17 @@
 .cm-effect-degraded { color: var(--tac-slowgo); }
 .cm-effect-displaced { color: var(--tac-nogo); }
 
+.mobility-export-row { margin-top: 10px; }
+.mobility-export-wrap .plan-export-btn {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--tac-text, #d7e4ee);
+}
+.mobility-export-wrap .plan-export-btn:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: var(--tac-accent, #38bdf8);
+}
+
 .mobility-brush-row { display: flex; gap: 6px; }
 .mobility-brush-btn {
   flex: 1;

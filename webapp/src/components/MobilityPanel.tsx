@@ -13,13 +13,17 @@
  * panel shows profile/options and results detail only.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { MOVER_PROFILES, MoverProfile, MoverFamily } from '../terrain/moverProfiles';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
 import { PaintedArea, BrushSize } from '../terrain/paintedArea';
 import { TacticalCoordinateReadout } from './TacticalCoordinateReadout';
 import { AssessmentLog } from './AssessmentLog';
 import { DataConfidenceBadge, ConfidenceTier } from './DataConfidenceBadge';
+import { MobilityExportControls } from './MobilityExportControls';
+import { ExportMobilityInput } from '../utils/mobilityGisExport';
+import { COUNTER_MEASURES } from '../terrain/counterMeasures';
+import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
 
 export interface MobilityPanelProps {
   profileId: string;
@@ -39,6 +43,12 @@ export interface MobilityPanelProps {
   displayMode: 'trafficability' | 'isochrone';
   onDisplayModeChange: (m: 'trafficability' | 'isochrone') => void;
   cursor: { lat: number; lng: number } | null;
+  /** Proposed counter-measure placements and their scored ledger, if any —
+   *  folded into the export pack alongside the corridor/chokepoint/barrier
+   *  results so the exported course of action carries the same numbers the
+   *  Counter-Mobility panel shows (docs §29). */
+  cmPlacements?: CounterMeasurePlacement[];
+  cmLedger?: DelayLedgerEntry[] | null;
 
   // Unit movement simulation (owner "bonus feature", 2026-07-26).
   hasPath: boolean;
@@ -72,8 +82,25 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   displayMode, onDisplayModeChange, cursor,
   hasPath, simRunning, onStartSimulation, onStopSimulation,
   speedMultiplier, onSpeedMultiplierChange, simElapsedSeconds,
+  cmPlacements = [], cmLedger = null,
 }) => {
   const profile = MOVER_PROFILES.find(p => p.id === profileId);
+
+  const exportInput: ExportMobilityInput | null = useMemo(() => {
+    if (!result) return null;
+    return {
+      profile: result.profile,
+      nightMode,
+      usedEstimatedData: result.usedEstimatedData,
+      corridorField: result.corridorField,
+      chokepoints: result.chokepoints,
+      barrier: result.barrier,
+      cells: result.cells,
+      placements: cmPlacements,
+      measures: COUNTER_MEASURES,
+      ledger: cmLedger,
+    };
+  }, [result, nightMode, cmPlacements, cmLedger]);
 
   return (
     <div className="tac-panel mobility-panel">
@@ -175,6 +202,9 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
             >
               Isochrone bands
             </button>
+          </div>
+          <div className="mobility-export-row">
+            <MobilityExportControls exportInput={exportInput} />
           </div>
         </div>
       )}

@@ -2249,9 +2249,91 @@ the live preview**.
 
 Deliberately not built, and not silently dropped: **MCOO overlay + GIS
 export** (the "then scouted and planned in more detail" handoff — corridors
-are now the right shape to export, so this is genuinely next), **assistant
-narrative through the grounding gate**, **VCI/RCI capacity** (blocked on soil
-sampling), and the Tier-1 NAFI/DEA per-cell wiring from §27.
+are now the right shape to export, so this is genuinely next — done in §29),
+**assistant narrative through the grounding gate**, **VCI/RCI capacity**
+(blocked on soil sampling), and the Tier-1 NAFI/DEA per-cell wiring from §27.
+
+## 29. GIS export for the Terrain Mobility appreciation (2026-07-27)
+
+Closes the "MCOO overlay + GIS export" item above: the "this will then be
+scouted and planned in more detail" handoff (§28's framing) needed a real
+mechanism, not just a shape corridors happened to be ready for. Mirrors
+`gisExport.ts`'s exact pattern (GeoJSON/KML/KMZ, provenance stamps, per-feature
+honesty flags) via a new sibling module, `utils/mobilityGisExport.ts`, rather
+than inventing a second export convention — same consumers (QGIS, FireMapper,
+Google Earth), same contract.
+
+**What is exported**, one Feature/Placemark per item, every one carrying
+`provenanceProperties()`/`provenanceStamp()`:
+- **Movement corridors** → one `MultiPolygon` Feature per corridor, built from
+  its own hex cells **undissolved**. Deliberate: a smoothed/dissolved outline
+  would claim a boundary precision the hex grid doesn't have — the same
+  "band, not a line" honesty argument §28 makes for the on-map render applies
+  identically to the exported geometry. Properties carry the same figures the
+  panel card shows (rank, ease class, route count/share, median/fastest time,
+  bottleneck width/abreast/frontage, GO/SLOW/NO-GO fractions) plus a
+  **per-corridor** `estimated_data` flag — some corridors sit entirely on
+  surveyed cells, others don't, so one blanket flag for the whole export would
+  either hide a real caveat or over-warn on clean ground.
+- **Chokepoints** → one `Polygon` Feature per top route-crossing hex cell.
+- **Min-cut barrier** → one `LineString` Feature per severing-cut segment.
+- **Counter-measure placements** → one `LineString` Feature per placed edge.
+  An obstacle is sited *at an edge between two cells* (`delayLedger.ts`'s
+  `segmentFromKey`/`segmentToKey`), so a line between their real centres is
+  what was actually computed — never an invented point partway along it, even
+  for a catalogue measure whose doctrinal `geometry` is `'point'` (that field
+  is carried through as `measure_geometry` so a GIS user still knows what kind
+  of obstacle it doctrinally is). Each placement carries **that measure's own
+  delay-ledger figures** (`delay_imposed_min`, `bypass_delay_min`,
+  `egress_safe`, `egress_warning`) so the exported course of action is backed
+  by the same bypass-rule and egress-gate numbers the Counter-Mobility panel
+  shows, not a stripped subset. A placement whose measure hasn't been scored
+  yet (ledger not run, or run against a different placement set) still
+  exports — flagged `ledger_status: "not_scored"` with null figures, never a
+  stale or invented number.
+- **Mission metadata** — a geometry-`null` Feature (valid GeoJSON per RFC 7946
+  §3.2) carrying mover profile, night mode, and the grid-level
+  `usedEstimatedData` flag, so the file's own top-level properties don't need
+  a nonstandard `FeatureCollection.properties` extension to answer "what was
+  this appreciation run with".
+
+**A stale placement key is skipped, never invented a location for**: if
+`segmentFromKey`/`segmentToKey` doesn't resolve against the `cells` passed in
+(e.g. a placement kept in state after a fresh appreciation resampled the
+grid), that placement is silently dropped from the export rather than guessing
+coordinates — verified in the smoke test below.
+
+**Shapefile is deliberately NOT offered** for this pack (unlike
+`gisExport.ts`'s route export, which does offer it): mixing
+MultiPolygon/Polygon/LineString in one set needs `@mapbox/shp-write`'s
+per-geometry-type file-splitting to be confirmed working for MultiPolygon
+specifically, which wasn't verified — left out rather than shipped untested.
+GeoJSON/KML/KMZ already cover this module's stated consumers.
+
+**UI**: a new `MobilityExportControls` component (mirrors
+`ExportImportControls`'s dropdown exactly — menu, per-format handler, loading
+state, outside-click dismiss) sits in `MobilityPanel.tsx`'s RESULT section,
+enabled once a result exists. It folds in `cmPlacements`/`cmLedger` from the
+Counter-Mobility tab (passed down from `App.tsx`, both optional/default-empty
+so the appreciation tab's export works standalone before any measure is even
+proposed).
+
+**Verification**: `tsc --noEmit`/`npm run build` clean. A standalone Node
+smoke test (real modules, disposable vite lib-mode entry, deleted before
+commit — this session's established pattern) built a small synthetic flat-open
+grid, ran the real `buildCorridorField`/`computeChokepoints`/
+`computeMinCutBarrier`/`computeDelayLedger` over it, then exported: asserts
+feature counts match source data 1:1 for every category, corridor geometry is
+`MultiPolygon` with a boolean `estimated_data`, the mission feature has null
+geometry and a real provenance stamp, a scored placement's delay/bypass/egress
+figures are present and typed correctly, an *unscored* placement (ledger
+passed as `null`) exports with `ledger_status: "not_scored"` and null figures
+rather than stale ones, a placement with a key not present in the grid is
+dropped rather than mislocated, and the KML contains all four folders plus the
+scored placement's delay text. Live import into QGIS/Google Earth is not
+verified in this sandbox (no Mapbox token, no GIS desktop tooling here) —
+**confirm on the live preview / a real GIS client** before relying on the
+exported files operationally.
 
 ---
 
