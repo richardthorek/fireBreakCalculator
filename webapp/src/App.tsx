@@ -34,6 +34,7 @@ import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/m
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
 import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
+import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY } from './terrain/mobilityGrid';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
@@ -430,6 +431,11 @@ const App: React.FC = () => {
   }, [mobilityModeActive]);
   const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
   const [mobilityNightMode, setMobilityNightMode] = useState(false);
+  // Docs §35 — analysis depth (owner: "let the user select a scale of
+  // something like 'quick' to 'fine' for analysis depth"). Not persisted —
+  // matches the other per-run toggles in this mode (nightMode, movementView)
+  // rather than the road-speed overrides' brigade-calibrate-once case.
+  const [mobilityFidelity, setMobilityFidelity] = useState<MobilityFidelity>(DEFAULT_MOBILITY_FIDELITY);
   // Docs §35 Slice A config UI — user-edited road-class speeds, persisted so
   // a brigade/unit calibrates once (owner requirement: "configurable... for
   // fine grained adjustments"). Loaded lazily (useState initializer) rather
@@ -576,6 +582,7 @@ const App: React.FC = () => {
         signal: controller.signal,
         behaviourSpreadId,
         roadSpeedOverrides,
+        fidelity: mobilityFidelity,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
         onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
         onStage: stage => { if (!controller.signal.aborted) setMobilityStage(stage); },
@@ -606,7 +613,7 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides, mobilityFidelity]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
@@ -1447,6 +1454,8 @@ const App: React.FC = () => {
               onNightModeChange={setMobilityNightMode}
               roadSpeedOverrides={roadSpeedOverrides}
               onRoadSpeedOverridesChange={setRoadSpeedOverrides}
+              fidelity={mobilityFidelity}
+              onFidelityChange={setMobilityFidelity}
               boxRole={mobilityBoxRole}
               onBoxRoleChange={setMobilityBoxRole}
               originPaint={mobilityOriginPaint}

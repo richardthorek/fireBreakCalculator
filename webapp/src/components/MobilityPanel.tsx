@@ -30,6 +30,7 @@ import { BEHAVIOUR_SPREADS, MovementEnsembleResult } from '../terrain/movementSi
 import { CorridorField } from '../terrain/corridorField';
 import { RoadSpeedOverrides } from '../terrain/roadSpeedModel';
 import { RoadSpeedOverridePanel } from './RoadSpeedOverridePanel';
+import { MobilityFidelity } from '../terrain/mobilityGrid';
 
 export interface MobilityPanelProps {
   profileId: string;
@@ -38,6 +39,8 @@ export interface MobilityPanelProps {
   onNightModeChange: (v: boolean) => void;
   roadSpeedOverrides: RoadSpeedOverrides;
   onRoadSpeedOverridesChange: (overrides: RoadSpeedOverrides) => void;
+  fidelity: MobilityFidelity;
+  onFidelityChange: (f: MobilityFidelity) => void;
   boxRole: 'origin' | 'objective' | null;
   onBoxRoleChange: (role: 'origin' | 'objective' | null) => void;
   originPaint: PaintedArea;
@@ -99,6 +102,12 @@ const FAMILY_LABEL: Record<MoverFamily, string> = {
   generic: 'Generic width/weight class',
 };
 
+const FIDELITY_HINT: Record<MobilityFidelity, string> = {
+  quick: 'Coarsest hexes, fastest turnaround — good for a first look or a very long-range crossing.',
+  standard: 'The default balance of resolution and run time for a typical local-to-regional analysis.',
+  fine: 'Finest resolution this run\'s range allows. A country-scale crossing at this setting can genuinely take minutes — it still runs entirely on THIS device, not a shared server, so it only costs your own session.',
+};
+
 function groupByFamily(profiles: MoverProfile[]): [MoverFamily, MoverProfile[]][] {
   const order: MoverFamily[] = ['foot', 'auFleet', 'adf', 'generic'];
   return order.map(f => [f, profiles.filter(p => p.family === f)]);
@@ -107,6 +116,7 @@ function groupByFamily(profiles: MoverProfile[]): [MoverFamily, MoverProfile[]][
 export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   profileId, onProfileChange, nightMode, onNightModeChange,
   roadSpeedOverrides, onRoadSpeedOverridesChange,
+  fidelity, onFidelityChange,
   boxRole, onBoxRoleChange, originPaint, objectivePaint,
   brushSize, onBrushSizeChange, onClearPaint,
   running, logLines, result,
@@ -179,6 +189,29 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       </div>
 
       <RoadSpeedOverridePanel overrides={roadSpeedOverrides} onOverridesChange={onRoadSpeedOverridesChange} />
+
+      {/* Analysis depth (docs §35, owner: "let the user select a scale of
+          something like 'quick' to 'fine' for analysis depth"). The cell
+          budget scales with the real origin<->objective distance AND this
+          setting — a short local run behaves the same at any fidelity, a
+          long-range one gets noticeably more/fewer cells (and time) per
+          notch. Re-running at a different fidelity is the "more/fewer
+          cells" control — no separate UI needed for that. */}
+      <div className="tac-panel mobility-section">
+        <div className="tac-label">ANALYSIS DEPTH</div>
+        <select
+          className="tac-mono mobility-select"
+          value={fidelity}
+          onChange={e => onFidelityChange(e.target.value as MobilityFidelity)}
+        >
+          <option value="quick">Quick — coarser, fastest</option>
+          <option value="standard">Standard</option>
+          <option value="fine">Fine — finer resolution, slower</option>
+        </select>
+        <div className="tac-hint">
+          {FIDELITY_HINT[fidelity]}
+        </div>
+      </div>
 
       {/* How the simulated movers behave. This is the model's biggest
           assumption and it belongs in front of the user BEFORE the run, not

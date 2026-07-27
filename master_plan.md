@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 — Slice B (scoped) shipped: the Lake George defect is now fixed for off-road/foot movement too; see Recent Updates for the dated history.
+**Last Updated**: July 27, 2026 — distance-scaled cell budget + quick/standard/fine analysis-depth selector shipped; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -60,6 +60,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 22 | Slice A.9 — road-network routing wired into the LIVE app (found + fixed) | Discovered mid-step-21: `roadGraph.ts`/`roadRouting.ts` were correct in isolation (Lake George synthetic test) but never called by the running app — only the hex-grid search ever ran, so Lake George was still genuinely unfixed for vehicles in the product. `roadRouteSearch.ts` (new) wires a box-free road route into `mobilityAppreciation.ts` for vehicle profiles, additive alongside the hex-grid search, drawn on the map as its own amber line. Re-proven end to end with `PaintedArea` inputs (what the app actually has), not raw graph node IDs | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 23 | Slice B (scoped) — expand-and-retry, v1 (SUPERSEDED by step 24 — see below, the base quantity it scaled was still broken) | First attempt at the off-road fix: `boundsPadFactor` retry at escalating factors. Proven against a SYNTHETIC grid built directly from local coordinates, which is exactly why it missed that the real padding formula was still broken — see step 24 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 24 | Slice B (scoped) — square distance-based box + targeted frontier-edge growth (the actual fix) | Live-tested by the owner against the real Lake George, step 23 still failed. `computePaddedBounds` now targets a SQUARE box sized off the real origin↔objective distance (haversine), proven to clear the real 28km lake on attempt 1; `frontierTouchedEdges`/`growBoundsTowardFrontier` extend specifically the box edge the reachable frontier actually hit on any further retry, not a fresh uniform box. Also fixed the `nearestCellKey` seed-set fallback (was an arbitrary array index) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 25 | Distance-scaled cell budget + quick/standard/fine analysis-depth selector | `TARGET_CELL_COUNT`/`MAX_HEX_CELLS` were fixed constants regardless of AOI size — a continental run got the same budget as a 2km local one, just coarsened into huge hexes, with no user control. `computeCellBudget(spanM, fidelity)` scales the target sub-linearly (sqrt) with the real origin↔objective distance, per a `quick`/`standard`/`fine` tier each with its own base, growth rate and hard ceiling ('fine' allows up to 50,000 cells at continental range — a deliberate, bounded "few minutes is fine" choice, not an accident). New `ANALYSIS DEPTH` selector in the Terrain panel; re-running at a different tier IS the "more/fewer cells" control | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 
 ### Next up
 
@@ -68,7 +69,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| A "fidelity" selector feeding the analysis grid's target cell count | Owner's paint↔analysis reconciliation answer named "user selection of fidelity" as one input to the eventual analysis hex size, alongside area scale — today `chooseHexSize`'s target count is a fixed constant | S | Paint↔analysis reconciliation (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
@@ -103,6 +103,37 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-27 — Distance-scaled cell budget + analysis-depth selector
+  (step 25)**: owner, after confirming the Lake George fix: *"Work out a
+  sensible scaling of the cell budget for distance noting big areas should
+  take longer. Let the user select a scale of something like 'quick' to
+  'fine' for analysis depth. Processing half the country for a few minutes
+  is perfectly acceptable once we have the data locally. This is processing
+  on their device still?"* — confirmed yes: the whole search
+  (`mobilityWorker.ts` — Dijkstra, k-dissimilar routes, movement ensemble,
+  chokepoints, min-cut) runs in a Web Worker in the user's OWN browser tab;
+  only source data (elevation/vegetation/roads/water) crosses the network.
+
+  `TARGET_CELL_COUNT`/`MAX_HEX_CELLS` were fixed constants (2200/2800)
+  regardless of AOI size — a continental run got the identical budget as a
+  2km local one, silently coarsened into huge hexes, no user control over
+  the trade-off. `computeCellBudget(spanM, fidelity)` (new) scales the
+  target SUB-LINEARLY (sqrt of the distance ratio, not linear/area-
+  proportional — that would demand millions of cells at continental range)
+  with the real origin↔objective distance, per a `quick`/`standard`/`fine`
+  tier — each with its own base count, growth rate, AND hard ceiling
+  (quick 5,000 / standard 12,000 / fine 50,000 cells), so a country-scale
+  'fine' run is a deliberate, bounded choice matching the owner's own "a
+  few minutes is acceptable", not an unbounded accident. 'standard' at
+  short range (<=10km) reproduces the original fixed budget almost exactly
+  — no behaviour change for a typical local analysis. New "ANALYSIS DEPTH"
+  selector in the Terrain panel; re-running at a different tier IS the
+  "user can re-run with more or less cells" control the owner asked for —
+  no separate mechanism needed.
+
+  7 new tests (`cellBudgetScaling.test.ts`); full regression green;
+  tsc/build clean.
 
 - **2026-07-27 — Slice B (scoped) was STILL broken; found and fixed live
   against the real Lake George (step 24)**: owner live-tested step 23's

@@ -3710,6 +3710,74 @@ value stays flagged end to end.
   the water reference layer (§34) already exist; roads as a drawn layer are
   new but the data is already fetched.
 
+### Distance-scaled cell budget + analysis-depth selector (2026-07-27)
+
+Owner: *"Work out a sensible scaling of the cell budget for distance noting
+big areas should take longer. Let the user select a scale of something like
+'quick' to 'fine' for analysis depth. Processing half the country for a few
+minutes is perfectly acceptable once we have the data locally. This is
+processing on their device still?"*
+
+**Confirmed: yes, entirely client-side.** The whole search this budget
+governs — the multi-source Dijkstra (`accumulatedCost.ts`), the
+k-dissimilar route search (`corridorAnalysis.ts`), the movement ensemble,
+chokepoints, min-cut — runs inside `mobilityWorker.ts`, a Web Worker in the
+user's OWN browser tab. Only source DATA (elevation/vegetation/roads/water)
+is fetched over the network; the graph search itself never leaves the
+device. A heavier 'fine' run at long range costs that one user's own
+session — their tab may become less responsive while it runs (the existing
+progress channel, §33, is what makes that wait legible) — not shared
+backend capacity.
+
+**What changed:** `TARGET_CELL_COUNT`/`MAX_HEX_CELLS` were fixed constants
+(2200/2800) regardless of AOI size. `chooseHexSize` would still fit
+*whatever* box it was given into that same budget — so a continental-scale
+run got identical cell counts to a 2km local one, just silently coarsened
+into unusably big hexes, with no user control over the trade-off.
+
+`computeCellBudget(spanM, fidelity)` (new, `mobilityGrid.ts`) replaces the
+fixed pair with a formula that scales with the REAL origin↔objective
+distance:
+
+```
+distanceRatio = max(1, spanM / 10km)
+target = tier.base * (1 + (sqrt(distanceRatio) - 1) * tier.growthRate)
+target = min(round(target), tier.hardCeiling)
+```
+
+Growth is deliberately SUB-LINEAR (`sqrt`, not `distanceRatio` directly) —
+a naive linear or area-proportional (~distance²) scaling would demand
+millions of cells at continental range, which no browser tab can search in
+"a few minutes". Three fidelity tiers (`MobilityFidelity`), each with its
+own base, growth rate and hard ceiling:
+
+| Tier | Base (≤10km) | Growth rate | Hard ceiling |
+|---|---|---|---|
+| `quick` | 900 | 0.6 | 5,000 |
+| `standard` (default) | 2,200 (= old fixed value) | 1.0 | 12,000 |
+| `fine` | 4,000 | 2.2 | 50,000 |
+
+`standard` at short range (≤10km) reproduces the original fixed budget
+almost exactly (2200 target / ~2800 max) — no behaviour change for a
+typical local analysis. `fine`'s 50,000-cell ceiling at continental range
+is what makes the owner's "a few minutes is acceptable" a deliberate,
+bounded choice rather than an unbounded one. The hard ceiling applies
+regardless of fidelity ONCE the sqrt-scaled target would exceed it — this
+is the actual runtime bound, not a soft target.
+
+**UI:** new "ANALYSIS DEPTH" selector in the Terrain panel (`quick` /
+`standard` / `fine`), threaded through `MobilityAppreciationOptions.fidelity`
+→ every `buildMobilityGrid` call (initial attempt AND targeted retries —
+the retry mechanism's attempt count/growth behaviour is unchanged by
+fidelity, only the cell budget is). Re-running at a different tier IS the
+owner's requested "user can re-run with more or less cells after an initial
+result" — no separate control needed.
+
+Tests: `cellBudgetScaling.test.ts` — short-range parity with the original
+constants, sub-linear growth, per-tier hard ceilings holding at continental
+distance, tier ordering at both short and long range, 'fine' giving a
+genuinely higher baseline (not just steeper scaling) even locally.
+
 ---
 
 ## 36. Painting is now real hex cells, not circles (2026-07-27)

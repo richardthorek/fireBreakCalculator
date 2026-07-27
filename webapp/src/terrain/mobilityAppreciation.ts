@@ -32,6 +32,7 @@
 
 import {
   buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
+  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY,
 } from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
@@ -89,8 +90,15 @@ export interface MobilityAppreciationResult {
    *  genuinely isn't one. False means the very first, smallest-padding
    *  attempt already settled it. */
   usedExpandedSearch: boolean;
-  /** How many `boundsPadFactor` attempts this run actually made (1..4). */
+  /** How many `boundsPadFactor` attempts this run actually made (1..6). */
   searchAttempts: number;
+  /** Analysis depth this run used (docs §35) — surfaced so the panel can
+   *  show the current setting and a "re-run at finer resolution" control. */
+  fidelity: MobilityFidelity;
+  /** The cell count `computeCellBudget` targeted for the decisive attempt —
+   *  paired with `cellCount` (the actual count, which can differ slightly
+   *  after `chooseHexSize` rounds to a real hex tiling). */
+  targetCellCount: number;
   /** The genuinely distinct origin→objective routes this run analysed. These
    *  are the ANALYSIS substrate; `corridorField` below is what gets
    *  presented (owner 2026-07-26: "use the individual pathways to analyse,
@@ -184,6 +192,13 @@ export interface MobilityAppreciationOptions {
    *  corridorAnalysis.ts, the road-route search) picks it up from the
    *  same set-once call — no threading required beyond this one option. */
   roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Analysis depth (docs §35, owner: "let the user select a scale of
+   *  something like 'quick' to 'fine'"). Defaults to 'standard' — matches
+   *  the original fixed cell budget exactly for a typical short-range run.
+   *  Governs `buildMobilityGrid`'s cell budget on every attempt (initial AND
+   *  targeted retries); does not change the retry count/growth behaviour
+   *  itself. */
+  fidelity?: MobilityFidelity;
 }
 
 export async function runMobilityAppreciation(
@@ -198,6 +213,7 @@ export async function runMobilityAppreciation(
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
     planRestrictions = true,
     roadSpeedOverrides,
+    fidelity = DEFAULT_MOBILITY_FIDELITY,
   } = options;
   const profile = getMoverProfile(profileId);
   if (!profile) {
@@ -256,7 +272,7 @@ export async function runMobilityAppreciation(
     attemptsUsed = i + 1;
     let samplingAnnounced = false;
 
-    const buildOptions: Parameters<typeof buildMobilityGrid>[2] = { signal };
+    const buildOptions: Parameters<typeof buildMobilityGrid>[2] = { signal, fidelity };
     if (grid) {
       // Targeted growth from the PREVIOUS attempt's own box + where its
       // frontier actually got to — not a fresh symmetric box.
@@ -296,7 +312,10 @@ export async function runMobilityAppreciation(
     grid = attemptGrid;
 
     if (i === 0) {
-      onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
+      onLog?.(
+        `SAMPLING ${grid.cells.length} CELLS (${fidelity.toUpperCase()} FIDELITY, TARGET ${grid.targetCellCount}) · ` +
+        `ORIGIN SEED SET ${grid.originKeys.length} CELLS`
+      );
     } else {
       // docs §35 — the targeted-retry response to the Lake George defect: a
       // search that found no route tries again, extended specifically
@@ -594,6 +613,8 @@ export async function runMobilityAppreciation(
     roadRoute,
     usedExpandedSearch,
     searchAttempts: attemptsUsed,
+    fidelity: grid.fidelity,
+    targetCellCount: grid.targetCellCount,
     dissimilarRoutes,
     corridorField,
     optimiserCorridorField,

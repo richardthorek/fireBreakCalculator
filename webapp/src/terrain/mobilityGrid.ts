@@ -42,15 +42,10 @@ import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
 import { RoadWayTags } from './roadSpeedModel';
 
-// Raised from 1400/1800 (2026-07-26, "think about a larger area"): both
-// upstream sampling calls this grid depends on are already area-batched, not
-// per-point (sampleVegetation resolves from at most two area requests once
-// enough points are uncached; sampleElevationsCached batches misses in one
-// call) — the "hundreds of upstream requests" risk that keeps NAFI/DEA point
-// queries capped small (docs §10.7, dataLayers/nafiFireHistoryService.ts)
-// does not apply here. The search itself is O(cells log cells) in a Web
-// Worker, and demDerivatives.ts's per-cell plane fit + one MFD accumulation
-// pass are the same order — both stay well under a second at this size.
+// Historical fixed values (2026-07-26, "think about a larger area"), now the
+// 'standard' fidelity tier's baseline at CELL_BUDGET_REFERENCE_DISTANCE_M —
+// see `computeCellBudget` below for why a fixed constant regardless of AOI
+// size stopped being the right model.
 const TARGET_CELL_COUNT = 2200;
 const MAX_HEX_CELLS = 2800;
 const TRAIL_SNAP_M = 30;
@@ -60,6 +55,82 @@ const TRAIL_SNAP_M = 30;
  *  a different tolerance for the same class of problem (a linear OSM feature
  *  vs a hex grid). */
 const WATER_SNAP_M = 30;
+
+/**
+ * Analysis-depth control (docs §35, owner 2026-07-27: "work out a sensible
+ * scaling of the cell budget for distance noting big areas should take
+ * longer. Let the user select a scale of something like 'quick' to 'fine'
+ * for analysis depth. Processing half the country for a few minutes is
+ * perfectly acceptable once we have the data locally.").
+ *
+ * "Once we have the data locally" is worth being explicit about: the ENTIRE
+ * search this budget governs — the multi-source Dijkstra, the k-dissimilar
+ * route search, the movement ensemble, chokepoints, min-cut — runs in
+ * `mobilityWorker.ts`, a Web Worker in the user's OWN browser tab. Only the
+ * source DATA (elevation/vegetation/roads/water) is fetched over the
+ * network; the graph search itself never leaves the device. A heavier
+ * 'fine' run at long range costs that one user's own session — their tab
+ * may become less responsive while it runs (the existing progress channel,
+ * §33, is what makes that wait legible) — not shared backend capacity.
+ */
+export type MobilityFidelity = 'quick' | 'standard' | 'fine';
+
+export const DEFAULT_MOBILITY_FIDELITY: MobilityFidelity = 'standard';
+
+/** Distance below which the cell budget is just the tier's own base — a
+ *  typical local analysis (a few km) behaves identically regardless of
+ *  fidelity; the scaling below only kicks in for genuinely large areas. */
+const CELL_BUDGET_REFERENCE_DISTANCE_M = 10_000; // 10 km
+
+interface FidelityTier {
+  /** Cell target at/below the reference distance. 'standard' matches the
+   *  original fixed TARGET_CELL_COUNT exactly, so existing short-range
+   *  behaviour is unchanged by adding this control. */
+  baseTargetCellCount: number;
+  /** How aggressively the target grows with distance beyond the reference
+   *  — multiplies the (sqrt-scaled) growth term; see `computeCellBudget`. */
+  growthRate: number;
+  /** Hard ceiling on cell count regardless of distance — the actual bound
+   *  on worst-case runtime. This is what makes a country-scale 'fine' run a
+   *  deliberate, bounded choice (owner's own "a few minutes is acceptable")
+   *  rather than an unbounded accident. */
+  hardCeiling: number;
+}
+
+const FIDELITY_TIERS: Record<MobilityFidelity, FidelityTier> = {
+  quick: { baseTargetCellCount: 900, growthRate: 0.6, hardCeiling: 5_000 },
+  standard: { baseTargetCellCount: TARGET_CELL_COUNT, growthRate: 1.0, hardCeiling: 12_000 },
+  fine: { baseTargetCellCount: 4_000, growthRate: 2.2, hardCeiling: 50_000 },
+};
+
+export interface CellBudget {
+  targetCellCount: number;
+  maxHexCells: number;
+}
+
+/**
+ * The cell budget for one attempt, scaling with the REAL distance between
+ * origin and objective. Growth is SUB-LINEAR (sqrt of the distance ratio)
+ * on purpose — a naive linear or area-proportional (~distance²) scaling
+ * would demand millions of cells at continental range, which no browser tab
+ * can search in "a few minutes"; sqrt growth keeps the budget increasing
+ * meaningfully with distance while `hardCeiling` still bounds the worst
+ * case per tier. Below `CELL_BUDGET_REFERENCE_DISTANCE_M`, `fidelity` still
+ * matters (each tier's own `baseTargetCellCount` differs — 'fine' is
+ * genuinely higher-resolution even locally, not just "scales up more"),
+ * just not the distance term.
+ */
+export function computeCellBudget(spanM: number, fidelity: MobilityFidelity): CellBudget {
+  const tier = FIDELITY_TIERS[fidelity];
+  const distanceRatio = Math.max(1, spanM / CELL_BUDGET_REFERENCE_DISTANCE_M);
+  const scaled = tier.baseTargetCellCount * (1 + (Math.sqrt(distanceRatio) - 1) * tier.growthRate);
+  const targetCellCount = Math.min(Math.round(scaled), tier.hardCeiling);
+  // Keeps the ~1.27x headroom the original TARGET_CELL_COUNT/MAX_HEX_CELLS
+  // pair had (2800/2200), so the existing coarsening loop in
+  // `buildMobilityGrid` has the same relative slack it always did.
+  const maxHexCells = Math.min(Math.round(targetCellCount * 1.27), tier.hardCeiling);
+  return { targetCellCount, maxHexCells };
+}
 
 export interface MobilityGridResult {
   cells: MobilityGridCell[];
@@ -112,6 +183,13 @@ export interface MobilityGridResult {
    *  where it hit"). */
   boundsSw: LatLng;
   boundsNe: LatLng;
+  /** Analysis depth this attempt actually used (docs §35) — honesty field so
+   *  the log/UI can say plainly which trade-off was in effect, and so a
+   *  "re-run at finer resolution" control can show the CURRENT setting. */
+  fidelity: MobilityFidelity;
+  /** The cell target `computeCellBudget` resolved `fidelity` and the real
+   *  origin<->objective distance into for this attempt. */
+  targetCellCount: number;
 }
 
 /** Real overlap fraction (0..1) between one hex cell's actual polygon and a
@@ -375,9 +453,13 @@ export async function buildMobilityGrid(
      *  frontier actually touched on a failed attempt, rather than
      *  re-deriving a fresh symmetric box from `boundsPadFactor`. */
     explicitBounds?: PaddedBounds;
+    /** Analysis depth (docs §35) — defaults to 'standard', matching the
+     *  original fixed cell budget exactly for a typical short-range run.
+     *  See `computeCellBudget`'s own doc comment. */
+    fidelity?: MobilityFidelity;
   } = {}
 ): Promise<MobilityGridResult | null> {
-  const { signal, onProgress, boundsPadFactor = 0.2, explicitBounds } = options;
+  const { signal, onProgress, boundsPadFactor = 0.2, explicitBounds, fidelity = DEFAULT_MOBILITY_FIDELITY } = options;
 
   const originBounds = paintedAreaBounds(origin);
   const objectiveBounds = paintedAreaBounds(objective);
@@ -390,6 +472,18 @@ export async function buildMobilityGrid(
   if (!padded) return null;
   const { boundsSw, boundsNe } = padded;
 
+  // Cell budget scales with the REAL origin<->objective distance and the
+  // caller's chosen fidelity (docs §35) — NOT a fixed constant regardless of
+  // AOI size, which either wasted resolution on small areas or silently
+  // coarsened large ones into unusably big hexes with no user control over
+  // the trade-off.
+  const originCentroidForBudget: LatLng = { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 };
+  const objectiveCentroidForBudget: LatLng = { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 };
+  const spanMForBudget = calculateDistance(
+    originCentroidForBudget.lat, originCentroidForBudget.lng, objectiveCentroidForBudget.lat, objectiveCentroidForBudget.lng
+  );
+  const { targetCellCount, maxHexCells } = computeCellBudget(spanMForBudget, fidelity);
+
   const center: LatLng = { lat: (boundsSw.lat + boundsNe.lat) / 2, lng: (boundsSw.lng + boundsNe.lng) / 2 };
   const proj = makeProjection(center);
   const boxMinLocal = toLocal(proj, boundsSw);
@@ -400,10 +494,10 @@ export async function buildMobilityGrid(
   const height = max.y - min.y;
   if (width < 10 || height < 10) return null;
 
-  let size = chooseHexSize(Math.max(width, height), Math.min(width, height) / 2, TARGET_CELL_COUNT);
+  let size = chooseHexSize(Math.max(width, height), Math.min(width, height) / 2, targetCellCount);
   let cellsRaw = generateBoxHexes(min, max, size);
   let tries = 0;
-  while (cellsRaw.length > MAX_HEX_CELLS && tries < 5) {
+  while (cellsRaw.length > maxHexCells && tries < 5) {
     size *= 1.25;
     cellsRaw = generateBoxHexes(min, max, size);
     tries++;
@@ -575,6 +669,8 @@ export async function buildMobilityGrid(
     boundsPadFactor,
     boundsSw,
     boundsNe,
+    fidelity,
+    targetCellCount,
     usedCoarseGrid: tries > 0,
   };
 }
