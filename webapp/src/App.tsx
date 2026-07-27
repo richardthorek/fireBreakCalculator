@@ -1206,6 +1206,7 @@ const App: React.FC = () => {
             mobilityRunning={mobilityRunning}
           />
           <MapEmptyState
+            key={mobilityModeActive ? 'terrain' : 'firebreak'}
             initialLocationSettled={initialLocationSettled}
             distance={fireBreakDistance}
             tacticalMode={mobilityModeActive}

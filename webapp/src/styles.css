@@ -4596,6 +4596,25 @@ button:focus {
   animation: gentlePulse 2s ease-in-out infinite;
 }
 
+/* 2026-07-27 field report: no manual dismiss existed at all, which reads
+ * exactly like a stuck overlay even when the auto-hide state is fine. */
+.map-empty-state-dismiss {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary, #94a3b8);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.map-empty-state-dismiss:hover,
+.map-empty-state-dismiss:focus-visible {
+  color: var(--color-text-primary, #f5f7fa);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 @keyframes gentlePulse {
   0%, 100% {
     opacity: 0.9;
