@@ -71,6 +71,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 33 | Small-AOI detour padding, profile-scaled (revised — see step 35) | Owner-reported defect: a short (~1-2km) hill crossing never considered an equally short detour 1-2km north/south, because the search box is sized proportionally to the direct span — short trips got proportionately short padding regardless of whether a much better route sat just outside it. `minDetourPadM(profile)` (mobilityGrid.ts) adds a floor derived from the mover profile's own sourced road speed over a time budget, so a vehicle gets proportionately more search room than foot for the identical trip. Originally shipped uncapped (1 hour); revised to a 15-minute cap same day — see step 35 for why | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39/§41 |
 | 34 | Mapbox-tile road fallback widened to Terrain Mobility | Owner, live-testing near Lake George: a real, signed highway along the shoreline was painted NO-GO end to end, and asked whether the road network visible on the map tiles is real queryable data or just an image. Answer: real vector geometry, already loaded zero-network/CORS-free/offline-capable (`mapboxTrails.ts`) — but that fast-path was restricted to the fire-break `'highway'` kind and never applied to Terrain Mobility's `'highway-mobility'` kind. Root cause confirmed by this same session's own console evidence: Overpass unreachable for that area left `onTrail` false everywhere, and the hard slope gates in `mobilityCost.ts` (unlike the vegetation/hydrology gates) carry no mapped-road exemption at all, so a narrow lake-edge shelf read NO-GO from raw DEM alone. Fixed: `extractCorridorTrails` now takes a `kind`, widening to `MOBILITY_CLASSES` (motorway/trunk/primary included) with a Mapbox-class → OSM-highway translation table; honest stated cost is a highway-class-only speed ceiling (Mapbox carries no surface/tracktype/smoothness) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
 | 35 | Page-hang regression fixed: detour floor capped, cell budget fixed, onTrail slope exemption added | Owner reported the page hanging around 50% progress until the browser offered to kill the tab. Traced to step 33's uncapped 1-hour detour floor: for a fast vehicle profile on a short trip it inflated the search box to ~120km wide, which fed the box-free road-graph route search (`findVehicleRoadRoute`, runs synchronously on the main thread, only ever "cheap" for a small bbox) — at 120km wide that's a whole regional road network, freezing the UI. Three fixes: (1) detour floor capped to a 15-minute budget (was 1hr uncapped) — still profile-scaled, but bounded; (2) cell budget (`buildMobilityGrid`) now derives from the ACTUAL padded box, not the raw origin↔objective distance — a second bug the detour floor exposed, where a fixed budget stretched over a much bigger box ballooned hex size everywhere; (3) the hard climb/cross-slope gates now exempt onTrail cells (both `edgeMobilityCost` and `classifyCellTerrain`) — the actual root cause of "the whole ridge is red instead of the legitimate gap", and on inspection the IDENTICAL root cause as step 34's Lake George case: vegetation/hydrology already exempt a mapped road, the slope gates never did | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
+| 36 | Road-graph route fused into chokepoint/corridor analysis | Owner proposed a hex grid aligned to roads at fine width, cross-country filling in around it — challenged instead: a hex grid, even fine, still quantizes the road (the identical failure step 35 just fixed), while the box-free road-graph search already routes over the road's EXACT geometry with zero quantization. Owner's real instinct ("roads are known good, treat them specially") is already Slice A's own philosophy; the actual gap was that the road route sat only as an ADDITIVE display, never counted by chokepoint/corridor analysis. `roadRouteToDissimilarRoute` (new) converts the road route into the same shape the hex-optimiser's/ensemble's own routes use, resampled to even spacing and snapped onto the hex grid, then folded into both corridor-building calls in `mobilityAppreciation.ts` — so chokepoints and corridor bands now count the real road route as a genuine avenue. Stated, not fused: the ensemble's own per-step movement (still hex-quantized with a road-affinity bias) and min-cut (still hex-adjacency-only) — both real, larger follow-up work | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
 
 ### Next up
 
@@ -80,7 +81,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 |------|-------|------|------------|--------|
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Fuse road-graph routes into movement simulation / min-cut (partially done — see step 36) | Step 36 fused the road route into chokepoint ranking and corridor-band clustering (via a `DissimilarRoute` conversion). Still open: the movement ensemble's own per-step decision logic (`movementSimulation.ts`) still walks hex-to-hex with a road-affinity bias rather than the road graph's exact edges, and min-cut (`minCutBarrier.ts`) is still hex-adjacency-only — a real mixed hex+road-graph adjacency across these core search primitives, not a route-list injection | M | step 36 (✅, partial) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
 | Full OSM water-relation topology (multi-part outer rings, inner/island holes) | Step 31 shipped the common case (single outer ring per relation); proper multipolygon reassembly (stitching split outer rings, subtracting inner rings as real holes) is a stated, deliberate scope cut, not forgotten | S | step 31 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
@@ -116,6 +117,44 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Road-graph route fused into chokepoint/corridor analysis
+  (step 36)**: owner proposed a hex grid aligned to the road network at a
+  fine width (~50m), coarser elsewhere for cross-country, so passable roads
+  would show up cleanly and cross-country corridors could fill in around
+  them — "roads are known good... why not just complete the grid over the
+  top of them", asked to be challenged if wrong.
+
+  Challenged and redirected: a hex grid, even a fine one aligned to roads,
+  is still a quantized approximation subject to the exact slope-averaging
+  failure step 35 just fixed. The box-free road-graph search (Slice A,
+  already shipped) already solves this better — it routes over the road's
+  EXACT OSM/Mapbox vertex geometry, zero quantization. The owner's real
+  instinct ("treat roads specially, let cross-country fill in around them")
+  is already that module's own philosophy (docs §35: "roads are a network;
+  hexes are a tessellation"), just implemented as a graph, not a grid.
+
+  The genuine gap: that road-graph route was ADDITIVE — a separate display
+  alongside the hex search — never counted by chokepoint ranking or
+  corridor-band clustering, which only ever saw hex-grid routes. This was
+  already the tracked "fuse road-graph routes" roadmap item. Fixed (the
+  chokepoint/corridor half of it): `roadRouteToDissimilarRoute` (new,
+  `roadRouteSearch.ts`) converts the road route into the same shape the
+  hex-optimiser's k routes and the ensemble's tracks already use — resampled
+  to 64 evenly-spaced points first (real road waypoint spacing is very
+  uneven, and the corridor code samples by index fraction assuming roughly
+  even spacing), then snapped onto the caller's own hex grid. Folded into
+  both corridor-building calls in `mobilityAppreciation.ts`, so chokepoints
+  and corridor bands now count the real road route as a genuine avenue.
+
+  Stated, not attempted this pass: the movement ensemble's own per-step
+  logic still walks hex-to-hex with a road-affinity bias, not the road
+  graph's literal edges; min-cut is still hex-adjacency-only. Both need a
+  genuinely mixed hex+road-graph adjacency across several core search
+  primitives — real, larger follow-up work, not silently claimed as done.
+  6 new tests (`roadRouteFusion.test.ts`); full existing road/corridor/
+  chokepoint suite still green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42.
 
 - **2026-07-28 — Mapbox-tile road fallback widened to Terrain Mobility
   (step 34)**: live-testing near Lake George, owner reported a real, signed

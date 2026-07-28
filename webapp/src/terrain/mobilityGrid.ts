@@ -233,7 +233,7 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
  *  whatever `generateBoxHexes` happened to emit first/last — typically a
  *  corner of the bounding box, nowhere near where the user actually
  *  painted. Squared distance only (comparison, not a real length). */
-function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
+export function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
   let bestKey = cells[0].key;
   let bestD = Infinity;
   for (const c of cells) {

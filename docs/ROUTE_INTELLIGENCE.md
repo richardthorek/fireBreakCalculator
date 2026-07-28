@@ -4682,5 +4682,74 @@ in both packages.
 
 ---
 
+## 42. Road-graph route fused into chokepoint/corridor analysis (2026-07-28)
+
+Owner, challenging their own idea after §40/§41: proposed a hex grid aligned
+to the road network at a fine width (~50m), coarser elsewhere for
+cross-country terrain/vegetation, so "we would literally see passable paths
+aligned to the roads and the cross-country corridors can be filled in as the
+focus of the broader analysis... roads are known good, why not just complete
+the grid over the top of them."
+
+**Challenged and redirected, not built as proposed.** A hex grid, even a
+fine one aligned to roads, is still a quantized approximation of the road —
+subject to the identical slope-averaging failure mode §41 just fixed (a hex
+straddling a curve or a cutting still blends road-bed with verge). The
+box-free road-graph search (`roadRouteSearch.ts`, Slice A, already built)
+already solves this better: it routes over the road's EXACT OSM/Mapbox
+vertex geometry, zero quantization, with the road-class speed model applied
+per real way segment. The owner's underlying instinct — "roads are known
+good, treat them specially, let cross-country fill in around them" — is
+exactly Slice A's own philosophy (docs §35: *"Roads are a network; hexes are
+a tessellation"*), just already implemented as a graph rather than a grid.
+
+**The real gap, confirmed and fixed instead:** the road-graph route was
+*additive* — a separate, correctly-labelled display alongside the hex-grid
+search — never counted by chokepoint ranking or corridor-band clustering,
+which only ever saw the hex-optimiser's own k routes or the movement
+ensemble's tracks. This was already the tracked "Fuse road-graph routes into
+movement simulation / chokepoints / min-cut" roadmap item (master_plan.md,
+sized M).
+
+**What's fused this pass:** `roadRouteToDissimilarRoute` (roadRouteSearch.ts,
+new) converts a `RoadRouteSearchResult` into the SAME `DissimilarRoute` shape
+(`{ keys, path, totalSeconds }`) the hex-optimiser's k-cheapest routes and
+the ensemble's tracks already use — resampling the route to 64 evenly-
+spaced-by-distance points first (real road waypoint spacing is very uneven;
+`corridorField.ts`'s `sampleRoutePoint` samples by INDEX fraction, assuming
+roughly even spacing the way a hex-stepped search path naturally has), then
+snapping each point onto the caller's own hex grid via `nearestCellKey`
+(exported from mobilityGrid.ts for this). `mobilityAppreciation.ts` now
+folds this converted route into BOTH corridor-building calls (the
+ensemble-driven one via `routesOverride`, and the optimiser-driven one via a
+second, cheap re-cluster pass once the road route is known) — so `dissimilarRoutes`
+(what chokepoints are computed from) and the presented corridor bands both
+include the real road route as a genuine avenue, either forming its own
+distinct corridor or merging into an existing one if it's genuinely the same
+ground.
+
+**Stated, NOT fused this pass** (see `roadRouteSearch.ts`'s own updated
+header comment): the movement ensemble's per-STEP decision logic
+(`movementSimulation.ts`) still walks hex-to-hex with a road-affinity
+preference — a simulated mover "on" a road is still hex-quantized, just
+biased to stay there, not literally walking the road graph's exact edges.
+Min-cut (`minCutBarrier.ts`) is completely unchanged — its max-flow graph is
+the hex adjacency graph only, so a counter-mobility cut still targets a
+whole hex rather than an exact road choke point. Both remain real, larger
+follow-up work (would need the core search primitives across several files
+to accept a genuinely mixed hex+road-graph adjacency, not just a route-list
+injection) — not attempted here, and not silently claimed as done.
+
+**Tests** (`roadRouteFusion.test.ts`, 6 checks): the conversion produces a
+real route with monotonic cumulative time ending at the input's total;
+consecutive duplicate hex keys are deduplicated; degenerate inputs (too few
+waypoints, empty cell array) return null, not a crash; and the fusion itself
+— injecting the converted route into `computeChokepoints` genuinely makes
+its cells count toward chokepoint ranking, verified against the route's own
+key set (not coincidental overlap). Full existing road/corridor/chokepoint
+suite still green; `tsc`/build clean.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
