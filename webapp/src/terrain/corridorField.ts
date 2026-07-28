@@ -162,6 +162,19 @@ export interface Corridor {
    *  data — surfaced per corridor so a caveat lands on the specific corridor
    *  it applies to, not just once for the whole run. */
   usedEstimatedData: boolean;
+  /** The single FASTEST analysed route that actually uses this corridor —
+   *  the one real hairline worth drawing for it, rather than every route in
+   *  the analysed set (docs §28 addendum, 2026-07-28: "the individual white
+   *  lines of the considered paths don't work as a visualisation... they
+   *  need to be consolidated to show substantive differences in the
+   *  pathways / corridors, not show that every piece of ground has been
+   *  considered"). Null only when the corridor's own `routeCount` is
+   *  somehow 0 (should not happen in practice — a corridor without any
+   *  route crossing it would not have formed). Still rides hex cell
+   *  centres; presentation-side smoothing/road-snapping (`pathRefinement.ts`)
+   *  is applied by the caller, not here — this module stays geometry-of-
+   *  record, not a rendering decision. */
+  representativeRoute: DissimilarRoute | null;
 }
 
 /**
@@ -772,6 +785,9 @@ function buildCorridor(
     noGoFraction,
     easeClass,
     usedEstimatedData: comp.some(k => byKey.get(k)?.vegEstimated ?? false),
+    representativeRoute: usingRoutes.length > 0
+      ? usingRoutes.reduce((best, r) => (r.totalSeconds < best.totalSeconds ? r : best))
+      : null,
   };
 }
 

@@ -158,6 +158,29 @@ test('CONTROL: sealing one gap collapses the field back down toward a single cor
     `expected the single-detour control to stay close to one corridor, got ${controlField!.corridors.length}`);
 });
 
+test('every corridor carries a representativeRoute — one real line to draw, not the whole analysed set (§28 addendum, 2026-07-28)', () => {
+  for (const c of field!.corridors) {
+    assert.ok(c.representativeRoute, `FAILED: corridor ${c.id} (rank ${c.rank}) has no representativeRoute`);
+    assert.ok(c.representativeRoute!.path.length > 1, `FAILED: corridor ${c.id}'s representativeRoute has a degenerate path`);
+  }
+});
+
+test('representativeRoute is genuinely the FASTEST route using that corridor, not an arbitrary one', () => {
+  // `fastestTravelSeconds` and `representativeRoute` are both derived from
+  // the SAME `usingRoutes` list inside `buildCorridor` — so they must agree
+  // by construction. This is the meaningful internal-consistency check;
+  // re-deriving "which routes use this corridor" independently here would
+  // test a different (broader, cell-overlap-only) definition than the one
+  // `buildCorridor` actually uses (its own per-cluster `routesByCell`), which
+  // is not the same thing near a cluster boundary.
+  for (const c of field!.corridors) {
+    assert.strictEqual(
+      c.representativeRoute!.totalSeconds, c.fastestTravelSeconds,
+      `FAILED: corridor ${c.id}'s representativeRoute (${c.representativeRoute!.totalSeconds}s) does not match its own fastestTravelSeconds (${c.fastestTravelSeconds}s)`
+    );
+  }
+});
+
 if (process.exitCode === 1) {
   console.error(`\nCorridor clustering did NOT hold.`);
 } else {

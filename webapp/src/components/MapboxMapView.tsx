@@ -2179,9 +2179,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   //   3. `mobility-corridor-spine` — only the highest-density cells, drawn
   //      brighter. This is where movement is most concentrated, which is the
   //      thing a commander actually reads off a corridor.
-  //   4. `mobility-corridor-routes` — the individual analysed pathways as
-  //      faint hairlines, kept on top exactly as before: the corridors are
-  //      what you read, the routes are what they were computed from.
+  //   4. `mobility-corridor-routes` — ONE representative line per corridor
+  //      (its own fastest analysed route), not the full analysed set (owner,
+  //      2026-07-28: "the individual white lines of the considered paths
+  //      don't work as a visualisation... they end up being 'triangles'
+  //      between the grid centres and they don't follow the road geometry
+  //      ... consolidate to show substantive differences, not that every
+  //      piece of ground has been considered"). `App.tsx`'s
+  //      `corridorRoutesForMap` refines each one first (`pathRefinement.ts`
+  //      — snap onto a nearby road where the route genuinely follows one,
+  //      corner-smooth the rest) before it ever reaches this layer, so what
+  //      renders here is already the presentation line, not raw hex-centre
+  //      steps.
   //
   // `highlightedCorridorId` dims every band but one, so picking a card in the
   // panel answers "which of these is that" unambiguously.

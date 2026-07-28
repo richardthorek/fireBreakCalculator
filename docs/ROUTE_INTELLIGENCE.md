@@ -4135,6 +4135,83 @@ evidence of that combination was found during this investigation, but it is
 a different code path from the one fixed here and is noted rather than
 assumed clear.
 
+### Corridor route rendering was analysis noise, not presentation (§28 addendum)
+
+Owner, live: *"the individual white lines of the considered paths don't
+work as a visualisation. Because of the hex grid they end up being
+'triangles' between the grid centres and they don't follow the road
+geometry. Roads should allow for a 'hop on' and off type movement. I think
+they need to be consolidated to show substantive differences in the
+pathways / corridors, not show that every piece of ground has been
+considered, even smoothing between hex grid so units moving directly in
+straight lines aren't zig zagging to follow the hex. I'd expect to see the
+2-5 clear corridors outlined and shaded appropriately over the top of the
+ground... We need to reduce the analysis noise and show insights rather
+than raw thinking."*
+
+**What was wrong:** `App.tsx`'s `corridorRoutesForMap` drew up to 24 raw
+route polylines — a sample of the full k-dissimilar analysed set — each
+stepping hex CENTRE to hex CENTRE with no smoothing and no relationship to
+mapped road geometry, regardless of how many corridors those routes had
+actually clustered into. §28's own original design intent ("the analysis is
+done on individual routes... the PRESENTATION is a corridor") was correct in
+principle but not honoured in the map layer: the routes were still being
+rendered as if they were the presentation.
+
+**Fix — one representative route per corridor, refined the same way the
+fire-break optimizer's own routes already are:**
+
+1. `corridorField.ts`'s `Corridor` gains `representativeRoute` — the single
+   FASTEST analysed route that actually uses that corridor (derived from the
+   same `usingRoutes` list `fastestTravelSeconds` already comes from, so the
+   two are guaranteed consistent by construction). One field, computed once,
+   where the corridor/route relationship is already known — not re-derived
+   in the presentation layer.
+2. `App.tsx`'s `corridorRoutesForMap` now maps EACH CORRIDOR (typically 2-5,
+   per the owner's own target) to its one `representativeRoute`, refined
+   through `pathRefinement.ts`'s `refinePath` — the SAME module the
+   fire-break optimizer already uses to turn a coarse hex-centre path into a
+   realistic line (docs — path refinement, "coarse hex line → realistic
+   line"). This is a straight reuse, not a parallel implementation: snap
+   onto a nearby mapped road when the route genuinely runs alongside one
+   (`snapPathToTrails`, unchanged), corner-smooth everywhere else.
+3. **"Some corridors may be overland"** (owner, live follow-up) — snapping
+   alone only ever fixes the ON-ROAD portion of a route; a stretch with no
+   nearby trail at all previously kept its raw zig-zag untouched even after
+   snapping ran. `pathRefinement.ts` gains `smoothFreeVertices` and a new
+   opt-in `RefineOptions.cornerSmoothingIterations` (default 0 — the
+   fire-break optimizer's existing behaviour is UNCHANGED unless it opts
+   in): a moving-average pass over vertices NOT snapped to a trail, each
+   pass pulling a free vertex toward its two neighbours' midpoint. A snapped
+   vertex is read as a neighbour (so smoothing blends INTO the road join
+   rather than leaving a visible kink) but is never itself moved, and
+   endpoints never move. `App.tsx` passes `cornerSmoothingIterations: 2`.
+4. `mobilityAppreciation.ts`'s `MobilityAppreciationResult` gains `roadWays`
+   (mirrors the already-shipped `waterFeatures` field exactly) — the raw
+   road/track geometry `pathRefinement.ts`'s snap step needs, previously
+   available to the search's own `onTrail` classification but never
+   surfaced past it.
+
+**Not attempted in this pass:** smoothing the corridor BAND's own outline
+(`mobility-corridor-edge`, a real `@turf/union` of the corridor's hex cells
+— already a genuine dissolved shape, not a drawn approximation, but still
+has the hex tessellation's own blocky edge at close zoom). The routes were
+the specific, named complaint ("triangles… don't follow the road
+geometry"); the outline is a smaller, lower-priority polish item and is not
+tracked as fixed here.
+
+Tests: `pathSmoothing.test.ts` (8 checks — corner smoothing measurably
+reduces a synthetic zig-zag's total turning angle, never moves either
+endpoint or a locked/snapped vertex, the fire-break optimizer's default
+`cornerSmoothingIterations: 0` behaviour is unchanged, an overland path with
+zero trail data still smooths, and a genuinely road-following stretch still
+snaps onto the road rather than being blurred off it even with smoothing
+enabled) and two new checks in `corridorClustering.test.ts` (every corridor
+carries a non-null `representativeRoute`; it agrees with the corridor's own
+`fastestTravelSeconds`). Full regression green (only the pre-existing,
+unrelated live-data `nvis-fidelity.test.ts` fails); `tsc --noEmit` and
+`npm run build` clean.
+
 ---
 
 ## Update policy

@@ -68,6 +68,13 @@ export interface MobilityAppreciationResult {
    *  for drawing the actual mapped river/lake shape on the map, not just the
    *  hex cells it influenced. */
   waterFeatures: InfrastructureTrail[];
+  /** The raw OSM road/track geometry this run fetched (docs §35's
+   *  `highway-mobility` set) — kept alongside `waterFeatures` for the SAME
+   *  reason: presentation-layer route smoothing (`pathRefinement.ts`'s
+   *  snap-to-trail step, reused for corridor representative routes, docs
+   *  §28 addendum 2026-07-28) needs the actual road LINE geometry, not just
+   *  the per-cell `onTrail` boolean the search itself used. */
+  roadWays: InfrastructureTrail[];
   cellCount: number;
   reachableCount: number;
   noGoCount: number;
@@ -505,6 +512,7 @@ export async function runMobilityAppreciation(
     infrastructureAvailable: grid.infrastructureAvailable,
     hydrologyAvailable: grid.hydrologyAvailable,
     waterFeatures: grid.waterFeatures,
+    roadWays: grid.roadWays,
     cellCount: grid.cells.length,
     reachableCount, noGoCount, slowGoCount,
     path, roadRoute, usedExpandedSearch,
@@ -700,6 +708,7 @@ export async function runMobilityAppreciation(
     infrastructureAvailable: grid.infrastructureAvailable,
     hydrologyAvailable: grid.hydrologyAvailable,
     waterFeatures: grid.waterFeatures,
+    roadWays: grid.roadWays,
     cellCount: grid.cells.length,
     reachableCount,
     noGoCount,

@@ -168,7 +168,8 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                 <Swatch color="#94a3b8" kind="line">Corridor 4+</Swatch>
                 {present.corridorRoutes && (
                   <Swatch color="#e2e8f0" kind="line">
-                    Hairlines — the individual tracks the band was built from
+                    Thin line — that corridor's fastest analysed route, snapped to any
+                    road it follows and smoothed elsewhere
                   </Swatch>
                 )}
               </ul>

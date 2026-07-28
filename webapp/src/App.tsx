@@ -29,6 +29,7 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
+import { refinePath } from './utils/pathRefinement';
 import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from './terrain/paintedArea';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
@@ -713,14 +714,37 @@ const App: React.FC = () => {
     return displayedEnsemble.cells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
   }, [showTransitField, displayedEnsemble]);
 
-  /** Only a sample of the simulated tracks is drawn as hairlines: 240 of them
-   *  would be a grey wash that hides the very band they are evidence for. */
+  /**
+   * ONE representative route per corridor, road-snapped and corner-smoothed
+   * — not a wash of every analysed route (owner, 2026-07-28: "the
+   * individual white lines of the considered paths don't work as a
+   * visualisation. Because of the hex grid they end up being 'triangles'
+   * between the grid centres and they don't follow the road geometry...
+   * they need to be consolidated to show substantive differences in the
+   * pathways / corridors, not show that every piece of ground has been
+   * considered"). Previously drew up to 24 raw, un-refined route polylines
+   * stepping hex-centre to hex-centre regardless of what any of them meant
+   * for presentation; now draws at most one per corridor (so "2-5 clear
+   * corridors" is also "2-5 lines", never more), each the corridor's own
+   * FASTEST analysed route (`representativeRoute`, `corridorField.ts`),
+   * refined the SAME way the fire-break optimizer's own routes already are
+   * (`pathRefinement.ts`): densified, snapped onto a nearby mapped road
+   * where the route actually runs alongside one, and corner-smoothed
+   * everywhere else — "some corridors may be overland" (owner), so a
+   * missing nearby road must not stop the line from smoothing, and a route
+   * that genuinely traces a road must not be blurred off it.
+   */
   const corridorRoutesForMap = useMemo(() => {
-    const routes = displayedMovementCorridorField?.routes ?? [];
-    if (routes.length <= 24) return routes;
-    const stride = Math.ceil(routes.length / 24);
-    return routes.filter((_, i) => i % stride === 0);
-  }, [displayedMovementCorridorField]);
+    const corridors = displayedMovementCorridorField?.corridors ?? [];
+    const roadWays = mobilityResult?.roadWays ?? [];
+    return corridors
+      .map(c => c.representativeRoute)
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .map(r => ({
+        path: refinePath(r.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
+          .map(p => ({ lat: p.lat, lng: p.lng })),
+      }));
+  }, [displayedMovementCorridorField, mobilityResult]);
 
   const restrictionsForMap = useMemo(() => {
     if (!mobilityResult?.restrictionPlan) return null;
