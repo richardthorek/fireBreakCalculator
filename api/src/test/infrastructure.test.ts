@@ -100,6 +100,45 @@ async function run() {
   check("'highway-mobility' still includes track (rural AU coverage)",
     mobilityQuery.includes('track'));
 
+  // --- OSM water relations (docs §35 addendum, 2026-07-28) — a real,
+  // live-confirmed gap: multipolygon water bodies (Lake Tuggeranong,
+  // Gungahlin Pond — both Canberra-region, both `relation` not `way` in
+  // real OSM data) were previously never requested or parsed at all, so a
+  // profile with no fording capability could cross one uncontested. Shape
+  // below matches Overpass's REAL `out geom` response for a relation
+  // (confirmed live): `members[].geometry` is inlined directly, no
+  // recursion needed. ---
+  _clearInfrastructureCache();
+  setFetch(async (_url: string, init?: any) => {
+    lastBody = typeof init?.body === 'string' ? decodeURIComponent(init.body) : '';
+    return okJson({
+      elements: [
+        {
+          type: 'relation',
+          tags: { natural: 'water', name: 'Lake Testown' },
+          members: [
+            { type: 'way', role: 'outer', geometry: [
+              { lat: -35.0, lon: 149.0 }, { lat: -35.0, lon: 149.1 }, { lat: -34.9, lon: 149.1 }, { lat: -35.0, lon: 149.0 },
+            ] },
+            { type: 'way', role: 'inner', geometry: [
+              { lat: -34.98, lon: 149.05 }, { lat: -34.98, lon: 149.06 }, { lat: -34.97, lon: 149.05 },
+            ] },
+            { type: 'way', role: 'outer', geometry: [{ lat: -35.0, lon: 149.0 }] }, // too short, must be dropped
+            { type: 'node', role: 'admin_centre' }, // not a way, must be dropped
+          ],
+        },
+      ],
+    });
+  });
+  const relationResult = await fetchCorridorInfrastructure(-35.1, 148.9, -34.8, 149.2, 'water' as any);
+  check("'water' query now also requests relation[natural=water]", lastBody.includes('relation["natural"="water"]'));
+  check('relation outer member becomes a water trail, inner member does not',
+    relationResult.trails.length === 1, `got ${relationResult.trails.length} trail(s)`);
+  check('relation trail carries the relation\'s own name and kind=water',
+    relationResult.trails[0]?.name === 'Lake Testown' && relationResult.trails[0]?.kind === 'water');
+  check('relation trail carries the outer member\'s full geometry (lon→lng mapped)',
+    relationResult.trails[0]?.coords.length === 4 && relationResult.trails[0]?.coords[0].lng === 149.0);
+
   setFetch(origFetch as any);
   if (failures > 0) {
     console.error(`\n${failures} infrastructure check(s) failed`);

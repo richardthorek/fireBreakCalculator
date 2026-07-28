@@ -4259,6 +4259,63 @@ holes and `MultiPolygon` are walked correctly). Full regression green (only
 the pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
 `tsc --noEmit` and `npm run build` clean.
 
+### OSM water relations — the closed gap, fixed ahead of the 1.0 demo (§34/§35)
+
+Picked up out of Next-up order, ahead of smaller-effort items still queued:
+demo-risk assessment (owner: "one more push then we're done for a 1.0
+demo... pick the item most critical for that purpose") found this was the
+single highest-probability repeat of the exact bug class this whole pass
+had been chasing — the Lake George road-crossing fix earlier in this
+section, and the original hex-grid padding defect before it, were both
+"water that should block movement doesn't." Checked directly whether that
+class of failure had any other open instances rather than assuming it was
+fully closed: **confirmed live, via Overpass, that Lake Tuggeranong and
+Gungahlin Pond — both in the SAME Canberra region this project's own test
+scenarios (Lake George, M23, Sutton, Bywong) already live in — are mapped as
+OSM `relation`, not `way`.** `fetchCorridorWaterways`'s query only ever
+requested `way["natural"="water"]`, so either of those (or any other
+multipolygon lake) would have been invisible to the hydrology gate entirely
+— a real, high-probability repeat of the just-fixed bug class in front of
+the exact geography already being demoed, not a hypothetical edge case.
+
+**Fix, both the client and the server-side proxy (kept in lock-step per
+their own existing "MUST match" discipline):**
+
+1. The `water`-kind Overpass query now also requests
+   `relation["natural"="water"](bbox)`, alongside the existing `way`
+   queries.
+2. `extractWaterRelationTrails` (new, duplicated in both
+   `webapp/src/utils/infrastructureService.ts` and
+   `api/src/services/infrastructureService.ts`, matching how every other
+   OSM query constant in these two files is already kept in parallel):
+   confirmed live via Overpass that `out geom` on a relation query inlines
+   each MEMBER's own node geometry directly (`members[].geometry`) — no
+   separate recursion (`>`) query needed. Each `outer`-role member way
+   becomes its own standalone water-body `InfrastructureTrail`.
+3. **Deliberate, stated scope cut, not a silent gap:** a multi-part outer
+   ring split across several way members is not re-stitched into one true
+   polygon, and `inner` (island) members are not subtracted as holes. Both
+   directions of that cut are safe for a HARD-BLOCK hydrology gate
+   specifically: at worst an island cell reads as water (a false NO-GO, the
+   safe direction to be wrong in — never a false crossing), and a
+   multi-member outer ring still gates correctly member-by-member even
+   without being literally one closed polygon. Full relation reassembly
+   (proper outer/inner ring topology) remains real, open follow-up work if
+   a future case needs it — not assumed done here.
+
+Tests: 4 new checks in the API package's `infrastructure.test.ts` (query
+shape, outer-vs-inner member filtering, name/kind/geometry mapping) and a
+new `waterRelations.test.ts` in the webapp package (4 checks, through the
+PUBLIC `fetchCorridorWaterways` API with `fetch` stubbed — query shape,
+outer/inner filtering, and critically that the parsed relation trail
+actually gates a point via `distanceToNearestWater`, the SAME function the
+hex-grid search's own `inWaterBody` classification calls, closing the loop
+from "the query returns it" to "the search actually sees it" — plus a
+regression guard that plain `way`-tagged water bodies still work exactly as
+before). Full regression green in both packages (webapp: only the
+pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails; api: all
+green); `tsc --noEmit` and build clean in both.
+
 ---
 
 ## Update policy

@@ -146,12 +146,52 @@ function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e
     return (
       `[out:json][timeout:12];` +
       `(way["waterway"~"^(${WATER_WATERWAYS})$"](${s},${w},${n},${e});` +
-      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
+      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e});` +
+      // Multipolygon water bodies (docs §35, "OSM water relations" —
+      // real, live-confirmed gap: Lake Tuggeranong and Gungahlin Pond, both
+      // in the same Canberra region this project's own test scenarios live
+      // in, are mapped as `relation` not `way`). MUST match the API's
+      // identical addition — see `extractWaterRelationTrails`'s own doc
+      // comment for how the response is parsed.
+      `relation["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
       `out geom;`
     );
   }
   const highways = kind === 'highway-mobility' ? MOBILITY_HIGHWAYS : REUSABLE_HIGHWAYS;
   return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
+}
+
+/**
+ * Multipolygon water bodies come back as `relation` elements, not `way` —
+ * confirmed live via Overpass (docs §35 addendum, 2026-07-28): Overpass's
+ * `out geom` inlines each member's own node geometry directly on the
+ * relation element (`members[].geometry`), no separate recursion query
+ * needed. Each `outer`-role member way becomes its own standalone water-body
+ * `InfrastructureTrail` — deliberately NOT reassembled into one true ring
+ * with `inner` members subtracted as holes (a real, stated scope cut: a
+ * multi-part outer ring split across several way members is not
+ * re-stitched, and island/inner rings are not excluded). Both directions of
+ * that cut are safe for this gate's purpose: at worst an island cell is
+ * conservatively treated as water (a false NO-GO, not a false crossing —
+ * the safe direction to be wrong in for a hard-block hydrology gate), and a
+ * multi-member outer ring still gates correctly member-by-member even if
+ * not literally one closed polygon.
+ */
+function extractWaterRelationTrails(elements: any[]): InfrastructureTrail[] {
+  const out: InfrastructureTrail[] = [];
+  for (const el of elements) {
+    if (el.type !== 'relation' || el.tags?.natural !== WATER_NATURAL) continue;
+    for (const member of el.members ?? []) {
+      if (member.type !== 'way' || member.role !== 'outer') continue;
+      if (!Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      out.push({
+        name: el.tags?.name,
+        kind: 'water',
+        coords: member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+      });
+    }
+  }
+  return out;
 }
 
 /** One attempt against a single Overpass endpoint. Throws on any failure
@@ -323,6 +363,7 @@ async function fetchCorridorUncached(
           tracktype: el.tags?.tracktype,
           smoothness: el.tags?.smoothness,
         }));
+      if (kind === 'water') trails.push(...extractWaterRelationTrails(json?.elements ?? []));
 
       const data: InfrastructureData = { trails, available: true };
       bboxCache.set(key, data);

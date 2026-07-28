@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — corridor band outlines now Chaikin-smoothed (rounds off the hex tessellation's own blocky edge); see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — OSM water relations (multipolygon lakes) now fetched and gated, closing the last known instance of the "water doesn't block movement" bug class ahead of the 1.0 demo; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -66,6 +66,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 28 | Road graph had zero water awareness — vehicle route crossed Lake George | Live-tested: a vehicle route ran straight across the real lake. Ruled out the OSM-relation hypothesis by direct testing (Lake George is a real, well-formed `way`, not a `relation`) and confirmed the hex-grid's own fording gate already works correctly against the real polygon. Root cause: `roadGraph.ts`/`roadRouting.ts` (the box-free vehicle road route, §35 Slice A) had NO water logic at all. Fixed: `buildRoadGraph` flags a CONTIGUOUS run of a way's edges through a mapped water body's interior longer than a plausible bridge span (250 m) as `crossesStandingWater`; `edgeTravelTime` blocks it for any profile whose fording capability is under the same assumed-depth (2.5 m) the hex grid already uses. A short bridge-like dip stays passable | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
 | 29 | Corridor route rendering was analysis noise, not presentation — consolidated to 1 refined route per corridor | Owner: *"the individual white lines of the considered paths don't work as a visualisation... they end up being 'triangles' between the grid centres and they don't follow the road geometry... consolidate to show substantive differences... reduce the analysis noise and show insights rather than raw thinking."* Was drawing up to 24 raw, un-refined hex-centre route polylines regardless of corridor count. Fixed: `Corridor.representativeRoute` (new, `corridorField.ts`) — the single fastest analysed route actually using that corridor; `App.tsx` draws exactly one per corridor (2-5, matching the target), refined through the fire-break optimizer's own `pathRefinement.ts` (snap onto a nearby real road, unchanged). Owner follow-up — *"some corridors may be overland"* — meant snapping alone wasn't enough: added `smoothFreeVertices`/`cornerSmoothingIterations` (opt-in, fire-break optimizer's default behaviour unchanged) so a stretch with no nearby road is corner-smoothed instead of staying a raw zig-zag | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 30 | Smooth the corridor band's own outline | Direct roadmap follow-on to step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — genuine, not approximated — but still traced the hex tessellation's own blocky edge. `polygonSmoothing.ts` (new) applies Chaikin corner-cutting to every ring of the dissolved geometry (`Polygon` or `MultiPolygon` — union can produce either), a deliberately different algorithm from the route lines' moving-average (a closed ring has no endpoints/locked vertices to preserve; Chaikin treats every vertex cyclically). Caught a real test-methodology trap before shipping: summed turning angle is near-invariant under Chaikin for a closed ring (unlike an open path) — the maximum single-corner turn is the measure that actually captures "no more staircase corners" | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
+| 31 | OSM water relations — picked ahead of queue order for 1.0 demo risk | Owner: "one more push then we're done for a 1.0 demo... pick the item most critical." Assessed demo risk rather than following size-first order: confirmed LIVE that Lake Tuggeranong and Gungahlin Pond — both in the same Canberra region this project's own test scenarios already live in — are OSM `relation`, not `way`, so either would have repeated the exact "water doesn't block movement" bug class just fixed twice already, live, in front of the demoed geography. Fixed in both `webapp` and `api` (kept in lock-step, matching their existing "MUST match" query-constant discipline): the water query now also requests `relation["natural"="water"]`; `out geom` inlines each member's geometry directly (confirmed live, no recursion needed); each `outer`-role member becomes its own water-body trail. Stated scope cut: multi-part outer rings aren't re-stitched and `inner`/island members aren't subtracted as holes — both safe directions to be wrong in for a hard-block gate (worst case: an island cell over-blocks, never under-blocks) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
 
 ### Next up
 
@@ -78,7 +79,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
-| OSM water relations (multipolygon lakes) | Only `way`-tagged water features are fetched today; add relation support | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
+| Full OSM water-relation topology (multi-part outer rings, inner/island holes) | Step 31 shipped the common case (single outer ring per relation); proper multipolygon reassembly (stitching split outer rings, subtracting inner rings as real holes) is a stated, deliberate scope cut, not forgotten | S | step 31 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
 | Vegetation NVIS-first uplift | Explicit `NoData` handling; flag cleared/modified segments distinctly | S | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
@@ -108,6 +109,40 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — OSM water relations, picked ahead of queue order for 1.0
+  demo risk (step 31)**: owner: *"one more push then we're done for a 1.0
+  demo. Pick the item that is the most critical for that purpose."* Rather
+  than defaulting to the roadmap's own smallest-effort-first item, assessed
+  which open item was most likely to bite LIVE in the demo — and confirmed,
+  via a direct Overpass query (not assumption), that **Lake Tuggeranong and
+  Gungahlin Pond, both in the same Canberra region this project's own test
+  scenarios (Lake George, M23, Sutton, Bywong) already live in, are mapped
+  as OSM `relation`, not `way`.** `fetchCorridorWaterways`'s query only ever
+  requested `way["natural"="water"]`, so either lake — or any other
+  multipolygon water body — would have repeated the exact "water doesn't
+  block movement" bug class this whole pass had been chasing (the Lake
+  George road-crossing fix, and the original padding defect before it),
+  live, in front of the exact geography likely to be demoed.
+
+  Fixed in BOTH `webapp` and `api` (the two packages' Overpass query
+  constants are already kept in explicit lock-step via "MUST match"
+  comments — this followed the same discipline): the water query now also
+  requests `relation["natural"="water"]`; confirmed live that Overpass's
+  `out geom` inlines each member way's own geometry directly on the
+  relation element, no separate recursion query needed; each `outer`-role
+  member becomes its own water-body trail. Stated, deliberate scope cut:
+  multi-part outer rings aren't re-stitched into one polygon and `inner`
+  (island) members aren't subtracted as holes — both are safe directions to
+  be wrong in for a hard-block gate (worst case an island cell is
+  over-conservatively treated as water; never a false crossing).
+
+  8 new tests (4 in the API package's `infrastructure.test.ts`, 4 in the
+  webapp's new `waterRelations.test.ts` — the latter proves the parsed
+  relation trail actually gates a point via `distanceToNearestWater`, the
+  same function the hex-grid search's own water classification calls, not
+  just that the query/parsing shape looks right). Full regression green in
+  both packages; tsc/build clean in both.
 
 - **2026-07-28 — Corridor band outline smoothing (step 30)**: direct
   roadmap follow-on to step 29 (smallest-effort-first ordering). The band's
