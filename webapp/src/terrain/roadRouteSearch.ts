@@ -75,9 +75,9 @@ export interface RoadRouteSearchResult {
  *  `paintedArea.ts`'s `brushApproxRadiusM`): a painted area is typically at
  *  or under this size, and origin/objective areas are exactly the kind of
  *  place a user paints BECAUSE they're near infrastructure, not deep bush. */
-const ROAD_ACCESS_SNAP_M = 3000;
+export const ROAD_ACCESS_SNAP_M = 3000;
 
-function areaCentroid(area: PaintedArea): { lat: number; lng: number } | null {
+export function areaCentroid(area: PaintedArea): { lat: number; lng: number } | null {
   const bounds = paintedAreaBounds(area);
   if (!bounds) return null;
   return { lat: (bounds.minLat + bounds.maxLat) / 2, lng: (bounds.minLng + bounds.maxLng) / 2 };

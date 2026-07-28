@@ -46,10 +46,13 @@ import {
 } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
-import { findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult } from './roadRouteSearch';
+import {
+  findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
+} from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
-import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
+import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
+import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
 import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
 } from './corridorField';
@@ -137,6 +140,14 @@ export interface MobilityAppreciationResult {
   /** Pass 2 — cheapest severing cut for this profile (null if the objective
    *  was already unreachable, since there is nothing left to sever). */
   barrier: MinCutResult | null;
+  /** Road-network-EXACT min-cut (docs §42b) — the cheapest set of REAL road
+   *  segments (not whole hexes) that severs the road network specifically,
+   *  computed directly over the road graph's own nodes/edges. Vehicle
+   *  profiles only, null when no road data connects the two areas or nothing
+   *  needs severing. A genuinely more precise ANSWER for the road/vehicle
+   *  case alongside `barrier` above (which still covers off-road ground the
+   *  same profile could also use) — not a replacement for it. */
+  roadNetworkBarrier: RoadMinCutResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
    *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
@@ -467,6 +478,14 @@ export async function runMobilityAppreciation(
   // profiles only (roadRouteSearch.ts's own gate); cheap enough to run
   // synchronously on the main thread (a handful of OSM ways, not a grid).
   let roadRoute: RoadRouteSearchResult | null = null;
+  // Built once, alongside `roadRoute`, for reuse by BOTH the ensemble's
+  // mixed-mode movement (docs §42b — real road-graph edges, not just
+  // hex-quantized steps) and the road-network-exact min-cut below. Kept as a
+  // SEPARATE build from the one `findVehicleRoadRoute` makes internally
+  // (rather than refactoring that tested function's signature) — cheap (no
+  // network I/O, just iterating already-fetched ways), and keeps this new
+  // wiring isolated from the existing, proven road-route search path.
+  let mixedRoadGraph: RoadGraph | null = null;
   if (profile.speedModel === 'vehicle-gradient') {
     roadRoute = findVehicleRoadRoute(origin, objective, grid.roadWays, profile, roadSpeedOverrides, grid.waterFeatures);
     if (roadRoute) {
@@ -478,6 +497,13 @@ export async function runMobilityAppreciation(
       );
     } else if (grid.roadWays.length > 0) {
       onLog?.('NO ROAD-NETWORK ROUTE FOUND BETWEEN THE PAINTED AREAS (NO NEARBY ROAD, OR THE NETWORK DOES NOT CONNECT THEM)');
+    }
+    if (grid.roadWays.length > 0) {
+      const waterBodies: WaterBodyPolygon[] = grid.waterFeatures
+        .filter(f => f.kind === 'water')
+        .map(f => ({ coords: f.coords }));
+      const built = buildRoadGraph(grid.roadWays as RoadWay[], waterBodies);
+      if (built.wayCount > 0) mixedRoadGraph = built;
     }
   }
 
@@ -539,6 +565,7 @@ export async function runMobilityAppreciation(
     restrictedCorridorField: null,
     chokepoints: [],
     barrier: null,
+    roadNetworkBarrier: null,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
@@ -552,6 +579,7 @@ export async function runMobilityAppreciation(
   let dissimilarRoutes: DissimilarRoute[] = [];
   let chokepoints: ChokepointCell[] = [];
   let barrier: MinCutResult | null = null;
+  let roadNetworkBarrier: RoadMinCutResult | null = null;
   let corridorField: CorridorField | null = null;
   let optimiserCorridorField: CorridorField | null = null;
   let ensemble: MovementEnsembleResult | null = null;
@@ -572,6 +600,10 @@ export async function runMobilityAppreciation(
         planRestrictions,
         roadSpeedOverrides,
         preferredRouteKeys: roadRouteAsDissimilar?.keys,
+        // Mixed-mode movement (docs §42b) — the baseline ensemble only; never
+        // forwarded to planRestrictions internally (mobilityWorker.ts), by
+        // design (see RoadMixState's own doc comment on why).
+        roadGraph: mixedRoadGraph ?? undefined,
         // NOTE: `planRestrictions` runs INSIDE this same worker call, after
         // the ensemble, before the response posts back — so BOTH phases'
         // progress (ensemble then restrictions) can already have reported up
@@ -721,6 +753,31 @@ export async function runMobilityAppreciation(
     } else {
       onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
     }
+
+    // Road-network-EXACT min-cut (docs §42b) — a SEPARATE max-flow problem
+    // run directly over the road graph's own nodes/edges (see
+    // computeRoadNetworkMinCut's own header for why this is not a rewrite of
+    // the hex cut above). Vehicle profiles only, and only when road data
+    // connects both painted areas — matching `findVehicleRoadRoute`'s own
+    // gating exactly, since this answers the same "is there a road-network
+    // path here at all" question the route search already had to resolve.
+    if (mixedRoadGraph) {
+      const originPoint = areaCentroid(origin);
+      const objectivePoint = areaCentroid(objective);
+      const originNodes = originPoint ? nodesWithin(mixedRoadGraph, originPoint, ROAD_ACCESS_SNAP_M) : [];
+      const objectiveNodes = objectivePoint ? nodesWithin(mixedRoadGraph, objectivePoint, ROAD_ACCESS_SNAP_M) : [];
+      if (originNodes.length > 0 && objectiveNodes.length > 0) {
+        roadNetworkBarrier = computeRoadNetworkMinCut(
+          mixedRoadGraph, originNodes.map(n => n.id), objectiveNodes.map(n => n.id), profile, roadSpeedOverrides
+        );
+        if (roadNetworkBarrier) {
+          onLog?.(
+            `ROAD-NETWORK MIN-CUT — ${roadNetworkBarrier.segments.length} EXACT ROAD SEGMENT(S), ` +
+            `CUT VALUE ${roadNetworkBarrier.cutValue.toFixed(0)} (ROAD-CLASS-WEIGHTED, RESOLUTION = REAL ROAD VERTICES, NOT HEXES)`
+          );
+        }
+      }
+    }
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
@@ -754,6 +811,7 @@ export async function runMobilityAppreciation(
     restrictedCorridorField,
     chokepoints,
     barrier,
+    roadNetworkBarrier,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,

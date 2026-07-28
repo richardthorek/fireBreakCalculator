@@ -4820,6 +4820,100 @@ Full existing road/ensemble/restriction/min-cut-adjacent suite still green;
 
 ---
 
+### 42b. The genuinely mixed hex+road-graph adjacency — road usage complete (2026-07-28)
+
+Owner: "Finish the bigger slice of work so the road usage is fully complete."
+§42/§42a both deferred the actual mixed-adjacency rewrite as real, larger,
+riskier work — this entry does it, in two bounded pieces that together close
+the roadmap item without rewriting either core search primitive from
+scratch.
+
+**1. Ensemble mixed-mode movement** (`movementSimulation.ts`). A mover's
+recorded POSITION stays a hex cell always — every downstream consumer
+(`TransitCell`'s polygon, `MoverTrack.keys`, corridor/chokepoint hex-band
+clustering) still gets exactly the shape it already expects, so none of that
+machinery needed to change. What changed is the CANDIDATE SET a mover chooses
+from at each step: when it is on a hex cell linked to a road-graph node
+(within `HEX_ROAD_LINK_SNAP_M`, 150m — onTrail cells and the road graph's own
+nodes come from the same OSM/Mapbox geometry, so a real link sits far closer
+than that in the common case), a bounded forward walk (`roadLandingCandidates`,
+`MAX_ROAD_HOP_CHAIN` = 40 real edges) follows the road graph's OWN exact
+edges — real per-edge distance, real class-based speed via
+`edgeTravelTime`, never a hex-approximated straight line — until it reaches a
+road node whose nearest onTrail hex genuinely differs from the mover's
+current one, then offers THAT hex as a candidate with the exact cumulative
+time to reach it. A long straight highway segment is no longer forced
+through artificial hex-sized steps, and a real junction offers its actual
+branches, not just "any onTrail hex neighbour" the tessellation happens to
+present. Every branch at a fork right at the start node is walked
+independently (a junction is not silently collapsed to its first-found arm),
+and both the linked-node map (per onTrail cell, eager, cheap) and the
+per-node "nearest hex" / per-walk landing results are memoised across the
+whole ensemble run — most movers revisit the same handful of real road nodes.
+
+**SAFETY-MOTIVATED SCOPE CUT, load-bearing, not incidental**: mixed-mode is
+wired in ONLY for the unrestricted baseline ensemble. `blockedEdges` is keyed
+by hex edges; a road-graph shortcut can legitimately skip past several
+intermediate hexes in one step, and there is no cheap way to prove such a
+skip never crosses a blocked hex edge along the way. Rather than risk a
+recommended road block being silently bypassed by the very mechanism meant to
+make movement more realistic, `restrictionPlanner.ts` continues to build its
+own plain hex-only `EdgeCostCache` (no road graph passed in) for every
+candidate evaluation AND the final restricted re-run — enforced structurally
+(the road graph is simply never threaded to that call site), not by a runtime
+flag that could be forgotten. The restricted picture always falls back to the
+same hex-only movement this mode already used before this change.
+
+**2. Road-network-exact min-cut** (`minCutBarrier.ts`,
+`computeRoadNetworkMinCut`). A SEPARATE max-flow problem, run directly over
+the road graph's own nodes/edges — deliberately not a rewrite of
+`computeMinCutBarrier` to accept a mixed adjacency (`ResidualGraph`/
+`bfsAugmentingPath` are reused completely unchanged; both were already
+generic over string node IDs, nothing hex-specific in either). Where the hex
+cut answers "the cheapest set of HEXES that severs all movement, on- or
+off-road", this answers "the cheapest set of REAL road segments that severs
+the road network specifically" — at the road graph's own resolution, a
+single OSM vertex-to-vertex edge, very often narrower than one hex. Capacity
+reuses the identical `HIGHWAY_CAPACITY_TIER` table §42a introduced (one real
+classification, not a second independently-tuned hierarchy); edges are
+excluded via the SAME `edgeTravelTime` blocked-check `roadRouteSearch.ts`
+already uses (impassable smoothness, unfordable standing water). Wired in
+`mobilityAppreciation.ts` as `roadNetworkBarrier` — vehicle profiles only,
+alongside (not replacing) the existing hex `barrier`, since the two answer
+genuinely different questions for the same profile (all ground vs.
+road-network specifically).
+
+**Stated scope, not silently expanded**: `roadNetworkBarrier` is computed and
+logged (`ROAD-NETWORK MIN-CUT — N EXACT ROAD SEGMENT(S)...`) and carried on
+`MobilityAppreciationResult`, but this pass did NOT add new Mapbox map layers,
+legend entries, GIS export attributes, or AI-briefing text for it — the
+existing hex `barrier` still owns the on-map counter-mobility answer. Surfacing
+the road-network-exact result visually is real, smaller follow-up work,
+explicitly not claimed as done here.
+
+**Tests** (`roadGraphMixedAdjacency.test.ts`, 10 checks). Ensemble: a
+deliberately extreme two-hex fixture with NO hex adjacency between them and
+NO intermediate hex cells at all proves the baseline (no road graph) leaves
+100% of movers stuck, while supplying the road graph lets 100% cross — via
+the road graph's real chained edges (proven by an intermediate pass-through
+node deliberately placed beyond the hex-link snap distance of EITHER hex, so
+a single-hop shortcut could not explain the result) — at the EXACT
+independently-computed travel time (not a hex approximation, since there is
+no hex edge to approximate from at all); the safety gate is proven directly
+(a defined-but-empty `blockedEdges` set disables the bridge entirely); an
+off-trail current cell never receives road candidates even when a road graph
+is supplied. Min-cut: a single-path chain cuts to exactly one segment, and
+BFS over the post-cut graph confirms origin and objective are genuinely
+disconnected (not just a plausible-looking answer); a motorway chain
+out-capacities an identical residential chain; two parallel equal-capacity
+branches require severing both, cut value summing correctly; an
+impassable-tagged edge is excluded from the flow graph entirely (returns
+null — already disconnected, nothing to cut); an empty graph returns null,
+not a crash. Full existing test suite still green (only the pre-existing,
+unrelated live-data `nvis-fidelity.test.ts` fails); `tsc`/build clean.
+
+---
+
 ## 43. Corridor legibility pass — the route line becomes the star (2026-07-28)
 
 Owner, reviewing a screenshot of a live run with 2 corridors present:

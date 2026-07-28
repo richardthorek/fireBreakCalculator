@@ -121,6 +121,9 @@ import { edgeMobilityCost, irmischerClarkeSpeedKmh, toblerSpeedKmh } from './mob
 import {
   LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors,
 } from '../utils/hexGrid';
+import { RoadGraph, nearestNode } from './roadGraph';
+import { edgeTravelTime } from './roadRouting';
+import { RoadSpeedOverrides } from './roadSpeedModel';
 
 // ---------------------------------------------------------------------------
 // Behaviour parameters — ASSUMED, not sourced (see the honesty boundary above)
@@ -327,6 +330,197 @@ export function nominalCrossCountrySpeedKmh(profile: MoverProfile, nightMode: bo
 // ---------------------------------------------------------------------------
 
 /**
+ * How far a hex cell's centre may sit from a road-graph node and still be
+ * treated as "the same real ground" for mixed-mode linkage (docs §42b,
+ * 2026-07-28). Deliberately generous relative to a typical hex circumradius
+ * in this mode (30-200m): `onTrail` cells and the road graph's own nodes are
+ * ultimately built from the same OSM/Mapbox way geometry, so a genuine link
+ * should sit far closer than this in the overwhelming common case — this is
+ * a ceiling against a genuinely unrelated node, not a tuned "typical"
+ * distance.
+ */
+const HEX_ROAD_LINK_SNAP_M = 150;
+
+/** Hard bound on how many real road-graph edges a single bounded walk (see
+ *  `roadLandingCandidates`) may cross while still hunting for a hex cell
+ *  different from the one it started at. Guards against pathological dense
+ *  vertex chains (or a graph cycle) turning one mover's per-step decision
+ *  into an unbounded search; a genuinely reachable, differently-hexed landing
+ *  almost always sits within a handful of real OSM vertices of any start. */
+const MAX_ROAD_HOP_CHAIN = 40;
+
+interface RoadLandingCandidate {
+  hexKey: string;
+  seconds: number;
+}
+
+/**
+ * Road-graph mixed-mode linkage (docs §42b, 2026-07-28) — the "ensemble walks
+ * the road graph's own edges, not just hex-to-hex" half of the "fuse
+ * road-graph routes into movement simulation" roadmap item.
+ *
+ * WHY A LINKAGE LAYER, NOT A REWRITE OF THE HEX ADJACENCY: replacing the
+ * ensemble's hex-to-hex stepping with a fully mixed hex+road-graph adjacency
+ * was assessed (docs §42, §42a) as real, larger, riskier work — every
+ * downstream consumer of a mover's position (`TransitCell`'s hex polygon,
+ * `MoverTrack.keys`, corridor/chokepoint hex-band clustering) assumes a
+ * position IS a hex cell. Rather than teach all of those about a
+ * road-graph-node position too, a mover's recorded position stays a hex cell
+ * ALWAYS, but the CANDIDATE SET a mover chooses from, when it is on a linked
+ * onTrail cell, is extended with real road-graph "next landing" options: walk
+ * forward along the road graph's own exact edges (real distance, real
+ * class-based speed via `edgeTravelTime` — never hex-approximated) until
+ * reaching a road node whose nearest onTrail hex genuinely differs from the
+ * mover's current one, then offer THAT hex as a candidate with the REAL
+ * cumulative road time it took to reach it. A long straight highway is no
+ * longer forced through artificial hex-sized steps, and a real junction's
+ * exact branches are what the mover actually sees — not just "any onTrail
+ * neighbour hex" the tessellation happens to offer.
+ *
+ * SAFETY-MOTIVATED SCOPE CUT, stated plainly: this linkage is only ever
+ * attached to the UNRESTRICTED baseline ensemble (see `mobilityWorker.ts` —
+ * `restrictionPlanner.ts` always builds its OWN plain hex-only cache for
+ * every evaluation and the final restricted re-run). `blockedEdges` is keyed
+ * by HEX edges; a road-graph shortcut can legitimately skip past several
+ * intermediate hexes in one step, and this module has no way to prove such a
+ * shortcut never crosses a blocked hex edge along the way. Rather than risk a
+ * recommended road block being silently bypassed by the very shortcut meant
+ * to make movement more realistic, mixed-mode is simply never offered
+ * wherever a restriction could be in play — the restricted picture always
+ * falls back to the same hex-only movement this mode already used before
+ * this change, never a confident-but-unverified faster path around a block.
+ */
+interface RoadMixState {
+  graph: RoadGraph;
+  overrides?: RoadSpeedOverrides;
+  /** Onward-only: which onTrail hex each road-linked hex resolves to. Built
+   *  eagerly (cheap — scoped to onTrail cells only, not the whole grid). */
+  hexToRoadNode: Map<string, string>;
+  /** Memoised nearest-onTrail-hex per road-graph node, populated lazily as
+   *  bounded walks actually visit nodes (most of a large graph's nodes are
+   *  never visited by any real mover's decision, so eager computation over
+   *  every node would waste far more work than it saves). */
+  nearestHexForNode: Map<string, string | null>;
+  /** Memoised bounded-walk results, keyed `${fromHexKey}|${roadNodeId}` — many
+   *  movers revisit the same road nodes across one ensemble run. */
+  landingCache: Map<string, RoadLandingCandidate[]>;
+}
+
+function buildRoadMixState(
+  cells: MobilityGridCell[],
+  roadGraph: RoadGraph,
+  overrides?: RoadSpeedOverrides
+): RoadMixState | null {
+  if (roadGraph.nodes.size === 0) return null;
+  const onTrailCells = cells.filter(c => c.onTrail);
+  if (onTrailCells.length === 0) return null;
+
+  const hexToRoadNode = new Map<string, string>();
+  for (const cell of onTrailCells) {
+    const node = nearestNode(roadGraph, cell.center, HEX_ROAD_LINK_SNAP_M);
+    if (node) hexToRoadNode.set(cell.key, node.id);
+  }
+  if (hexToRoadNode.size === 0) return null;
+
+  return {
+    graph: roadGraph,
+    overrides,
+    hexToRoadNode,
+    nearestHexForNode: new Map(),
+    landingCache: new Map(),
+  };
+}
+
+/** Nearest onTrail hex to a road-graph node, within `HEX_ROAD_LINK_SNAP_M` —
+ *  memoised in `state.nearestHexForNode` (see that field's doc comment). Only
+ *  ever scans `onTrailCells` (a small subset of the whole grid), and only for
+ *  nodes a bounded walk actually reaches. */
+function nearestOnTrailHexForNode(
+  nodeId: string,
+  state: RoadMixState,
+  onTrailCells: MobilityGridCell[]
+): string | null {
+  const cached = state.nearestHexForNode.get(nodeId);
+  if (cached !== undefined) return cached;
+  const node = state.graph.nodes.get(nodeId);
+  if (!node) { state.nearestHexForNode.set(nodeId, null); return null; }
+  let bestKey: string | null = null;
+  let bestD = Infinity;
+  for (const cell of onTrailCells) {
+    const dLat = cell.center.lat - node.lat;
+    const dLng = cell.center.lng - node.lng;
+    const d = dLat * dLat + dLng * dLng;
+    if (d < bestD) { bestD = d; bestKey = cell.key; }
+  }
+  // Convert the snap threshold to the same squared-degree units as `bestD`
+  // (a coarse but adequate check at this scale — matching `nearestCellKey`'s
+  // own degree-space comparison elsewhere in this mode).
+  const snapDeg = HEX_ROAD_LINK_SNAP_M / 111320;
+  const result = bestKey !== null && bestD <= snapDeg * snapDeg ? bestKey : null;
+  state.nearestHexForNode.set(nodeId, result);
+  return result;
+}
+
+/**
+ * Bounded forward walk of the road graph's real edges from `fromRoadNode`
+ * (the road node linked to `fromHexKey`), collecting every distinct FIRST
+ * landing hex reached along each branch — the real "what does this mover see
+ * from here" candidate set. See `RoadMixState`'s own doc comment for the
+ * overall design and `MAX_ROAD_HOP_CHAIN` for the bound.
+ */
+function roadLandingCandidates(
+  fromHexKey: string,
+  fromRoadNode: string,
+  state: RoadMixState,
+  onTrailCells: MobilityGridCell[],
+  profile: MoverProfile
+): RoadLandingCandidate[] {
+  const cacheKey = `${fromHexKey}|${fromRoadNode}`;
+  const cached = state.landingCache.get(cacheKey);
+  if (cached) return cached;
+
+  const best = new Map<string, number>(); // landing hex key -> cheapest seconds to reach it
+  const visitedThisWalk = new Set<string>([fromRoadNode]);
+
+  // Explore each immediate branch from the start node independently — a
+  // junction right at the start must offer every fork, not just the first
+  // one a single linear walk would happen to follow.
+  const startEdges = state.graph.adjacency.get(fromRoadNode) ?? [];
+  for (const startEdge of startEdges) {
+    const branchVisited = new Set(visitedThisWalk);
+    let frontier: { nodeId: string; seconds: number }[] = [];
+    const startTravel = edgeTravelTime(startEdge, profile, state.overrides);
+    if (startTravel.blocked) continue;
+    frontier.push({ nodeId: startEdge.to, seconds: startTravel.seconds });
+    branchVisited.add(startEdge.to);
+
+    for (let hop = 0; hop < MAX_ROAD_HOP_CHAIN && frontier.length > 0; hop++) {
+      const next: { nodeId: string; seconds: number }[] = [];
+      for (const { nodeId, seconds } of frontier) {
+        const landedHex = nearestOnTrailHexForNode(nodeId, state, onTrailCells);
+        if (landedHex && landedHex !== fromHexKey) {
+          const existing = best.get(landedHex);
+          if (existing === undefined || seconds < existing) best.set(landedHex, seconds);
+          continue; // this branch found its landing — stop walking it further
+        }
+        for (const edge of state.graph.adjacency.get(nodeId) ?? []) {
+          if (branchVisited.has(edge.to)) continue;
+          const travel = edgeTravelTime(edge, profile, state.overrides);
+          if (travel.blocked) continue;
+          branchVisited.add(edge.to);
+          next.push({ nodeId: edge.to, seconds: seconds + travel.seconds });
+        }
+      }
+      frontier = next;
+    }
+  }
+
+  const result = [...best.entries()].map(([hexKey, seconds]) => ({ hexKey, seconds }));
+  state.landingCache.set(cacheKey, result);
+  return result;
+}
+
+/**
  * Memoised directed-edge cost over one sampled grid + profile + night setting.
  *
  * Hoisted out of a single ensemble run on purpose: `restrictionPlanner.ts`
@@ -339,12 +533,20 @@ export interface EdgeCostCache {
   seconds(from: MobilityGridCell, to: MobilityGridCell): number;
   neighboursOf(key: string): MobilityGridCell[];
   byKey: Map<string, MobilityGridCell>;
+  /** Road-graph mixed-mode linkage (docs §42b) — present only when a road
+   *  graph was supplied to `createEdgeCostCache` AND at least one onTrail
+   *  cell genuinely links to it. See `RoadMixState`'s own doc comment,
+   *  especially its safety-motivated scope cut (unrestricted baseline only). */
+  roadMix?: RoadMixState;
+  onTrailCells?: MobilityGridCell[];
 }
 
 export function createEdgeCostCache(
   cells: MobilityGridCell[],
   profile: MoverProfile,
-  nightMode: boolean
+  nightMode: boolean,
+  roadGraph?: RoadGraph,
+  roadOverrides?: RoadSpeedOverrides
 ): EdgeCostCache {
   const byKey = new Map<string, MobilityGridCell>();
   for (const c of cells) byKey.set(c.key, c);
@@ -360,8 +562,11 @@ export function createEdgeCostCache(
   }
 
   const cache = new Map<string, number>();
+  const roadMix = roadGraph ? buildRoadMixState(cells, roadGraph, roadOverrides) ?? undefined : undefined;
   return {
     byKey,
+    roadMix,
+    onTrailCells: roadMix ? cells.filter(c => c.onTrail) : undefined,
     neighboursOf: key => adjacency.get(key) ?? [],
     seconds(from, to) {
       const ck = `${from.key}|${to.key}`;
@@ -487,6 +692,13 @@ export interface MovementSimulationOptions {
    *  onto this grid (`roadRouteToDissimilarRoute`), when one exists for this
    *  run. See `KNOWN_ROAD_ROUTE_BONUS_SECONDS` for what this does. */
   preferredRouteKeys?: string[];
+  /** The road graph to mix into per-step movement (docs §42b) — used only
+   *  when `edgeCache` is omitted (this call builds its own); a caller
+   *  supplying its own `edgeCache` (restrictionPlanner.ts) controls mixed-mode
+   *  by whether IT passed a road graph into `createEdgeCostCache`, not by this
+   *  field. See `RoadMixState`'s doc comment for the safety reasoning. */
+  roadGraph?: RoadGraph;
+  roadSpeedOverrides?: RoadSpeedOverrides;
 }
 
 const DEFAULT_MOVER_COUNT = 240;
@@ -537,7 +749,8 @@ export function simulateMovementEnsemble(
   const preferredRouteKeys = options.preferredRouteKeys && options.preferredRouteKeys.length > 0
     ? new Set(options.preferredRouteKeys)
     : null;
-  const cache = options.edgeCache ?? createEdgeCostCache(cells, profile, nightMode);
+  const cache = options.edgeCache
+    ?? createEdgeCostCache(cells, profile, nightMode, options.roadGraph, options.roadSpeedOverrides);
   const byKey = cache.byKey;
   const originSeeds = originKeys.filter(k => byKey.has(k));
   const objectiveSet = new Set(objectiveKeys.filter(k => byKey.has(k)));
@@ -616,10 +829,8 @@ export function simulateMovementEnsemble(
 
     for (let step = 0; step < maxSteps && !arrived; step++) {
       const candidates: { cell: MobilityGridCell; edge: number; score: number }[] = [];
-      for (const n of cache.neighboursOf(cur.key)) {
-        if (blockedEdges?.has(`${cur.key}|${n.key}`)) continue; // an emplaced restriction
-        const edge = cache.seconds(cur, n);
-        if (!isFinite(edge)) continue; // NO-GO — the ensemble may never cross it
+      const candidateIndexByKey = new Map<string, number>();
+      const scoreFor = (n: MobilityGridCell, edge: number): number => {
         const trueTerm = trueToGo.get(n.key);
         const trueLookahead = typeof trueTerm === 'number' && isFinite(trueTerm)
           ? trueTerm
@@ -645,7 +856,42 @@ export function simulateMovementEnsemble(
         // forks apart; never fires off the network at all, since a key can
         // only be in this set if the box-free road route itself crossed it.
         const known = preferredRouteKeys?.has(n.key) ? -KNOWN_ROAD_ROUTE_BONUS_SECONDS : 0;
-        candidates.push({ cell: n, edge, score: edge + perceivedToGo + turn + revisit + network + known });
+        return edge + perceivedToGo + turn + revisit + network + known;
+      };
+
+      for (const n of cache.neighboursOf(cur.key)) {
+        if (blockedEdges?.has(`${cur.key}|${n.key}`)) continue; // an emplaced restriction
+        const edge = cache.seconds(cur, n);
+        if (!isFinite(edge)) continue; // NO-GO — the ensemble may never cross it
+        candidateIndexByKey.set(n.key, candidates.length);
+        candidates.push({ cell: n, edge, score: scoreFor(n, edge) });
+      }
+
+      // Road-graph mixed-mode candidates (docs §42b) — real, exact-geometry
+      // "next landing" options along the road graph's own edges, on top of
+      // the plain hex-adjacency candidates above. See RoadMixState's own doc
+      // comment: unrestricted baseline only (`blockedEdges` unset), by
+      // construction (restrictionPlanner.ts never supplies a road graph).
+      if (cache.roadMix && !blockedEdges && cur.onTrail) {
+        const fromRoadNode = cache.roadMix.hexToRoadNode.get(cur.key);
+        if (fromRoadNode) {
+          const landings = roadLandingCandidates(cur.key, fromRoadNode, cache.roadMix, cache.onTrailCells ?? [], profile);
+          for (const landing of landings) {
+            const n = cache.byKey.get(landing.hexKey);
+            if (!n) continue; // shouldn't happen (landings only come from onTrailCells), but never trust silently
+            const existingIdx = candidateIndexByKey.get(landing.hexKey);
+            // The REAL road-walked time — never the hex-hop approximation —
+            // is what a mover on the road actually experiences.
+            if (existingIdx !== undefined) {
+              if (landing.seconds < candidates[existingIdx].edge) {
+                candidates[existingIdx] = { cell: n, edge: landing.seconds, score: scoreFor(n, landing.seconds) };
+              }
+              continue;
+            }
+            candidateIndexByKey.set(landing.hexKey, candidates.length);
+            candidates.push({ cell: n, edge: landing.seconds, score: scoreFor(n, landing.seconds) });
+          }
+        }
       }
       if (candidates.length === 0) break; // genuinely boxed in
 

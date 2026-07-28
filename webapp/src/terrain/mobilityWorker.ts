@@ -33,6 +33,7 @@ import { getMoverProfile } from './moverProfiles';
 import { simulateMovementEnsemble, MovementEnsembleResult } from './movementSimulation';
 import { planRestrictions, RestrictionPlan } from './restrictionPlanner';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
+import { RoadGraph } from './roadGraph';
 
 export interface SimPathNode {
   lat: number;
@@ -82,6 +83,15 @@ export interface MobilityMovementRequest {
    *  `preferredRouteKeys` option. Forwarded to both the baseline ensemble and
    *  every restriction-planner re-run below. */
   preferredRouteKeys?: string[];
+  /** The road graph itself (docs §42b), for the baseline ensemble's mixed-mode
+   *  movement (`movementSimulation.ts`'s `roadMix` machinery) — vehicle
+   *  profiles only, when road data was fetched. Deliberately NOT forwarded to
+   *  `planRestrictions` below — see `RoadMixState`'s own doc comment for why
+   *  mixed-mode is unrestricted-baseline-only. `RoadGraph`'s `nodes`/
+   *  `adjacency` are plain `Map`s, which structured-clone natively across the
+   *  worker boundary same as every other Map-shaped payload this app already
+   *  sends it. */
+  roadGraph?: RoadGraph;
 }
 
 export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest;
@@ -152,6 +162,8 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
         seed: req.seed,
         onProgress: throttledProgress('ensemble'),
         preferredRouteKeys: req.preferredRouteKeys,
+        roadGraph: req.roadGraph,
+        roadSpeedOverrides: req.roadSpeedOverrides,
       }
     );
 

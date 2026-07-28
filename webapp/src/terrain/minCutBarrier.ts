@@ -51,6 +51,9 @@ import { MobilityGridCell, toMobilitySample } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { edgeMobilityCost } from './mobilityCost';
 import { calculateDistance } from '../utils/slopeCalculation';
+import { RoadGraph } from './roadGraph';
+import { edgeTravelTime } from './roadRouting';
+import { RoadSpeedOverrides } from './roadSpeedModel';
 
 const SOURCE = '__SOURCE__';
 const SINK = '__SINK__';
@@ -245,5 +248,147 @@ export function computeMinCutBarrier(
     segments,
     cutValue: maxFlow,
     originSideKeys: Array.from(reachable).filter(k => k !== SOURCE && k !== SINK),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Road-network-EXACT min-cut (docs §42b, 2026-07-28) — the "genuinely
+// road-graph-aware" half of the "fuse road-graph routes into min-cut" roadmap
+// item, closing the gap the hex-based cut above always had: it can only ever
+// sever a whole HEX, never a specific point along a road narrower than one.
+//
+// This is deliberately NOT a rewrite of `computeMinCutBarrier` to accept a
+// mixed hex+road adjacency (that remains the larger, harder architectural
+// change) — it is a SEPARATE, self-contained max-flow problem run directly
+// over the road graph's own nodes and edges, reusing the identical
+// `ResidualGraph`/`bfsAugmentingPath` machinery above unchanged (both are
+// already generic over string node IDs — nothing hex-specific in either).
+// Where the hex cut answers "the cheapest set of hexes that severs ALL
+// movement, on- or off-road", this answers "the cheapest set of REAL road
+// segments that severs the road network specifically" — a genuinely more
+// precise answer for the vehicle/road case, at the exact resolution the road
+// graph itself carries (a single OSM vertex-to-vertex edge, which is very
+// often far narrower than one hex). Vehicle profiles only, matching every
+// other road-graph consumer in this codebase (`roadRouteSearch.ts`) — a
+// road-class speed ceiling has no meaning for a foot mover.
+//
+// Capacity reuses the SAME `HIGHWAY_CAPACITY_TIER` table the hex cut's
+// `edgeCapacity` reads — one real classification, not two independently
+// tuned hierarchies for what is conceptually the same "how much throughput
+// does this road class carry" question.
+// ---------------------------------------------------------------------------
+
+export interface RoadBarrierSegment {
+  fromNodeId: string;
+  toNodeId: string;
+  from: LatLng;
+  to: LatLng;
+  /** The OSM way this segment belongs to, when named — for a log line/label,
+   *  mirroring `roadRouteSearch.ts`'s own `wayNames` treatment. */
+  wayName?: string;
+}
+
+export interface RoadMinCutResult {
+  segments: RoadBarrierSegment[];
+  /** Total capacity severed (= the max flow value) — same informational,
+   *  not-a-physical-cost-figure caveat as `MinCutResult.cutValue`. */
+  cutValue: number;
+  /** Road graph node IDs on the origin side of the cut. */
+  originSideNodeIds: string[];
+}
+
+/**
+ * Minimum s-t cut over the road graph's own nodes/edges, severing
+ * `originNodeIds` from `objectiveNodeIds` — the road-network access points a
+ * caller has already resolved (e.g. `nodesWithin` in `roadGraph.ts`, the same
+ * seed sets `findVehicleRoadRoute` uses). Returns null under the same
+ * conditions as `computeMinCutBarrier`: no edges at all, the objective
+ * already disconnected (nothing to sever), or a degenerate/empty graph.
+ */
+export function computeRoadNetworkMinCut(
+  graph: RoadGraph,
+  originNodeIds: string[],
+  objectiveNodeIds: string[],
+  profile: MoverProfile,
+  overrides?: RoadSpeedOverrides
+): RoadMinCutResult | null {
+  if (graph.nodes.size === 0) return null;
+  const flowGraph = new ResidualGraph();
+
+  let edgeCount = 0;
+  for (const [fromId, edges] of graph.adjacency) {
+    for (const edge of edges) {
+      const travel = edgeTravelTime(edge, profile, overrides);
+      if (travel.blocked) continue; // a real NO-GO (impassable/unfordable) — carries no traffic, excluded
+      const highway = edge.wayTags.highway;
+      const capacity = (highway ? HIGHWAY_CAPACITY_TIER[highway] : undefined) ?? DEFAULT_TRAIL_CAPACITY_MULTIPLIER;
+      flowGraph.addEdge(fromId, edge.to, capacity);
+      edgeCount++;
+    }
+  }
+  if (edgeCount === 0) return null;
+
+  const INF = 1e9;
+  for (const id of originNodeIds) if (graph.nodes.has(id)) flowGraph.addEdge(SOURCE, id, INF);
+  for (const id of objectiveNodeIds) if (graph.nodes.has(id)) flowGraph.addEdge(id, SINK, INF);
+
+  let maxFlow = 0;
+  for (let guard = 0; guard < 200000; guard++) {
+    const parent = bfsAugmentingPath(flowGraph);
+    if (!parent) break;
+    let bottleneck = Infinity;
+    let v = SINK;
+    while (v !== SOURCE) {
+      const u = parent.get(v)!;
+      bottleneck = Math.min(bottleneck, flowGraph.capacityOf(u, v));
+      v = u;
+    }
+    v = SINK;
+    while (v !== SOURCE) {
+      const u = parent.get(v)!;
+      flowGraph.pushFlow(u, v, bottleneck);
+      v = u;
+    }
+    maxFlow += bottleneck;
+  }
+
+  if (maxFlow >= INF / 2) return null;
+  if (maxFlow === 0) return null;
+
+  const reachable = new Set<string>([SOURCE]);
+  const queue = [SOURCE];
+  let qi = 0;
+  while (qi < queue.length) {
+    const u = queue[qi++];
+    for (const v of flowGraph.neighborsOf(u)) {
+      if (reachable.has(v)) continue;
+      if (flowGraph.capacityOf(u, v) > 1e-9) { reachable.add(v); queue.push(v); }
+    }
+  }
+
+  const segments: RoadBarrierSegment[] = [];
+  for (const [fromId, edges] of graph.adjacency) {
+    if (!reachable.has(fromId)) continue;
+    for (const edge of edges) {
+      if (reachable.has(edge.to)) continue; // not crossing the cut boundary
+      const travel = edgeTravelTime(edge, profile, overrides);
+      if (travel.blocked) continue; // wasn't a real edge in the original graph
+      const fromNode = graph.nodes.get(fromId);
+      const toNode = graph.nodes.get(edge.to);
+      if (!fromNode || !toNode) continue;
+      segments.push({
+        fromNodeId: fromId,
+        toNodeId: edge.to,
+        from: { lat: fromNode.lat, lng: fromNode.lng },
+        to: { lat: toNode.lat, lng: toNode.lng },
+        wayName: edge.wayName,
+      });
+    }
+  }
+
+  return {
+    segments,
+    cutValue: maxFlow,
+    originSideNodeIds: Array.from(reachable).filter(id => id !== SOURCE && id !== SINK),
   };
 }
