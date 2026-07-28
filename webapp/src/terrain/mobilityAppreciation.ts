@@ -481,6 +481,12 @@ export async function runMobilityAppreciation(
     }
   }
 
+  // Converted once, up front, so BOTH the movement ensemble (as a per-step
+  // tie-break bias, docs §42 follow-on) and the corridor/chokepoint fusion
+  // below (docs §42) can use the identical resolved route — never two
+  // independent conversions that could drift apart.
+  const roadRouteAsDissimilar = roadRoute ? roadRouteToDissimilarRoute(roadRoute, grid.cells) : null;
+
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
   const noGoCount = results.filter(r => r.trafficability === 'NO-GO').length;
@@ -565,6 +571,7 @@ export async function runMobilityAppreciation(
         seed: simulationSeed,
         planRestrictions,
         roadSpeedOverrides,
+        preferredRouteKeys: roadRouteAsDissimilar?.keys,
         // NOTE: `planRestrictions` runs INSIDE this same worker call, after
         // the ensemble, before the response posts back — so BOTH phases'
         // progress (ensemble then restrictions) can already have reported up
@@ -614,16 +621,6 @@ export async function runMobilityAppreciation(
     // is right in both cases, and the monotonic wrapper would just discard a
     // wrong guess anyway. The stage label is still useful on its own.
     onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: highWaterProgress });
-
-    // Road-graph fusion (docs §42, 2026-07-28): the box-free vehicle route
-    // (roadRoute, computed earlier) is a genuine, exact-geometry route
-    // candidate — converted here into the SAME DissimilarRoute shape the
-    // hex-optimiser's and the ensemble's own routes already use, so it can
-    // be counted as a real avenue for chokepoints and corridor-band
-    // clustering instead of sitting only as a separate, additive display.
-    // Null when there's no vehicle road route for this run (foot profiles,
-    // no road data, or the network genuinely doesn't connect the areas).
-    const roadRouteAsDissimilar = roadRoute ? roadRouteToDissimilarRoute(roadRoute, grid.cells) : null;
 
     // Corridors from the SIMULATION where one exists, from the optimiser
     // otherwise. Both go through the identical pipeline, so the two views can
@@ -720,7 +717,7 @@ export async function runMobilityAppreciation(
     onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
     barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
     if (barrier) {
-      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/TRAIL-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
+      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/ROAD-CLASS-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
     } else {
       onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
     }

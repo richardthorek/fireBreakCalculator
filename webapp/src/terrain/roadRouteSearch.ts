@@ -10,19 +10,31 @@
  * independent of the hex grid's box. This is what actually fixes Lake George
  * for vehicles in the RUNNING app, not just in a test fixture.
  *
- * PARTIALLY FUSED (docs §42, 2026-07-28): `roadRouteToDissimilarRoute` below
- * converts this route into the hex-grid's own `DissimilarRoute` shape so it
- * can be injected into the chokepoint/corridor-band analysis alongside the
+ * PARTIALLY FUSED (docs §42, 2026-07-28; extended same day): `roadRouteToDissimilarRoute`
+ * below converts this route into the hex-grid's own `DissimilarRoute` shape so
+ * it can be injected into the chokepoint/corridor-band analysis alongside the
  * hex-optimiser's k cheapest routes and the movement ensemble's tracks —
  * "the known-good road is a real route candidate", not just a separate
- * additive display. STATED SCOPE, not yet done: the movement ensemble's own
- * per-step decision logic still walks hex-to-hex (with a road-affinity
- * preference, `movementSimulation.ts`), not the road graph's own edges — a
- * simulated mover "on" a road is still hex-quantized, just biased to stay
- * there. Min-cut (`minCutBarrier.ts`) is UNCHANGED — its max-flow graph is
- * the hex adjacency graph only; a genuine road-graph-aware min-cut (so a
- * counter-mobility cut can target an exact road choke point rather than a
- * whole hex) remains real, open follow-up work, not attempted here.
+ * additive display. The SAME converted route's hex keys are also passed into
+ * the movement ensemble (`MovementSimulationOptions.preferredRouteKeys`) as a
+ * small per-step tie-break bias — at a genuine junction where two or more
+ * `onTrail` neighbours are candidates, the generic road-affinity term can't
+ * tell them apart, but the road graph's own exact-geometry A* already knows
+ * which fork is fastest. And min-cut's trail-edge capacity multiplier
+ * (`minCutBarrier.ts`) is now tiered by the same real OSM highway
+ * classification, rather than one flat multiplier for every trail regardless
+ * of class.
+ *
+ * STATED SCOPE, still NOT done, and not attempted this pass: the movement
+ * ensemble's own per-step decision logic still walks hex-to-hex — the bias
+ * above sharpens WHICH hex a mover picks at a fork, it does not make the
+ * mover walk the road graph's own edges/exact geometry. Min-cut's max-flow
+ * graph is still the hex adjacency graph only — a road-class-aware capacity
+ * is a real improvement to that graph's REALISM, not a road-graph-aware cut
+ * that can target an exact choke point narrower than a hex. Both would need a
+ * genuinely mixed hex+road-graph adjacency across these core search
+ * primitives to close completely — real, larger follow-up work, not silently
+ * claimed as done here.
  *
  * HONESTY ON SCOPE: the returned route runs between the nearest road ACCESS
  * POINT to the origin area and the nearest to the objective area — it does

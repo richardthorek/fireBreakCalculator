@@ -250,6 +250,30 @@ const REVISIT_PENALTY_SECONDS = 240;
  */
 const UNREACHABLE_LOOKAHEAD_SECONDS = 4 * 3600;
 
+/**
+ * Known-good-route tie-break bonus, SECONDS (docs §42 follow-on, 2026-07-28) —
+ * part of the "fuse road-graph routes into movement simulation" roadmap item.
+ * The box-free road-graph search (`roadRouteSearch.ts`) already finds the
+ * EXACT fastest road route between two areas via A* over real OSM/Mapbox
+ * vertex geometry — no hex quantization at all. The ensemble still walks
+ * hex-to-hex (rewriting it to walk the road graph's own edges is real, larger
+ * follow-up work — see that module's header), but at a genuine fork where the
+ * hex tessellation offers two or more `onTrail` neighbours (a junction), the
+ * generic road-affinity term (note 0 above) cannot tell them apart — every
+ * onTrail step looks equally "on the network" to it. The resolved road-graph
+ * route already knows, by exact-geometry search, which fork is actually part
+ * of the fastest route. `preferredRouteKeys`, when supplied (vehicle profiles
+ * only, when a road route was found), is that route resampled and snapped
+ * onto this SAME hex grid; a step onto one of its cells gets this SMALL
+ * additional pull — small deliberately, so it breaks a genuine tie at a
+ * junction without overriding the stochastic model the whole ensemble exists
+ * for (τ still governs how decisive that pull actually is for a given mover).
+ * ASSUMED constant, chosen to sit below `ROAD_AFFINITY_BASE_SECONDS`'s
+ * smallest base (150s) so it can never outweigh the mover's own network
+ * preference, only sharpen it at a fork.
+ */
+const KNOWN_ROAD_ROUTE_BONUS_SECONDS = 60;
+
 // ---------------------------------------------------------------------------
 // Seeded RNG — planning tools must be reproducible: same AOI, same profile,
 // same seed → same ensemble. mulberry32, a standard small PRNG.
@@ -459,6 +483,10 @@ export interface MovementSimulationOptions {
   /** Precomputed cost-to-go field, if the caller already has one for exactly
    *  this `blockedEdges` set. Omit and it is computed here. */
   costToGo?: Map<string, number>;
+  /** Hex keys of the box-free road-graph route, already resolved and snapped
+   *  onto this grid (`roadRouteToDissimilarRoute`), when one exists for this
+   *  run. See `KNOWN_ROAD_ROUTE_BONUS_SECONDS` for what this does. */
+  preferredRouteKeys?: string[];
 }
 
 const DEFAULT_MOVER_COUNT = 240;
@@ -506,6 +534,9 @@ export function simulateMovementEnsemble(
   const keepTrajectories = options.keepTrajectories ?? DEFAULT_KEEP_TRAJECTORIES;
 
   const blockedEdges = options.blockedEdges;
+  const preferredRouteKeys = options.preferredRouteKeys && options.preferredRouteKeys.length > 0
+    ? new Set(options.preferredRouteKeys)
+    : null;
   const cache = options.edgeCache ?? createEdgeCostCache(cells, profile, nightMode);
   const byKey = cache.byKey;
   const originSeeds = originKeys.filter(k => byKey.has(k));
@@ -609,7 +640,12 @@ export function simulateMovementEnsemble(
         let network = 0;
         if (cur.onTrail && !n.onTrail) network = roadAffinity;
         else if (!cur.onTrail && n.onTrail) network = -roadAffinity;
-        candidates.push({ cell: n, edge, score: edge + perceivedToGo + turn + revisit + network });
+        // Known-road-route tie-break (see KNOWN_ROAD_ROUTE_BONUS_SECONDS):
+        // sharpens the choice AT a junction where onTrail alone can't tell two
+        // forks apart; never fires off the network at all, since a key can
+        // only be in this set if the box-free road route itself crossed it.
+        const known = preferredRouteKeys?.has(n.key) ? -KNOWN_ROAD_ROUTE_BONUS_SECONDS : 0;
+        candidates.push({ cell: n, edge, score: edge + perceivedToGo + turn + revisit + network + known });
       }
       if (candidates.length === 0) break; // genuinely boxed in
 

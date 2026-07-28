@@ -23,12 +23,23 @@
  *
  * CAPACITY MODEL, also stated plainly: capacity is UNIT per passable edge
  * (GO/SLOW-GO only — a NO-GO edge already carries no traffic and is excluded
- * entirely), tripled when both ends are on a mapped trail (real sampled data,
- * not an invented number) on the reasoning that a trail carries more
- * realistic throughput than the same distance cross-country. This is NOT yet
- * weighted by real vehicle-capacity data (VCI/RCI, docs §6a) — that needs the
- * soil layers Pass 3 brings in. So today's min-cut answers "the fewest,
- * most trail-favouring chokepoints that fully sever this corridor", not yet
+ * entirely), multiplied when both ends are on a mapped trail — TIERED by the
+ * trail's own OSM `highway` classification (docs §42 follow-on, 2026-07-28)
+ * rather than a single flat multiplier for "on a trail" regardless of class.
+ * A two-lane sealed highway and a single-track fire trail were previously
+ * treated as identical throughput once either counted as `onTrail`, which
+ * meant a genuine highway chokepoint and a farm track chokepoint could tie on
+ * cut value for no real reason. `HIGHWAY_CAPACITY_TIER` reuses the SAME real,
+ * sourced classification (`nearestTrailTags.highway`, already on every cell —
+ * accumulatedCost.ts) the road-class speed model keys off — not a second,
+ * unrelated hierarchy invented for this. The MULTIPLIER VALUES themselves are
+ * still an engineering judgement (no source gives an exact vehicle-capacity-
+ * per-road-class figure, same honesty position the original flat 3× already
+ * held) — only the fact that they now vary by real class, rather than
+ * collapsing every trail to one bucket, is new. This is NOT yet weighted by
+ * real vehicle-capacity data (VCI/RCI, docs §6a) — that needs the soil layers
+ * Pass 3 brings in. So today's min-cut answers "the fewest, most
+ * trail-class-aware chokepoints that fully sever this corridor", not yet
  * "the cheapest to physically build" — the latter needs the Pass 4
  * production-model + breach-cost integration this doc's §5 already gates on
  * a citable basis.
@@ -43,7 +54,34 @@ import { calculateDistance } from '../utils/slopeCalculation';
 
 const SOURCE = '__SOURCE__';
 const SINK = '__SINK__';
-const TRAIL_CAPACITY_MULTIPLIER = 3;
+
+/** Capacity multiplier by OSM `highway` class, tiered off the SAME real
+ *  classification `roadSpeedModel.ts`'s `HIGHWAY_SPEED_KMH` keys off — see
+ *  the module header. Absent classes (a track/path with no clearer tag, or a
+ *  trail whose nearest-feature scan didn't resolve a class) fall back to
+ *  `DEFAULT_TRAIL_CAPACITY_MULTIPLIER`, matching the original flat value this
+ *  replaces. */
+const HIGHWAY_CAPACITY_TIER: Readonly<Record<string, number>> = {
+  motorway: 8, motorway_link: 8,
+  trunk: 7, trunk_link: 7,
+  primary: 6, primary_link: 6,
+  secondary: 5, secondary_link: 5,
+  tertiary: 4, tertiary_link: 4,
+  unclassified: 3, residential: 3, living_street: 3, service: 3,
+};
+const DEFAULT_TRAIL_CAPACITY_MULTIPLIER = 3;
+
+/** Capacity for one passable edge, unit per cross-country hex, tiered when
+ *  both ends sit on a mapped trail (see module header). Reads the FROM cell's
+ *  own resolved trail tags — `onTrail` for both ends already means they were
+ *  snapped to the same nearby feature in the overwhelming common case (a
+ *  short hex edge), so a second independent lookup on the neighbour would
+ *  only ever re-derive the same class at real extra cost, not new information. */
+function edgeCapacity(cell: MobilityGridCell, neighbor: MobilityGridCell): number {
+  if (!cell.onTrail || !neighbor.onTrail) return 1;
+  const highway = cell.nearestTrailTags?.highway;
+  return (highway ? HIGHWAY_CAPACITY_TIER[highway] : undefined) ?? DEFAULT_TRAIL_CAPACITY_MULTIPLIER;
+}
 
 export interface BarrierSegment {
   fromKey: string;
@@ -142,8 +180,7 @@ export function computeMinCutBarrier(
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
       const result = edgeMobilityCost(profile, toMobilitySample(cell), toMobilitySample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO — carries no traffic, excluded
-      const capacity = cell.onTrail && neighbor.onTrail ? TRAIL_CAPACITY_MULTIPLIER : 1;
-      graph.addEdge(cell.key, nKey, capacity);
+      graph.addEdge(cell.key, nKey, edgeCapacity(cell, neighbor));
       edgeCount++;
     }
   }

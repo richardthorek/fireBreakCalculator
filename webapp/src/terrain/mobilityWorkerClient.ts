@@ -92,6 +92,9 @@ export interface MovementEnsembleRequestOptions {
   roadSpeedOverrides?: RoadSpeedOverrides;
   onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun') => void;
   onLog?: (line: string) => void;
+  /** Hex keys of the box-free road-graph route, when one was found for this
+   *  run — see `movementSimulation.ts`'s `preferredRouteKeys` option. */
+  preferredRouteKeys?: string[];
 }
 
 export interface MovementEnsembleOutcome {
@@ -135,6 +138,7 @@ export function runMovementEnsembleInWorker(
       moverCount: options.moverCount, spreadId: options.spreadId, seed: options.seed,
       planRestrictions: options.planRestrictions, maxRestrictions: options.maxRestrictions,
       roadSpeedOverrides: options.roadSpeedOverrides,
+      preferredRouteKeys: options.preferredRouteKeys,
     };
     w.postMessage(request);
   });

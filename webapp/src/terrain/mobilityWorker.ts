@@ -77,6 +77,11 @@ export interface MobilityMovementRequest {
   /** Same as `MobilitySearchRequest.roadSpeedOverrides` — see that field's
    *  doc comment. */
   roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Hex keys of the box-free road-graph route, when one was found for this
+   *  run (vehicle profiles only) — see `movementSimulation.ts`'s
+   *  `preferredRouteKeys` option. Forwarded to both the baseline ensemble and
+   *  every restriction-planner re-run below. */
+  preferredRouteKeys?: string[];
 }
 
 export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest;
@@ -146,6 +151,7 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
         spreadId: req.spreadId,
         seed: req.seed,
         onProgress: throttledProgress('ensemble'),
+        preferredRouteKeys: req.preferredRouteKeys,
       }
     );
 
@@ -161,6 +167,7 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
           maxRestrictions: req.maxRestrictions,
           onProgress: throttledProgress('restrictions'),
           onLog: line => post({ kind: 'progress', requestId: req.requestId, fraction: 1, phase: 'restrictions', log: line }),
+          preferredRouteKeys: req.preferredRouteKeys,
         }
       );
     }

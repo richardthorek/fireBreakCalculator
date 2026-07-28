@@ -4751,6 +4751,75 @@ suite still green; `tsc`/build clean.
 
 ---
 
+### 42a. Road-graph fusion extended: ensemble tie-break + min-cut class-tiered capacity (2026-07-28)
+
+Direct continuation of §42, picked as the next roadmap item (master_plan.md,
+"Fuse road-graph routes into movement simulation / min-cut"). §42 explicitly
+left two things unfused: the movement ensemble's per-step logic still walks
+hex-to-hex with a generic road-affinity bias, and min-cut's max-flow graph
+treated every mapped trail as identical (`TRAIL_CAPACITY_MULTIPLIER = 3`
+regardless of a two-lane highway vs. a single-track fire trail). The roadmap
+framed the FULL fix as "a genuinely mixed hex+road-graph adjacency across
+these core search primitives" — real, larger work this project's own
+discipline (avoid a confidently-wrong shortcut on a core algorithm) has twice
+now flagged as too risky to attempt in one pass. This entry ships two
+bounded, honest, real improvements instead — not the full rewrite, and not
+silently presented as though it were.
+
+**1. Ensemble known-route tie-break** (`movementSimulation.ts`). At a genuine
+hex-grid FORK — a junction where two or more `onTrail` neighbours are
+candidates — the existing road-affinity term (module note 0) can't tell them
+apart: every onTrail step looks equally "on the network". The box-free
+road-graph search already knows, by exact-geometry A*, which fork is
+actually part of the fastest route. New option `preferredRouteKeys` (hex keys
+of the resolved road route, already computed and snapped onto the grid by
+`roadRouteToDissimilarRoute`) adds a small, fixed
+`KNOWN_ROAD_ROUTE_BONUS_SECONDS` (60s) pull toward those cells — small
+enough on purpose to sit below the smallest `ROAD_AFFINITY_BASE_SECONDS`
+base (150s), so it sharpens a fork decision without overriding the
+ensemble's own stochastic spread (τ still governs how decisive it is per
+mover). Threaded through the full call chain that already exists for
+`blockedEdges`/`edgeCache`: `mobilityAppreciation.ts` (converts the road
+route once, up front, reusing it for both this and the existing
+corridor/chokepoint fusion — previously two independent conversions) →
+`mobilityWorkerClient.ts` → `mobilityWorker.ts`'s request shape → both the
+baseline ensemble call and `restrictionPlanner.ts`'s re-runs (kept IDENTICAL
+between baseline and every candidate/scenario evaluation, so a restriction's
+measured effect is never confounded by the bias changing between runs).
+
+**2. Min-cut road-class-tiered capacity** (`minCutBarrier.ts`). Replaces the
+flat `TRAIL_CAPACITY_MULTIPLIER = 3` with `HIGHWAY_CAPACITY_TIER`, keyed off
+the SAME real, sourced `nearestTrailTags.highway` classification the
+road-class speed model already uses (motorway/trunk 7-8×, primary/secondary
+5-6×, tertiary 4×, unclassified/residential/service/untagged 3× — matching
+the old flat default exactly, so nothing regresses for an untagged trail).
+The exact multiplier VALUES remain an engineering judgement (no source gives
+a real vehicle-capacity-per-road-class figure — the original flat 3× already
+held this same honesty position); what's new is that they now vary by real
+classification instead of collapsing every trail into one bucket, so a
+genuine highway chokepoint and a farm-track chokepoint no longer tie on cut
+value for no real reason.
+
+**Stated, NOT done, same as §42**: neither change makes the ensemble walk
+the road graph's own edges, nor makes min-cut's graph road-graph-aware — a
+mover still steps hex-to-hex, and a cut still severs whole hexes, never an
+exact point narrower than one. Both remain the same real, larger follow-up
+work §42 already named.
+
+**Tests** (`roadGraphEnsembleMinCutFusion.test.ts`, 6 checks): a synthetic
+two-fork hex grid (built from real `axialToLocal` geometry, not a hand-rolled
+approximation, so both forks are genuinely equal-cost) proves the baseline
+fork balance sits near parity, and that biasing toward EITHER fork shifts the
+balance decisively in that direction (not a one-directional artefact); a
+preferred-route key set with no matching cells in the grid is silently
+ignored, not a crash. Separately, a motorway-tagged trail chain is proven to
+carry strictly more min-cut capacity than an identically-shaped untagged
+track, while an off-trail chain is proven UNCHANGED at unit (1×) capacity.
+Full existing road/ensemble/restriction/min-cut-adjacent suite still green;
+`tsc`/build clean.
+
+---
+
 ## 43. Corridor legibility pass — the route line becomes the star (2026-07-28)
 
 Owner, reviewing a screenshot of a live run with 2 corridors present:

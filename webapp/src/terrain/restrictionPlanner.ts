@@ -231,6 +231,12 @@ export interface RestrictionPlannerOptions {
   maxRestrictions?: number;
   onProgress?: (fraction: number) => void;
   onLog?: (line: string) => void;
+  /** Forwarded to every `simulateMovementEnsemble` re-run this planner makes
+   *  (see that option's own doc comment) — kept identical between the
+   *  baseline and every candidate/scenario evaluation, so a restriction's
+   *  measured effect is never confounded by the known-route bias changing
+   *  between runs. */
+  preferredRouteKeys?: string[];
 }
 
 /**
@@ -277,6 +283,7 @@ export function planRestrictions(
       blockedEdges: extraBlocked,
       edgeCache: cache,
       costToGo,
+      preferredRouteKeys: options.preferredRouteKeys,
     });
   };
 
