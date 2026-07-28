@@ -546,7 +546,7 @@ export async function runMobilityAppreciation(
     if (grid.roadWays.length > 0) {
       const waterBodies: WaterBodyPolygon[] = grid.waterFeatures
         .filter(f => f.kind === 'water')
-        .map(f => ({ coords: f.coords }));
+        .map(f => ({ coords: f.coords, holes: f.holes }));
       const built = buildRoadGraph(grid.roadWays as RoadWay[], waterBodies);
       if (built.wayCount > 0) mixedRoadGraph = built;
     }

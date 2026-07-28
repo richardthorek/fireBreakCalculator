@@ -68,9 +68,13 @@ export interface RoadEdge {
 /** Minimal water-body polygon shape — mirrors `RoadWay`'s own "no import
  *  dependency" design (see that interface's doc comment): the caller maps
  *  its own `InfrastructureTrail`/`kind === 'water'` features into this shape
- *  rather than this module importing `infrastructureService.ts`. */
+ *  rather than this module importing `infrastructureService.ts`. `holes`
+ *  (docs §35 addendum, full multipolygon reassembly, 2026-07-28) mirrors
+ *  `InfrastructureTrail.holes` exactly — real island rings a point inside
+ *  `coords` must ALSO be checked against before counting as "in the water". */
 export interface WaterBodyPolygon {
   coords: LatLngLike[];
+  holes?: LatLngLike[][];
 }
 
 /** How far a road may run through the interior of a mapped standing water
@@ -100,7 +104,11 @@ function pointInPolygon(p: LatLngLike, polygon: LatLngLike[]): boolean {
 function isInAnyWaterBody(p: LatLngLike, waterBodies: WaterBodyPolygon[]): boolean {
   for (const body of waterBodies) {
     if (body.coords.length < 4) continue; // not enough vertices to be a meaningful ring
-    if (pointInPolygon(p, body.coords)) return true;
+    if (!pointInPolygon(p, body.coords)) continue;
+    // Inside the outer ring — but a real island (docs §35 addendum, full
+    // multipolygon reassembly, 2026-07-28) makes that dry ground, not water.
+    const onIsland = (body.holes ?? []).some(hole => hole.length >= 4 && pointInPolygon(p, hole));
+    if (!onIsland) return true;
   }
   return false;
 }

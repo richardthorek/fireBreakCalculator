@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — the box-free vehicle road route now surfaces on the map seconds into a run instead of tens of seconds, independent of the hex-grid pipeline; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — full OSM water-relation topology (multi-fragment ring stitching + real island holes) closes a genuine under-detection gap in the hydrology hard-block gate; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -76,6 +76,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 38 | Road-graph fusion extended: ensemble tie-break + min-cut class-tiered capacity (still not full mixed adjacency) | Direct continuation of step 36's stated remainder. Ensemble: new `preferredRouteKeys` option gives movers a small, fixed pull toward the resolved road-graph route's own hex cells — sharpens which fork a mover picks at a genuine junction (where the old generic road-affinity term can't tell two onTrail forks apart) without overriding the ensemble's own stochastic spread. Min-cut: flat 3× trail capacity replaced with `HIGHWAY_CAPACITY_TIER`, keyed off the same real OSM highway classification the road-class speed model already uses, so a highway chokepoint no longer ties with a farm-track chokepoint on cut value. Neither change makes the ensemble walk the road graph's exact edges or makes min-cut road-graph-aware — both real, larger follow-up work, stated not attempted | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a |
 | 39 | Fuse road-graph routes into movement simulation / min-cut — genuinely mixed hex+road-graph adjacency, CLOSED | Owner: "finish the bigger slice of work so the road usage is fully complete." Ensemble: a mover's recorded position stays a hex cell (no downstream rendering/clustering code needed to change), but its CANDIDATE SET now includes real road-graph "next landing" options — a bounded walk of the road graph's own exact edges (real distance, real class speed) until it reaches a road node whose nearest onTrail hex genuinely differs from the mover's own, so a long straight road is no longer hex-quantized and a real junction offers its actual branches. Safety-motivated scope cut, structural not a flag: mixed-mode is wired ONLY into the unrestricted baseline (`restrictionPlanner.ts` never receives a road graph), so a recommended block can never be silently bypassed by the shortcut. Min-cut: a SEPARATE `computeRoadNetworkMinCut`, reusing the identical max-flow machinery over the road graph's own nodes/edges directly — targets a real road segment, often narrower than a hex, alongside (not replacing) the existing hex-based cut. Not done this pass: new map layers/GIS export/briefing text for the road-network-exact cut — computed, logged, and carried on the result type, not yet visualised | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
 | 40 | Road-route decoupling — the instant road-network preview | Owner, picking the next priority explicitly for confidence/accuracy AND visual impact over "nice to have" controls. The box-free vehicle road route never actually depended on the hex-grid retry loop, only on the road-network fetch — but ran after the whole grid/search pipeline settled purely because of where the code sat, so a real result that could appear in seconds instead waited tens of seconds. `findEarlyVehicleRoadRoutePreview` (new) fetches independently, using the EXACT same first-attempt bounds the grid pipeline's own attempt 0 computes, so the existing bbox cache collapses the two into one real network round trip, not a duplicate. New `onRoadRoute` callback wired into `App.tsx` — the map shows the real road route seconds in, always superseded outright by the authoritative result the instant it lands (never a stale preview surviving the real answer) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
+| 41 | Full OSM water-relation topology — multipolygon reassembly | Owner's second confidence/accuracy pick alongside step 40. Step 31's scope cut was framed as "safe either direction", but reading `distanceToNearestWater`'s actual code found a sharper gap: an unclosed fragment (exactly what one piece of a multi-member outer ring usually is) was skipped entirely by the interior point-in-polygon test, so a point deep in a large multi-fragment lake could go UNDETECTED as water — a real under-block risk for a hard-block gate, not just the documented "island over-blocks" direction. `stitchRings` (new, kept in lock-step between webapp and API) reassembles same-role way fragments into closed rings by endpoint-matching; `inner` fragments become real holes assigned to whichever stitched outer ring actually contains them. `distanceToNearestWater`/`roadGraph.ts`'s `isInAnyWaterBody` both now correctly treat a point on a real island as dry ground, not water | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
 
 ### Next up
 
@@ -87,7 +88,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
-| Full OSM water-relation topology (multi-part outer rings, inner/island holes) | Step 31 shipped the common case (single outer ring per relation); proper multipolygon reassembly (stitching split outer rings, subtracting inner rings as real holes) is a stated, deliberate scope cut, not forgotten | S | step 31 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
 | Vegetation NVIS-first uplift | Explicit `NoData` handling; flag cleared/modified segments distinctly | S | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
@@ -119,6 +119,51 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Full OSM water-relation topology: multipolygon reassembly
+  (step 41)**: owner's second confidence/accuracy pick alongside step 40.
+  Step 31 ("OSM water relations") shipped the common case and stated a
+  scope cut — multi-part outer rings weren't re-stitched, islands weren't
+  subtracted as holes — framed as safe in both directions.
+
+  Reading the actual consumer code (not just the extraction code) found a
+  sharper problem: `distanceToNearestWater`'s interior point-in-polygon
+  test already had a defensive `if (!closed) continue` guard, so an
+  UNCLOSED fragment — exactly what one piece of a multi-member outer ring
+  usually is on its own — was skipped entirely, not "gated member-by-member"
+  as the old comment claimed. A point deep in a large multi-fragment lake,
+  far from any single fragment's own edge, could go completely undetected
+  as water. That's a real UNDER-block risk for a hard-block hydrology gate —
+  the opposite of the documented safe direction — which made this a
+  correctness fix, not just a completeness item.
+
+  Fixed, kept in explicit lock-step between `webapp` and `api` (matching
+  the existing "MUST match" discipline): `stitchRings` reassembles a
+  relation's same-role way fragments into closed ring(s) by matching
+  endpoints in either orientation, chaining until each ring closes — an
+  unstitchable fragment still surfaces as a plain edge feature, never a
+  fabricated closure. `inner` fragments are stitched the same way and
+  assigned as holes to whichever stitched OUTER ring actually contains them
+  (a relation can have multiple disjoint lakes, each with its own islands).
+  `InfrastructureTrail` gained `holes?: LatLng[][]`; `distanceToNearestWater`
+  builds a proper multi-ring GeoJSON `Polygon` (Turf already implements
+  "outer minus holes" correctly, no new logic needed there);
+  `distanceToNearestTrail` now also scans hole boundaries for edge-proximity
+  (a real island's shoreline is a genuine water/land edge too);
+  `roadGraph.ts`'s self-contained `isInAnyWaterBody` gained the matching
+  hole check, so a road entirely on a real island is correctly not flagged
+  as an in-water crossing.
+
+  8 new tests total: `waterRelationTopology.test.ts` (webapp, 4 checks) —
+  a three-fragment ring correctly detects water at its centre (the core
+  regression), an island reads as dry with the surrounding lake still wet,
+  two disjoint lakes each get only their own island, an unstitchable
+  fragment degrades safely; mirrored in the API's `infrastructure.test.ts`
+  (4 checks, same fixtures); `roadWaterCrossing.test.ts` gained 2 more — a
+  road on a real island is not blocked, the same lake without the island
+  road still correctly blocks a crossing through genuine open water. Full
+  existing suite green in both packages; `tsc`/build clean in both. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45.
 
 - **2026-07-28 — Road-route decoupling: the instant road-network preview
   (step 40)**: owner, picking the next priority after step 39 shipped:

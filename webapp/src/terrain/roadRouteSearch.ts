@@ -127,7 +127,7 @@ export function findVehicleRoadRoute(
 
   const waterBodies: WaterBodyPolygon[] = waterFeatures
     .filter(f => f.kind === 'water')
-    .map(f => ({ coords: f.coords }));
+    .map(f => ({ coords: f.coords, holes: f.holes }));
   const graph: RoadGraph = buildRoadGraph(roadWays as RoadWay[], waterBodies);
   if (graph.wayCount === 0) return null;
 

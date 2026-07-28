@@ -5026,5 +5026,83 @@ live-data `nvis-fidelity.test.ts` fails); `tsc`/build clean.
 
 ---
 
+## 45. Full OSM water-relation topology — multipolygon reassembly (2026-07-28)
+
+Owner, picking the second of two priorities alongside step 40 (road-route
+decoupling): "improves the confidence or accuracy of the system... make
+sure the core is rock solid and reliable." Step 31 ("OSM water relations")
+shipped the common case — a relation's `outer`-role members each became
+their own standalone water-body trail — and stated a deliberate scope cut:
+a multi-part outer ring split across several way members was never
+re-stitched into one true ring, and `inner` (island) members were excluded
+entirely rather than subtracted as holes. That doc entry framed both
+directions as safe ("at worst an island cell is conservatively treated as
+water").
+
+**A sharper finding than the stated cut, found by reading the actual
+consumer code, not just the extraction code**: `distanceToNearestWater`'s
+point-in-polygon interior test already had a defensive `if (!closed)
+continue` guard — meaning an UNCLOSED fragment (exactly what one piece of a
+multi-member outer ring usually is on its own) was skipped entirely, not
+"gated member-by-member" as the old doc comment claimed. A point deep in
+the middle of a large multi-fragment lake, far from any single fragment's
+own edge, was therefore not reliably detected as water at all — a real
+UNDER-detection risk for a hard-block hydrology gate, the opposite of the
+documented safe direction. This made the fix a correctness gap, not just a
+"nice to have" completeness item.
+
+**Fixed, in both `webapp/src/utils/infrastructureService.ts` and
+`api/src/services/infrastructureService.ts` (kept in explicit lock-step,
+matching the existing "MUST match" discipline)**:
+
+- `stitchRings` reassembles a relation's same-role way-member fragments into
+  closed ring(s) by matching endpoint coordinates in EITHER orientation (a
+  member way's own direction is arbitrary), chaining until each ring closes.
+  Nothing is ever fabricated into a false closure — an unstitchable fragment
+  (a genuine data-quality edge case) still surfaces as a plain edge feature,
+  the exact same degraded-but-safe behaviour every fragment got before this
+  fix, not a regression for the cases the old code already handled.
+- `inner`-role fragments are stitched the same way and assigned as HOLES to
+  whichever stitched OUTER ring actually contains them (`pointInRing`, a
+  self-contained ray-casting test — a relation can have multiple disjoint
+  outer rings, each with its own islands, so this must be a real containment
+  check, not "first ring wins").
+- `InfrastructureTrail` gained an optional `holes?: LatLng[][]` field,
+  populated only for `kind === 'water'` features stitched from a relation
+  with usable inner members.
+- `distanceToNearestWater` (webapp) builds a proper multi-ring GeoJSON
+  `Polygon` — `[outer, hole1, hole2, ...]` — when holes are present;
+  `@turf/boolean-point-in-polygon` already implements "outer minus holes"
+  correctly per the GeoJSON spec, so no new point-in-polygon logic was
+  needed there. `distanceToNearestTrail` (the edge-proximity half) now also
+  scans hole boundaries — a real island's own shoreline is a genuine
+  water/land edge too, exactly as much as the lake's own outer shore.
+- `roadGraph.ts`'s self-contained `isInAnyWaterBody` (used by
+  `buildRoadGraph`'s water-crossing detection, docs §37) gained the same
+  hole check: inside the outer ring AND NOT inside any hole. A road entirely
+  on a real island is correctly NOT flagged as an in-water crossing, closing
+  the same failure mode §37's Lake George fix targeted, for the island case
+  specifically.
+
+**Tests**: `waterRelationTopology.test.ts` (webapp, 4 checks, global `fetch`
+stubbed): a three-fragment outer ring stitches into one closed ring and a
+point at its CENTRE (far from every individual fragment's own edge, so only
+a genuinely closed ring's interior test can find it) reads as water — the
+core regression this fix closes; a real island is subtracted as a hole
+(island centre reads as NOT water, the surrounding lake still does); two
+disjoint outer rings in one relation each get only their OWN island
+(structurally verified, not just "some hole exists"); an unstitchable
+fragment degrades safely, no crash, no fabricated closure. Mirrored in the
+API's `infrastructure.test.ts` (4 new checks, same fixtures, "MUST match"
+webapp behaviour). `roadWaterCrossing.test.ts` (webapp, 2 new checks): a
+long track running the length of a real island is NOT blocked as an
+in-water crossing; the SAME lake, without the island road, still correctly
+blocks a track through genuine open water (a control proving the fix didn't
+just turn the whole gate off). Full existing suite green in both packages
+(only the pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
+`tsc`/build clean in both.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
