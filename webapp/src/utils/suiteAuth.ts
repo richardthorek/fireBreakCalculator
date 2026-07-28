@@ -29,7 +29,8 @@
 
 import { startAuthentication } from '@simplewebauthn/browser';
 
-const RAW_URL = (import.meta.env.VITE_SUITE_AUTH_URL as string | undefined) || '';
+// import.meta.env is undefined outside Vite — see logger.ts's own guard.
+const RAW_URL = ((import.meta as any).env?.VITE_SUITE_AUTH_URL as string | undefined) || '';
 export const SUITE_AUTH_URL = RAW_URL.trim().replace(/\/+$/, '');
 
 /** Suite-wide token storage key (see Station Manager's suite-token-validation doc). */

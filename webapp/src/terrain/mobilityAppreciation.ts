@@ -30,7 +30,10 @@
  * the ensemble produced anything.
  */
 
-import { buildMobilityGrid } from './mobilityGrid';
+import {
+  buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
+  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY,
+} from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
@@ -42,6 +45,8 @@ import {
   MobilityGridCell, assembleMobilityResults,
 } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
+import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
+import { findVehicleRoadRoute, RoadRouteSearchResult } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
@@ -63,6 +68,13 @@ export interface MobilityAppreciationResult {
    *  for drawing the actual mapped river/lake shape on the map, not just the
    *  hex cells it influenced. */
   waterFeatures: InfrastructureTrail[];
+  /** The raw OSM road/track geometry this run fetched (docs §35's
+   *  `highway-mobility` set) — kept alongside `waterFeatures` for the SAME
+   *  reason: presentation-layer route smoothing (`pathRefinement.ts`'s
+   *  snap-to-trail step, reused for corridor representative routes, docs
+   *  §28 addendum 2026-07-28) needs the actual road LINE geometry, not just
+   *  the per-cell `onTrail` boolean the search itself used. */
+  roadWays: InfrastructureTrail[];
   cellCount: number;
   reachableCount: number;
   noGoCount: number;
@@ -71,6 +83,29 @@ export interface MobilityAppreciationResult {
    *  unit-simulation animation follows (docs "Terrain Mobility &
    *  Counter-Mobility": null only if no objective cell was reachable). */
   path: SimPathNode[] | null;
+  /** The box-free ROAD-NETWORK route between the two painted areas (docs
+   *  §35 Slice A, `roadRouteSearch.ts`) — computed independently of the
+   *  hex-grid search above and the padded box it still runs inside. Null for
+   *  non-vehicle profiles, when no road data was fetched, or when the road
+   *  network genuinely doesn't connect the two areas. This is what actually
+   *  answers a Lake-George-shaped "no route" for vehicles: the hex-grid
+   *  `path` above can still legitimately be null in that case while this
+   *  isn't. */
+  roadRoute: RoadRouteSearchResult | null;
+  /** docs §35 — true when the hex-grid search needed more than one attempt
+   *  (a wider `boundsPadFactor` retry) to find a route, or to conclude there
+   *  genuinely isn't one. False means the very first, smallest-padding
+   *  attempt already settled it. */
+  usedExpandedSearch: boolean;
+  /** How many `boundsPadFactor` attempts this run actually made (1..6). */
+  searchAttempts: number;
+  /** Analysis depth this run used (docs §35) — surfaced so the panel can
+   *  show the current setting and a "re-run at finer resolution" control. */
+  fidelity: MobilityFidelity;
+  /** The cell count `computeCellBudget` targeted for the decisive attempt —
+   *  paired with `cellCount` (the actual count, which can differ slightly
+   *  after `chooseHexSize` rounds to a real hex tiling). */
+  targetCellCount: number;
   /** The genuinely distinct origin→objective routes this run analysed. These
    *  are the ANALYSIS substrate; `corridorField` below is what gets
    *  presented (owner 2026-07-26: "use the individual pathways to analyse,
@@ -156,6 +191,39 @@ export interface MobilityAppreciationOptions {
    * `timeSeconds` legitimately Infinity because nothing has been reached yet.
    */
   onPreviewCells?: (cells: MobilityCellResult[]) => void;
+  /**
+   * Fires ONCE, right after the multi-source search settles — the real
+   * reachability field (arrival time per cell, GO/SLOW-GO/NO-GO) and the
+   * single cheapest origin→objective route, exactly as `results`/`bands`/
+   * `path` appear in the final return value. This is well before the
+   * movement ensemble, corridors, chokepoints and min-cut barrier finish —
+   * those can add tens of seconds more on a large or fine-fidelity grid, and
+   * previously NOTHING new appeared on the map in that whole span (owner:
+   * "the map [should start] getting visual results being loaded as it
+   * happens. I'd love to see pathways snaking across the landscape from the
+   * get go rather than waiting for the end."). The object passed here has
+   * the exact shape of the final result, with every field the later stages
+   * haven't computed yet left in its honest "nothing yet" state
+   * (`corridorField`/`ensemble`/`restrictionPlan`/`barrier`: null,
+   * `chokepoints`/`dissimilarRoutes`: empty) — never fabricated placeholder
+   * corridors, just real data surfaced as soon as it exists.
+   */
+  onPartialResult?: (partial: MobilityAppreciationResult) => void;
+  /** User-edited road-class speeds (docs §35 config UI). Set into this
+   *  thread's own roadSpeedModel.ts module instance at the top of this run,
+   *  and forwarded into the worker (a separate module instance — see
+   *  roadSpeedModel.ts's own doc comment) on every worker call this run
+   *  makes. Main-thread cost evaluation (corridorField.ts, minCutBarrier.ts,
+   *  corridorAnalysis.ts, the road-route search) picks it up from the
+   *  same set-once call — no threading required beyond this one option. */
+  roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Analysis depth (docs §35, owner: "let the user select a scale of
+   *  something like 'quick' to 'fine'"). Defaults to 'standard' — matches
+   *  the original fixed cell budget exactly for a typical short-range run.
+   *  Governs `buildMobilityGrid`'s cell budget on every attempt (initial AND
+   *  targeted retries); does not change the retry count/growth behaviour
+   *  itself. */
+  fidelity?: MobilityFidelity;
 }
 
 export async function runMobilityAppreciation(
@@ -164,50 +232,202 @@ export async function runMobilityAppreciation(
   options: MobilityAppreciationOptions
 ): Promise<MobilityAppreciationResult | null> {
   const {
-    profileId, nightMode = false, signal, onProgress, onLog, onStage, onPreviewCells,
+    profileId, nightMode = false, signal, onProgress: onProgressRaw, onLog, onStage, onPreviewCells, onPartialResult,
     moverCount = 240,
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
     planRestrictions = true,
+    roadSpeedOverrides,
+    fidelity = DEFAULT_MOBILITY_FIDELITY,
   } = options;
+  // Progress across this run is assembled from several sources that don't
+  // know about each other — a retry's own sampling pass, the worker's search
+  // progress, the ensemble/restrictions phases the SAME worker call streams
+  // back before it resolves — and reconciling their exact numeric handoffs
+  // by hand proved fragile: a stale/lower value from one source landing
+  // after a higher one from another visibly moved the bar BACKWARD (found
+  // this session: the ensemble worker call's own 'restrictions' phase can
+  // already report up to ~0.97 internally before the outer code's next
+  // scripted checkpoint, which used to unconditionally send a lower 0.7).
+  // This guard is the one place that discipline is enforced, so no call site
+  // below has to re-derive it: report a value going backward NEVER reaches
+  // the caller — the bar holds at its high-water mark instead of lying about
+  // work being undone.
+  let highWaterProgress = 0;
+  const onProgress = (fraction: number) => {
+    if (fraction <= highWaterProgress) return;
+    highWaterProgress = fraction;
+    onProgressRaw?.(fraction);
+  };
   const profile = getMoverProfile(profileId);
   if (!profile) {
     onLog?.(`ERROR — unknown mover profile "${profileId}"`);
     return null;
+  }
+  // Set once, here, before any main-thread cost evaluation this run makes —
+  // see roadSpeedModel.ts's own doc comment on why the worker call sites
+  // below must ALSO forward this explicitly (a Worker is a separate module
+  // instance; this call is invisible to it).
+  setRoadSpeedOverrides(roadSpeedOverrides ?? null);
+  if (roadSpeedOverrides) {
+    onLog?.('USING USER-EDITED ROAD-CLASS SPEEDS — SEE CONFIG PANEL FOR WHICH CLASSES WERE OVERRIDDEN');
   }
 
   onLog?.(`PROFILE ${profile.label.toUpperCase()} · ${profile.confidence.toUpperCase()} CONFIDENCE (${profile.source.slice(0, 72)}${profile.source.length > 72 ? '…' : ''})`);
   onLog?.('LAYING OUT SURVEY GRID OVER AREA OF INTEREST…');
   onStage?.({ key: 'grid', label: 'Laying out survey grid', fraction: 0 });
 
-  let samplingAnnounced = false;
-  const grid = await buildMobilityGrid(origin, objective, {
-    signal,
-    // Sampling owns the first 45% of the run's progress bar; the simulation
-    // stages that follow are real work of comparable length, and a bar that
-    // sat at 70% for most of the wall-clock time would be a worse lie than no
-    // bar at all.
-    onProgress: f => {
-      onProgress?.((f / 0.7) * 0.45);
+  // docs §35 — the Lake George defect, and its full fix (2026-07-27,
+  // confirmed live against the real Lake George: a first, uniform-only-pad
+  // fix still fell short). Owner, after watching that: "I think we need
+  // both, a large uniform box covering the origin and destination and then
+  // the ability to extend out when we hit edges. We need enough padding so
+  // the algorithm can identify the best routes and thus the handful of
+  // possible corridors for movement." Two things compose:
+  //
+  //  1. INITIAL PASS — a generous uniform box, sized off the REAL distance
+  //     between origin and objective (`computePaddedBounds`), not either
+  //     axis's own incidental span (the earlier bug: a due-east crossing has
+  //     almost no north–south span of its own, so padding stayed near-zero
+  //     regardless of multiplier). Generous on purpose, per the owner's own
+  //     "enough padding to identify a HANDFUL of corridors" requirement, not
+  //     just the single cheapest thread through.
+  //  2. TARGETED RETRY — if that still finds no route, `frontierTouchedEdges`
+  //     reads back WHICH side of the box the reachable frontier actually hit
+  //     (genuinely stopped by running out of box, not by terrain), and
+  //     `growBoundsTowardFrontier` extends specifically that side for the
+  //     next attempt — owner: "if it still hits the edge then it loads a new
+  //     [area] from the point of where it hit. Repeat until we get there."
+  //     An edge the frontier never reached gains nothing from being pushed
+  //     further out, so retries stay targeted instead of an ever-larger
+  //     uniform square burning resolution in directions that were never
+  //     going to help.
+  const INITIAL_PAD_FACTOR = 0.3;
+  const MAX_ATTEMPTS = 6;
+  const spanM = originObjectiveDistanceM(origin, objective) ?? 1000;
+
+  let grid: MobilityGridResult | null = null;
+  let results: MobilityCellResult[] = [];
+  let path: SimPathNode[] | null = null;
+  let attemptsUsed = 0;
+  let noEdgeTouchedStreak = 0; // consecutive attempts genuinely terrain-blocked, not box-limited
+
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    attemptsUsed = i + 1;
+    let samplingAnnounced = false;
+
+    const buildOptions: Parameters<typeof buildMobilityGrid>[2] = { signal, fidelity };
+    if (grid) {
+      // Targeted growth from the PREVIOUS attempt's own box + where its
+      // frontier actually got to — not a fresh symmetric box.
+      const edges = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
+      buildOptions.explicitBounds = growBoundsTowardFrontier(
+        { boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, edges, spanM * 0.3
+      );
+    } else {
+      buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
+    }
+    // Sampling owns the first 40% of the run's progress bar; the search
+    // that follows now reports its OWN real progress (§35 addendum,
+    // 2026-07-27 — see `runAccumulatedCostSearch`'s `onProgress`) into the
+    // next 15%, rather than the two of them sharing one silent jump the way
+    // they used to. The `onProgress` wrapper above is monotonic, so a RETRY's
+    // sampling replaying this same 0..0.40 mapping from its own zero cannot
+    // visibly rewind the bar — it just holds at the prior high-water mark
+    // until this attempt's real progress catches back up past it.
+    buildOptions.onProgress = f => {
+      onProgress((f / 0.7) * 0.40);
       // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
       // elevation/vegetation/trail sampling begins — the long part.
       if (f > 0.05 && !samplingAnnounced) {
         samplingAnnounced = true;
-        onStage?.({ key: 'sampling', label: 'Sampling ground — elevation, vegetation, trails', fraction: (f / 0.7) * 0.45 });
+        onStage?.({
+          key: 'sampling',
+          label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
+          fraction: (f / 0.7) * 0.40,
+        });
       }
-    },
-  });
-  if (!grid || signal?.aborted) {
-    if (grid === null) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
-    return null;
-  }
+    };
 
-  onLog?.(`SAMPLING ${grid.cells.length} CELLS · ORIGIN SEED SET ${grid.originKeys.length} CELLS`);
+    const attemptGrid = await buildMobilityGrid(origin, objective, buildOptions);
+    if (signal?.aborted) return null;
+    if (!attemptGrid) {
+      // Degenerate span (near-identical origin/objective points) — no amount
+      // of padding fixes this, so there is nothing to gain from retrying.
+      if (i === 0) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
+      return null;
+    }
+    grid = attemptGrid;
+
+    if (i === 0) {
+      onLog?.(
+        `SAMPLING ${grid.cells.length} CELLS (${fidelity.toUpperCase()} FIDELITY, TARGET ${grid.targetCellCount}) · ` +
+        `ORIGIN SEED SET ${grid.originKeys.length} CELLS`
+      );
+    } else {
+      // docs §35 — the targeted-retry response to the Lake George defect: a
+      // search that found no route tries again, extended specifically
+      // toward whichever edge its own frontier actually reached, rather
+      // than concluding "no route" from a box that was never allowed to
+      // look far enough. Logged plainly so this is visible, not silent.
+      onLog?.(
+        `NO ROUTE AT THE PREVIOUS EXTENT — WIDENING THE SEARCH TOWARD WHERE IT WAS STOPPED ` +
+        `(ATTEMPT ${attemptsUsed}/${MAX_ATTEMPTS}, ${grid.cells.length} CELLS)`
+      );
+    }
+
+    // Paint the surveyed ground NOW, before this attempt's search runs — the
+    // same assembly the final render uses, with an empty reachability map.
+    // On a retry this visibly redraws the WIDER area being surveyed.
+    if (onPreviewCells) {
+      onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
+    }
+
+    onProgress(0.40);
+    onStage?.({
+      key: 'search',
+      label: i === 0 ? 'Running multi-source search across the grid' : `Re-running search at wider extent (attempt ${attemptsUsed})`,
+      fraction: 0.40,
+    });
+    if (i === 0) onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
+
+    // Real, incremental progress through the Dijkstra field build (§35
+    // addendum, 2026-07-27) — this call previously reported NOTHING while it
+    // ran, the single largest silent stretch in the whole run (owner: "the
+    // 'progress' indicator stopped well before the result loaded in with a
+    // long 'nothing' time"). `settledFraction` is how much of the grid has
+    // actually been reached so far, not decorative motion.
+    const outcome = await runMobilitySearchInWorker(
+      grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+      roadSpeedOverrides,
+      settledFraction => onProgress(0.40 + settledFraction * 0.15)
+    );
+    if (signal?.aborted) return null;
+    results = outcome.results;
+    path = outcome.path;
+
+    if (path) break; // found it — stop expanding, this is the decisive attempt
+
+    // Two consecutive attempts where the frontier never even reached an
+    // edge (blocked by terrain everywhere it could reach, not by running
+    // out of box) is real evidence of a genuine enclosure — stop early
+    // rather than spending the remaining attempts on growth that has
+    // already shown it isn't the limiting factor.
+    const edgesThisAttempt = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
+    const touchedAny = edgesThisAttempt.north || edgesThisAttempt.south || edgesThisAttempt.east || edgesThisAttempt.west;
+    noEdgeTouchedStreak = touchedAny ? 0 : noEdgeTouchedStreak + 1;
+    if (noEdgeTouchedStreak >= 2) break;
+  }
+  if (!grid) return null; // unreachable (the loop above always assigns or returns), keeps TS satisfied
+  onProgress(0.55);
+
+  const usedExpandedSearch = attemptsUsed > 1;
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
   if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
   // Hydrology (docs §34) — a real, computed count, not a claim: this is what
   // makes "is water actually being considered" answerable by looking at the
-  // log rather than taking the model's word for it.
+  // log rather than taking the model's word for it. Reported for the FINAL
+  // (decisive) grid, since a retry resamples a different box.
   if (!grid.hydrologyAvailable) {
     onLog?.('NO WATERWAY/WATER-BODY DATA FOR THIS AREA — HYDROLOGY GATE INACTIVE');
   } else {
@@ -236,23 +456,24 @@ export async function runMobilityAppreciation(
     onLog?.(`ORIGIN AND OBJECTIVE OVERLAP — ${overlapKeys.length} SHARED CELL(S), ROUTE IS TRIVIAL BY DESIGN`);
   }
 
-  // Paint the surveyed ground NOW, before the search runs. Same assembly the
-  // final render uses, with an empty reachability map — so every cell shows
-  // its real terrain classification and nothing shows an arrival time it has
-  // not earned yet.
-  if (onPreviewCells) {
-    onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
+  // Box-free ROAD-NETWORK route (docs §35 Slice A) — independent of the
+  // hex-grid search above and the padded box it still runs inside. Vehicle
+  // profiles only (roadRouteSearch.ts's own gate); cheap enough to run
+  // synchronously on the main thread (a handful of OSM ways, not a grid).
+  let roadRoute: RoadRouteSearchResult | null = null;
+  if (profile.speedModel === 'vehicle-gradient') {
+    roadRoute = findVehicleRoadRoute(origin, objective, grid.roadWays, profile, roadSpeedOverrides, grid.waterFeatures);
+    if (roadRoute) {
+      onLog?.(
+        `ROAD-NETWORK ROUTE (VEHICLE, BOX-FREE) — ${(roadRoute.totalDistanceM / 1000).toFixed(1)} KM VIA ` +
+        `${roadRoute.wayNames.length > 0 ? roadRoute.wayNames.slice(0, 3).join(', ') : 'UNNAMED WAYS'} · ` +
+        `${(roadRoute.totalSeconds / 60).toFixed(0)} MIN ROAD-NETWORK ACCESS TO ROAD-NETWORK ACCESS ` +
+        `(EXCLUDES OFF-ROAD LEGS TO/FROM THE PAINTED AREAS)`
+      );
+    } else if (grid.roadWays.length > 0) {
+      onLog?.('NO ROAD-NETWORK ROUTE FOUND BETWEEN THE PAINTED AREAS (NO NEARBY ROAD, OR THE NETWORK DOES NOT CONNECT THEM)');
+    }
   }
-
-  onProgress?.(0.46);
-  onStage?.({ key: 'search', label: 'Running multi-source search across the grid', fraction: 0.46 });
-  onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
-
-  const { results, path } = await runMobilitySearchInWorker(
-    grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode
-  );
-  if (signal?.aborted) return null;
-  onProgress?.(0.5);
 
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
@@ -265,10 +486,53 @@ export async function runMobilityAppreciation(
   }
   if (path) {
     const etaMin = path[path.length - 1].cumulativeSeconds / 60;
-    onLog?.(`ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN`);
+    onLog?.(
+      `ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN` +
+      (usedExpandedSearch ? ` (NEEDED ${attemptsUsed} ATTEMPTS, FINAL PADDING ${grid.boundsPadFactor}×)` : '')
+    );
   } else {
-    onLog?.('NO ROUTE FOUND — OBJECTIVE UNREACHABLE FOR THIS PROFILE');
+    onLog?.(
+      `NO ROUTE FOUND AFTER ${attemptsUsed} ATTEMPT(S), UP TO ${grid.boundsPadFactor}× PADDING ` +
+      `(${grid.cells.length} CELLS AT WIDEST) — OBJECTIVE GENUINELY UNREACHABLE FOR THIS PROFILE AT THIS SEARCH CEILING, ` +
+      `NOT A BOX ARTEFACT AT THIS POINT`
+    );
   }
+
+  // Surface the real reachability field and cheapest route NOW — everything
+  // below (the movement ensemble, corridors, chokepoints, min-cut barrier)
+  // can add tens of seconds more on a large or fine-fidelity grid, and until
+  // this call existed NOTHING new reached the map in that whole span (owner:
+  // "the map [should start] getting visual results being loaded as it
+  // happens... pathways snaking across the landscape from the get go rather
+  // than waiting for the end"). Every field below this point is still in its
+  // honest "nothing yet" state — not fabricated, just not computed yet.
+  onPartialResult?.({
+    results, bands, profile,
+    usedEstimatedData: grid.usedEstimatedData,
+    infrastructureAvailable: grid.infrastructureAvailable,
+    hydrologyAvailable: grid.hydrologyAvailable,
+    waterFeatures: grid.waterFeatures,
+    roadWays: grid.roadWays,
+    cellCount: grid.cells.length,
+    reachableCount, noGoCount, slowGoCount,
+    path, roadRoute, usedExpandedSearch,
+    searchAttempts: attemptsUsed,
+    fidelity: grid.fidelity,
+    targetCellCount: grid.targetCellCount,
+    dissimilarRoutes: [],
+    corridorField: null,
+    optimiserCorridorField: null,
+    ensemble: null,
+    restrictionPlan: null,
+    restrictedCorridorField: null,
+    chokepoints: [],
+    barrier: null,
+    cells: grid.cells,
+    originKeys: grid.originKeys,
+    objectiveKeys: grid.objectiveKeys,
+    hexSize: grid.hexSize,
+    proj: grid.proj,
+  });
 
   // --- Pass 2 + the simulation (docs §32): corridors, chokepoints, min-cut
   // barrier. Everything except the ensemble/restriction work runs on the main
@@ -284,8 +548,8 @@ export async function runMobilityAppreciation(
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
-    onProgress?.(0.5);
-    onStage?.({ key: 'ensemble', label: `Simulating ${moverCount} independent movers over untouched ground`, fraction: 0.5 });
+    onProgress(0.55);
+    onStage?.({ key: 'ensemble', label: `Simulating ${moverCount} independent movers over untouched ground`, fraction: 0.55 });
     onLog?.(`SIMULATING ${moverCount} MOVERS — UNRESTRICTED MOVEMENT (BEHAVIOUR MODEL: ${behaviourSpreadId.toUpperCase()})…`);
     const movement = await runMovementEnsembleInWorker(
       grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
@@ -294,9 +558,17 @@ export async function runMobilityAppreciation(
         spreadId: behaviourSpreadId,
         seed: simulationSeed,
         planRestrictions,
+        roadSpeedOverrides,
+        // NOTE: `planRestrictions` runs INSIDE this same worker call, after
+        // the ensemble, before the response posts back — so BOTH phases'
+        // progress (ensemble then restrictions) can already have reported up
+        // to their own ceilings by the time this `await` resolves, well
+        // before the `onStage`/`onProgress` calls that follow it below. The
+        // monotonic `onProgress` wrapper (see its own comment near the top
+        // of this function) is what keeps that from showing as a rewind.
         onProgress: (f, phase) => {
-          if (phase === 'ensemble') onProgress?.(0.5 + f * 0.18);
-          else onProgress?.(0.75 + f * 0.22);
+          if (phase === 'ensemble') onProgress(0.55 + f * 0.17);
+          else onProgress(0.72 + f * 0.23);
         },
         onLog: line => onLog?.(line),
       }
@@ -329,8 +601,13 @@ export async function runMobilityAppreciation(
       }
     }
 
-    onProgress?.(0.7);
-    onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: 0.7 });
+    // No onProgress call here: by this point the ensemble/restrictions
+    // progress reported inside the await above may already sit anywhere up
+    // to ~0.95 (or as low as ~0.72 if no restriction was worth evaluating) —
+    // there is no single honest constant for "corridors are starting" that
+    // is right in both cases, and the monotonic wrapper would just discard a
+    // wrong guess anyway. The stage label is still useful on its own.
+    onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: highWaterProgress });
 
     // Corridors from the SIMULATION where one exists, from the optimiser
     // otherwise. Both go through the identical pipeline, so the two views can
@@ -408,7 +685,7 @@ export async function runMobilityAppreciation(
       onLog?.(`TOP CHOKEPOINT CROSSED BY ${chokepoints[0].passCount}/${dissimilarRoutes.length} ROUTES`);
     }
 
-    onProgress?.(0.98);
+    onProgress(0.98);
     onStage?.({ key: 'barrier', label: 'Siting the cheapest severing cut', fraction: 0.98 });
     onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
     barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
@@ -420,7 +697,7 @@ export async function runMobilityAppreciation(
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
-  onProgress?.(1);
+  onProgress(1);
   onStage?.({ key: 'done', label: 'Appreciation complete', fraction: 1 });
 
   return {
@@ -431,11 +708,17 @@ export async function runMobilityAppreciation(
     infrastructureAvailable: grid.infrastructureAvailable,
     hydrologyAvailable: grid.hydrologyAvailable,
     waterFeatures: grid.waterFeatures,
+    roadWays: grid.roadWays,
     cellCount: grid.cells.length,
     reachableCount,
     noGoCount,
     slowGoCount,
     path,
+    roadRoute,
+    usedExpandedSearch,
+    searchAttempts: attemptsUsed,
+    fidelity: grid.fidelity,
+    targetCellCount: grid.targetCellCount,
     dissimilarRoutes,
     corridorField,
     optimiserCorridorField,

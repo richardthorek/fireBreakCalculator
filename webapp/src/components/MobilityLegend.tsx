@@ -39,6 +39,7 @@ export interface MobilityLegendProps {
     water: boolean;
     unitPath: boolean;
     movers: boolean;
+    roadRoute: boolean;
   };
   overlayOpacity: number;
   onOverlayOpacityChange: (value: number) => void;
@@ -161,13 +162,14 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             <section>
               <h4>Movement corridors</h4>
               <ul>
-                <Swatch color="#D8232A" kind="line">Corridor 1 — carries the most movement</Swatch>
-                <Swatch color="#F6A609" kind="line">Corridor 2</Swatch>
-                <Swatch color="#38bdf8" kind="line">Corridor 3</Swatch>
+                <Swatch color="#3B82F6" kind="line">Corridor 1 — carries the most movement</Swatch>
+                <Swatch color="#8B5CF6" kind="line">Corridor 2</Swatch>
+                <Swatch color="#06B6D4" kind="line">Corridor 3</Swatch>
                 <Swatch color="#94a3b8" kind="line">Corridor 4+</Swatch>
                 {present.corridorRoutes && (
                   <Swatch color="#e2e8f0" kind="line">
-                    Hairlines — the individual tracks the band was built from
+                    Thin line — that corridor's fastest analysed route, snapped to any
+                    road it follows and smoothed elsewhere
                   </Swatch>
                 )}
               </ul>
@@ -206,6 +208,19 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                     </Swatch>
                   </>
                 )}
+              </ul>
+            </section>
+          )}
+
+          {present.roadRoute && (
+            <section>
+              <h4>Road-network route (docs §35)</h4>
+              <ul>
+                <Swatch color="#f59e0b" kind="dash">
+                  Amber dashed line — fastest ROAD-ONLY route between the painted areas
+                  (vehicle profiles), independent of the hex-grid search above. Road
+                  access point to road access point — excludes the off-road legs.
+                </Swatch>
               </ul>
             </section>
           )}

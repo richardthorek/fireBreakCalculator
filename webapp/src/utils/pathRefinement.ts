@@ -49,6 +49,21 @@ export interface RefineOptions {
    *  backed by the retained area vegetation resolver. When omitted, the
    *  fuel-aware smoothing step is skipped entirely. */
   fuelCostAt?: (lat: number, lng: number) => number | null;
+  /**
+   * Corner-smoothing passes for vertices NOT snapped to a trail — 0 disables
+   * it entirely (the fire-break optimizer's existing default/behaviour,
+   * unchanged). Added for Terrain Mobility's corridor routes (docs §28
+   * addendum, 2026-07-28): snapping alone only fixes the ON-ROAD portion of
+   * a route — "some corridors may be overland" (owner), where there is no
+   * nearby trail for `snapPathToTrails` to catch at all, so the hex-centre
+   * zig-zag survives untouched unless something ELSE smooths it. A moving-
+   * average pass over the free (non-snapped) vertices only — snapped
+   * vertices are read as neighbours but never themselves smoothed, so a
+   * route that traces a real road still traces it exactly — rounds off the
+   * hex-stepped corners without inventing geometry the route didn't
+   * analyse. 2-3 passes is enough to read as a smooth line at typical hex
+   * scale; see `smoothFreeVertices`. */
+  cornerSmoothingIterations?: number;
 }
 
 const M_PER_DEG_LAT = 111320;
@@ -217,9 +232,48 @@ export function nudgePathByFuel(
 }
 
 /**
+ * Moving-average corner smoothing over FREE (non-snapped) interior vertices
+ * only — a snapped vertex is read as a neighbour (so the smoothing blends
+ * INTO it rather than leaving a visible kink at the join) but is never
+ * itself moved, and the two path endpoints never move either. This is what
+ * makes an overland stretch — no nearby trail for `snapPathToTrails` to
+ * catch — read as a smooth line instead of the raw hex-centre zig-zag,
+ * without inventing a road that was never analysed. Each pass moves a free
+ * vertex `weight` of the way toward its two neighbours' midpoint; repeated
+ * passes converge toward a smooth curve without ever running away from the
+ * original line (there is no divergent feedback here, just repeated
+ * averaging).
+ */
+export function smoothFreeVertices(
+  coords: LatLng[],
+  locked: Set<number>,
+  iterations: number,
+  weight = 0.5
+): LatLng[] {
+  if (coords.length < 3 || iterations <= 0) return coords.slice();
+  let path = coords.slice();
+  for (let it = 0; it < iterations; it++) {
+    const next = path.slice();
+    for (let i = 1; i < path.length - 1; i++) {
+      if (locked.has(i)) continue; // exactly on a trail — leave it there
+      const prev = path[i - 1];
+      const cur = path[i];
+      const nxt = path[i + 1];
+      next[i] = {
+        lat: cur.lat * (1 - weight) + ((prev.lat + nxt.lat) / 2) * weight,
+        lng: cur.lng * (1 - weight) + ((prev.lng + nxt.lng) / 2) * weight,
+      };
+    }
+    path = next;
+  }
+  return path;
+}
+
+/**
  * Refine a coarse (hex-centre) optimized path into a more realistic line.
- * Densify → snap-to-trails → local fuel nudge. Pure over already-fetched data;
- * returns a new coordinate array (the caller still simplifies for rendering).
+ * Densify → snap-to-trails → corner-smooth the rest → local fuel nudge. Pure
+ * over already-fetched data; returns a new coordinate array (the caller
+ * still simplifies for rendering).
  */
 export function refinePath(
   coords: LatLng[],
@@ -234,11 +288,13 @@ export function refinePath(
     snapToTrails = true,
     maxFuelNudgeM = 0,
     fuelCostAt,
+    cornerSmoothingIterations = 0,
   } = options;
 
   let path = resamplePath(coords, resampleM);
 
-  // Track which vertices got snapped so the fuel nudge leaves them fixed.
+  // Track which vertices got snapped so later steps (fuel nudge, corner
+  // smoothing) leave them fixed.
   const locked = new Set<number>();
   if (snapToTrails && trails.length > 0) {
     const snapped = snapPathToTrails(path, trails, snapThresholdM, maxSnapAngleDeg);
@@ -246,6 +302,10 @@ export function refinePath(
       if (snapped[i] !== path[i]) locked.add(i);
     }
     path = snapped;
+  }
+
+  if (cornerSmoothingIterations > 0) {
+    path = smoothFreeVertices(path, locked, cornerSmoothingIterations);
   }
 
   if (maxFuelNudgeM > 0 && fuelCostAt) {

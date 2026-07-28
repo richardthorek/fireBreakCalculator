@@ -29,6 +29,15 @@
  *  the same set. */
 const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential';
 
+/** Highway classes for Terrain Mobility / counter-mobility (docs §35) —
+ *  MUST match the webapp's MOBILITY_HIGHWAYS. Deliberately a separate, wider
+ *  set from REUSABLE_HIGHWAYS: motorway/trunk/primary aren't realistically
+ *  "reusable broken ground" for a fire break, but are exactly the
+ *  highest-value roads to identify for movement/denial planning. */
+const MOBILITY_HIGHWAYS =
+  'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
+  'tertiary|tertiary_link|unclassified|residential|living_street|service|track|path|road';
+
 /** Waterway/water-body classes queried for the Terrain Mobility hydrology gate
  *  (docs/ROUTE_INTELLIGENCE.md §34) — linear watercourses plus standing water
  *  bodies. MUST match the webapp's WATER_WATERWAYS/WATER_NATURAL so proxied and
@@ -38,7 +47,7 @@ const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|seconda
 const WATER_WATERWAYS = 'river|canal|stream';
 const WATER_NATURAL = 'water';
 
-export type InfrastructureKind = 'highway' | 'water';
+export type InfrastructureKind = 'highway' | 'highway-mobility' | 'water';
 
 const OVERPASS_ENDPOINTS: string[] = (process.env.OVERPASS_URLS
   ? String(process.env.OVERPASS_URLS).split(',').map(s => s.trim()).filter(Boolean)
@@ -59,6 +68,12 @@ export interface InfrastructureTrail {
   /** OSM highway value, e.g. "track", "path", "service". */
   kind: string;
   coords: { lat: number; lng: number }[];
+  /** OSM `surface` tag — road-class speed model (docs §35). Undefined when untagged. */
+  surface?: string;
+  /** OSM `tracktype` tag — only meaningful on `highway=track`. Undefined when untagged. */
+  tracktype?: string;
+  /** OSM `smoothness` tag. Undefined when untagged. */
+  smoothness?: string;
 }
 
 export interface InfrastructureResult {
@@ -83,11 +98,52 @@ function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e
     return (
       `[out:json][timeout:12];` +
       `(way["waterway"~"^(${WATER_WATERWAYS})$"](${s},${w},${n},${e});` +
-      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
+      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e});` +
+      // Multipolygon water bodies (docs §35, "OSM water relations" — real,
+      // live-confirmed gap: Lake Tuggeranong and Gungahlin Pond, both in
+      // the same Canberra region this project's own test scenarios live in,
+      // are mapped as `relation` not `way`). MUST match the webapp's
+      // identical addition — see `extractWaterRelationTrails`'s own doc
+      // comment for how the response is parsed.
+      `relation["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
       `out geom;`
     );
   }
-  return `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${s},${w},${n},${e});out geom;`;
+  const highways = kind === 'highway-mobility' ? MOBILITY_HIGHWAYS : REUSABLE_HIGHWAYS;
+  return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
+}
+
+/**
+ * Multipolygon water bodies come back as `relation` elements, not `way` —
+ * confirmed live via Overpass (docs §35 addendum, 2026-07-28): Overpass's
+ * `out geom` inlines each member's own node geometry directly on the
+ * relation element (`members[].geometry`), no separate recursion query
+ * needed. Each `outer`-role member way becomes its own standalone water-body
+ * `InfrastructureTrail` — deliberately NOT reassembled into one true ring
+ * with `inner` members subtracted as holes (a real, stated scope cut: a
+ * multi-part outer ring split across several way members is not
+ * re-stitched, and island/inner rings are not excluded). Both directions of
+ * that cut are safe for this gate's purpose: at worst an island cell is
+ * conservatively treated as water (a false NO-GO, not a false crossing —
+ * the safe direction to be wrong in for a hard-block hydrology gate), and a
+ * multi-member outer ring still gates correctly member-by-member even if
+ * not literally one closed polygon.
+ */
+function extractWaterRelationTrails(elements: any[]): InfrastructureTrail[] {
+  const out: InfrastructureTrail[] = [];
+  for (const el of elements) {
+    if (el.type !== 'relation' || el.tags?.natural !== WATER_NATURAL) continue;
+    for (const member of el.members ?? []) {
+      if (member.type !== 'way' || member.role !== 'outer') continue;
+      if (!Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      out.push({
+        name: el.tags?.name,
+        kind: 'water',
+        coords: member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+      });
+    }
+  }
+  return out;
 }
 
 function getCached(key: string): InfrastructureResult | null {
@@ -151,7 +207,11 @@ export async function fetchCorridorInfrastructure(
           name: el.tags?.name,
           kind: kind === 'water' ? (el.tags?.waterway ?? el.tags?.natural ?? 'water') : (el.tags?.highway ?? 'track'),
           coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+          surface: el.tags?.surface,
+          tracktype: el.tags?.tracktype,
+          smoothness: el.tags?.smoothness,
         }));
+      if (kind === 'water') trails.push(...extractWaterRelationTrails(json?.elements ?? []));
       const data: InfrastructureResult = { trails, available: true };
       setCached(key, data);
       preferredEndpointIndex = OVERPASS_ENDPOINTS.indexOf(url);

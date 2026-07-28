@@ -30,7 +30,7 @@ import { VegetationType } from '../config/classification';
 import { tilesCovering, tileBounds, tileUrl, legendUrl, NVIS_TILE_DEG, MAX_NVIS_TILES } from './vegetationTiles';
 
 const NVIS_MVG_URL =
-  (import.meta.env.VITE_NVIS_MVG_URL as string | undefined) ||
+  ((import.meta as any).env?.VITE_NVIS_MVG_URL as string | undefined) ||
   'https://gis.environment.gov.au/gispubmap/rest/services/ogc_services/NVIS_ext_mvg/MapServer';
 
 const NVIS_LAYER_ID = 0;

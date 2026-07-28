@@ -162,6 +162,19 @@ export interface Corridor {
    *  data — surfaced per corridor so a caveat lands on the specific corridor
    *  it applies to, not just once for the whole run. */
   usedEstimatedData: boolean;
+  /** The single FASTEST analysed route that actually uses this corridor —
+   *  the one real hairline worth drawing for it, rather than every route in
+   *  the analysed set (docs §28 addendum, 2026-07-28: "the individual white
+   *  lines of the considered paths don't work as a visualisation... they
+   *  need to be consolidated to show substantive differences in the
+   *  pathways / corridors, not show that every piece of ground has been
+   *  considered"). Null only when the corridor's own `routeCount` is
+   *  somehow 0 (should not happen in practice — a corridor without any
+   *  route crossing it would not have formed). Still rides hex cell
+   *  centres; presentation-side smoothing/road-snapping (`pathRefinement.ts`)
+   *  is applied by the caller, not here — this module stays geometry-of-
+   *  record, not a rendering decision. */
+  representativeRoute: DissimilarRoute | null;
 }
 
 /**
@@ -320,6 +333,122 @@ function smoothOverHexGrid(
   return current;
 }
 
+/** Which normalised progress fractions along each route are sampled to test
+ *  whether two routes represent the same avenue (see `clusterRoutes`). Three
+ *  points rather than one: a route's start/end are always near the shared
+ *  origin/objective AOI regardless of which avenue it takes, so the
+ *  discriminating evidence sits in the MIDDLE of the crossing — but a single
+ *  midpoint sample would miss a detour whose divergence isn't centred at
+ *  exactly 50%. */
+const ROUTE_CLUSTER_SAMPLE_FRACTIONS = [0.25, 0.5, 0.75];
+
+/** How many hex-widths apart two routes' sampled points may be and still
+ *  count as "the same avenue, wiggling" rather than "a different avenue"
+ *  (docs §35/§28 addendum, 2026-07-27 — see `clusterRoutes`'s own doc
+ *  comment for why this replaced a cell-overlap measure). Calibrated
+ *  against a synthetic two-gap grid (`corridorClustering.test.ts`): routes
+ *  sharing a real avenue never sampled more than ~5.3 hex-widths apart at
+ *  ANY of the three fractions, while routes on genuinely different avenues
+ *  were never LESS than ~8.6 hex-widths apart at every fraction
+ *  simultaneously — this sits centred in that gap. */
+const ROUTE_CLUSTER_DISTANCE_HEX_MULTIPLIER = 7;
+
+/** Sample a route's position at a normalised progress fraction along its own
+ *  path (index-based — search paths step one hex per node, so index
+ *  fraction and distance fraction track closely enough for this purpose). */
+function sampleRoutePoint(route: DissimilarRoute, fraction: number): LatLng {
+  const path = route.path;
+  const idx = Math.min(path.length - 1, Math.max(0, Math.round(fraction * (path.length - 1))));
+  return path[idx];
+}
+
+/**
+ * Group routes into corridor clusters by SPATIAL proximity at sampled
+ * progress fractions — the segmentation-time fix for a real, reproducible
+ * defect (owner, 2026-07-27, live-testing a west<->east Lake George crossing
+ * with visibly distinct east-shore and west-shore detour tracks on the map:
+ * "it only generated 1 corridor, we need two minimum... consider how
+ * corridors and alternative pathways are explored and identified").
+ *
+ * WHY THIS HAS TO HAPPEN BEFORE any spatial segmentation: every route
+ * between the SAME origin and objective necessarily SHARES cells at both
+ * ends (they all start in the origin AOI and end in the objective AOI). A
+ * segmentation pass that connects any two geometrically-adjacent
+ * high-density cells will therefore always find the west-shore and
+ * east-shore routes connected to EACH OTHER through those shared endpoints
+ * — collapsing two genuinely distinct avenues of approach into one
+ * connected component. That is not an edge case; it is the normal shape of
+ * the problem whenever origin/objective are compact areas (the usual case),
+ * which is exactly why it reproduced on the very first live geometry that
+ * had two real detours to find.
+ *
+ * FIRST ATTEMPT (superseded): Jaccard cell-set overlap (|A∩B| / |A∪B|).
+ * Measured against the synthetic two-gap fixture, this proved inadequate —
+ * on open terrain, routes have huge freedom to wiggle through unconstrained
+ * ground even while representing the same avenue, so same-avenue route
+ * pairs scored as low as 0.09-0.20 Jaccard, barely distinguishable from
+ * genuinely cross-avenue pairs (0.00-0.08). No single threshold separated
+ * them cleanly, which is exactly what the two `corridorClustering.test.ts`
+ * failures this caused were showing (over-fragmentation on a single real
+ * avenue; unreliable top-rank selection).
+ *
+ * CURRENT APPROACH: sample each route's actual lat/lng at three normalised
+ * progress fractions and compare GEOGRAPHIC distance between corresponding
+ * points, unanimously across all three fractions (a route's start and end
+ * are always near the shared AOIs regardless of avenue, so a majority vote
+ * can be won by two agreeing endpoint samples even when the middle — where
+ * the real divergence is — disagrees; requiring all three closes that gap).
+ * Measured against the same fixture, this separates same-avenue from
+ * cross-avenue pairs with a clean, un-overlapping margin (worst same-avenue
+ * pair: every sample within ~273 m; best-separated cross-avenue pair: every
+ * sample at least ~449 m apart) — see `ROUTE_CLUSTER_DISTANCE_HEX_MULTIPLIER`.
+ *
+ * Union-find over that unanimous spatial-proximity test — two routes merge
+ * into the same cluster only if they track close to each other along their
+ * whole middle, not merely because they touch the same launching point.
+ *
+ * COST NOTE: O(n²) route-pairs, each a fixed 3-point distance check — at
+ * `DEFAULT_CORRIDOR_ROUTE_COUNT` (14) this is trivial; at the movement
+ * ensemble's mover count (a few hundred tracks) it is still well under a
+ * second at this product's grid scale, the same "linear/quadratic but
+ * bounded" cost discipline `buildCorridorField`'s own note already applies
+ * to k.
+ */
+function clusterRoutes(routes: DissimilarRoute[], hexWidthM: number): number[][] {
+  const n = routes.length;
+  const thresholdM = hexWidthM * ROUTE_CLUSTER_DISTANCE_HEX_MULTIPLIER;
+  const samples = routes.map(r => ROUTE_CLUSTER_SAMPLE_FRACTIONS.map(f => sampleRoutePoint(r, f)));
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(x: number): number {
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+  }
+  function union(a: number, b: number): void {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let sameAvenue = true;
+      for (let f = 0; f < ROUTE_CLUSTER_SAMPLE_FRACTIONS.length; f++) {
+        const pa = samples[i][f];
+        const pb = samples[j][f];
+        if (calculateDistance(pa.lat, pa.lng, pb.lat, pb.lng) > thresholdM) { sameAvenue = false; break; }
+      }
+      if (sameAvenue) union(i, j);
+    }
+  }
+
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(i);
+  }
+  return [...groups.values()];
+}
+
 /**
  * Build the smoothed movement-density field and segment it into ranked
  * corridors. `edgePenalties` flows straight through to the SAME search the
@@ -382,84 +511,128 @@ export function buildCorridorField(
 
   const facts = computeCellFacts(cells, originKeys, profile, nightMode, options.edgePenalties);
   const byKey = new Map(cells.map(c => [c.key, c]));
-
-  // --- Weighted density: an attractive route contributes more. Weight is the
-  // real ratio best/this, so a route twice as slow as the best counts half —
-  // a computed figure, not an arbitrary rank decay.
   const bestSeconds = Math.min(...routes.map(r => r.totalSeconds));
-  const raw = new Map<string, number>();
-  const rawRouteCount = new Map<string, number>();
-  const routesByCell = new Map<string, Set<number>>();
-  routes.forEach((route, idx) => {
-    const weight = weightByAttractiveness
-      ? (route.totalSeconds > 0 ? Math.max(0.05, bestSeconds / route.totalSeconds) : 1)
-      : 1;
-    for (const key of new Set(route.keys)) {
-      raw.set(key, (raw.get(key) ?? 0) + weight);
-      rawRouteCount.set(key, (rawRouteCount.get(key) ?? 0) + 1);
-      if (!routesByCell.has(key)) routesByCell.set(key, new Set());
-      routesByCell.get(key)!.add(idx);
-    }
-  });
+  const hexWidthM = hexSize * Math.sqrt(3); // pointy-top hex flat-to-flat width
 
-  const smoothed = smoothOverHexGrid(raw, cells, opts.smoothingIterations, opts.smoothingWeight);
+  // --- Cluster ROUTES first, by cell-overlap similarity — NOT a single
+  // global density-then-segment pass (owner, 2026-07-27, live-testing a real
+  // west<->east Lake George crossing with genuinely distinct east-shore and
+  // west-shore detours visible on the map: "it only generated 1 corridor, we
+  // need two minimum... consider how corridors and alternative pathways are
+  // explored and identified.").
+  //
+  // THE BUG a single global pass has: every route between the SAME origin
+  // and objective necessarily SHARES cells at both ends (they all start in
+  // the origin AOI and end in the objective AOI). Segmenting the density
+  // field by raw hex adjacency therefore always finds the west-shore and
+  // east-shore routes connected to EACH OTHER through those shared
+  // endpoints, collapsing two genuinely distinct avenues of approach into
+  // one connected component. This is not an edge case — it is the NORMAL
+  // shape of the problem whenever origin/objective are compact areas (the
+  // usual case), which is why it reproduced immediately on real data.
+  //
+  // Fix: group routes by SPATIAL proximity at sampled progress fractions
+  // before any spatial segmentation (see `clusterRoutes`'s doc comment for
+  // why cell-overlap similarity was tried first and abandoned). Two routes
+  // join the same corridor only if they track close to each other along
+  // their whole middle, not merely because they touch the same launching
+  // point. Density/smoothing/segmentation then run PER CLUSTER, so one
+  // cluster's shared start/end cells can never bridge it to a DIFFERENT
+  // cluster's cells — they were never part of that cluster's density source
+  // to begin with.
+  const routeClusters = clusterRoutes(routes, hexWidthM);
+
+  // Global peak across ALL clusters (not each cluster's own) — so a minor
+  // corridor still reads dimmer than the primary one, preserving the
+  // cross-corridor relative-importance signal the density gradient carries.
+  const clusterRaw: { indices: number[]; raw: Map<string, number>; rawRouteCount: Map<string, number>; routesByCell: Map<string, Set<number>> }[] = [];
   let peak = 0;
-  for (const v of smoothed.values()) if (v > peak) peak = v;
+  for (const indices of routeClusters) {
+    const raw = new Map<string, number>();
+    const rawRouteCount = new Map<string, number>();
+    const routesByCell = new Map<string, Set<number>>();
+    for (const idx of indices) {
+      const route = routes[idx];
+      const weight = weightByAttractiveness
+        ? (route.totalSeconds > 0 ? Math.max(0.05, bestSeconds / route.totalSeconds) : 1)
+        : 1;
+      for (const key of new Set(route.keys)) {
+        raw.set(key, (raw.get(key) ?? 0) + weight);
+        rawRouteCount.set(key, (rawRouteCount.get(key) ?? 0) + 1);
+        if (!routesByCell.has(key)) routesByCell.set(key, new Set());
+        routesByCell.get(key)!.add(idx);
+      }
+    }
+    clusterRaw.push({ indices, raw, rawRouteCount, routesByCell });
+  }
+  const clusterSmoothed = clusterRaw.map(c => smoothOverHexGrid(c.raw, cells, opts.smoothingIterations, opts.smoothingWeight));
+  for (const smoothedMap of clusterSmoothed) {
+    for (const v of smoothedMap.values()) if (v > peak) peak = v;
+  }
   if (peak <= 0) return null;
 
   const cutoff = peak * opts.membershipThreshold;
-  const member = new Set<string>();
-  for (const [key, v] of smoothed) {
-    if (v >= cutoff && byKey.has(key)) member.add(key);
-  }
-  if (member.size === 0) return null;
-
-  // --- Segment into connected components over hex adjacency.
-  const seen = new Set<string>();
-  const components: string[][] = [];
-  for (const key of member) {
-    if (seen.has(key)) continue;
-    const comp: string[] = [];
-    const queue = [key];
-    seen.add(key);
-    while (queue.length > 0) {
-      const cur = queue.pop()!;
-      comp.push(cur);
-      const cell = byKey.get(cur);
-      if (!cell) continue;
-      for (const nHex of hexNeighbors(cell.hex)) {
-        const nKey = hexKey(nHex);
-        if (member.has(nKey) && !seen.has(nKey)) { seen.add(nKey); queue.push(nKey); }
-      }
+  const built: Corridor[] = [];
+  clusterRaw.forEach((c, ci) => {
+    const smoothed = clusterSmoothed[ci];
+    const member = new Set<string>();
+    for (const [key, v] of smoothed) {
+      if (v >= cutoff && byKey.has(key)) member.add(key);
     }
-    components.push(comp);
-  }
+    if (member.size === 0) return;
 
-  const hexWidthM = hexSize * Math.sqrt(3); // pointy-top hex flat-to-flat width
-
-  const built = components
-    .filter(comp => comp.length >= opts.minCorridorCells)
-    .map((comp, i) => buildCorridor(
-      `corridor-${i}`, comp, byKey, smoothed, rawRouteCount, routesByCell, routes, facts, peak, hexSize, hexWidthM, proj, opts, profile
-    ))
-    // Rank by weighted movement carried, not raw cell count — a short fat
-    // component that few routes use is not the primary avenue of approach.
-    .sort((a, b) => b.routeCount - a.routeCount || b.cells.length - a.cells.length)
-    .map((c, i) => ({ ...c, rank: i + 1 }));
+    // Connected components WITHIN this cluster's own members — a cluster
+    // whose routes are themselves disjoint bundles (possible with a loose
+    // similarity threshold via transitive chaining) still correctly splits
+    // into more than one corridor here, same as the original single-pass
+    // logic did, just now scoped to routes that actually resemble each other.
+    const seen = new Set<string>();
+    for (const key of member) {
+      if (seen.has(key)) continue;
+      const comp: string[] = [];
+      const queue = [key];
+      seen.add(key);
+      while (queue.length > 0) {
+        const cur = queue.pop()!;
+        comp.push(cur);
+        const cell = byKey.get(cur);
+        if (!cell) continue;
+        for (const nHex of hexNeighbors(cell.hex)) {
+          const nKey = hexKey(nHex);
+          if (member.has(nKey) && !seen.has(nKey)) { seen.add(nKey); queue.push(nKey); }
+        }
+      }
+      if (comp.length < opts.minCorridorCells) continue;
+      built.push(buildCorridor(
+        `corridor-${built.length}`, comp, byKey, smoothed, c.rawRouteCount, c.routesByCell, routes, facts, peak, hexSize, hexWidthM, proj, opts, profile
+      ));
+    }
+  });
 
   if (built.length === 0) return null;
+
+  // Rank by weighted movement carried, not raw cell count — a short fat
+  // component that few routes use is not the primary avenue of approach.
+  built.sort((a, b) => b.routeCount - a.routeCount || b.cells.length - a.cells.length);
+  built.forEach((c, i) => { c.id = `corridor-${i}`; c.rank = i + 1; });
 
   const cellCount = built.reduce((s, c) => s + c.cells.length, 0);
   const coverageFraction = cells.length > 0 ? cellCount / cells.length : 0;
   const busiest = built[0];
   const pinchRatio = busiest.widestCells > 0 ? busiest.bottleneckCells / busiest.widestCells : 1;
 
+  // Distinct cells at least one raw route crossed, across ALL clusters —
+  // the honest "measured" count (vs `cellCount`'s "measured + smoothed
+  // into"). Union rather than a single map's size now that density is
+  // computed per-cluster.
+  const routedCellCount = new Set(clusterRaw.flatMap(c => [...c.rawRouteCount.keys()])).size;
+
   return {
     corridors: built,
     evidence,
     routes,
     cellCount,
-    routedCellCount: rawRouteCount.size,
+    routedCellCount,
     peakDensity: peak,
     coverageFraction,
     pinchRatio,
@@ -612,6 +785,9 @@ function buildCorridor(
     noGoFraction,
     easeClass,
     usedEstimatedData: comp.some(k => byKey.get(k)?.vegEstimated ?? false),
+    representativeRoute: usingRoutes.length > 0
+      ? usingRoutes.reduce((best, r) => (r.totalSeconds < best.totalSeconds ? r : best))
+      : null,
   };
 }
 

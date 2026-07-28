@@ -16,13 +16,14 @@ import {
 } from './mobilityWorker';
 import { MovementEnsembleResult } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
+import { RoadSpeedOverrides } from './roadSpeedModel';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
 
 interface PendingEntry {
   resolve: (response: MobilityWorkerResponse) => void;
-  onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
+  onProgress?: (fraction: number, phase: 'search' | 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
 }
 const pending = new Map<number, PendingEntry>();
 
@@ -54,7 +55,12 @@ export function runMobilitySearchInWorker(
   originKeys: string[],
   objectiveKeys: string[],
   profileId: string,
-  nightMode: boolean
+  nightMode: boolean,
+  roadSpeedOverrides?: RoadSpeedOverrides,
+  /** Real, incremental progress through the Dijkstra field build (§35
+   *  addendum, 2026-07-27) — the fraction of the grid settled so far, NOT a
+   *  placeholder. Previously this call reported nothing at all while it ran. */
+  onProgress?: (fraction: number) => void
 ): Promise<MobilitySearchOutcome> {
   const w = ensureWorker();
   const requestId = nextRequestId++;
@@ -64,9 +70,13 @@ export function runMobilitySearchInWorker(
         if (response.kind !== 'search') { resolve({ results: [], path: null }); return; }
         resolve({ results: response.results, path: response.path });
       },
+      onProgress: (fraction, phase) => {
+        if (phase === 'search') onProgress?.(fraction);
+      },
     });
     const request: MobilityWorkerRequest = {
       kind: 'search', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      roadSpeedOverrides,
     };
     w.postMessage(request);
   });
@@ -79,6 +89,7 @@ export interface MovementEnsembleRequestOptions {
   /** Also derive and evaluate the recommended restriction set. */
   planRestrictions: boolean;
   maxRestrictions?: number;
+  roadSpeedOverrides?: RoadSpeedOverrides;
   onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun') => void;
   onLog?: (line: string) => void;
 }
@@ -112,13 +123,18 @@ export function runMovementEnsembleInWorker(
       ),
       onProgress: (fraction, phase, log) => {
         if (log) options.onLog?.(log);
-        else options.onProgress?.(fraction, phase);
+        // A 'movement' request's own worker branch never emits phase
+        // 'search' (that's exclusive to 'search' requests) — this guard
+        // exists purely so the shared `PendingEntry` type, which now also
+        // carries 'search' for the OTHER request kind, still type-checks.
+        else if (phase !== 'search') options.onProgress?.(fraction, phase);
       },
     });
     const request: MobilityWorkerRequest = {
       kind: 'movement', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
       moverCount: options.moverCount, spreadId: options.spreadId, seed: options.seed,
       planRestrictions: options.planRestrictions, maxRestrictions: options.maxRestrictions,
+      roadSpeedOverrides: options.roadSpeedOverrides,
     };
     w.postMessage(request);
   });

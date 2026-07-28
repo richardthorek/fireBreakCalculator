@@ -46,7 +46,7 @@ export function tilesCovering(bounds: TileBoundsDeg, tileDeg: number, maxTiles: 
   return out;
 }
 
-const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api';
+const apiBase = ((import.meta as any).env?.VITE_API_BASE_URL as string | undefined) || '/api';
 
 export const tileUrl = (source: 'nvis' | 'nsw', t: TileIndex) => `${apiBase}/vegetation/tile/${source}/${t.tx}/${t.ty}`;
 export const legendUrl = () => `${apiBase}/vegetation/legend`;

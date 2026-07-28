@@ -29,10 +29,13 @@ import { ImportedFeatures, importedToGeoJSON } from './utils/gisImport';
 import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
-import { PaintDab, PaintedArea, PaintStrokeMode, BrushSize, brushRadiusMeters } from './terrain/paintedArea';
+import { refinePath } from './utils/pathRefinement';
+import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from './terrain/paintedArea';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
+import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
+import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY } from './terrain/mobilityGrid';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
@@ -52,6 +55,8 @@ const logo96 = '/favicon-96x96.png';
  * Renders a fixed-height header (10% of viewport), responsive Mapbox GL JS map,
  * and analysis panel for fire break calculations.
  */
+const ROAD_SPEED_OVERRIDES_STORAGE_KEY = 'firebreak.terrainMobility.roadSpeedOverrides.v1';
+
 const App: React.FC = () => {
   const [fireBreakDistance, setFireBreakDistance] = useState<number | null>(null);
   const [trackAnalysis, setTrackAnalysis] = useState<TrackAnalysis | null>(null);
@@ -427,6 +432,33 @@ const App: React.FC = () => {
   }, [mobilityModeActive]);
   const [mobilityProfileId, setMobilityProfileId] = useState(DEFAULT_MOVER_PROFILE_ID);
   const [mobilityNightMode, setMobilityNightMode] = useState(false);
+  // Docs §35 — analysis depth (owner: "let the user select a scale of
+  // something like 'quick' to 'fine' for analysis depth"). Not persisted —
+  // matches the other per-run toggles in this mode (nightMode, movementView)
+  // rather than the road-speed overrides' brigade-calibrate-once case.
+  const [mobilityFidelity, setMobilityFidelity] = useState<MobilityFidelity>(DEFAULT_MOBILITY_FIDELITY);
+  // Docs §35 Slice A config UI — user-edited road-class speeds, persisted so
+  // a brigade/unit calibrates once (owner requirement: "configurable... for
+  // fine grained adjustments"). Loaded lazily (useState initializer) rather
+  // than in an effect, so the very first run after a reload already sees any
+  // saved overrides instead of one run at the sourced defaults.
+  const [roadSpeedOverrides, setRoadSpeedOverridesState] = useState<RoadSpeedOverrides>(() => {
+    try {
+      const raw = localStorage.getItem(ROAD_SPEED_OVERRIDES_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as RoadSpeedOverrides) : {};
+    } catch {
+      return {}; // corrupt/unavailable storage — fall back to sourced defaults, not a crash
+    }
+  });
+  const setRoadSpeedOverrides = useCallback((next: RoadSpeedOverrides) => {
+    setRoadSpeedOverridesState(next);
+    try {
+      localStorage.setItem(ROAD_SPEED_OVERRIDES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Storage full/unavailable — the override still applies for this
+      // session via state, it just won't survive a reload.
+    }
+  }, []);
   const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
   // Cross-mode cleanup (2026-07-26 UI review: "ensure everything switches...
   // and back again"). Hiding a mode's controls isn't enough on its own — an
@@ -443,11 +475,11 @@ const App: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobilityModeActive]);
-  // Painted areas (owner feedback 2026-07-26): a union of circular dabs laid
-  // down by dragging over the map, not a drawn rectangle — see
-  // terrain/paintedArea.ts. Brush size is a fixed on-screen radius, so it
-  // paints a bigger ground area when zoomed out and a more precise one
-  // zoomed in.
+  // Painted areas (owner feedback 2026-07-26): a union of real hex-cell dabs
+  // laid down by dragging over the map, not a drawn rectangle — see
+  // terrain/paintedArea.ts. Brush size (docs §35) is a FIXED ground hex
+  // count (100m-circumradius hexes; small/medium/large/xl = 1/10/100/1000),
+  // not a screen-relative pixel radius.
   const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
   const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
   const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
@@ -502,12 +534,15 @@ const App: React.FC = () => {
    *  scenario with counter-measures emplaced. */
   const [corridorView, setCorridorView] = useState<'baseline' | 'scenario'>('baseline');
 
-  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', dab: PaintDab) => {
-    const stroke = { mode: mobilityPaintMode, dab };
-    if (role === 'origin') setMobilityOriginPaint(prev => [...prev, stroke]);
-    else setMobilityObjectivePaint(prev => [...prev, stroke]);
+  // MapboxMapView reports only the raw click/drag point; the actual hex dab
+  // is built HERE (docs §35) because it needs the role's EXISTING strokes —
+  // specifically its first dab's anchor (paintedArea.ts's module header) —
+  // which live in this component's state, not the map view's.
+  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', point: { lat: number; lng: number }) => {
+    const setter = role === 'origin' ? setMobilityOriginPaint : setMobilityObjectivePaint;
+    setter(prev => [...prev, { mode: mobilityPaintMode, dab: createHexDab(prev, point, mobilityBrushSize) }]);
     setMobilityResult(null); // a stale result over a changed AOI would mislead
-  }, [mobilityPaintMode]);
+  }, [mobilityPaintMode, mobilityBrushSize]);
 
   const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
     mobilityAbortRef.current?.abort();
@@ -547,6 +582,8 @@ const App: React.FC = () => {
         nightMode: mobilityNightMode,
         signal: controller.signal,
         behaviourSpreadId,
+        roadSpeedOverrides,
+        fidelity: mobilityFidelity,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
         onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
         onStage: stage => { if (!controller.signal.aborted) setMobilityStage(stage); },
@@ -561,6 +598,20 @@ const App: React.FC = () => {
             timeSeconds: c.timeSeconds,
             bandIndex: -1,
           })));
+        },
+        // Real reachability field + cheapest route, surfaced as soon as the
+        // search settles — well before the ensemble/corridors/chokepoints/
+        // min-cut that follow (owner: "the map [should start] getting visual
+        // results being loaded as it happens... pathways snaking across the
+        // landscape from the get go rather than waiting for the end").
+        // Every consumer of `mobilityResult` already treats corridorField/
+        // ensemble/chokepoints/barrier as nullable (the "no route found"
+        // case has always produced exactly this shape), so setting it early
+        // here needs no new rendering path.
+        onPartialResult: partial => {
+          if (controller.signal.aborted) return;
+          setMobilityResult(partial);
+          setMobilityPreviewCells(null);
         },
       });
       if (controller.signal.aborted) return;
@@ -577,7 +628,7 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides, mobilityFidelity]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
@@ -663,14 +714,37 @@ const App: React.FC = () => {
     return displayedEnsemble.cells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
   }, [showTransitField, displayedEnsemble]);
 
-  /** Only a sample of the simulated tracks is drawn as hairlines: 240 of them
-   *  would be a grey wash that hides the very band they are evidence for. */
+  /**
+   * ONE representative route per corridor, road-snapped and corner-smoothed
+   * — not a wash of every analysed route (owner, 2026-07-28: "the
+   * individual white lines of the considered paths don't work as a
+   * visualisation. Because of the hex grid they end up being 'triangles'
+   * between the grid centres and they don't follow the road geometry...
+   * they need to be consolidated to show substantive differences in the
+   * pathways / corridors, not show that every piece of ground has been
+   * considered"). Previously drew up to 24 raw, un-refined route polylines
+   * stepping hex-centre to hex-centre regardless of what any of them meant
+   * for presentation; now draws at most one per corridor (so "2-5 clear
+   * corridors" is also "2-5 lines", never more), each the corridor's own
+   * FASTEST analysed route (`representativeRoute`, `corridorField.ts`),
+   * refined the SAME way the fire-break optimizer's own routes already are
+   * (`pathRefinement.ts`): densified, snapped onto a nearby mapped road
+   * where the route actually runs alongside one, and corner-smoothed
+   * everywhere else — "some corridors may be overland" (owner), so a
+   * missing nearby road must not stop the line from smoothing, and a route
+   * that genuinely traces a road must not be blurred off it.
+   */
   const corridorRoutesForMap = useMemo(() => {
-    const routes = displayedMovementCorridorField?.routes ?? [];
-    if (routes.length <= 24) return routes;
-    const stride = Math.ceil(routes.length / 24);
-    return routes.filter((_, i) => i % stride === 0);
-  }, [displayedMovementCorridorField]);
+    const corridors = displayedMovementCorridorField?.corridors ?? [];
+    const roadWays = mobilityResult?.roadWays ?? [];
+    return corridors
+      .map(c => c.representativeRoute)
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .map(r => ({
+        path: refinePath(r.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
+          .map(p => ({ lat: p.lat, lng: p.lng })),
+      }));
+  }, [displayedMovementCorridorField, mobilityResult]);
 
   const restrictionsForMap = useMemo(() => {
     if (!mobilityResult?.restrictionPlan) return null;
@@ -1343,6 +1417,7 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
+            roadRoute={mobilityResult?.roadRoute?.waypoints ?? null}
             corridors={displayedMovementCorridorField?.corridors ?? null}
             corridorRoutes={corridorRoutesForMap}
             highlightedCorridorId={highlightedCorridorId}
@@ -1380,6 +1455,7 @@ const App: React.FC = () => {
                 water: (waterFeaturesForMap?.length ?? 0) > 0,
                 unitPath: !!unitSimPath,
                 movers: !!ensembleMovers && ensembleMovers.length > 0,
+                roadRoute: !!mobilityResult?.roadRoute,
               }}
             />
           )}
@@ -1414,6 +1490,10 @@ const App: React.FC = () => {
               onProfileChange={setMobilityProfileId}
               nightMode={mobilityNightMode}
               onNightModeChange={setMobilityNightMode}
+              roadSpeedOverrides={roadSpeedOverrides}
+              onRoadSpeedOverridesChange={setRoadSpeedOverrides}
+              fidelity={mobilityFidelity}
+              onFidelityChange={setMobilityFidelity}
               boxRole={mobilityBoxRole}
               onBoxRoleChange={setMobilityBoxRole}
               originPaint={mobilityOriginPaint}

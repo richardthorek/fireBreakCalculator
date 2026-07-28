@@ -89,7 +89,7 @@ import { logger } from '../../utils/logger';
 import { decodeImageBytes } from '../../utils/nvisVegetationService';
 
 const NAFI_WMS_BASE =
-  (import.meta.env.VITE_NAFI_WMS_URL as string | undefined) || 'https://firenorth.org.au/geoserver/public/ows';
+  ((import.meta as any).env?.VITE_NAFI_WMS_URL as string | undefined) || 'https://firenorth.org.au/geoserver/public/ows';
 
 /** Technical raster extent, read directly from the live GetCapabilities
  *  document this session (CRS:84 / lon-lat order), for the two time-since-
