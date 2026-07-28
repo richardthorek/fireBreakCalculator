@@ -68,6 +68,8 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 30 | Smooth the corridor band's own outline | Direct roadmap follow-on to step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — genuine, not approximated — but still traced the hex tessellation's own blocky edge. `polygonSmoothing.ts` (new) applies Chaikin corner-cutting to every ring of the dissolved geometry (`Polygon` or `MultiPolygon` — union can produce either), a deliberately different algorithm from the route lines' moving-average (a closed ring has no endpoints/locked vertices to preserve; Chaikin treats every vertex cyclically). Caught a real test-methodology trap before shipping: summed turning angle is near-invariant under Chaikin for a closed ring (unlike an open path) — the maximum single-corner turn is the measure that actually captures "no more staircase corners" | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 31 | OSM water relations — picked ahead of queue order for 1.0 demo risk | Owner: "one more push then we're done for a 1.0 demo... pick the item most critical." Assessed demo risk rather than following size-first order: confirmed LIVE that Lake Tuggeranong and Gungahlin Pond — both in the same Canberra region this project's own test scenarios already live in — are OSM `relation`, not `way`, so either would have repeated the exact "water doesn't block movement" bug class just fixed twice already, live, in front of the demoed geography. Fixed in both `webapp` and `api` (kept in lock-step, matching their existing "MUST match" query-constant discipline): the water query now also requests `relation["natural"="water"]`; `out geom` inlines each member's geometry directly (confirmed live, no recursion needed); each `outer`-role member becomes its own water-body trail. Stated scope cut: multi-part outer rings aren't re-stitched and `inner`/island members aren't subtracted as holes — both safe directions to be wrong in for a hard-block gate (worst case: an island cell over-blocks, never under-blocks) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
 | 32 | Cloud-offload scoping + mobility run telemetry | Owner asked to scope cloud infrastructure for large-area Terrain Mobility runs (Static Web Apps + Functions vs. Container Apps vs. an on-demand Container Apps Job for big jobs only) and to start collecting real per-run scale/performance data now, since device variance (owner's own two machines) makes a guessed cell-count threshold unreliable. Design: a three-tier model (client Worker default → same-algorithm Function-hosted tier → on-demand Container Apps Job for genuine outliers), explicitly NOT building tiers 2–3 until telemetry shows real demand. `POST /api/mobility-telemetry` (new, rate-limited, Table Storage-backed) + `webapp/src/terrain/mobilityTelemetry.ts` now record cell counts, GO/SLOW-GO/NO-GO + vegetation-difficulty histograms, distance, per-stage elapsed time, and coarse device hints for every completed run — no location, no identity, fire-and-forget. Also confirmed the road-routing piece from the same conversation was NOT missing (Slice A's `roadRouteSearch.ts` already gives a fast, box-free vehicle route independent of the slow hex-grid search) and flagged the one real gap: it currently waits on the same grid-sampling pass instead of being surfaced first | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| 33 | Small-AOI detour padding, profile-scaled | Owner-reported defect: a short (~1-2km) hill crossing never considered an equally short detour 1-2km north/south, because the search box is sized proportionally to the direct span — short trips got proportionately short padding regardless of whether a much better route sat just outside it. `minDetourPadM(profile)` (mobilityGrid.ts) adds a floor derived from the mover profile's own sourced road speed over a 1-hour budget, so a vehicle gets proportionately more search room than foot for the identical trip. Deliberately uncapped — the existing distance-scaled cell budget (step 25) already coarsens resolution rather than exploding cell count as the box grows, so large-AOI performance (step 32) is unaffected | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39 |
+| 34 | Mapbox-tile road fallback widened to Terrain Mobility | Owner, live-testing near Lake George: a real, signed highway along the shoreline was painted NO-GO end to end, and asked whether the road network visible on the map tiles is real queryable data or just an image. Answer: real vector geometry, already loaded zero-network/CORS-free/offline-capable (`mapboxTrails.ts`) — but that fast-path was restricted to the fire-break `'highway'` kind and never applied to Terrain Mobility's `'highway-mobility'` kind. Root cause confirmed by this same session's own console evidence: Overpass unreachable for that area left `onTrail` false everywhere, and the hard slope gates in `mobilityCost.ts` (unlike the vegetation/hydrology gates) carry no mapped-road exemption at all, so a narrow lake-edge shelf read NO-GO from raw DEM alone. Fixed: `extractCorridorTrails` now takes a `kind`, widening to `MOBILITY_CLASSES` (motorway/trunk/primary included) with a Mapbox-class → OSM-highway translation table; honest stated cost is a highway-class-only speed ceiling (Mapbox carries no surface/tracktype/smoothness) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
 
 ### Next up
 
@@ -113,6 +115,75 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Mapbox-tile road fallback widened to Terrain Mobility
+  (step 34)**: live-testing near Lake George, owner reported a real, signed
+  highway along the shoreline painted NO-GO end to end by the terrain
+  overlay, then asked the sharper diagnostic question directly: "we can
+  literally see the road network on the underlying map tiles? is that data
+  present or is it just an image?" Answer: real, queryable vector geometry —
+  `mapboxTrails.ts` already adds the Mapbox Streets v8 source as an
+  invisible, always-queryable layer (zero extra network, no CORS, works
+  offline once cached) and has been the first-tried source for the
+  fire-break optimizer for a while. The gap was narrower than "no data at
+  all": this shortcut was restricted to the fire-break `'highway'` kind and
+  never applied to Terrain Mobility's `'highway-mobility'` kind, for two
+  real reasons — the class filter excluded motorway/trunk, and the tileset
+  carries no surface/tracktype/smoothness tags.
+
+  Root-caused with this same session's own evidence: earlier console output
+  (this exact testing session) showed the backend Overpass proxy 502-ing for
+  `kind=highway-mobility`, then every direct Overpass mirror failing
+  CORS/timeout. With zero road data, `onTrail` is false for every cell, so
+  the mapped-road exemption the hydrology/vegetation gates already give a
+  road never fires — and the hard slope/cross-slope gates in
+  `mobilityCost.ts` have NO such exemption at all, applying regardless of
+  `onTrail`. A narrow, engineered lake-edge shelf between a steep hillside
+  and the water reads as NO-GO from raw DEM alone, exactly matching the
+  screenshot.
+
+  Fixed: `mapboxTrails.ts` gained `MOBILITY_CLASSES` (motorway/trunk/primary
+  included) alongside the existing `REUSABLE_CLASSES`, queried from the SAME
+  underlying layer and filtered per call rather than maintaining two Mapbox
+  GL layers; a `MAPBOX_CLASS_TO_OSM_HIGHWAY` table translates Mapbox's
+  bucketed classes (`street` covers OSM residential/unclassified/
+  living_street alike) to a real OSM tag so the speed-by-class table gets an
+  honest entry instead of its generic untagged-track fallback.
+  `infrastructureService.ts`'s `LocalTrailProvider` gained a `kind`
+  parameter; the Mapbox-first shortcut now covers `'highway-mobility'` too
+  (never `'water'` — no waterway geometry in Mapbox's schema). Stated cost:
+  a way sourced this way gets a highway-class-only speed ceiling, no
+  surface/tracktype/smoothness refinement — strictly better than the
+  failure mode it fixes. 6 new tests (`mapboxTrailsMobility.test.ts`) against
+  a stubbed Mapbox GL map; full existing road/infrastructure suite still
+  green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40.
+
+- **2026-07-28 — Small-AOI detour padding, profile-scaled (step 33)**: owner
+  reported that a short (~1-2km) hill crossing never considered an equally
+  short, genuinely viable detour 1-2km north or south — the search box
+  (`computePaddedBounds`, §35) is sized proportionally to the direct
+  origin↔objective span, so a short trip gets proportionately short padding
+  regardless of whether a much better route sits just outside it. Confirmed
+  with the owner before implementing: a literal "1-2 hours of travel"
+  padding floor, uncapped, since the existing distance-scaled cell budget
+  (step 25) already coarsens hex resolution rather than exploding cell count
+  as the resulting box grows — this doesn't reintroduce the large-AOI
+  performance problem from step 32.
+
+  `minDetourPadM(profile)` (mobilityGrid.ts) derives extra room, metres each
+  side, from the mover profile's own sourced `roadSpeedKmh` over a 1-hour
+  budget — a vehicle at 60 km/h gets ~60km of floor room, foot at 5 km/h
+  gets ~5km, matching the owner's own framing ("foot would be quite
+  constrained compared to vehicles"). Threaded through `computePaddedBounds`
+  as an additional `Math.max()` term (default 0, fully backward compatible)
+  and wired in from `mobilityAppreciation.ts`'s first search attempt where
+  the profile is already resolved; only binds when the direct span is short
+  enough that the existing proportional term would otherwise fall short —
+  long-range runs are unaffected. 6 new tests (`detourPadScaling.test.ts`);
+  full existing padded-bounds/frontier-growth/cell-budget/road-routing suite
+  still green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39.
 
 - **2026-07-28 — Cloud-offload design scoping + mobility run telemetry
   (step 32)**: continuing a conversation about why Terrain Mobility runs feel

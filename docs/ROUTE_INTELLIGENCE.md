@@ -4509,5 +4509,121 @@ at — premature before that data exists.
 
 ---
 
+## 39. Small-AOI detour padding — profile-scaled, not just proportional (2026-07-28)
+
+Owner-reported defect, live-testing a short-range run: "moving approximately
+1-2km from one side of a hill to the other is not considering the very
+viable possibility of travelling an additional 1-2km north or south to a
+bunch of viable pathways... we need to consider all paths within a
+reasonable minimum distance, especially for the vehicle types... so 'foot'
+would be quite constrained compared to vehicles."
+
+**Root cause.** `computePaddedBounds` (mobilityGrid.ts, §35) sizes the search
+box as `spanM * (1 + 2*boundsPadFactor)` — proportional to the direct
+origin↔objective distance. Fine for a long trip; for a short one (1-2 km)
+the resulting padding is itself only a few hundred metres, nowhere near
+enough to contain an equally short detour around an obstacle. The multi-
+source Dijkstra search itself is not the problem — it already finds the
+cheapest path across whatever cells it's given — the box just never
+contained the better route's cells in the first place. Compounding this: the
+retry loop stops widening as soon as ANY route is found (`if (path) break`
+in `mobilityAppreciation.ts`), so a mediocre straight-line route through the
+obstacle silences the mechanism before a better detour is ever sampled.
+
+**Fix.** `minDetourPadM(profile)` (mobilityGrid.ts) — extra room, metres
+each side, derived from the mover profile's own sourced `roadSpeedKmh` over
+a fixed 1-hour time budget. Threaded into `computePaddedBounds` as an
+additional `Math.max()` term against the existing proportional formula
+(default 0, so every pre-existing call site/test is unaffected), and wired
+in from `mobilityAppreciation.ts`'s first search attempt, where the profile
+is already resolved. A vehicle profile at 60 km/h gets ~60 km of floor
+room; a foot profile at 5 km/h gets ~5 km — proportionate to the owner's own
+framing, not a flat number applied to both alike.
+
+**Deliberately uncapped (owner decision, weighed against a smaller/bounded
+alternative):** the existing distance-scaled cell budget (`computeCellBudget`,
+step 25) already coarsens hex resolution as the resulting box grows, so a
+fast profile's wider box costs RESOLUTION, not runaway cell count — this
+does not reintroduce the large-AOI performance problem from §38. The floor
+only binds at all when the direct span is short enough that the
+proportional term would otherwise fall short of it; a long-range run is
+unaffected (verified in tests below).
+
+**Tests** (`detourPadScaling.test.ts`, 6 checks): foot gets a modest,
+real floor; a vehicle gets an order-of-magnitude more room than foot for the
+identical trip; the reported hill-crossing scenario gets ≥1.5 km of room on
+each side; a long-range trip's box is unchanged (<1% delta); omitting the
+new parameter reproduces the old formula exactly. Full existing padded-
+bounds/frontier-growth/cell-budget/road-routing suite still green; `tsc`/
+build clean.
+
+---
+
+## 40. Mapbox-tile road fallback widened to Terrain Mobility (2026-07-28)
+
+Owner, live-testing near Lake George: a real, clearly-signed highway
+running along the shoreline was painted NO-GO end to end by the terrain
+overlay, despite being "highly preferred" and visibly present on the very
+same map tiles already loaded. Owner's own diagnostic question: "we can
+literally see the road network on the underlying map tiles? is that data
+present or is it just an image?"
+
+**Answer: the data is real, queryable vector geometry, not a rendered
+image.** `mapboxTrails.ts` already adds the `mapbox-streets-v8` vector
+source as an invisible, always-queryable layer — zero extra network cost
+(the tiles load with the map itself), no CORS problem (Mapbox serves its
+own tiles with the app's token), and works offline once an area's tiles are
+cached. This has been the FIRST-TRIED source for the fire-break optimizer's
+plain `'highway'` kind since it was built. The bug was narrower: this
+shortcut was explicitly restricted to that fire-break kind and never applied
+to Terrain Mobility's `'highway-mobility'` kind, for two real reasons —
+Mapbox's `REUSABLE_CLASSES` filter excluded motorway/trunk (a fire break
+doesn't run down a freeway), and the tileset carries no `surface`/
+`tracktype`/`smoothness` tags the road-speed model wants.
+
+**Mechanism confirmed by this same session's own evidence.** Earlier
+console output from this exact testing session showed the backend Overpass
+proxy 502-ing for `kind=highway-mobility`, followed by every direct Overpass
+mirror failing on CORS/timeout — "All Overpass endpoints failed for
+highway-mobility; continuing without it." With zero road data, `onTrail` is
+false for every cell, so the mapped-road exemption the hydrology/vegetation
+gates already give a road (§34, §35: "a road crossing a mapped watercourse
+implies a bridge/ford already handles it") never fires. The hard slope/
+cross-slope gates in `mobilityCost.ts` have NO such exemption at all — they
+apply regardless of `onTrail` — so a narrow, engineered lake-edge shelf
+between a steep hillside and the water reads as NO-GO from raw DEM alone.
+
+**Fix.** `mapboxTrails.ts`: added `MOBILITY_CLASSES` (motorway/trunk/primary
+included, docs §35's `MOBILITY_HIGHWAYS` set in Mapbox Streets v8 naming)
+alongside the existing `REUSABLE_CLASSES`; `extractCorridorTrails` now takes
+a `kind` parameter selecting which set applies, querying the SAME underlying
+layer (filtered to the union of both) rather than maintaining two Mapbox GL
+layers. `MAPBOX_CLASS_TO_OSM_HIGHWAY` translates Mapbox's bucketed classes
+(`street` → covers OSM residential/unclassified/living_street alike) to a
+real OSM `highway` value so the speed-by-class table gets an honest entry
+instead of falling through to its generic untagged-track estimate.
+`infrastructureService.ts`'s `LocalTrailProvider` type gained a `kind`
+parameter; the Mapbox-first shortcut now covers `'highway-mobility'` as well
+as `'highway'` (still never `'water'` — Mapbox's schema carries no waterway
+geometry at all).
+
+**Honest, stated fidelity cost:** a way sourced this way gets a highway-
+class-only speed ceiling — `surface`/`tracktype`/`smoothness` are simply
+absent from Mapbox's schema, so no refinement beyond the base class is
+possible via this path (`roadSpeedModel.ts` already treats an absent tag as
+"no cap from that dimension", so this degrades gracefully rather than
+erroring). Strictly better than the failure mode it fixes: zero road data
+at all, and a real highway reading as impassable.
+
+**Tests** (`mapboxTrailsMobility.test.ts`, 6 checks, stubbed Mapbox GL map —
+no real map/token needed): `'highway'` kind still excludes motorway
+(regression guard); `'highway-mobility'` includes it (the reported gap);
+the class translation table; surface/tracktype/smoothness left undefined,
+not fabricated; default kind is backward-compatible; empty feature sets
+still return null, never throw. Full existing road/infrastructure suite
+still green; `tsc`/build clean.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

@@ -938,7 +938,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       // trail source; it falls back to the backend Overpass proxy whenever this
       // returns nothing (tiles not loaded for the corridor).
       ensureStreetsSource(map);
-      setLocalTrailProvider((s, w, n, e) => extractCorridorTrails(map, s, w, n, e));
+      setLocalTrailProvider((s, w, n, e, kind) => extractCorridorTrails(map, s, w, n, e, kind));
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
