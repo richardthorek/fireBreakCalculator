@@ -19,18 +19,29 @@ import { MobilityAppreciationResult, MobilityStage } from './mobilityAppreciatio
 
 const SESSION_KEY = 'mobilityTelemetrySessionId';
 
+/** Not a security token — only a grouping key so a device's own runs can be
+ *  told apart in the collected telemetry. Still built from `crypto`, not
+ *  `Math.random()`: the Web Crypto API is available everywhere this runs
+ *  (browser main thread), so there's no reason to reach for the weaker
+ *  generator even where it wouldn't matter. */
+function randomId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function sessionId(): string {
   try {
     let id = sessionStorage.getItem(SESSION_KEY);
     if (!id) {
-      id = (crypto as { randomUUID?: () => string }).randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      id = randomId();
       sessionStorage.setItem(SESSION_KEY, id);
     }
     return id;
   } catch {
     // sessionStorage unavailable (private mode, etc.) — a per-call id is fine,
     // this only affects grouping runs from the same session, not correctness.
-    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return randomId();
   }
 }
 
