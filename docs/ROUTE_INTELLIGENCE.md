@@ -3980,5 +3980,162 @@ math is tracked as follow-up cleanup rather than blocking this change.
 
 ---
 
+## 37. Progress-bar dead zones fixed; road graph gets real water awareness (2026-07-28)
+
+Two field reports, both from the same live-testing session as §35's corridor
+addendum.
+
+### Progress bar accuracy + early real results on the map
+
+Owner: *"the 'progress' indicator stopped well before the result loaded in
+with a long 'nothing' time. Ensure that the progress bar reflects the work
+being done and the map starts getting visual results being loaded as it
+happens. I'd love to see pathways snaking across the landscape from the get
+go rather than waiting for the end."*
+
+Three real, confirmed bugs in `mobilityAppreciation.ts`'s progress reporting,
+found by direct inspection (not guessing):
+
+1. **The multi-source Dijkstra search reported NOTHING while it ran.**
+   `runMobilitySearchInWorker` had no progress channel at all — the single
+   largest silent stretch in the whole run, and exactly the "long nothing
+   time" symptom. Fixed by threading a real `onProgress` through
+   `runAccumulatedCostSearch` (`accumulatedCost.ts`) — `best.size /
+   cells.length`, the genuine fraction of the grid settled so far, throttled
+   to whole-percent steps before crossing the Worker boundary (same
+   discipline the movement ensemble's own progress already used). The search
+   phase's share of the overall bar widened from a token 4% (0.46→0.5) to a
+   real 15% (0.40→0.55).
+2. **A retry's sampling progress replayed from zero, visibly rewinding the
+   bar.** Each `boundsPadFactor`/targeted-growth retry attempt's
+   `buildOptions.onProgress` mapped its OWN 0..1 progress back into the same
+   overall 0..0.40 (formerly 0..0.45) range every time, with nothing
+   preventing a later attempt's early progress from reporting a LOWER
+   fraction than an earlier attempt had already reached.
+3. **The ensemble/restrictions worker call's own internal progress could
+   already exceed a LATER, hard-coded checkpoint.** `planRestrictions` runs
+   inside the SAME worker message handler as the ensemble, after it, before
+   the response posts back — so by the time `await
+   runMovementEnsembleInWorker(...)` resolves, phase `'restrictions'`
+   progress may already have reported up to ~0.97. The very next line used
+   to call `onProgress(0.7)` for the "corridors" stage — a real, visible
+   rewind from ~97% back to 70%.
+
+**Fix, one mechanism for all three:** `runMobilityAppreciation` now wraps the
+caller's `onProgress` in a monotonic guard — a value at or below the current
+high-water mark is silently dropped, never forwarded. This isn't a numeric
+patch over each individual bug; it is the general property the bar must have
+("progress" cannot mean "sometimes less work than before"), so no future
+stage reordering can reintroduce the same class of defect. The three
+call-site bugs above were still worth understanding and fixing at the
+source (a bar that only ever HOLDS during a retry, rather than climbing, is
+a worse experience than one that climbs correctly) — the guard is the
+backstop, not a substitute for getting the numbers right.
+
+**Real results reach the map before the run finishes.** A new
+`onPartialResult` callback fires once, right after the search settles — the
+real reachability field, GO/SLOW-GO/NO-GO classification, and the single
+cheapest route, exactly as they appear in the final result — well before the
+movement ensemble, corridors, chokepoints and min-cut barrier (which can add
+tens of seconds more on a large or fine-fidelity grid) finish. Every field
+those later stages own (`corridorField`, `ensemble`, `restrictionPlan`,
+`chokepoints`, `barrier`) is passed through in its honest "nothing yet"
+state — not fabricated, just not computed yet — which every consumer of
+`MobilityAppreciationResult` already treats as nullable (the "no route
+found" case has always produced exactly this shape), so `App.tsx` wiring
+this straight into the same `mobilityResult` state needed no new rendering
+path. This is the "pathways snaking across the landscape from the get go"
+request: the real route and reachability field appear as soon as they
+exist, not only once everything else is also done.
+
+Tests: `searchProgress.test.ts` (6 checks — the Dijkstra progress callback
+fires repeatedly not once, is monotonic, reaches ~1.0 on fully-reachable
+ground, stays in [0,1], and changes nothing about the search's own result).
+The orchestration-level fixes (monotonic guard, `onPartialResult`) live in
+`mobilityAppreciation.ts`, which — like `mobilityGrid.ts` — transitively
+depends on `import.meta.env` and a real Worker, so cannot be exercised via a
+bare `tsx` script; verified via `tsc --noEmit` and `npm run build`, both
+clean, matching this doc's own established precedent for that class of
+module (§36).
+
+### Road graph had zero water awareness — a vehicle route crossed Lake George
+
+Owner, live-testing a run against the real Lake George: *"ran straight
+across the lake which should based on data be a hard block due to water. (No
+'has boats' option for unit movement)."*
+
+**First hypothesis (ruled out by direct testing):** that Lake George is
+mapped as an OSM multipolygon `relation`, and `infrastructureService.ts`'s
+Overpass query only requests `way[...]` — a real, already-known gap (master
+plan's "OSM water relations" backlog item). Checked directly: Lake George
+(OSM way id 8060816) is in fact a single, well-formed closed `way` (349
+nodes), fetched live via Overpass for this investigation. This gap is real
+for OTHER lakes but was not the cause here.
+
+**Second check (confirmed correct):** whether the HEX-GRID search's own
+`estimateFordingRequirement` gate (`mobilityCost.ts`) actually blocks
+movement through this exact real polygon. Proven directly — `foot-
+individual-unladen` (no fording capability) searched against a grid built
+from the real Lake George way correctly found a 96-waypoint route with ZERO
+waypoints inside the lake. The hex-grid cost model works correctly on real
+data.
+
+**Root cause, confirmed by direct code inspection:** `roadGraph.ts` and
+`roadRouting.ts` — the box-free vehicle road-network route (§35 Slice A) —
+had **no water or hydrology logic at all**, in contrast to the hex grid.
+Lake George is real-world famous for drying out for years at a time, so OSM
+legitimately has tracks tagged across its bed with no bridge; a vehicle
+profile without fording capability would be routed straight across any such
+track with nothing to stop it.
+
+**Fix:** `buildRoadGraph` now accepts the same water-body polygons the hex
+grid already fetches (`grid.waterFeatures`, threaded through
+`roadRouteSearch.ts`'s `findVehicleRoadRoute`). While building each way's
+edges in order, it tracks a CONTIGUOUS run of edges whose midpoint falls
+inside a mapped water body; if that run's total length exceeds
+`MAX_ASSUMED_BRIDGE_SPAN_M` (250 m — generous, since a real bridge/causeway
+span is typically tens to a couple hundred metres and Lake George's own
+reported crossing was ~8.5 km), every edge in the run is flagged
+`crossesStandingWater`. `roadRouting.ts`'s `edgeTravelTime` blocks any such
+edge outright for a profile whose `fordingDepthM` is undefined OR less than
+2.5 m — the SAME assumed depth `estimateFordingRequirement` already uses for
+a standing water body, so a profile with a real-but-shallow rating (e.g. 0.7
+m) is correctly still blocked, not just profiles with no capability stated
+at all. A SHORT dip into a small water body (a genuine bridge) is
+deliberately left unflagged — the run-length threshold, not point-in-polygon
+alone, is what distinguishes "assumed bridge" from "track across dry
+ground", preserving the hex-grid's existing "roads imply bridges" assumption
+for the case it was actually meant to cover.
+
+Both new fields (`RoadEdge.crossesStandingWater`, `WaterBodyPolygon`) keep
+`roadGraph.ts`'s stated "no import dependency" design — a self-contained
+ray-casting point-in-polygon check, not `@turf/boolean-point-in-polygon`,
+matching `roadSpeedModel.ts`'s precedent for this module family.
+
+Tests: `roadWaterCrossing.test.ts` (4 checks), built against the REAL Lake
+George way geometry (same 349-node ring fetched live for the investigation
+above, embedded as the fixture): a track across the lake is found and used
+WITHOUT water awareness (proving the pre-fix defect is real and reproducible
+in a controlled fixture, not just live), the same track is blocked and the
+route forced onto a real northern detour WITH water awareness, and a CONTROL
+proving a short bridge-like crossing of a small pond is still assumed
+passable. Full regression suite green (only the pre-existing, unrelated
+live-data `nvis-fidelity.test.ts` fails); `tsc --noEmit` and `npm run build`
+clean.
+
+**Not fixed by this pass** (recorded, not silently dropped): the OSM
+relation gap identified and ruled out above is still real for other lakes
+and remains open in the roadmap. The hex-grid search's own `onTrail`
+exemption (mobilityCost.ts: a fording check is skipped when both edge
+endpoints are already on a mapped road/trail) was not touched — if a real
+OSM track through a lake bed also happens to snap `onTrail=true` on nearby
+hex cells, that hex-grid exemption could theoretically still admit a
+crossing the way this fix blocks for the road graph specifically. No live
+evidence of that combination was found during this investigation, but it is
+a different code path from the one fixed here and is noted rather than
+assumed clear.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

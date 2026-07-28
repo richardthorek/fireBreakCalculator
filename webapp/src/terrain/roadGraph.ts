@@ -48,6 +48,61 @@ export interface RoadEdge {
   /** Tags of the WAY this edge segment belongs to — feeds `roadClassCeiling`. */
   wayTags: RoadWayTags;
   wayName?: string;
+  /** True when this edge sits inside a CONTIGUOUS run of the way's own
+   *  geometry passing through the interior of a mapped standing water body
+   *  (a lake/reservoir), longer than a single plausible bridge span (docs §35
+   *  addendum, 2026-07-28 — Lake George again: field-tested, a vehicle route
+   *  ran straight across the real lake. Root cause: this graph had ZERO water
+   *  awareness at all, unlike the hex-grid search's own
+   *  `estimateFordingRequirement` gate — a road/track tagged in OSM across a
+   *  lake bed that is dry often enough for vehicles to have driven and mapped
+   *  it was simply never checked). A SHORT dip into a water polygon — a real
+   *  bridge or causeway abutment — is deliberately NOT flagged; see
+   *  `MAX_ASSUMED_BRIDGE_SPAN_M`. Consumed by `roadRouting.ts`'s
+   *  `edgeTravelTime`, which blocks it for any profile without a stated
+   *  fording capability, mirroring `mobilityCost.ts`'s "standing water body —
+   *  assumed genuinely deep" default exactly. */
+  crossesStandingWater?: boolean;
+}
+
+/** Minimal water-body polygon shape — mirrors `RoadWay`'s own "no import
+ *  dependency" design (see that interface's doc comment): the caller maps
+ *  its own `InfrastructureTrail`/`kind === 'water'` features into this shape
+ *  rather than this module importing `infrastructureService.ts`. */
+export interface WaterBodyPolygon {
+  coords: LatLngLike[];
+}
+
+/** How far a road may run through the interior of a mapped standing water
+ *  body and still be assumed to be a real bridge/causeway rather than a
+ *  track across dry ground (docs §35 addendum, 2026-07-28). A genuine bridge
+ *  span is typically tens to a few hundred metres; Lake George's own
+ *  reported crossing was ~8.5 km — nowhere near this threshold, which is
+ *  deliberately generous in the direction of NOT falsely blocking a real,
+ *  short causeway. */
+const MAX_ASSUMED_BRIDGE_SPAN_M = 250;
+
+/** Ray-casting point-in-polygon — self-contained rather than pulling in
+ *  `@turf/boolean-point-in-polygon` (`infrastructureService.ts`'s own
+ *  choice), matching this module's stated "no import dependency" design. */
+function pointInPolygon(p: LatLngLike, polygon: LatLngLike[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].lng, yi = polygon[i].lat;
+    const xj = polygon[j].lng, yj = polygon[j].lat;
+    const intersect = (yi > p.lat) !== (yj > p.lat) &&
+      p.lng < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function isInAnyWaterBody(p: LatLngLike, waterBodies: WaterBodyPolygon[]): boolean {
+  for (const body of waterBodies) {
+    if (body.coords.length < 4) continue; // not enough vertices to be a meaningful ring
+    if (pointInPolygon(p, body.coords)) return true;
+  }
+  return false;
 }
 
 export interface RoadGraph {
@@ -106,8 +161,16 @@ function addEdge(adjacency: Map<string, RoadEdge[]>, edge: RoadEdge): void {
  * Zero-length consecutive-vertex pairs (duplicate points within a way's own
  * geometry — an occasional Overpass/OSM data quirk) are skipped rather than
  * creating a zero-cost edge.
+ *
+ * `waterBodies`, when supplied, flags edges per `RoadEdge.crossesStandingWater`
+ * — see that field's own doc comment for why and `MAX_ASSUMED_BRIDGE_SPAN_M`
+ * for the threshold. Detection walks each way's OWN vertex sequence in order,
+ * testing each EDGE's midpoint against every water polygon, and accumulates
+ * a running length across a CONTIGUOUS in-water stretch (resetting the moment
+ * a dry edge is seen) — so a long track across a lake bed is flagged in full,
+ * while a short bridge span over the same lake's edge is not.
  */
-export function buildRoadGraph(ways: RoadWay[]): RoadGraph {
+export function buildRoadGraph(ways: RoadWay[], waterBodies: WaterBodyPolygon[] = []): RoadGraph {
   const nodes = new Map<string, RoadNode>();
   const adjacency = new Map<string, RoadEdge[]>();
 
@@ -125,6 +188,19 @@ export function buildRoadGraph(ways: RoadWay[]): RoadGraph {
     if (way.coords.length < 2) continue;
     const wayTags: RoadWayTags = { highway: way.kind, surface: way.surface, tracktype: way.tracktype, smoothness: way.smoothness };
 
+    // Tracks the CURRENT contiguous in-water run of edges (both directions'
+    // objects, so flagging one flags the other) — flushed the moment a dry
+    // edge is seen, or at the end of the way, whichever comes first.
+    let run: RoadEdge[] = [];
+    let runLengthM = 0;
+    const flushRun = () => {
+      if (runLengthM > MAX_ASSUMED_BRIDGE_SPAN_M) {
+        for (const e of run) e.crossesStandingWater = true;
+      }
+      run = [];
+      runLengthM = 0;
+    };
+
     for (let i = 0; i < way.coords.length - 1; i++) {
       const a = getOrCreateNode(way.coords[i]);
       const b = getOrCreateNode(way.coords[i + 1]);
@@ -133,9 +209,22 @@ export function buildRoadGraph(ways: RoadWay[]): RoadGraph {
       const distanceM = haversineM(a, b);
       if (distanceM <= 0) continue;
 
-      addEdge(adjacency, { from: a.id, to: b.id, distanceM, wayTags, wayName: way.name });
-      addEdge(adjacency, { from: b.id, to: a.id, distanceM, wayTags, wayName: way.name });
+      const forward: RoadEdge = { from: a.id, to: b.id, distanceM, wayTags, wayName: way.name };
+      const backward: RoadEdge = { from: b.id, to: a.id, distanceM, wayTags, wayName: way.name };
+      addEdge(adjacency, forward);
+      addEdge(adjacency, backward);
+
+      if (waterBodies.length > 0) {
+        const midpoint: LatLngLike = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+        if (isInAnyWaterBody(midpoint, waterBodies)) {
+          run.push(forward, backward);
+          runLengthM += distanceM;
+        } else {
+          flushRun();
+        }
+      }
     }
+    flushRun(); // the way may end mid-run
   }
 
   return { nodes, adjacency, wayCount: ways.length };

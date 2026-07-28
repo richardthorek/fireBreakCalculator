@@ -23,7 +23,7 @@ let nextRequestId = 1;
 
 interface PendingEntry {
   resolve: (response: MobilityWorkerResponse) => void;
-  onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
+  onProgress?: (fraction: number, phase: 'search' | 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
 }
 const pending = new Map<number, PendingEntry>();
 
@@ -56,7 +56,11 @@ export function runMobilitySearchInWorker(
   objectiveKeys: string[],
   profileId: string,
   nightMode: boolean,
-  roadSpeedOverrides?: RoadSpeedOverrides
+  roadSpeedOverrides?: RoadSpeedOverrides,
+  /** Real, incremental progress through the Dijkstra field build (§35
+   *  addendum, 2026-07-27) — the fraction of the grid settled so far, NOT a
+   *  placeholder. Previously this call reported nothing at all while it ran. */
+  onProgress?: (fraction: number) => void
 ): Promise<MobilitySearchOutcome> {
   const w = ensureWorker();
   const requestId = nextRequestId++;
@@ -65,6 +69,9 @@ export function runMobilitySearchInWorker(
       resolve: response => {
         if (response.kind !== 'search') { resolve({ results: [], path: null }); return; }
         resolve({ results: response.results, path: response.path });
+      },
+      onProgress: (fraction, phase) => {
+        if (phase === 'search') onProgress?.(fraction);
       },
     });
     const request: MobilityWorkerRequest = {
@@ -116,7 +123,11 @@ export function runMovementEnsembleInWorker(
       ),
       onProgress: (fraction, phase, log) => {
         if (log) options.onLog?.(log);
-        else options.onProgress?.(fraction, phase);
+        // A 'movement' request's own worker branch never emits phase
+        // 'search' (that's exclusive to 'search' requests) — this guard
+        // exists purely so the shared `PendingEntry` type, which now also
+        // carries 'search' for the OTHER request kind, still type-checks.
+        else if (phase !== 'search') options.onProgress?.(fraction, phase);
       },
     });
     const request: MobilityWorkerRequest = {

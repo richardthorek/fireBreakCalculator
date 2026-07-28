@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 27, 2026 — movement-corridor route-clustering fix (two shores of a lake now report as two corridors, not one) + corridor colour collision fixed; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — progress-bar dead zones fixed (real search progress, monotonic guard, early real results on the map) + road graph now has real water awareness (a vehicle route no longer crosses a lake); see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -62,6 +62,8 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 24 | Slice B (scoped) — square distance-based box + targeted frontier-edge growth (the actual fix) | Live-tested by the owner against the real Lake George, step 23 still failed. `computePaddedBounds` now targets a SQUARE box sized off the real origin↔objective distance (haversine), proven to clear the real 28km lake on attempt 1; `frontierTouchedEdges`/`growBoundsTowardFrontier` extend specifically the box edge the reachable frontier actually hit on any further retry, not a fresh uniform box. Also fixed the `nearestCellKey` seed-set fallback (was an arbitrary array index) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 25 | Distance-scaled cell budget + quick/standard/fine analysis-depth selector | `TARGET_CELL_COUNT`/`MAX_HEX_CELLS` were fixed constants regardless of AOI size — a continental run got the same budget as a 2km local one, just coarsened into huge hexes, with no user control. `computeCellBudget(spanM, fidelity)` scales the target sub-linearly (sqrt) with the real origin↔objective distance, per a `quick`/`standard`/`fine` tier each with its own base, growth rate and hard ceiling ('fine' allows up to 50,000 cells at continental range — a deliberate, bounded "few minutes is fine" choice, not an accident). New `ANALYSIS DEPTH` selector in the Terrain panel; re-running at a different tier IS the "more/fewer cells" control | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 26 | Movement corridors collapsing into one — route-clustering fix + corridor colour collision fix | Live-tested: a two-shore Lake George crossing with visibly distinct east/west detour tracks still reported only 1 corridor — every route sharing a compact origin/objective always shares cells at both ends, so old adjacency-based segmentation always found them "connected". Fixed by clustering routes BEFORE spatial segmentation (Jaccard cell-overlap tried first, proven inadequate on open terrain; replaced with spatial proximity at 3 sampled progress fractions, unanimous across all three, calibrated to a clean synthetic-fixture margin), then running density/smoothing/segmentation per cluster. Also fixed: corridor rank-1/2 colours were byte-identical to the NO-GO/SLOW-GO trafficability colours — moved corridors to a blue/violet palette | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 27 | Progress-bar dead zones + real results reach the map early | The Dijkstra search reported nothing while it ran (the single largest silent stretch); a retry's sampling progress replayed from zero (visible rewind); the ensemble worker call's internal 'restrictions' progress could already exceed a later hard-coded checkpoint (another visible rewind). Fixed: real incremental search progress (`runAccumulatedCostSearch`'s new `onProgress`), a monotonic guard around the whole run's `onProgress` (a value at/below the high-water mark is dropped, never forwarded — the general fix, not per-bug patches), and a new `onPartialResult` callback that surfaces the real reachability field + cheapest route as soon as the search settles, well before the ensemble/corridors/chokepoints/min-cut that follow | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
+| 28 | Road graph had zero water awareness — vehicle route crossed Lake George | Live-tested: a vehicle route ran straight across the real lake. Ruled out the OSM-relation hypothesis by direct testing (Lake George is a real, well-formed `way`, not a `relation`) and confirmed the hex-grid's own fording gate already works correctly against the real polygon. Root cause: `roadGraph.ts`/`roadRouting.ts` (the box-free vehicle road route, §35 Slice A) had NO water logic at all. Fixed: `buildRoadGraph` flags a CONTIGUOUS run of a way's edges through a mapped water body's interior longer than a plausible bridge span (250 m) as `crossesStandingWater`; `edgeTravelTime` blocks it for any profile whose fording capability is under the same assumed-depth (2.5 m) the hex grid already uses. A short bridge-like dip stays passable | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
 
 ### Next up
 
@@ -69,7 +71,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
-| Terrain progress bar accuracy + streaming path/corridor visualization | Owner: *"the 'progress' indicator stopped well before the result loaded in with a long 'nothing' time... the map [should start] getting visual results being loaded as it happens. I'd love to see pathways snaking across the landscape from the get go rather than waiting for the end."* Needs an audit of `onProgress` fraction mapping across every phase (grid build, search retries, ensemble, corridors, chokepoints, barrier) for dead zones, plus surfacing intermediate path/corridor data as it's found rather than only at the very end | M | step 26 (✅, corridors themselves now correct) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Corridor/route rendering is too noisy — consolidate to smoothed, shaded 2-5 corridor bands | Owner: *"the individual white lines of the considered paths don't work as a visualisation. Because of the hex grid they end up being 'triangles' between the grid centres and they don't follow the road geometry... they need to be consolidated to show substantive differences in the pathways / corridors, not show that every piece of ground has been considered, even smoothing between hex grid so units moving directly in straight lines aren't zig zagging to follow the hex. I'd expect to see the 2-5 clear corridors outlined and shaded appropriately over the top of the ground... reduce the analysis noise and show insights rather than raw thinking."* Three related asks: (1) stop rendering the raw k-route hairlines by default — they're the analysis substrate, not the presentation (docs §28 already says this; the hairline layer needs to actually default off/subordinate rather than visually competing with the band); (2) smooth a corridor's own outline/spine so it doesn't trace the hex tessellation's zig-zag, matching `pathRefinement.ts`'s existing "coarse hex line → realistic line" precedent for the fire-break optimizer's route rendering; (3) roads should support "hop on/off" movement in how a corridor's shape reads, not force it through hex-centre triangles even where a mapped road runs straight through. Needs design work before implementation — which smoothing approach (spline over the corridor polygon boundary? snap-to-road same as `pathRefinement.ts`? both?) is a real decision, not a one-line fix | M/L | step 26 (✅, corridor clustering itself now correct) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
@@ -105,6 +107,47 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Progress-bar dead zones fixed + road graph gets real water
+  awareness (steps 27, 28)**: two live field reports.
+
+  (1) Owner: *"the 'progress' indicator stopped well before the result
+  loaded in with a long 'nothing' time... the map [should start] getting
+  visual results being loaded as it happens. I'd love to see pathways
+  snaking across the landscape from the get go."* Three real bugs found by
+  direct inspection: the Dijkstra search reported NOTHING while it ran (now
+  fixed — real `best.size/cells.length` progress, throttled, threaded
+  through the Worker); a retry's sampling progress replayed from zero
+  (visible rewind); the ensemble worker call's internal 'restrictions'
+  phase could already report past a LATER hard-coded checkpoint (another
+  visible rewind, since `planRestrictions` runs inside the same worker
+  message handler as the ensemble, before either resolves). Fixed
+  generally with a monotonic guard around the whole run's `onProgress`
+  (a value at/below the high-water mark is dropped) rather than chasing
+  each numeric handoff by hand. A new `onPartialResult` callback surfaces
+  the real reachability field + cheapest route the moment the search
+  settles — well before the ensemble/corridors/chokepoints/min-cut that
+  follow — wired straight into `App.tsx`'s existing `mobilityResult` state
+  (every consumer already treats corridors/ensemble/chokepoints/barrier as
+  nullable, so no new rendering path was needed).
+
+  (2) Owner: *"ran straight across the lake which should based on data be a
+  hard block due to water. (No 'has boats' option for unit movement)."*
+  Investigated properly rather than guessed: fetched the REAL Lake George
+  OSM way live, confirmed it's a well-formed `way` (not the suspected
+  `relation` gap), and proved the hex-grid search already routes around it
+  correctly. Root cause was specific to the box-free VEHICLE road route
+  (§35 Slice A): `roadGraph.ts`/`roadRouting.ts` had zero water logic at
+  all. Fixed: a contiguous run of a road way's edges through a mapped water
+  body's interior longer than a plausible bridge span (250 m) is flagged
+  and blocked for any profile without enough fording capability (same 2.5 m
+  assumed depth the hex grid already uses) — a short genuine bridge stays
+  passable.
+
+  10 new tests (`searchProgress.test.ts` ×6, `roadWaterCrossing.test.ts` ×4
+  — the latter built against the real, live-fetched Lake George geometry).
+  Full regression green (only the pre-existing, unrelated live-data
+  `nvis-fidelity.test.ts` fails); tsc/build clean.
 
 - **2026-07-27 — Movement corridors collapsing into one + corridor colour
   collision (step 26)**: owner, live-testing a west↔east Lake George

@@ -28,7 +28,7 @@
 
 import { PaintedArea, paintedAreaBounds } from './paintedArea';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { buildRoadGraph, nodesWithin, RoadWay, RoadGraph } from './roadGraph';
+import { buildRoadGraph, nodesWithin, RoadWay, RoadGraph, WaterBodyPolygon } from './roadGraph';
 import { findRoadRoute } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';
 import { MoverProfile } from './moverProfiles';
@@ -72,13 +72,21 @@ function areaCentroid(area: PaintedArea): { lat: number; lng: number } | null {
  * for this AOI, neither painted area has a road within snapping distance, or
  * the road network genuinely doesn't connect the two — a real "no road
  * route" answer, not a box artefact, since this graph has no box.
+ *
+ * `waterFeatures`: the SAME OSM waterway/water-body geometry the hex-grid
+ * search's own hydrology gate uses (`grid.waterFeatures`, docs §34) — passed
+ * through to `buildRoadGraph` so this graph gets the identical water
+ * awareness the hex grid already has, rather than the "no water logic at
+ * all" gap that let a real vehicle route run straight across Lake George
+ * (docs §35 addendum, 2026-07-28).
  */
 export function findVehicleRoadRoute(
   origin: PaintedArea,
   objective: PaintedArea,
   roadWays: InfrastructureTrail[],
   profile: MoverProfile,
-  overrides?: RoadSpeedOverrides
+  overrides?: RoadSpeedOverrides,
+  waterFeatures: InfrastructureTrail[] = []
 ): RoadRouteSearchResult | null {
   if (profile.speedModel !== 'vehicle-gradient') return null;
   if (roadWays.length === 0) return null;
@@ -87,7 +95,10 @@ export function findVehicleRoadRoute(
   const objectivePoint = areaCentroid(objective);
   if (!originPoint || !objectivePoint) return null;
 
-  const graph: RoadGraph = buildRoadGraph(roadWays as RoadWay[]);
+  const waterBodies: WaterBodyPolygon[] = waterFeatures
+    .filter(f => f.kind === 'water')
+    .map(f => ({ coords: f.coords }));
+  const graph: RoadGraph = buildRoadGraph(roadWays as RoadWay[], waterBodies);
   if (graph.wayCount === 0) return null;
 
   const originNodes = nodesWithin(graph, originPoint, ROAD_ACCESS_SNAP_M);

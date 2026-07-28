@@ -598,6 +598,20 @@ const App: React.FC = () => {
             bandIndex: -1,
           })));
         },
+        // Real reachability field + cheapest route, surfaced as soon as the
+        // search settles — well before the ensemble/corridors/chokepoints/
+        // min-cut that follow (owner: "the map [should start] getting visual
+        // results being loaded as it happens... pathways snaking across the
+        // landscape from the get go rather than waiting for the end").
+        // Every consumer of `mobilityResult` already treats corridorField/
+        // ensemble/chokepoints/barrier as nullable (the "no route found"
+        // case has always produced exactly this shape), so setting it early
+        // here needs no new rendering path.
+        onPartialResult: partial => {
+          if (controller.signal.aborted) return;
+          setMobilityResult(partial);
+          setMobilityPreviewCells(null);
+        },
       });
       if (controller.signal.aborted) return;
       if (!result) {

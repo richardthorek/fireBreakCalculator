@@ -184,6 +184,24 @@ export interface MobilityAppreciationOptions {
    * `timeSeconds` legitimately Infinity because nothing has been reached yet.
    */
   onPreviewCells?: (cells: MobilityCellResult[]) => void;
+  /**
+   * Fires ONCE, right after the multi-source search settles — the real
+   * reachability field (arrival time per cell, GO/SLOW-GO/NO-GO) and the
+   * single cheapest origin→objective route, exactly as `results`/`bands`/
+   * `path` appear in the final return value. This is well before the
+   * movement ensemble, corridors, chokepoints and min-cut barrier finish —
+   * those can add tens of seconds more on a large or fine-fidelity grid, and
+   * previously NOTHING new appeared on the map in that whole span (owner:
+   * "the map [should start] getting visual results being loaded as it
+   * happens. I'd love to see pathways snaking across the landscape from the
+   * get go rather than waiting for the end."). The object passed here has
+   * the exact shape of the final result, with every field the later stages
+   * haven't computed yet left in its honest "nothing yet" state
+   * (`corridorField`/`ensemble`/`restrictionPlan`/`barrier`: null,
+   * `chokepoints`/`dissimilarRoutes`: empty) — never fabricated placeholder
+   * corridors, just real data surfaced as soon as it exists.
+   */
+  onPartialResult?: (partial: MobilityAppreciationResult) => void;
   /** User-edited road-class speeds (docs §35 config UI). Set into this
    *  thread's own roadSpeedModel.ts module instance at the top of this run,
    *  and forwarded into the worker (a separate module instance — see
@@ -207,7 +225,7 @@ export async function runMobilityAppreciation(
   options: MobilityAppreciationOptions
 ): Promise<MobilityAppreciationResult | null> {
   const {
-    profileId, nightMode = false, signal, onProgress, onLog, onStage, onPreviewCells,
+    profileId, nightMode = false, signal, onProgress: onProgressRaw, onLog, onStage, onPreviewCells, onPartialResult,
     moverCount = 240,
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
@@ -215,6 +233,25 @@ export async function runMobilityAppreciation(
     roadSpeedOverrides,
     fidelity = DEFAULT_MOBILITY_FIDELITY,
   } = options;
+  // Progress across this run is assembled from several sources that don't
+  // know about each other — a retry's own sampling pass, the worker's search
+  // progress, the ensemble/restrictions phases the SAME worker call streams
+  // back before it resolves — and reconciling their exact numeric handoffs
+  // by hand proved fragile: a stale/lower value from one source landing
+  // after a higher one from another visibly moved the bar BACKWARD (found
+  // this session: the ensemble worker call's own 'restrictions' phase can
+  // already report up to ~0.97 internally before the outer code's next
+  // scripted checkpoint, which used to unconditionally send a lower 0.7).
+  // This guard is the one place that discipline is enforced, so no call site
+  // below has to re-derive it: report a value going backward NEVER reaches
+  // the caller — the bar holds at its high-water mark instead of lying about
+  // work being undone.
+  let highWaterProgress = 0;
+  const onProgress = (fraction: number) => {
+    if (fraction <= highWaterProgress) return;
+    highWaterProgress = fraction;
+    onProgressRaw?.(fraction);
+  };
   const profile = getMoverProfile(profileId);
   if (!profile) {
     onLog?.(`ERROR — unknown mover profile "${profileId}"`);
@@ -283,12 +320,16 @@ export async function runMobilityAppreciation(
     } else {
       buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
     }
-    // Sampling owns the first 45% of the run's progress bar; the simulation
-    // stages that follow are real work of comparable length, and a bar that
-    // sat at 70% for most of the wall-clock time would be a worse lie than
-    // no bar at all.
+    // Sampling owns the first 40% of the run's progress bar; the search
+    // that follows now reports its OWN real progress (§35 addendum,
+    // 2026-07-27 — see `runAccumulatedCostSearch`'s `onProgress`) into the
+    // next 15%, rather than the two of them sharing one silent jump the way
+    // they used to. The `onProgress` wrapper above is monotonic, so a RETRY's
+    // sampling replaying this same 0..0.40 mapping from its own zero cannot
+    // visibly rewind the bar — it just holds at the prior high-water mark
+    // until this attempt's real progress catches back up past it.
     buildOptions.onProgress = f => {
-      onProgress?.((f / 0.7) * 0.45);
+      onProgress((f / 0.7) * 0.40);
       // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
       // elevation/vegetation/trail sampling begins — the long part.
       if (f > 0.05 && !samplingAnnounced) {
@@ -296,7 +337,7 @@ export async function runMobilityAppreciation(
         onStage?.({
           key: 'sampling',
           label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
-          fraction: (f / 0.7) * 0.45,
+          fraction: (f / 0.7) * 0.40,
         });
       }
     };
@@ -335,17 +376,24 @@ export async function runMobilityAppreciation(
       onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
     }
 
-    onProgress?.(0.46);
+    onProgress(0.40);
     onStage?.({
       key: 'search',
       label: i === 0 ? 'Running multi-source search across the grid' : `Re-running search at wider extent (attempt ${attemptsUsed})`,
-      fraction: 0.46,
+      fraction: 0.40,
     });
     if (i === 0) onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
 
+    // Real, incremental progress through the Dijkstra field build (§35
+    // addendum, 2026-07-27) — this call previously reported NOTHING while it
+    // ran, the single largest silent stretch in the whole run (owner: "the
+    // 'progress' indicator stopped well before the result loaded in with a
+    // long 'nothing' time"). `settledFraction` is how much of the grid has
+    // actually been reached so far, not decorative motion.
     const outcome = await runMobilitySearchInWorker(
       grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
-      roadSpeedOverrides
+      roadSpeedOverrides,
+      settledFraction => onProgress(0.40 + settledFraction * 0.15)
     );
     if (signal?.aborted) return null;
     results = outcome.results;
@@ -364,7 +412,7 @@ export async function runMobilityAppreciation(
     if (noEdgeTouchedStreak >= 2) break;
   }
   if (!grid) return null; // unreachable (the loop above always assigns or returns), keeps TS satisfied
-  onProgress?.(0.5);
+  onProgress(0.55);
 
   const usedExpandedSearch = attemptsUsed > 1;
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
@@ -407,7 +455,7 @@ export async function runMobilityAppreciation(
   // synchronously on the main thread (a handful of OSM ways, not a grid).
   let roadRoute: RoadRouteSearchResult | null = null;
   if (profile.speedModel === 'vehicle-gradient') {
-    roadRoute = findVehicleRoadRoute(origin, objective, grid.roadWays, profile, roadSpeedOverrides);
+    roadRoute = findVehicleRoadRoute(origin, objective, grid.roadWays, profile, roadSpeedOverrides, grid.waterFeatures);
     if (roadRoute) {
       onLog?.(
         `ROAD-NETWORK ROUTE (VEHICLE, BOX-FREE) — ${(roadRoute.totalDistanceM / 1000).toFixed(1)} KM VIA ` +
@@ -443,6 +491,41 @@ export async function runMobilityAppreciation(
     );
   }
 
+  // Surface the real reachability field and cheapest route NOW — everything
+  // below (the movement ensemble, corridors, chokepoints, min-cut barrier)
+  // can add tens of seconds more on a large or fine-fidelity grid, and until
+  // this call existed NOTHING new reached the map in that whole span (owner:
+  // "the map [should start] getting visual results being loaded as it
+  // happens... pathways snaking across the landscape from the get go rather
+  // than waiting for the end"). Every field below this point is still in its
+  // honest "nothing yet" state — not fabricated, just not computed yet.
+  onPartialResult?.({
+    results, bands, profile,
+    usedEstimatedData: grid.usedEstimatedData,
+    infrastructureAvailable: grid.infrastructureAvailable,
+    hydrologyAvailable: grid.hydrologyAvailable,
+    waterFeatures: grid.waterFeatures,
+    cellCount: grid.cells.length,
+    reachableCount, noGoCount, slowGoCount,
+    path, roadRoute, usedExpandedSearch,
+    searchAttempts: attemptsUsed,
+    fidelity: grid.fidelity,
+    targetCellCount: grid.targetCellCount,
+    dissimilarRoutes: [],
+    corridorField: null,
+    optimiserCorridorField: null,
+    ensemble: null,
+    restrictionPlan: null,
+    restrictedCorridorField: null,
+    chokepoints: [],
+    barrier: null,
+    cells: grid.cells,
+    originKeys: grid.originKeys,
+    objectiveKeys: grid.objectiveKeys,
+    hexSize: grid.hexSize,
+    proj: grid.proj,
+  });
+
   // --- Pass 2 + the simulation (docs §32): corridors, chokepoints, min-cut
   // barrier. Everything except the ensemble/restriction work runs on the main
   // thread — cheap at this grid size relative to the sampling already done.
@@ -457,8 +540,8 @@ export async function runMobilityAppreciation(
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
-    onProgress?.(0.5);
-    onStage?.({ key: 'ensemble', label: `Simulating ${moverCount} independent movers over untouched ground`, fraction: 0.5 });
+    onProgress(0.55);
+    onStage?.({ key: 'ensemble', label: `Simulating ${moverCount} independent movers over untouched ground`, fraction: 0.55 });
     onLog?.(`SIMULATING ${moverCount} MOVERS — UNRESTRICTED MOVEMENT (BEHAVIOUR MODEL: ${behaviourSpreadId.toUpperCase()})…`);
     const movement = await runMovementEnsembleInWorker(
       grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
@@ -468,9 +551,16 @@ export async function runMobilityAppreciation(
         seed: simulationSeed,
         planRestrictions,
         roadSpeedOverrides,
+        // NOTE: `planRestrictions` runs INSIDE this same worker call, after
+        // the ensemble, before the response posts back — so BOTH phases'
+        // progress (ensemble then restrictions) can already have reported up
+        // to their own ceilings by the time this `await` resolves, well
+        // before the `onStage`/`onProgress` calls that follow it below. The
+        // monotonic `onProgress` wrapper (see its own comment near the top
+        // of this function) is what keeps that from showing as a rewind.
         onProgress: (f, phase) => {
-          if (phase === 'ensemble') onProgress?.(0.5 + f * 0.18);
-          else onProgress?.(0.75 + f * 0.22);
+          if (phase === 'ensemble') onProgress(0.55 + f * 0.17);
+          else onProgress(0.72 + f * 0.23);
         },
         onLog: line => onLog?.(line),
       }
@@ -503,8 +593,13 @@ export async function runMobilityAppreciation(
       }
     }
 
-    onProgress?.(0.7);
-    onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: 0.7 });
+    // No onProgress call here: by this point the ensemble/restrictions
+    // progress reported inside the await above may already sit anywhere up
+    // to ~0.95 (or as low as ~0.72 if no restriction was worth evaluating) —
+    // there is no single honest constant for "corridors are starting" that
+    // is right in both cases, and the monotonic wrapper would just discard a
+    // wrong guess anyway. The stage label is still useful on its own.
+    onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: highWaterProgress });
 
     // Corridors from the SIMULATION where one exists, from the optimiser
     // otherwise. Both go through the identical pipeline, so the two views can
@@ -582,7 +677,7 @@ export async function runMobilityAppreciation(
       onLog?.(`TOP CHOKEPOINT CROSSED BY ${chokepoints[0].passCount}/${dissimilarRoutes.length} ROUTES`);
     }
 
-    onProgress?.(0.98);
+    onProgress(0.98);
     onStage?.({ key: 'barrier', label: 'Siting the cheapest severing cut', fraction: 0.98 });
     onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
     barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
@@ -594,7 +689,7 @@ export async function runMobilityAppreciation(
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
-  onProgress?.(1);
+  onProgress(1);
   onStage?.({ key: 'done', label: 'Appreciation complete', fraction: 1 });
 
   return {

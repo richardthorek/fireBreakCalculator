@@ -272,6 +272,22 @@ export interface AccumulatedCostSearchOptions {
    *  cheapest path, its edges are penalised and the search re-run, so the
    *  next route is genuinely different rather than a trivial variant. */
   edgePenalties?: Map<string, number>;
+  /** Called as the search settles more cells — `settledFraction` is
+   *  `best.size / cells.length`, a real, monotonically non-decreasing proxy
+   *  for how much of the grid has been reached so far (Dijkstra can't know
+   *  an exact pop-count total up front the way a bounded loop can, so this
+   *  is the honest substitute — the same "how much of the graph is settled"
+   *  measure isochrone tools commonly report progress against). Added
+   *  because this search previously reported NOTHING while it ran — a real,
+   *  reproducible dead zone in the Terrain Mobility progress bar (owner:
+   *  "the 'progress' indicator stopped well before the result loaded in
+   *  with a long 'nothing' time"). The caller is responsible for throttling
+   *  how often it forwards this on (e.g. to whole-percent steps) if it's
+   *  wired to something with per-call overhead, such as a Worker
+   *  `postMessage` — this function itself only pays a cheap `Map.size` read
+   *  per relaxed cell, so calling it unconditionally here is not the cost
+   *  problem. */
+  onProgress?: (settledFraction: number) => void;
 }
 
 export function runAccumulatedCostSearch(
@@ -281,9 +297,10 @@ export function runAccumulatedCostSearch(
   nightMode: boolean,
   options: AccumulatedCostSearchOptions = {}
 ): AccumulatedCostSearchResult {
-  const { edgePenalties } = options;
+  const { edgePenalties, onProgress } = options;
   const byKey = new Map<string, MobilityGridCell>();
   for (const c of cells) byKey.set(c.key, c);
+  const totalCells = Math.max(1, cells.length);
 
   const best = new Map<string, { timeSeconds: number; estimated: boolean }>();
   const prev = new Map<string, string>();
@@ -300,6 +317,7 @@ export function runAccumulatedCostSearch(
     if (!known || cur.priority > known.timeSeconds) continue; // stale heap entry
     const cell = byKey.get(cur.key);
     if (!cell) continue;
+    onProgress?.(Math.min(1, best.size / totalCells));
 
     for (const nHex of hexNeighbors(cell.hex)) {
       const nKey = hexKey(nHex);

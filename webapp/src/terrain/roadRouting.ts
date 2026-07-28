@@ -91,6 +91,33 @@ export function edgeTravelTime(
   profile: MoverProfile,
   overrides?: RoadSpeedOverrides
 ): EdgeTravelResult {
+  // Hard gate, checked before any speed composition — same ordering the
+  // hex-grid search uses for its own hard gates (slope, side-slope, fording)
+  // in mobilityCost.ts. `crossesStandingWater` (roadGraph.ts) is a REAL
+  // finding — this edge's own geometry runs through the interior of a mapped
+  // lake for longer than a plausible bridge span, not a heuristic guess.
+  // Blocked at the SAME assumed depth `mobilityCost.ts`'s
+  // `estimateFordingRequirement` uses for a standing water body (2.5 m,
+  // duplicated as a literal rather than imported — this module has no
+  // dependency on the hex-grid cost model, matching roadGraph.ts's own
+  // "no import dependency" design). Compares against CAPABILITY, not just
+  // "has any fording capability at all" — a profile with a shallow rated
+  // depth (e.g. 0.7 m) is still nowhere near enough for a lake (docs §35
+  // addendum, 2026-07-28 — field-tested, a vehicle road route ran straight
+  // across the real Lake George because this graph previously had NO water
+  // awareness at all).
+  const STANDING_WATER_ASSUMED_DEPTH_M = 2.5;
+  if (edge.crossesStandingWater && (profile.fordingDepthM === undefined || profile.fordingDepthM < STANDING_WATER_ASSUMED_DEPTH_M)) {
+    return {
+      seconds: Infinity,
+      blocked: true,
+      confidence: 'vehicle-capability-only',
+      source: profile.fordingDepthM === undefined
+        ? `${profile.label} has no stated fording capability and this stretch of ${edge.wayName ?? 'the mapped way'} runs through the interior of a mapped standing water body for longer than a plausible single bridge span`
+        : `${profile.label}'s ${profile.fordingDepthM.toFixed(1)} m fording capability is not enough for a standing water body (assumed ~${STANDING_WATER_ASSUMED_DEPTH_M} m) — this stretch of ${edge.wayName ?? 'the mapped way'} runs through its interior for longer than a plausible single bridge span`,
+    };
+  }
+
   const isVehicle = profile.speedModel === 'vehicle-gradient';
 
   let speedKmh = profile.roadSpeedKmh;

@@ -99,8 +99,11 @@ export interface MobilityProgressResponse {
   kind: 'progress';
   requestId: number;
   fraction: number;
-  /** Which sub-phase the fraction belongs to, so the UI can label it. */
-  phase: 'ensemble' | 'restrictions' | 'rerun';
+  /** Which sub-phase the fraction belongs to, so the UI can label it.
+   *  'search' — the multi-source Dijkstra field build (§35 addendum,
+   *  2026-07-27: this search previously reported nothing while it ran,
+   *  a real dead zone in the progress bar). */
+  phase: 'search' | 'ensemble' | 'restrictions' | 'rerun';
   /** Log lines the planner produced, forwarded so the assessment log shows
    *  real intermediate findings during a long run rather than nothing. */
   log?: string;
@@ -170,7 +173,19 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
     post({ kind: 'search', requestId: req.requestId, results: [], path: null });
     return;
   }
-  const reach = runAccumulatedCostSearch(req.cells, req.originKeys, profile, req.nightMode);
+  // Throttled to whole-percent steps, same discipline as the movement
+  // ensemble's progress below — a large fine-fidelity grid settles many
+  // thousands of cells, and an unthrottled postMessage per cell would cost
+  // more in structured-clone overhead than the search itself.
+  let lastSearchPercent = -1;
+  const reach = runAccumulatedCostSearch(req.cells, req.originKeys, profile, req.nightMode, {
+    onProgress: f => {
+      const percent = Math.floor(f * 100);
+      if (percent === lastSearchPercent) return;
+      lastSearchPercent = percent;
+      post({ kind: 'progress', requestId: req.requestId, fraction: f, phase: 'search' });
+    },
+  });
   const results = assembleMobilityResults(req.cells, req.hexSize, req.proj, reach.best, profile);
 
   const pathKeys = extractPath(reach, req.objectiveKeys);
