@@ -67,6 +67,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 29 | Corridor route rendering was analysis noise, not presentation — consolidated to 1 refined route per corridor | Owner: *"the individual white lines of the considered paths don't work as a visualisation... they end up being 'triangles' between the grid centres and they don't follow the road geometry... consolidate to show substantive differences... reduce the analysis noise and show insights rather than raw thinking."* Was drawing up to 24 raw, un-refined hex-centre route polylines regardless of corridor count. Fixed: `Corridor.representativeRoute` (new, `corridorField.ts`) — the single fastest analysed route actually using that corridor; `App.tsx` draws exactly one per corridor (2-5, matching the target), refined through the fire-break optimizer's own `pathRefinement.ts` (snap onto a nearby real road, unchanged). Owner follow-up — *"some corridors may be overland"* — meant snapping alone wasn't enough: added `smoothFreeVertices`/`cornerSmoothingIterations` (opt-in, fire-break optimizer's default behaviour unchanged) so a stretch with no nearby road is corner-smoothed instead of staying a raw zig-zag | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 30 | Smooth the corridor band's own outline | Direct roadmap follow-on to step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — genuine, not approximated — but still traced the hex tessellation's own blocky edge. `polygonSmoothing.ts` (new) applies Chaikin corner-cutting to every ring of the dissolved geometry (`Polygon` or `MultiPolygon` — union can produce either), a deliberately different algorithm from the route lines' moving-average (a closed ring has no endpoints/locked vertices to preserve; Chaikin treats every vertex cyclically). Caught a real test-methodology trap before shipping: summed turning angle is near-invariant under Chaikin for a closed ring (unlike an open path) — the maximum single-corner turn is the measure that actually captures "no more staircase corners" | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 31 | OSM water relations — picked ahead of queue order for 1.0 demo risk | Owner: "one more push then we're done for a 1.0 demo... pick the item most critical." Assessed demo risk rather than following size-first order: confirmed LIVE that Lake Tuggeranong and Gungahlin Pond — both in the same Canberra region this project's own test scenarios already live in — are OSM `relation`, not `way`, so either would have repeated the exact "water doesn't block movement" bug class just fixed twice already, live, in front of the demoed geography. Fixed in both `webapp` and `api` (kept in lock-step, matching their existing "MUST match" query-constant discipline): the water query now also requests `relation["natural"="water"]`; `out geom` inlines each member's geometry directly (confirmed live, no recursion needed); each `outer`-role member becomes its own water-body trail. Stated scope cut: multi-part outer rings aren't re-stitched and `inner`/island members aren't subtracted as holes — both safe directions to be wrong in for a hard-block gate (worst case: an island cell over-blocks, never under-blocks) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
+| 32 | Cloud-offload scoping + mobility run telemetry | Owner asked to scope cloud infrastructure for large-area Terrain Mobility runs (Static Web Apps + Functions vs. Container Apps vs. an on-demand Container Apps Job for big jobs only) and to start collecting real per-run scale/performance data now, since device variance (owner's own two machines) makes a guessed cell-count threshold unreliable. Design: a three-tier model (client Worker default → same-algorithm Function-hosted tier → on-demand Container Apps Job for genuine outliers), explicitly NOT building tiers 2–3 until telemetry shows real demand. `POST /api/mobility-telemetry` (new, rate-limited, Table Storage-backed) + `webapp/src/terrain/mobilityTelemetry.ts` now record cell counts, GO/SLOW-GO/NO-GO + vegetation-difficulty histograms, distance, per-stage elapsed time, and coarse device hints for every completed run — no location, no identity, fire-and-forget. Also confirmed the road-routing piece from the same conversation was NOT missing (Slice A's `roadRouteSearch.ts` already gives a fast, box-free vehicle route independent of the slow hex-grid search) and flagged the one real gap: it currently waits on the same grid-sampling pass instead of being surfaced first | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 
 ### Next up
 
@@ -85,6 +86,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
 | Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| Road-route decoupling — surface ahead of the hex-grid search | `findVehicleRoadRoute` (Slice A) is already fast but currently runs after `buildMobilityGrid`'s full retry loop settles, because it reads the same `highway-mobility` fetch. Fetch the road network and run the road route in parallel with elevation/vegetation sampling, surfaced via a new `onRoadRoute` callback — the genuine "instant on-road result while the area analysis runs" the original conversation asked for | S | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
 | Restriction siting at a surveyed point | Currently hex-cell resolution, not a specific point — an architecture change to the placement model | L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
@@ -109,6 +113,48 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Cloud-offload design scoping + mobility run telemetry
+  (step 32)**: continuing a conversation about why Terrain Mobility runs feel
+  slow on some devices and fast on others (owner: "my snapdragon ultra does
+  quite well on large areas, my hp elitebook grinds... hard to give a
+  definitive answer myself"). Owner asked for three things: whether the
+  offline-first premise still buys much given elevation/veg already need
+  network; what infrastructure would support cloud offload for the slow
+  cross-country search (Static Web Apps + Functions vs. Container Apps vs.
+  an on-demand container for big jobs only); and to start logging real
+  per-run metadata now rather than guess a threshold.
+
+  Scoped, not built speculatively: a three-tier model — client Worker stays
+  the default (interactive iterate loop, §14.1's latency reasoning still
+  holds), a same-algorithm Function-hosted tier is the cheap next step for
+  runs too big for a comfortable client experience but inside a Function's
+  timeout, and an on-demand Container Apps Job is reserved for genuine
+  outliers only, gated on tier-2 evidence. Explicitly did NOT build tiers
+  2–3 this pass — a fixed cell-count cutoff can't account for the device
+  variance that started this conversation, so telemetry has to exist first.
+
+  What DID ship: `POST /api/mobility-telemetry` (new, `telemetry`-tagged
+  rate limit, Azure Table Storage) and `webapp/src/terrain/mobilityTelemetry.ts`,
+  wired into every completed `runMobilityAppreciation` call in `App.tsx`.
+  Records cell counts, the GO/SLOW-GO/NO-GO split, a per-vegetation-kind
+  histogram (the actual terrain/veg difficulty breakdown), origin↔objective
+  distance, elapsed time per run stage (grid/sampling/search/ensemble/
+  corridors/chokepoints/barrier), and coarse device hints
+  (`hardwareConcurrency`/`deviceMemory`) — deliberately no location, no
+  identity, fire-and-forget so it can never affect the run it's reporting on.
+
+  Mid-scoping, owner asked directly whether the road-routing idea from
+  earlier in the conversation had been dropped. It hadn't been designed away
+  — checking the code found Slice A's `roadRouteSearch.ts` already gives a
+  fast, box-free vehicle route independent of the slow hex-grid search, so
+  it was never the bottleneck this section is about. Did find one real,
+  previously unflagged gap: that road route currently waits on the same
+  grid-sampling pass instead of being computed in parallel and surfaced
+  first, which is the genuine remainder of the original "instant road result
+  while the area analysis runs" ask — tracked as its own small Next-up item,
+  independent of the cloud-offload work. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38.
 
 - **2026-07-28 — OSM water relations, picked ahead of queue order for 1.0
   demo risk (step 31)**: owner: *"one more push then we're done for a 1.0

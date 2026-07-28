@@ -4318,5 +4318,196 @@ green); `tsc --noEmit` and build clean in both.
 
 ---
 
+## 38. Cloud offload for large-area analysis — design scoping, telemetry collection first (2026-07-28)
+
+Owner observation, continuing from the perf discussion that opened this
+thread: the hex-grid cross-country search (`mobilityWorker.ts`, §8/§35) is
+"relatively performant on small areas" but "grinds" on some devices at
+larger extents — reported as fast on a Snapdragon X Elite laptop and slow on
+an HP EliteBook, i.e. the same AOI at the same fidelity varies by device more
+than by any input the app controls. Three follow-on questions, in the order
+the owner raised them: (1) is road routing part of this consideration —
+answered above, see "Road routing stays out of scope" below; (2) what
+infrastructure would support offloading the slow part to the cloud — Static
+Web Apps + Functions, Container Apps, or an on-demand Container Apps Job;
+(3) start collecting real per-run scale/performance data now, since neither
+the owner's own two devices nor any fixed cell-count guess can answer "when"
+on their own.
+
+**Status: scoping + telemetry only.** No offload infrastructure exists yet.
+What ships with this pass is (a) this design, and (b) `POST
+/api/mobility-telemetry` + client-side capture, wired into every completed
+`runMobilityAppreciation` call, so a threshold decision has evidence behind
+it instead of two data points. See "Telemetry: what's collected and why"
+below for the shipped part.
+
+### Road routing stays out of scope — it's already fast and already separate
+
+The earlier part of this conversation proposed an off-the-shelf routing API
+(Mapbox Directions or similar) as an instant "Tier 0" road result while the
+slow cross-country analysis ran behind it. Checking the codebase: **that
+already exists**, just built as a self-hosted OSM-graph router rather than a
+third-party API call — Slice A (§35 addendum, `roadRouteSearch.ts` +
+`roadGraph.ts` + `roadRouting.ts`, "as-built" §37). For vehicle-gradient
+profiles it finds a box-free route over the actual OSM road network,
+independent of the hex-grid's padded box and independent of the hex-grid
+Dijkstra search entirely — a small-graph search, not an AOI-wide one, so it
+was never the slow part.
+
+**One real gap, not previously flagged:** `findVehicleRoadRoute` is called
+from `mobilityAppreciation.ts` *after* `buildMobilityGrid`'s retry loop
+settles (currently line ~463–476), because it currently reads `grid.roadWays`
+— the same `highway-mobility` Overpass fetch the hex-grid sampling pass
+already made, awaited together with elevation/vegetation before the grid
+returns at all. So today it's cheap once reached, but not actually surfaced
+*first* the way the original "instant road result while the area analysis
+churns" framing wanted. Fixing this doesn't need cloud offload — it needs
+decoupling: fetch `highway-mobility` ways and run `findVehicleRoadRoute`
+in parallel with (not after) `buildMobilityGrid`'s elevation/vegetation
+sampling, and surface it through a new `onRoadRoute` callback the moment it
+resolves, likely before `onPreviewCells` even fires. Small, self-contained,
+no new data source, no new infra — flagged here as a concrete near-term
+follow-up so it doesn't get lost in the cloud-offload discussion, but it is
+NOT the same problem as this section and shouldn't block on it.
+
+### Infrastructure options for the actual slow part (hex-grid search + ensemble)
+
+The candidates, evaluated against what this app already is (Static Web Apps
++ Azure Functions consumption, per CLAUDE.md's stack line) and what it needs
+(occasional large/complex jobs, mostly small/fast ones, a field tool that
+must degrade gracefully offline):
+
+| Option | Fit | Cost/ops profile | Why / why not |
+|---|---|---|---|
+| **Stay on SWA + Functions Consumption** (status quo, extended) | Small-to-medium runs, which is most of them | Free/near-free at this traffic; scales to zero | Consumption plan has a hard execution timeout (5 min default, extendable to 10 on the plan this app is likely on) and bursty cold-start latency — fine for the search/ensemble compute itself (seconds, not minutes, even at the ~10k-cell ceiling §8 describes) but wrong for anything that could legitimately run long, and it's the SAME serverless model already ruled out for the *interactive iterate loop* in §14.1 Finding 4 for latency reasons, not throughput reasons — that reasoning doesn't disappear just because this is a different call site |
+| **Always-on Azure Container App** | Poor fit | Pay for idle capacity 24/7 for a workload that's bursty and mostly small | No scale-to-zero benefit is being used; this is the wrong shape for "only certain cell counts trigger cloud offload" — most runs would never touch it, so most of the spend would be idle |
+| **On-demand Container Apps Job (scale-to-zero, triggered per request)** | **Best fit for the offload case specifically** | Pay only for the seconds a large job actually runs; can be given real CPU/memory instead of a Function's ceiling; no hard 5–10 min wall | Matches the owner's own framing exactly — "a standalone container app able to start on demand for bigger jobs only." Cold-start (several seconds to provision a job execution) is the real cost, which is why this should be the *exception* path, not the default one |
+
+**Recommendation: keep Functions as the default path for everything under
+the threshold, add an on-demand Container Apps Job as the *exception* path
+for jobs large/complex enough that the client Worker (or a Function's
+timeout) genuinely can't do them well.** This is a three-tier model, not a
+two-tier "local vs cloud" switch:
+
+1. **Client Worker (today's default, unchanged).** Stays the path for the
+   large majority of runs — small-to-medium AOIs, which is most real corridor
+   analyses. This is also what keeps the iterate loop (§14.1 Finding 4)
+   interactive and what keeps the tool usable with zero network once the
+   initial sampling has landed, matching the reframed "offline" property from
+   earlier in this conversation: not zero-network overall, but no *further*
+   round trips once data is cached.
+2. **Azure Function, same algorithm, server CPU.** A run too big for a
+   comfortable client Worker experience but well inside a Function's
+   timeout — same `accumulatedCost.ts`/`corridorAnalysis.ts`/etc. modules,
+   since the API is already Node/TypeScript, run server-side instead of in
+   the browser. Removes the device-performance variance entirely for this
+   tier: a Function's CPU doesn't care whether the caller has a Snapdragon or
+   an ageing EliteBook.
+3. **Container Apps Job, on demand, scale-to-zero.** Only for the genuine
+   outliers — AOI-wide exhaustive search at the top of §8's 10k–100k cell
+   range, or a fine-fidelity ensemble over a large corridor. Started per
+   request, torn down after; the cost only exists when this tier is actually
+   used.
+
+**Do not build tier 3 speculatively.** Tier 2 (same code, Function-hosted)
+is the cheap, mechanical step — no new infrastructure, no new deploy
+pipeline, just a new route calling the existing `webapp/src/terrain/*`
+modules from `api/src/functions/`. It alone would already remove the
+device-variance complaint for anything that fits a Function's timeout, which
+based on §8's own numbers (a few seconds of CPU even near the cell ceiling)
+is probably most of what currently "grinds" on a slower device. Tier 3 is
+real, scoped, and should be built — but only once telemetry shows genuine
+demand for it above what tier 2 already covers.
+
+### The trigger can't be a bare cell-count cutoff
+
+The owner's own two devices already disprove a single static threshold: the
+Snapdragon laptop handles large areas well, the EliteBook doesn't, at
+presumably similar cell counts. Cell count alone is a weak proxy for two
+independent reasons already documented elsewhere in this file: (a) §10's
+whole premise is that complex vegetation (dense stem spacing, more
+GO/SLOW-GO/NO-GO transitions to evaluate per edge) costs more per cell than
+open ground — "more complex environments are slower than big open spaces for
+path finding" is exactly right and is why §8 calls out CPU, not cell count
+alone, as the bottleneck; (b) device CPU varies by more than any workload
+does. **The right trigger is a function of (cell count × terrain/veg
+difficulty mix) calibrated against what THIS device has actually measured
+doing THIS kind of work — not a constant baked into the client.** That
+calibration is exactly what the telemetry below exists to build. Until
+there's enough of it, no automatic tier-2/tier-3 routing should ship;
+tier 1 stays the only path, same as today.
+
+### Result delivery for low/interrupted connectivity (tiers 2–3)
+
+Once a Function/Job tier exists, results need to reach a client whose
+connection may drop mid-run — genuine rural/remote conditions, not just
+latency. Recommendation: **not** a WebSocket (doesn't degrade through a real
+drop) and **not** unbuffered SSE (same problem, plus no native resume).
+Instead, a resumable job pattern: the client submits the AOI + profile,
+receives a job id, and the server writes results as they complete — chunked
+by corridor band or hex-block, not one giant payload — to blob storage. The
+client polls job status and pulls whatever chunks are ready, caching each
+one locally as it lands (mirrors the existing session retention cache
+pattern already used for the client Worker's own progressive results, §35).
+A dropped connection resumes from the last chunk received instead of
+restarting the job or losing progress. This is a tier-2/3 concern only —
+tier 1 (the client Worker) already has this property for free, since nothing
+ever leaves the browser.
+
+### Telemetry: what's collected and why (shipped this pass)
+
+`POST /api/mobility-telemetry` (anonymous, rate-limited under a `telemetry`
+tag, same `enforceRateLimit` pattern as every other public endpoint) writes
+one row to Azure Table Storage per completed `runMobilityAppreciation` call.
+Fire-and-forget from the client (`webapp/src/terrain/mobilityTelemetry.ts`) —
+every failure mode is swallowed there; this must never affect the analysis
+run it's reporting on, and never blocks or delays it (the `fetch` call fires
+after the result is already in hand).
+
+**Deliberately excluded: location and identity.** The question this exists
+to answer — "how big/hard was this run and how long did it take on this
+device" — has nothing to do with where on Earth it ran, so no lat/lng is
+sent, only a random per-session id (for grouping a device's own runs
+together, discarded on browser close, not tied to any account).
+
+**Captured per run:**
+- `cellCount`, `targetCellCount`, `reachableCount`, `noGoCount`,
+  `slowGoCount`, `goCount` — size and the GO/SLOW-GO/NO-GO split §8/§10 flags
+  as the real cost driver, not just raw cell count.
+- `vegetationHistogram` — cell count per vegetation kind (`cell.vegetation`
+  off the sampled grid), the direct terrain/veg-difficulty breakdown the
+  owner asked for.
+- `distanceM` — straight-line origin↔objective, from the same
+  `originObjectiveDistanceM` the run itself uses.
+- `elapsedMs` (total) and `stageDurationsMs` (per `MobilityStage` key: grid,
+  sampling, search, ensemble, corridors, chokepoints, barrier, restrictions,
+  done) — enough to see which PHASE dominates on a slow device, not just that
+  the run overall was slow. This is what will eventually distinguish "this
+  device is slow at network I/O" from "this device is slow at CPU search",
+  which matters because only the second one is helped by any of tiers 2–3.
+- `fidelity`, `profileId`, `searchAttempts`, `usedExpandedSearch`,
+  `routeFound` — run configuration and outcome context.
+- `hardwareConcurrency` (`navigator.hardwareConcurrency`) and
+  `deviceMemoryGb` (`navigator.deviceMemory`, Chromium-only, silently absent
+  elsewhere) — the closest thing to a device-capability signal available
+  without fingerprinting; both are coarse and neither is required for the
+  payload to be accepted.
+
+**Deliberately NOT built this pass:** any dashboard/query surface over the
+collected rows, and any automatic tier-2/3 routing logic. Both are the
+natural next step once there's a real sample of demo/testing runs to look
+at — premature before that data exists.
+
+### Staging
+
+| Stage | Scope | Gate |
+|---|---|---|
+| T0 (this pass) | Telemetry capture, this design | None — ships now |
+| T1 | Road-route decoupling (surfaced ahead of the hex-grid search) | Independent of the rest of this section; can ship any time |
+| T2 | Same-algorithm Function-hosted tier for oversized-for-client, under-Function-timeout runs | Enough telemetry rows to confirm which phase actually dominates on slow devices, so T2 targets the right phase rather than moving the whole pipeline speculatively |
+| T3 | On-demand Container Apps Job tier + resumable chunked delivery | Evidence from T2 that a real (not hypothetical) tail of runs exceeds a Function's timeout/memory ceiling |
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
