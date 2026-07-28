@@ -32,7 +32,7 @@
 
 import {
   buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
-  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY,
+  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM,
 } from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
@@ -326,6 +326,12 @@ export async function runMobilityAppreciation(
       );
     } else {
       buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
+      // Profile-scaled detour floor (docs §35 addendum, 2026-07-28 — owner:
+      // a 1-2 km hill crossing never considered an equally short detour 1-2
+      // km north/south, because the proportional pad above is a fraction of
+      // a SHORT direct span and so stays short itself). Only binds on the
+      // first attempt — retries already grow from the real search frontier.
+      buildOptions.minDetourPadM = minDetourPadM(profile);
     }
     // Sampling owns the first 40% of the run's progress bar; the search
     // that follows now reports its OWN real progress (§35 addendum,
