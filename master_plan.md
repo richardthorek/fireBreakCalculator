@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — the "fuse road-graph routes" roadmap item is now fully closed: the movement ensemble walks the road graph's own exact edges via a bounded mixed-mode candidate walk, and a road-network-exact min-cut targets real road segments narrower than a hex; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — the box-free vehicle road route now surfaces on the map seconds into a run instead of tens of seconds, independent of the hex-grid pipeline; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -75,6 +75,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 37 | Corridor legibility pass — route line becomes the star, real label/shape colour bug fixed | Owner challenged Claude to identify corridors from a live screenshot with no prior context; only one hazy shape was findable for two labelled corridors. Root causes in the actual paint properties: the representative route line rendered at 0.8px/near-white/40% opacity (effectively invisible); the corridor outline was blurred; a REAL bug — the map label text colour (`styles-tactical.css`) was still on the pre-fix red/amber rank palette, identical to the trafficability heatmap's own NO-GO/SLOW-GO colours, never updated when the corridor SHAPE colours moved to blue/violet/cyan for exactly that collision. Fixed (3 of 4 offered options, owner declined the 4th as more structural than needed): route line now casing+core (dark 6px under rank-coloured 3px, full opacity, same pattern as restriction lines); outline de-blurred and widened; map label gained a numbered rank-coloured badge and its text colour now matches the shape palette exactly. `corridorRoutesForMap` (App.tsx) had to start carrying each route's rank/id so the map could colour-match it to its owning corridor. Not done: splitting corridors and trafficability onto independent opacity sliders | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
 | 38 | Road-graph fusion extended: ensemble tie-break + min-cut class-tiered capacity (still not full mixed adjacency) | Direct continuation of step 36's stated remainder. Ensemble: new `preferredRouteKeys` option gives movers a small, fixed pull toward the resolved road-graph route's own hex cells — sharpens which fork a mover picks at a genuine junction (where the old generic road-affinity term can't tell two onTrail forks apart) without overriding the ensemble's own stochastic spread. Min-cut: flat 3× trail capacity replaced with `HIGHWAY_CAPACITY_TIER`, keyed off the same real OSM highway classification the road-class speed model already uses, so a highway chokepoint no longer ties with a farm-track chokepoint on cut value. Neither change makes the ensemble walk the road graph's exact edges or makes min-cut road-graph-aware — both real, larger follow-up work, stated not attempted | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a |
 | 39 | Fuse road-graph routes into movement simulation / min-cut — genuinely mixed hex+road-graph adjacency, CLOSED | Owner: "finish the bigger slice of work so the road usage is fully complete." Ensemble: a mover's recorded position stays a hex cell (no downstream rendering/clustering code needed to change), but its CANDIDATE SET now includes real road-graph "next landing" options — a bounded walk of the road graph's own exact edges (real distance, real class speed) until it reaches a road node whose nearest onTrail hex genuinely differs from the mover's own, so a long straight road is no longer hex-quantized and a real junction offers its actual branches. Safety-motivated scope cut, structural not a flag: mixed-mode is wired ONLY into the unrestricted baseline (`restrictionPlanner.ts` never receives a road graph), so a recommended block can never be silently bypassed by the shortcut. Min-cut: a SEPARATE `computeRoadNetworkMinCut`, reusing the identical max-flow machinery over the road graph's own nodes/edges directly — targets a real road segment, often narrower than a hex, alongside (not replacing) the existing hex-based cut. Not done this pass: new map layers/GIS export/briefing text for the road-network-exact cut — computed, logged, and carried on the result type, not yet visualised | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
+| 40 | Road-route decoupling — the instant road-network preview | Owner, picking the next priority explicitly for confidence/accuracy AND visual impact over "nice to have" controls. The box-free vehicle road route never actually depended on the hex-grid retry loop, only on the road-network fetch — but ran after the whole grid/search pipeline settled purely because of where the code sat, so a real result that could appear in seconds instead waited tens of seconds. `findEarlyVehicleRoadRoutePreview` (new) fetches independently, using the EXACT same first-attempt bounds the grid pipeline's own attempt 0 computes, so the existing bbox cache collapses the two into one real network round trip, not a duplicate. New `onRoadRoute` callback wired into `App.tsx` — the map shows the real road route seconds in, always superseded outright by the authoritative result the instant it lands (never a stale preview surviving the real answer) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
 
 ### Next up
 
@@ -92,7 +93,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
 | Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
-| Road-route decoupling — surface ahead of the hex-grid search | `findVehicleRoadRoute` (Slice A) is already fast but currently runs after `buildMobilityGrid`'s full retry loop settles, because it reads the same `highway-mobility` fetch. Fetch the road network and run the road route in parallel with elevation/vegetation sampling, surfaced via a new `onRoadRoute` callback — the genuine "instant on-road result while the area analysis runs" the original conversation asked for | S | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
@@ -119,6 +119,47 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Road-route decoupling: the instant road-network preview
+  (step 40)**: owner, picking the next priority after step 39 shipped:
+  "improves the confidence or accuracy of the system and... visually
+  'sell[s]' it... make sure the core is rock solid and reliable before we
+  start adding controls and adjustments" — explicitly deprioritising a
+  road-speed-override-confidence export item in favour of this and the
+  water-relation topology fix below.
+
+  The box-free vehicle road route (`findVehicleRoadRoute`, Slice A) never
+  actually depended on the hex-grid retry loop below it in
+  `mobilityAppreciation.ts` — it only ever needed the road-network fetch, one
+  of several fetches already running in parallel inside `buildMobilityGrid`
+  — but sat, uncalled, until the ENTIRE grid/search pipeline finished, purely
+  because of where the code happened to live. On a large or fine-fidelity
+  AOI that's tens of seconds; the road route itself resolves in a couple.
+
+  Fixed: `findEarlyVehicleRoadRoutePreview` (new, `roadRouteSearch.ts`)
+  fetches road/water data INDEPENDENTLY of the retry loop, using the exact
+  same `computePaddedBounds` inputs (`INITIAL_PAD_FACTOR`,
+  `minDetourPadM(profile)`) the grid pipeline's own first attempt uses — not
+  a coincidence, a hard requirement: the existing bbox result/in-flight
+  cache (`infrastructureService.ts`) only collapses two requests into ONE
+  real network round trip when they land on the identical rounded bbox key.
+  A new `onRoadRoute` callback fires the moment this resolves; `App.tsx`
+  wires it into a fresh `mobilityEarlyRoadRoute` state feeding the map's
+  existing `roadRoute` prop ahead of the authoritative
+  `mobilityResult.roadRoute` — which always supersedes it outright the
+  instant it lands, including correctly clearing to null if a retry-widened
+  box moved the route out of range. Best-effort only: any failure resolves
+  to nothing shown, never throws, never blocks the real pipeline.
+
+  6 new tests (`roadRouteDecoupling.test.ts`, global `fetch` stubbed): a foot
+  profile triggers zero fetches; a vehicle profile finds the same route the
+  live pipeline finds; the bbox actually sent is parsed back out of the
+  stubbed request and checked against an independently-computed
+  `computePaddedBounds` call — proving the cache-collapse claim by
+  construction; a without-the-connector control still correctly finds
+  nothing; no road data and a simulated network failure both resolve
+  cleanly to null. Full existing suite still green; `tsc`/build clean. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44.
 
 - **2026-07-28 — The genuinely mixed hex+road-graph adjacency, road usage now
   fully complete (step 39)**: owner, after step 38 shipped: "finish the

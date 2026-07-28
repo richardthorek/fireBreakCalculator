@@ -4971,5 +4971,60 @@ every other visual-only change in this doc's history has carried.
 
 ---
 
+## 44. Road-route decoupling — the instant road-network preview (2026-07-28)
+
+Owner, choosing the next priority: "pick an item that improves the
+confidence or accuracy of the system and that will visually 'sell' it...
+make sure the core is rock solid and reliable before we start adding
+controls and adjustments." This closes the stated remainder flagged back in
+§38's cloud-offload scoping: the box-free vehicle road route
+(`findVehicleRoadRoute`, Slice A) never actually depended on the hex-grid
+retry loop — it only needs the road-network fetch, one of several already-
+parallel fetches inside `buildMobilityGrid` — but was computed AFTER the
+whole grid/search pipeline settled purely because of where the code
+happened to sit. On a large or fine-fidelity AOI that pipeline can take
+tens of seconds; the road route itself resolves in a couple.
+
+**Fixed**: `findEarlyVehicleRoadRoutePreview` (new, `roadRouteSearch.ts`)
+fetches road/water data for the road route INDEPENDENTLY of
+`mobilityAppreciation.ts`'s retry loop, using the exact same
+`computePaddedBounds` call with the exact same first-attempt inputs
+(`INITIAL_PAD_FACTOR`, `minDetourPadM(profile)`) the grid pipeline's own
+attempt 0 uses — not a coincidence, a hard requirement: `infrastructureService.ts`'s
+existing bbox result/in-flight cache only collapses two requests into one
+real network round trip when they round to the IDENTICAL bbox key. Get the
+inputs even slightly out of sync and this becomes a genuine duplicate
+fetch instead of a free one — the two call sites are commented accordingly,
+pointing at each other. A new `onRoadRoute` callback
+(`MobilityAppreciationOptions`) fires the moment this resolves, wired into
+`App.tsx` as `mobilityEarlyRoadRoute` — a fresh piece of state feeding the
+map's existing `roadRoute` prop ahead of the authoritative
+`mobilityResult.roadRoute`, which always supersedes it outright the instant
+it lands (including correctly clearing to null if a retry-widened box moved
+the route out of range — no stale preview can survive the real answer
+arriving).
+
+**Deliberately a preview, not a second source of truth**: this is
+best-effort only — any fetch/compute failure resolves to nothing shown, and
+`onRoadRoute` never fires; the authoritative pipeline never depends on it
+succeeding, and its own log line is clearly labelled "EARLY... PREVIEW...
+WHILE THE FULL AREA ANALYSIS IS STILL RUNNING" so a user watching the
+assessment log never mistakes it for the final figure.
+
+**Tests** (`roadRouteDecoupling.test.ts`, 6 checks, global `fetch` stubbed —
+no real network): a foot profile triggers zero fetches (road class never
+modulates foot movement, so there's nothing to preview); a vehicle profile
+finds the same real route the live pipeline finds via a synthetic network
+matching `roadRouteSearch.test.ts`'s own fixture; the bbox actually SENT in
+the query is parsed back out of the stubbed request and checked against an
+INDEPENDENTLY-computed `computePaddedBounds` call for the same inputs —
+proving the cache-collapse claim by construction, not just asserting it;
+a without-the-connector control still correctly finds no route; no road
+data and a simulated network failure both resolve to `null` cleanly, never
+a throw. Full existing suite still green (only the pre-existing, unrelated
+live-data `nvis-fidelity.test.ts` fails); `tsc`/build clean.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

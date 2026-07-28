@@ -25,16 +25,25 @@
  * classification, rather than one flat multiplier for every trail regardless
  * of class.
  *
- * STATED SCOPE, still NOT done, and not attempted this pass: the movement
- * ensemble's own per-step decision logic still walks hex-to-hex — the bias
- * above sharpens WHICH hex a mover picks at a fork, it does not make the
- * mover walk the road graph's own edges/exact geometry. Min-cut's max-flow
- * graph is still the hex adjacency graph only — a road-class-aware capacity
- * is a real improvement to that graph's REALISM, not a road-graph-aware cut
- * that can target an exact choke point narrower than a hex. Both would need a
- * genuinely mixed hex+road-graph adjacency across these core search
- * primitives to close completely — real, larger follow-up work, not silently
- * claimed as done here.
+ * FULLY FUSED (docs §42b, 2026-07-28): the movement ensemble now genuinely
+ * walks the road graph's own edges (a bounded candidate-set extension,
+ * `movementSimulation.ts`'s `roadMix` machinery — unrestricted baseline only,
+ * see that module's own doc comment for the safety reasoning), and a
+ * SEPARATE `computeRoadNetworkMinCut` (`minCutBarrier.ts`) can target an
+ * exact road choke point narrower than a hex. Neither rewrote the hex
+ * adjacency graph itself — both are additive, bounded extensions — closing
+ * the "fuse road-graph routes into movement simulation / min-cut" roadmap
+ * item without the full mixed-adjacency rewrite once assessed as too risky
+ * for one pass.
+ *
+ * ROAD-ROUTE DECOUPLING (docs §38's stated remainder, closed 2026-07-28):
+ * `findEarlyVehicleRoadRoutePreview` below computes this SAME route
+ * independently of `mobilityAppreciation.ts`'s hex-grid retry loop, using the
+ * identical first-attempt bounding box — surfaced via a new `onRoadRoute`
+ * callback typically seconds in, rather than waiting on the entire grid/
+ * search pipeline (tens of seconds on a large or fine-fidelity AOI). A
+ * PREVIEW only; the authoritative `roadRoute` on the final result is still
+ * computed from the grid's actual final bounds, unchanged.
  *
  * HONESTY ON SCOPE: the returned route runs between the nearest road ACCESS
  * POINT to the origin area and the nearest to the objective area — it does
@@ -44,13 +53,13 @@
  */
 
 import { PaintedArea, paintedAreaBounds } from './paintedArea';
-import { InfrastructureTrail } from '../utils/infrastructureService';
+import { InfrastructureTrail, fetchCorridorMobilityRoads, fetchCorridorWaterways } from '../utils/infrastructureService';
 import { buildRoadGraph, nodesWithin, RoadWay, RoadGraph, WaterBodyPolygon } from './roadGraph';
 import { findRoadRoute } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';
 import { MoverProfile } from './moverProfiles';
 import { calculateDistance } from '../utils/slopeCalculation';
-import { nearestCellKey } from './mobilityGrid';
+import { nearestCellKey, computePaddedBounds } from './mobilityGrid';
 import { MobilityGridCell } from './accumulatedCost';
 import { DissimilarRoute } from './corridorAnalysis';
 
@@ -152,6 +161,45 @@ export function findVehicleRoadRoute(
   }
 
   return { waypoints, totalSeconds: route.totalSeconds, totalDistanceM, wayNames };
+}
+
+/**
+ * The EARLY, box-free vehicle road route — road-route decoupling (docs §38's
+ * stated remainder, closed 2026-07-28). Fetches road/water data for the SAME
+ * bounding box `mobilityAppreciation.ts`'s hex-grid retry loop will ALSO
+ * request for its own first attempt (identical `computePaddedBounds` inputs
+ * — `boundsPadFactor`/`detourPadM` must be the caller's actual attempt-0
+ * values, or the two requests land on different rounded bbox keys and the
+ * result/in-flight cache in `infrastructureService.ts` can't collapse them
+ * into one real network round trip), then runs `findVehicleRoadRoute`
+ * exactly as the authoritative pipeline does. Returns null cleanly for a
+ * non-vehicle profile, a degenerate span, or when nothing connects — never a
+ * throw, since this is a best-effort preview and must never be allowed to
+ * fail the run it's racing alongside.
+ */
+export async function findEarlyVehicleRoadRoutePreview(
+  origin: PaintedArea,
+  objective: PaintedArea,
+  profile: MoverProfile,
+  boundsPadFactor: number,
+  detourPadM: number,
+  overrides?: RoadSpeedOverrides,
+  signal?: AbortSignal
+): Promise<RoadRouteSearchResult | null> {
+  if (profile.speedModel !== 'vehicle-gradient') return null;
+  const originBounds = paintedAreaBounds(origin);
+  const objectiveBounds = paintedAreaBounds(objective);
+  if (!originBounds || !objectiveBounds) return null;
+  const padded = computePaddedBounds(originBounds, objectiveBounds, boundsPadFactor, detourPadM);
+  if (!padded) return null;
+  const { boundsSw, boundsNe } = padded;
+
+  const [roads, waterways] = await Promise.all([
+    fetchCorridorMobilityRoads(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
+    fetchCorridorWaterways(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
+  ]);
+  if (signal?.aborted || roads.trails.length === 0) return null;
+  return findVehicleRoadRoute(origin, objective, roads.trails, profile, overrides, waterways.trails);
 }
 
 /** How many points to resample the road route into before snapping onto the

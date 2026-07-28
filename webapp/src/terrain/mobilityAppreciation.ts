@@ -48,6 +48,7 @@ import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
+  findEarlyVehicleRoadRoutePreview,
 } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
@@ -220,6 +221,28 @@ export interface MobilityAppreciationOptions {
    * corridors, just real data surfaced as soon as it exists.
    */
   onPartialResult?: (partial: MobilityAppreciationResult) => void;
+  /**
+   * Fires ONCE, as soon as the box-free vehicle road route (docs §35 Slice A)
+   * resolves — typically a couple of seconds in, well before `onPartialResult`
+   * (which waits on the ENTIRE hex-grid sampling + multi-source search
+   * pipeline, tens of seconds on a large or fine-fidelity AOI). The road route
+   * has never actually depended on that pipeline — it only ever needed the
+   * road network fetch, one of several already-parallel fetches inside
+   * `buildMobilityGrid` — but was previously computed AFTER the whole grid
+   * settled purely because of where the code happened to sit (docs §38: "the
+   * genuine remainder of the original 'instant road result while the area
+   * analysis runs' ask"). This fires an INDEPENDENT, early fetch for the same
+   * first-attempt bounding box `buildMobilityGrid` will also request — the
+   * existing bbox result/in-flight cache (`infrastructureService.ts`)
+   * collapses the two into one real network round trip, not a duplicate.
+   * A PREVIEW, not a replacement: `MobilityAppreciationResult.roadRoute` (via
+   * `onPartialResult`/the final return) remains the authoritative figure,
+   * computed from the grid's ACTUAL final bounds — on the rare attempt that
+   * needed a targeted-retry widened box, this preview and the authoritative
+   * route can differ; the authoritative one always supersedes it. Vehicle
+   * profiles only, and only when a road route was actually found.
+   */
+  onRoadRoute?: (route: RoadRouteSearchResult) => void;
   /** User-edited road-class speeds (docs §35 config UI). Set into this
    *  thread's own roadSpeedModel.ts module instance at the top of this run,
    *  and forwarded into the worker (a separate module instance — see
@@ -244,6 +267,7 @@ export async function runMobilityAppreciation(
 ): Promise<MobilityAppreciationResult | null> {
   const {
     profileId, nightMode = false, signal, onProgress: onProgressRaw, onLog, onStage, onPreviewCells, onPartialResult,
+    onRoadRoute,
     moverCount = 240,
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
@@ -316,6 +340,27 @@ export async function runMobilityAppreciation(
   const INITIAL_PAD_FACTOR = 0.3;
   const MAX_ATTEMPTS = 6;
   const spanM = originObjectiveDistanceM(origin, objective) ?? 1000;
+
+  // Road-route decoupling (docs §38's stated remainder, closed 2026-07-28):
+  // fire the box-free vehicle road route EARLY, independent of the hex-grid
+  // pipeline below — see `findEarlyVehicleRoadRoutePreview`'s own doc comment.
+  // Deliberately NOT awaited: it races the retry loop and calls `onRoadRoute`
+  // the moment it resolves, typically seconds in rather than tens of seconds.
+  // `INITIAL_PAD_FACTOR`/`minDetourPadM(profile)` here MUST match attempt 0's
+  // own values below exactly, or the bbox cache in `infrastructureService.ts`
+  // can't collapse this into the same network request the grid pipeline makes.
+  if (onRoadRoute) {
+    findEarlyVehicleRoadRoutePreview(origin, objective, profile, INITIAL_PAD_FACTOR, minDetourPadM(profile), roadSpeedOverrides, signal)
+      .then(early => {
+        if (signal?.aborted || !early) return;
+        onLog?.(
+          `EARLY ROAD-NETWORK ROUTE PREVIEW — ${(early.totalDistanceM / 1000).toFixed(1)} KM, ` +
+          `${(early.totalSeconds / 60).toFixed(0)} MIN (WHILE THE FULL AREA ANALYSIS IS STILL RUNNING)`
+        );
+        onRoadRoute(early);
+      })
+      .catch(() => { /* best-effort preview only — the authoritative roadRoute below never depends on this */ });
+  }
 
   let grid: MobilityGridResult | null = null;
   let results: MobilityCellResult[] = [];
