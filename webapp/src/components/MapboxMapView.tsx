@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 // Lazy-load heavy map libraries to keep initial bundle small. The actual
 // imports (mapbox-gl and mapbox-gl-draw) are performed inside the effect.
 import type { LngLat } from 'mapbox-gl';
@@ -15,7 +15,39 @@ import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
-import { brushRadiusMeters, resolvePaintedAreaGeometry, BrushSize, PaintStrokeMode, PaintedArea } from '../terrain/paintedArea';
+import { smoothPolygonGeometry } from '../utils/polygonSmoothing';
+import {
+  metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
+  BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
+} from '../terrain/paintedArea';
+import { union } from '@turf/union';
+import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
+import type { Feature, Polygon, MultiPolygon } from 'geojson';
+
+/** The cached, already-resolved painted shape (see the incremental note by
+ *  `originPaintGeomRef`). */
+type PaintedFeature = Feature<Polygon | MultiPolygon> | null;
+
+const BRUSH_LABEL: Record<BrushSize, string> = { small: 'S', medium: 'M', large: 'L', xl: 'XL' };
+
+/**
+ * Resolve a painted area against a cached accumulator: extend it when strokes
+ * were only appended (the live-drag case), replay from scratch otherwise.
+ * Mutates the ref, and returns the geometry to render (or null if everything
+ * has been erased away).
+ */
+function resolvePaintedAreaIncrementally(
+  ref: React.MutableRefObject<{ count: number; feature: PaintedFeature }>,
+  area: PaintedArea
+): Polygon | MultiPolygon | null {
+  const cached = ref.current;
+  const appendedOnly = area.length > cached.count && cached.feature !== null;
+  const feature = appendedOnly
+    ? applyStrokes(cached.feature, area.slice(cached.count))
+    : applyStrokes(null, area);
+  ref.current = { count: area.length, feature };
+  return feature ? feature.geometry : null;
+}
 
 // Utility
 const toLatLng = (lngLat: LngLat) => ({ lat: lngLat.lat, lng: lngLat.lng });
@@ -137,14 +169,18 @@ interface MapboxMapViewProps {
   mobilityBoxRole?: 'origin' | 'objective' | null;
   onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
   /** Fired for every dab painted (or erased — see mobilityPaintMode) while a
-   *  role is armed. The caller tags the stroke's mode itself. */
-  onMobilityPaintDab?: (role: 'origin' | 'objective', dab: { lat: number; lng: number; radiusM: number }) => void;
+   *  role is armed. This component reports only the raw click/drag POINT —
+   *  the caller (App.tsx) builds the actual hex dab via `createHexDab`,
+   *  since it holds the painted area's existing strokes (needed for the
+   *  area's anchor — see paintedArea.ts's module header) and the current
+   *  brush size. */
+  onMobilityPaintDab?: (role: 'origin' | 'objective', point: { lat: number; lng: number }) => void;
   /** Persistent painted areas — ordered paint/erase stroke sequences,
    *  resolved to one shape and rendered until cleared. */
   mobilityOriginPaint?: PaintedArea;
   mobilityObjectivePaint?: PaintedArea;
-  /** On-screen brush radius class — ground radius is derived from this and
-   *  the map's zoom/latitude at the moment each dab is painted. */
+  /** Brush size — a FIXED ground hex count (`BRUSH_HEX_COUNT`), not a
+   *  screen-relative pixel radius (docs §35). */
   mobilityBrushSize?: BrushSize;
   onMobilityBrushSizeChange?: (size: BrushSize) => void;
   /** Paint vs erase — which kind of stroke the brush lays down next. */
@@ -156,11 +192,19 @@ interface MapboxMapViewProps {
    *  underneath stays visible rather than being hidden by the abstraction
    *  (docs §28). */
   corridors?: {
+    id: string;
     rank: number;
     easeClass: string;
+    bottleneckWidthM: number;
     cells: { polygon: { lat: number; lng: number }[]; density: number }[];
   }[] | null;
-  corridorRoutes?: { path: { lat: number; lng: number }[] }[] | null;
+  corridorRoutes?: { id: string; rank: number; path: { lat: number; lng: number }[] }[] | null;
+  /** Corridor the user has picked out in the panel. That band keeps full
+   *  strength and every other one drops back, which is the only reliable way
+   *  to answer "which of these overlapping bands is the one I'm reading
+   *  about" (owner, 2026-07-27: "the corridors are visually unclear"). */
+  highlightedCorridorId?: string | null;
+  onCorridorHighlight?: (id: string | null) => void;
   /** Result cells from the last terrain appreciation run. */
   mobilityHeatmap?: {
     polygon: { lat: number; lng: number }[];
@@ -180,6 +224,11 @@ interface MapboxMapViewProps {
   /** Unit simulation — the intended path currently being followed (redrawn
    *  whenever a mid-course replan splices a new remainder onto it). */
   unitSimPath?: { lat: number; lng: number }[] | null;
+  /** Docs §35 Slice A — the box-free ROAD-NETWORK route between the painted
+   *  areas (vehicle profiles only, `roadRouteSearch.ts`). Drawn as its own
+   *  distinct line since it is independent of, and can exist even when,
+   *  the hex-grid search's own path/corridors above found nothing. */
+  roadRoute?: { lat: number; lng: number }[] | null;
   /** Pass 2 — top chokepoint cells (highest route-crossing count first). */
   chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
   /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
@@ -190,6 +239,41 @@ interface MapboxMapViewProps {
   onRunAppreciation?: () => void;
   onCancelAppreciation?: () => void;
   mobilityRunning?: boolean;
+  /** Overall run progress 0..1 and the current phase's plain-English label —
+   *  the analysis takes tens of seconds and previously showed nothing at all
+   *  while it worked (owner, 2026-07-27). */
+  mobilityProgress?: number;
+  mobilityStageLabel?: string | null;
+  /** The most recent assessment-log line, echoed onto the map so the run's
+   *  real output is visible with the side panel collapsed. */
+  mobilityLatestLog?: string | null;
+  /** One master opacity for every analysis overlay (cells, bands, routes,
+   *  dots, lines), so the ground underneath can be read (owner, 2026-07-27).
+   *  1 = as designed; lower multiplies every layer's own opacity down. */
+  mobilityOverlayOpacity?: number;
+  /** Probabilistic movement ensemble — per-cell transit frequency over many
+   *  simulated movers (terrain/movementSimulation.ts). MODELLED behaviour, not
+   *  measured: the legend and panel say so, and this layer is styled as a
+   *  diffuse field rather than a crisp route for the same reason. */
+  mobilityTransitCells?: { polygon: { lat: number; lng: number }[]; transitFraction: number }[] | null;
+  /** Live positions/trails of the animated ensemble, updated per frame. */
+  ensembleMovers?: { index: number; lat: number; lng: number; trail: { lat: number; lng: number }[]; arrived: boolean }[] | null;
+  /** Recommended restrictions (restrictionPlanner.ts) — where to deny
+   *  movement, ranked. Drawn heavy and numbered because these are the
+   *  actionable output, not another analysis layer. */
+  restrictions?: {
+    id: string;
+    rank: number;
+    kind: 'road-block' | 'ground-denial';
+    from: { lat: number; lng: number };
+    to: { lat: number; lng: number };
+  }[] | null;
+  /** Real mapped watercourse/water-body geometry the last run fetched (docs
+   *  §34) — a reference layer showing the actual river/lake shape the
+   *  hydrology gate is reacting to, independent of any cell it influenced.
+   *  `kind === 'water'` (OSM natural=water) renders as a filled polygon;
+   *  anything else (river/canal/stream) renders as a line. */
+  waterFeatures?: { kind: string; coords: { lat: number; lng: number }[] }[] | null;
 }
 
 export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
@@ -240,16 +324,27 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onMobilityPaintModeChange,
   corridors = null,
   corridorRoutes = null,
+  highlightedCorridorId = null,
+  onCorridorHighlight,
   mobilityHeatmap = null,
   mobilityDisplayMode = 'trafficability',
   onCursorMove,
   unitSimPosition = null,
   unitSimPath = null,
+  roadRoute = null,
   chokepoints = null,
   barrierSegments = null,
   onRunAppreciation,
   onCancelAppreciation,
-  mobilityRunning = false
+  mobilityRunning = false,
+  mobilityProgress = 0,
+  mobilityStageLabel = null,
+  mobilityLatestLog = null,
+  mobilityOverlayOpacity = 1,
+  mobilityTransitCells = null,
+  ensembleMovers = null,
+  restrictions = null,
+  waterFeatures = null
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   // Use any for dynamically loaded libs to avoid static type dependency
@@ -284,6 +379,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // Aircraft drop markers state
   const dropMarkersRef = useRef<Map<string, mapboxgl.Marker[]>>(new Map());
   const unitSimMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  /** One HTML label per movement corridor — see the corridor-label effect. */
+  const corridorLabelMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  /** One numbered badge per recommended restriction. */
+  const restrictionMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const locationMarkerRef = useRef<any | null>(null);
   const mapLibRef = useRef<any>(null); // holds dynamically loaded mapboxgl module
   // Ensure we only signal initial location settled once to avoid duplicate
@@ -334,6 +433,21 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => { mobilityBrushSizeRef.current = mobilityBrushSize; }, [mobilityBrushSize]);
   const mobilityPaintingRef = useRef(false);
   const mobilityLastDabRef = useRef<{ lat: number; lng: number } | null>(null);
+  // Hold-to-pan (owner, 2026-07-27: "give me an option to pan the map by
+  // holding space or something while in painting mode"). While a paint role is
+  // armed, dragPan is disabled so a one-finger drag paints — which leaves no
+  // way to move the map without disarming the tool. Holding Space (or Alt, for
+  // anyone whose hands are already on the mouse) temporarily hands dragPan
+  // back and suppresses painting for the duration.
+  const panOverrideRef = useRef(false);
+  const [panOverrideActive, setPanOverrideActive] = useState(false);
+  // Live pointer position in SCREEN space, for the brush cursor ring.
+  const [brushCursorPoint, setBrushCursorPoint] = useState<{ x: number; y: number; radiusPx: number } | null>(null);
+  // The painting hint is a nudge, not a modal: dismissed by hand, and it
+  // re-arms when a role is (re-)selected so it is there when it is useful and
+  // gone once the user is clearly getting on with it.
+  const [paintHintDismissed, setPaintHintDismissed] = useState(false);
+  useEffect(() => { if (mobilityBoxRole) setPaintHintDismissed(false); }, [mobilityBoxRole]);
   useEffect(() => {
     mobilityBoxRoleRef.current = mobilityBoxRole;
     // Arming, disarming, or switching role always ends any in-progress
@@ -343,9 +457,55 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     mobilityLastDabRef.current = null;
     const map = mapRef.current;
     if (map?.dragPan) {
-      if (mobilityBoxRole) map.dragPan.disable(); else map.dragPan.enable();
+      if (mobilityBoxRole && !panOverrideRef.current) map.dragPan.disable(); else map.dragPan.enable();
     }
   }, [mobilityBoxRole]);
+
+  // Hold Space (or Alt) to pan while a paint tool is armed. Registered on
+  // `window` rather than the canvas because the canvas is not focusable and
+  // would never receive the keystroke. Space is swallowed while a role is
+  // armed so the page cannot scroll under the map mid-stroke; when no role is
+  // armed the handler does nothing at all and Space behaves normally.
+  useEffect(() => {
+    if (!tacticalMode) return;
+    const setOverride = (on: boolean) => {
+      if (panOverrideRef.current === on) return;
+      panOverrideRef.current = on;
+      setPanOverrideActive(on);
+      const map = mapRef.current;
+      if (!map?.dragPan) return;
+      if (on) {
+        // Abandon any stroke in progress — the drag that follows is a pan.
+        mobilityPaintingRef.current = false;
+        mobilityLastDabRef.current = null;
+        map.dragPan.enable();
+      } else if (mobilityBoxRoleRef.current) {
+        map.dragPan.disable();
+      }
+    };
+    const isPanKey = (e: KeyboardEvent) => e.code === 'Space' || e.key === ' ' || e.key === 'Alt';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!mobilityBoxRoleRef.current || !isPanKey(e)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      e.preventDefault();
+      setOverride(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => { if (isPanKey(e)) setOverride(false); };
+    // A window that loses focus mid-hold never delivers the keyup, which would
+    // leave the tool permanently in pan mode.
+    const onBlur = () => setOverride(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      setOverride(false);
+    };
+  }, [tacticalMode]);
+
   // MapboxDraw's mode is only read from `tacticalMode` once, at construction
   // (see the "load-time decision" note where `new MapboxDraw(...)` is built
   // below) — fine for a fresh page load with the mode already active, but the
@@ -778,7 +938,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       // trail source; it falls back to the backend Overpass proxy whenever this
       // returns nothing (tiles not loaded for the corridor).
       ensureStreetsSource(map);
-      setLocalTrailProvider((s, w, n, e) => extractCorridorTrails(map, s, w, n, e));
+      setLocalTrailProvider((s, w, n, e, kind) => extractCorridorTrails(map, s, w, n, e, kind));
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
@@ -813,19 +973,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // Terrain Mobility mode — press-drag-to-paint AOI tool (owner feedback
     // 2026-07-26): while a role is armed, mousedown starts a stroke and every
     // subsequent mousemove (throttled by distance so a slow drag doesn't
-    // flood dabs) lays down another dab at the map's CURRENT zoom/latitude —
-    // the whole reason a fixed on-screen brush paints a bigger real area when
-    // zoomed out. mouseup ends the stroke; the role stays armed so the user
-    // can paint several strokes to build up one irregular area, and
-    // dragPan is disabled/enabled by the role-change effect above so a
-    // touch-drag paints instead of panning the map.
+    // flood dabs) lays down another dab. Dabs are now real hex cells at a
+    // FIXED ground size (docs §35) — this component reports only the raw
+    // click point; App.tsx turns it into the actual hex stamp via
+    // `createHexDab`, since building that needs the painted area's existing
+    // strokes (for its anchor) which live in App.tsx's state, not here.
+    // mouseup ends the stroke; the role stays armed so the user can paint
+    // several strokes to build up one irregular area, and dragPan is
+    // disabled/enabled by the role-change effect above so a touch-drag
+    // paints instead of panning the map.
     const paintDabAt = (lngLat: { lat: number; lng: number }) => {
       const role = mobilityBoxRoleRef.current;
       if (!role) return;
-      const zoom = map.getZoom();
-      const radiusM = brushRadiusMeters(mobilityBrushSizeRef.current, lngLat.lat, zoom);
       mobilityLastDabRef.current = { lat: lngLat.lat, lng: lngLat.lng };
-      onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng, radiusM });
+      onMobilityPaintDabRef.current?.(role, { lat: lngLat.lat, lng: lngLat.lng });
     };
     // A pinch/two-finger-pan gesture must still reach Mapbox's own
     // touchZoomRotate handler (owner feedback 2026-07-26: "a two finger
@@ -837,6 +998,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     const touchCount = (e: any): number => e?.points?.length ?? 1;
     const handlePaintStart = (e: any) => {
       if (!mobilityBoxRoleRef.current) return;
+      if (panOverrideRef.current) return; // Space held — this drag is a pan
       if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; }
       e.preventDefault?.();
       mobilityPaintingRef.current = true;
@@ -844,17 +1006,25 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     };
     const handlePaintMove = (e: any) => {
       if (!mobilityPaintingRef.current || !mobilityBoxRoleRef.current) return;
+      if (panOverrideRef.current) { mobilityPaintingRef.current = false; return; }
       if (touchCount(e) > 1) { mobilityPaintingRef.current = false; return; } // a second finger joined mid-stroke — hand off to native pinch/pan
       e.preventDefault?.();
       const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
       const last = mobilityLastDabRef.current;
       // Only add a new dab once the cursor has moved a meaningful fraction
       // of the brush's on-screen size — an unthrottled drag would otherwise
-      // lay down dozens of near-identical dabs per second.
+      // lay down dozens of near-identical dabs per second. The threshold is
+      // ground-fixed now (docs §35: PAINT_HEX_SIZE_M-based, not a screen
+      // pixel constant), converted to on-screen pixels at the CURRENT
+      // zoom/latitude so it still throttles correctly whether zoomed in or
+      // out — roughly a third of the brush's on-screen radius, so a stroke
+      // stays continuous (dabs overlap heavily) while a slow drag still does
+      // not flood the stroke list.
       const point = map.project([pt.lng, pt.lat]);
       const lastPoint = last ? map.project([last.lng, last.lat]) : null;
       const movedPx = lastPoint ? Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) : Infinity;
-      const thresholdPx = { small: 10, medium: 18, large: 30 }[mobilityBrushSizeRef.current] ?? 18;
+      const brushRadiusPx = brushApproxRadiusM(mobilityBrushSizeRef.current) / metersPerPixel(pt.lat, map.getZoom());
+      const thresholdPx = Math.max(6, brushRadiusPx * 0.45);
       if (movedPx >= thresholdPx) paintDabAt(pt);
     };
     const handlePaintEnd = () => { mobilityPaintingRef.current = false; };
@@ -878,12 +1048,23 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // mouse travel, which is unnecessary jank for a read-only display.
     let lastCursorEmit = 0;
     map.on('mousemove', (e: any) => {
+      // The brush ring follows the pointer at full frame rate — it IS the
+      // cursor, and a throttled cursor reads as broken. Cheap: one screen-space
+      // state update, no projection or re-layout. Ring radius is now derived
+      // from the brush's FIXED ground size (docs §35) converted to pixels at
+      // this point's zoom/latitude — it genuinely grows zooming in and
+      // shrinks zooming out, the correct behaviour for a real-world-fixed
+      // brush (the old fixed-pixel cursor did the opposite).
+      if (mobilityBoxRoleRef.current && e.point) {
+        const radiusPx = brushApproxRadiusM(mobilityBrushSizeRef.current) / metersPerPixel(e.lngLat.lat, map.getZoom());
+        setBrushCursorPoint({ x: e.point.x, y: e.point.y, radiusPx });
+      }
       const now = performance.now();
       if (now - lastCursorEmit < 100) return;
       lastCursorEmit = now;
       onCursorMoveRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
-    map.on('mouseout', () => onCursorMoveRef.current?.(null));
+    map.on('mouseout', () => { onCursorMoveRef.current?.(null); setBrushCursorPoint(null); });
 
     return () => {
       // Drop the map-backed trail provider so a stale map instance is never
@@ -986,6 +1167,56 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       apply();
     }
   };
+
+  // --- Terrain Mobility: one master opacity for every analysis overlay -------
+  // Owner, 2026-07-27: "I need a slider to make the elements of the analysis
+  // like cells and the points and lines more or less opaque to see the
+  // background better." Each mobility layer registers its OWN designed opacity
+  // here as a base (a number or a Mapbox expression, since several are
+  // data-driven), and the slider multiplies every base by one factor. Doing it
+  // as a multiply rather than a flat override is what preserves the meaning
+  // each layer already encodes in opacity — the corridor band's density
+  // gradient, the isochrone field's unreached dimming — instead of flattening
+  // them all to the same value.
+  //
+  // Painted origin/objective areas are deliberately NOT included: they are the
+  // user's own inputs, not analysis output, and fading them out while hunting
+  // for the ground underneath would lose track of what was actually asked.
+  const overlayOpacityRef = useRef(mobilityOverlayOpacity);
+  const overlayBaseOpacityRef = useRef(
+    new Map<string, { layerId: string; property: string; base: number | unknown[] }>()
+  );
+
+  const applyOverlayOpacityTo = useCallback((layerId: string, property: string, base: number | unknown[]) => {
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      if (!map.getLayer(layerId)) return;
+      const k = overlayOpacityRef.current;
+      const value = typeof base === 'number' ? base * k : ['*', base, k];
+      map.setPaintProperty(layerId, property, value as any);
+    } catch (e) { /* style may be mid-reload */ }
+  }, []);
+
+  /** Register (or update) a layer's designed opacity and apply the current
+   *  slider factor to it immediately. */
+  const registerOverlayOpacity = useCallback((layerId: string, property: string, base: number | unknown[]) => {
+    overlayBaseOpacityRef.current.set(`${layerId}|${property}`, { layerId, property, base });
+    applyOverlayOpacityTo(layerId, property, base);
+  }, [applyOverlayOpacityTo]);
+
+  const unregisterOverlayOpacity = useCallback((layerId: string) => {
+    for (const key of [...overlayBaseOpacityRef.current.keys()]) {
+      if (key.startsWith(`${layerId}|`)) overlayBaseOpacityRef.current.delete(key);
+    }
+  }, []);
+
+  useEffect(() => {
+    overlayOpacityRef.current = mobilityOverlayOpacity;
+    for (const entry of overlayBaseOpacityRef.current.values()) {
+      applyOverlayOpacityTo(entry.layerId, entry.property, entry.base);
+    }
+  }, [mobilityOverlayOpacity, applyOverlayOpacityTo]);
 
   // Segment/insight highlight: bright casing + white core over the slice.
   useEffect(() => {
@@ -1418,6 +1649,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     return () => remove();
   }, [areaReconHeatmap, heatmapColorMode]);
 
+  // Painted-area geometry, resolved INCREMENTALLY (owner, 2026-07-27: "ensure
+  // the painting happens during the drag and not at the end"). Painting always
+  // did fire per dab, but the render replayed every stroke through @turf's
+  // polygon booleans on every one of them — quadratic in stroke count and real
+  // work each time, so a long stroke fell steadily further behind the finger
+  // and the shape appeared to land in a lump at mouse-up. Since a drag only
+  // ever APPENDS strokes, the resolved shape is cached and extended by the new
+  // strokes alone; any other change (clear, undo, a fresh area) falls back to a
+  // full replay, which is still correct.
+  const originPaintGeomRef = useRef<{ count: number; feature: PaintedFeature }>({ count: 0, feature: null });
+  const objectivePaintGeomRef = useRef<{ count: number; feature: PaintedFeature }>({ count: 0, feature: null });
+
   // Terrain Mobility mode — persistent painted origin (cyan) / objective
   // (amber) areas, rendered until cleared from App.tsx. Real ground size
   // (not a fixed screen radius) so the painted area reads as a stable patch
@@ -1435,8 +1678,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-origin-paint')) map.removeSource('mobility-origin-paint');
       } catch (e) { /* style may already be gone */ }
     };
-    if (mobilityOriginPaint.length === 0) { remove(); return; }
-    const geometry = resolvePaintedAreaGeometry(mobilityOriginPaint);
+    if (mobilityOriginPaint.length === 0) { originPaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    const geometry = resolvePaintedAreaIncrementally(originPaintGeomRef, mobilityOriginPaint);
     if (!geometry) { remove(); return; }
     const data = { type: 'Feature' as const, properties: {}, geometry };
     const apply = () => {
@@ -1461,8 +1704,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-objective-paint')) map.removeSource('mobility-objective-paint');
       } catch (e) { /* style may already be gone */ }
     };
-    if (mobilityObjectivePaint.length === 0) { remove(); return; }
-    const geometry = resolvePaintedAreaGeometry(mobilityObjectivePaint);
+    if (mobilityObjectivePaint.length === 0) { objectivePaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    const geometry = resolvePaintedAreaIncrementally(objectivePaintGeomRef, mobilityObjectivePaint);
     if (!geometry) { remove(); return; }
     const data = { type: 'Feature' as const, properties: {}, geometry };
     const apply = () => {
@@ -1532,7 +1775,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             id: 'mobility-heatmap-outline',
             type: 'line',
             source: 'mobility-heatmap',
-            paint: { 'line-color': 'rgba(56,189,248,0.3)', 'line-width': 0.5 },
+            paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.3 },
           });
         }
         if (mobilityDisplayMode === 'isochrone') {
@@ -1541,7 +1784,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             ['==', ['get', 'reached'], 0], '#1c2733',
             ['interpolate', ['linear'], ['get', 'bandIndex'], 0, '#38bdf8', maxBand, '#0b2a3f'],
           ]);
-          map.setPaintProperty('mobility-heatmap', 'fill-opacity', ['case', ['==', ['get', 'reached'], 0], 0.06, 0.55]);
+          registerOverlayOpacity('mobility-heatmap', 'fill-opacity', ['case', ['==', ['get', 'reached'], 0], 0.06, 0.55]);
         } else {
           map.setPaintProperty('mobility-heatmap', 'fill-color', [
             'match', ['get', 'trafficability'],
@@ -1550,8 +1793,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             'NO-GO', '#D8232A',
             '#55607A',
           ]);
-          map.setPaintProperty('mobility-heatmap', 'fill-opacity', 0.5);
+          registerOverlayOpacity('mobility-heatmap', 'fill-opacity', 0.5);
         }
+        registerOverlayOpacity('mobility-heatmap-outline', 'line-opacity', 0.3);
       } catch (e) {
         logger.warn('Failed to render mobility heatmap', e);
       }
@@ -1562,8 +1806,306 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       apply();
     }
 
+    return () => {
+      unregisterOverlayOpacity('mobility-heatmap');
+      unregisterOverlayOpacity('mobility-heatmap-outline');
+      remove();
+    };
+  }, [mobilityHeatmap, mobilityDisplayMode, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Probabilistic movement field (docs §32) ------------------------------
+  // Per-cell share of simulated movers that crossed it. Deliberately styled as
+  // a soft, single-hue field with NO outline and a strongly non-linear ramp:
+  // this is modelled behaviour, and it must not read like the crisp, measured
+  // GO/SLOW-GO grid sitting under it. The busy spine glows; ground a handful of
+  // movers wandered into stays faint, because that is what the number means.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-transit')) map.removeLayer('mobility-transit');
+        unregisterOverlayOpacity('mobility-transit');
+        if (map.getSource('mobility-transit')) map.removeSource('mobility-transit');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!mobilityTransitCells || mobilityTransitCells.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: mobilityTransitCells.map(c => ({
+        type: 'Feature' as const,
+        properties: { transit: Math.min(1, Math.max(0, c.transitFraction)) },
+        geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-transit');
+        if (existing) {
+          (existing as any).setData(data);
+        } else {
+          map.addSource('mobility-transit', { type: 'geojson', data } as any);
+          map.addLayer({
+            id: 'mobility-transit',
+            type: 'fill',
+            source: 'mobility-transit',
+            paint: {
+              'fill-color': [
+                'interpolate', ['linear'], ['get', 'transit'],
+                0, '#1b3a5c',
+                0.25, '#2f7fb5',
+                0.6, '#f2c14e',
+                1, '#f2603c',
+              ],
+              'fill-opacity': 0,
+            },
+          } as any);
+        }
+        registerOverlayOpacity('mobility-transit', 'fill-opacity', [
+          'interpolate', ['linear'], ['get', 'transit'], 0, 0.05, 1, 0.62,
+        ]);
+      } catch (e) { logger.warn('Failed to render movement transit field', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
     return () => remove();
-  }, [mobilityHeatmap, mobilityDisplayMode]);
+  }, [mobilityTransitCells, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Hydrology reference layer (docs §34) ---------------------------------
+  // Owner, 2026-07-27: "I can see substantial waterways in my sample area but
+  // they don't seem to form a barrier in the overlay analysis. If they are
+  // being considered then we need to show more of that." The GO/SLOW-GO/
+  // NO-GO cell colouring now DOES react to water (mobilityCost.ts's fording
+  // gate), but a coloured hex alone doesn't tell a reviewer "that's because of
+  // THIS river" — this layer draws the actual mapped watercourse/water-body
+  // geometry the gate is reacting to, as its own visible reference, separate
+  // from any cell it influenced. Lines (river/canal/stream) get a bold casing
+  // + core so a substantial waterway reads unmistakably as a real linear
+  // feature; `natural=water` bodies get a filled polygon.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['mobility-water-body', 'mobility-water-line-casing', 'mobility-water-line']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        if (map.getSource('mobility-water-body')) map.removeSource('mobility-water-body');
+        if (map.getSource('mobility-water-line')) map.removeSource('mobility-water-line');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!waterFeatures || waterFeatures.length === 0) { remove(); return; }
+
+    const bodyFeatures = waterFeatures
+      .filter(f => f.kind === 'water' && f.coords.length >= 4)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'Polygon' as const, coordinates: [f.coords.map(p => [p.lng, p.lat])] },
+      }));
+    const lineFeatures = waterFeatures
+      .filter(f => f.kind !== 'water' && f.coords.length >= 2)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: { kind: f.kind },
+        geometry: { type: 'LineString' as const, coordinates: f.coords.map(p => [p.lng, p.lat]) },
+      }));
+
+    const apply = () => {
+      try {
+        const bodyData = { type: 'FeatureCollection' as const, features: bodyFeatures };
+        const lineData = { type: 'FeatureCollection' as const, features: lineFeatures };
+        if (map.getSource('mobility-water-body')) {
+          (map.getSource('mobility-water-body') as any).setData(bodyData);
+          (map.getSource('mobility-water-line') as any)?.setData(lineData);
+        } else {
+          map.addSource('mobility-water-body', { type: 'geojson', data: bodyData } as any);
+          map.addLayer({
+            id: 'mobility-water-body',
+            type: 'fill',
+            source: 'mobility-water-body',
+            paint: { 'fill-color': '#1e88e5', 'fill-opacity': 0 },
+          } as any);
+          map.addSource('mobility-water-line', { type: 'geojson', data: lineData } as any);
+          map.addLayer({
+            id: 'mobility-water-line-casing',
+            type: 'line',
+            source: 'mobility-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#0a3d62',
+              'line-width': ['match', ['get', 'kind'], 'stream', 4, 6],
+              'line-opacity': 0,
+            },
+          } as any);
+          map.addLayer({
+            id: 'mobility-water-line',
+            type: 'line',
+            source: 'mobility-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#4fc3f7',
+              'line-width': ['match', ['get', 'kind'], 'stream', 2, 3],
+              'line-opacity': 0,
+            },
+          } as any);
+        }
+        registerOverlayOpacity('mobility-water-body', 'fill-opacity', 0.4);
+        registerOverlayOpacity('mobility-water-line-casing', 'line-opacity', 0.9);
+        registerOverlayOpacity('mobility-water-line', 'line-opacity', 0.95);
+      } catch (e) { logger.warn('Failed to render hydrology reference layer', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [waterFeatures, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Recommended restrictions (docs §32) ---------------------------------
+  // The actionable output of the whole mode: block HERE. Drawn as a heavy bar
+  // across the ground between two real cell centres — never an invented point
+  // along an edge — with a numbered badge carrying its rank, so the map and
+  // the panel's ranked list are obviously the same thing.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    const markers = restrictionMarkersRef.current;
+    markers.forEach(m => m.remove());
+    markers.length = 0;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['mobility-restrictions', 'mobility-restrictions-casing']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        if (map.getSource('mobility-restrictions')) map.removeSource('mobility-restrictions');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!restrictions || restrictions.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: restrictions.map(r => ({
+        type: 'Feature' as const,
+        properties: { rank: r.rank, kind: r.kind },
+        geometry: { type: 'LineString' as const, coordinates: [[r.from.lng, r.from.lat], [r.to.lng, r.to.lat]] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-restrictions');
+        if (existing) {
+          (existing as any).setData(data);
+        } else {
+          map.addSource('mobility-restrictions', { type: 'geojson', data } as any);
+          map.addLayer({
+            id: 'mobility-restrictions-casing',
+            type: 'line',
+            source: 'mobility-restrictions',
+            layout: { 'line-cap': 'butt' },
+            paint: { 'line-color': '#2a0505', 'line-width': 12, 'line-opacity': 0 },
+          } as any);
+          map.addLayer({
+            id: 'mobility-restrictions',
+            type: 'line',
+            source: 'mobility-restrictions',
+            layout: { 'line-cap': 'butt' },
+            paint: {
+              'line-color': ['case', ['==', ['get', 'kind'], 'road-block'], '#ff4d4d', '#F6A609'],
+              'line-width': 7,
+              'line-opacity': 0,
+              'line-dasharray': [1, 0.6],
+            },
+          } as any);
+        }
+        registerOverlayOpacity('mobility-restrictions-casing', 'line-opacity', 0.75);
+        registerOverlayOpacity('mobility-restrictions', 'line-opacity', 0.95);
+      } catch (e) { logger.warn('Failed to render recommended restrictions', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+
+    if (mapboxgl) {
+      for (const r of restrictions) {
+        const el = document.createElement('div');
+        el.className = `restriction-map-badge restriction-map-badge--${r.kind}`;
+        el.textContent = String(r.rank);
+        el.title = r.kind === 'road-block' ? 'Recommended road block' : 'Recommended ground denial';
+        try {
+          markers.push(new mapboxgl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([(r.from.lng + r.to.lng) / 2, (r.from.lat + r.to.lat) / 2])
+            .addTo(map));
+        } catch (e) { logger.warn('Failed to place restriction badge', e); }
+      }
+    }
+
+    return () => { markers.forEach(m => m.remove()); markers.length = 0; remove(); };
+  }, [restrictions, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Animated ensemble: many movers at once -------------------------------
+  // GeoJSON layers rather than N DOM markers: at a dozen-plus movers updated
+  // every animation frame, markers thrash the DOM, while one setData call per
+  // frame on two layers does not. Trails fade the ensemble's history in behind
+  // it so the fan-out and re-convergence is legible as it happens.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['ensemble-movers', 'ensemble-trails']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          if (map.getSource(id)) map.removeSource(id);
+        }
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!ensembleMovers || ensembleMovers.length === 0) { remove(); return; }
+    const trailData = {
+      type: 'FeatureCollection' as const,
+      features: ensembleMovers
+        .filter(m => m.trail.length >= 2)
+        .map(m => ({
+          type: 'Feature' as const,
+          properties: { arrived: m.arrived ? 1 : 0 },
+          geometry: { type: 'LineString' as const, coordinates: m.trail.map(p => [p.lng, p.lat]) },
+        })),
+    };
+    const moverData = {
+      type: 'FeatureCollection' as const,
+      features: ensembleMovers.map(m => ({
+        type: 'Feature' as const,
+        properties: { arrived: m.arrived ? 1 : 0 },
+        geometry: { type: 'Point' as const, coordinates: [m.lng, m.lat] },
+      })),
+    };
+    const apply = () => {
+      try {
+        if (map.getSource('ensemble-trails')) {
+          (map.getSource('ensemble-trails') as any).setData(trailData);
+          (map.getSource('ensemble-movers') as any).setData(moverData);
+          return;
+        }
+        map.addSource('ensemble-trails', { type: 'geojson', data: trailData } as any);
+        map.addLayer({
+          id: 'ensemble-trails',
+          type: 'line',
+          source: 'ensemble-trails',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#7dd3fc', 'line-width': 1.4, 'line-opacity': 0.45 },
+        } as any);
+        map.addSource('ensemble-movers', { type: 'geojson', data: moverData } as any);
+        map.addLayer({
+          id: 'ensemble-movers',
+          type: 'circle',
+          source: 'ensemble-movers',
+          paint: {
+            'circle-radius': 5,
+            'circle-color': ['case', ['==', ['get', 'arrived'], 1], '#1E9E62', '#38bdf8'],
+            'circle-stroke-color': '#04212f',
+            'circle-stroke-width': 1.5,
+            'circle-opacity': 0.95,
+          },
+        } as any);
+      } catch (e) { logger.warn('Failed to render simulated movers', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+  }, [ensembleMovers]);
 
   // Unit simulation — intended path line (redrawn whenever a mid-course
   // replan splices a new remainder onto it).
@@ -1577,6 +2119,23 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       },
     });
   }, [unitSimPath]);
+
+  // Docs §35 Slice A — box-free road-network route (vehicle profiles only).
+  // Amber/dashed, distinct from the sky-blue unit-sim path above: this line
+  // can exist even when the hex-grid search found no path at all, and is
+  // deliberately styled so it doesn't read as "the" answer, just as A road
+  // answer, restricted to the road network (see the log line that reports
+  // it for the door-to-door caveat).
+  useEffect(() => {
+    const coords = roadRoute && roadRoute.length >= 2 ? roadRoute.map(p => [p.lng, p.lat]) : null;
+    setOverlay('road-route-line', coords ? { type: 'LineString', coordinates: coords } : null, {
+      main: {
+        type: 'line',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#f59e0b', 'line-width': 4, 'line-opacity': 0.8, 'line-dasharray': [3, 2] },
+      },
+    });
+  }, [roadRoute]);
 
   // Unit simulation — the moving unit itself. A plain mapboxgl.Marker moved
   // via setLngLat on every animation frame (see App.tsx's UnitSimulationController)
@@ -1601,86 +2160,267 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     }
   }, [unitSimPosition]);
 
-  // Movement corridors — the presentation layer (docs §28). Two paired
-  // layers, deliberately in this order so the abstraction never hides its
-  // own evidence:
-  //   1. `mobility-corridors` — smoothed bands, per-cell opacity driven by
-  //      the cell's own density so edges FADE rather than stopping at a hard
-  //      line. That soft edge is the honest spatial statement ("movement is
-  //      somewhere in here"), not a styling flourish.
-  //   2. `mobility-corridor-routes` — the individual analysed pathways, as
-  //      faint hairlines on top. The corridors are what you read; the routes
-  //      are what they were computed from, left visible on purpose.
+  // Movement corridors — the presentation layer (docs §28, clarified §33).
+  //
+  // The original render was bands only: a fill of hexes whose per-cell opacity
+  // followed density. That is the right honesty statement (fuzzy edges = "we
+  // don't know exactly where within here") but on its own it reads as blotches
+  // — field report, 2026-07-27: "the corridors are visually unclear to me."
+  // Two overlapping bands with soft edges and no boundary give the eye nothing
+  // to latch a shape onto, and nothing ties a band on the map to a card in the
+  // panel. So the band now carries FOUR paired layers, each doing one job:
+  //
+  //   1. `mobility-corridors` — the density fill, unchanged in meaning: the
+  //      soft interior gradient is still the uncertainty statement.
+  //   2. `mobility-corridor-edge` — the corridor's dissolved OUTLINE (a real
+  //      @turf/union of its own hexes, so it is the actual extent, not a
+  //      drawn-on approximation). Deliberately thin and semi-transparent: it
+  //      makes the band legible as one object without hardening the claim
+  //      into a surveyed boundary.
+  //   3. `mobility-corridor-spine` — only the highest-density cells, drawn
+  //      brighter. This is where movement is most concentrated, which is the
+  //      thing a commander actually reads off a corridor.
+  //   4. `mobility-corridor-routes` — ONE representative line per corridor
+  //      (its own fastest analysed route), not the full analysed set (owner,
+  //      2026-07-28: "the individual white lines of the considered paths
+  //      don't work as a visualisation... they end up being 'triangles'
+  //      between the grid centres and they don't follow the road geometry
+  //      ... consolidate to show substantive differences, not that every
+  //      piece of ground has been considered"). `App.tsx`'s
+  //      `corridorRoutesForMap` refines each one first (`pathRefinement.ts`
+  //      — snap onto a nearby road where the route genuinely follows one,
+  //      corner-smooth the rest) before it ever reaches this layer, so what
+  //      renders here is already the presentation line, not raw hex-centre
+  //      steps.
+  //
+  // `highlightedCorridorId` dims every band but one, so picking a card in the
+  // panel answers "which of these is that" unambiguously.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    const layerIds = ['mobility-corridor-routes', 'mobility-corridor-routes-casing', 'mobility-corridor-spine', 'mobility-corridor-edge', 'mobility-corridors'];
     const remove = () => {
       try {
-        if (map.getLayer('mobility-corridor-routes')) map.removeLayer('mobility-corridor-routes');
-        if (map.getSource('mobility-corridor-routes')) map.removeSource('mobility-corridor-routes');
-        if (map.getLayer('mobility-corridors')) map.removeLayer('mobility-corridors');
-        if (map.getSource('mobility-corridors')) map.removeSource('mobility-corridors');
+        for (const id of layerIds) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        for (const id of ['mobility-corridor-routes', 'mobility-corridor-edge', 'mobility-corridors']) {
+          if (map.getSource(id)) map.removeSource(id);
+        }
       } catch (e) { /* style may already be gone */ }
     };
     if (!corridors || corridors.length === 0) { remove(); return; }
 
-    // Rank-coded, using the mode's existing palette: rank 1 (most-used) reads
-    // hottest. Ease class is carried as a property for the popup/legend
-    // rather than a second colour axis, so one visual channel = one meaning.
+    // Rank-coded — deliberately a BLUE/VIOLET family, entirely outside the
+    // red/amber/green the trafficability heatmap already owns (owner,
+    // 2026-07-27, live-testing: "the corridors need to be a colour other
+    // than red. The red, amber, green is used for the hex to show
+    // passability so the corridor in red makes it look like it's picking
+    // the hardest route!" — confirmed a real collision, not just taste:
+    // rank 1 was `#D8232A`, identical to the heatmap's own NO-GO red; rank
+    // 2 was `#F6A609`, identical to its SLOW-GO amber). Ease class is
+    // carried as a property for the legend rather than a second colour
+    // axis, so one visual channel = one meaning.
     const rankColor = (rank: number) =>
-      rank === 1 ? '#D8232A' : rank === 2 ? '#F6A609' : rank === 3 ? '#38bdf8' : '#94a3b8';
+      rank === 1 ? '#3B82F6' : rank === 2 ? '#8B5CF6' : rank === 3 ? '#06B6D4' : '#94a3b8';
 
     const cellFeatures = corridors.flatMap(c =>
       c.cells.map(cell => ({
         type: 'Feature' as const,
         properties: {
+          corridorId: c.id,
           rank: c.rank,
           ease: c.easeClass,
           color: rankColor(c.rank),
+          density: Math.min(1, Math.max(0, cell.density)),
           // Floor the opacity so a low-density fringe cell is still faintly
           // visible (it IS part of the corridor) without reading as strongly
           // as the spine.
-          opacity: 0.12 + 0.34 * Math.min(1, Math.max(0, cell.density)),
+          opacity: 0.10 + 0.40 * Math.min(1, Math.max(0, cell.density)),
         },
         geometry: { type: 'Polygon' as const, coordinates: [cell.polygon.map(p => [p.lng, p.lat])] },
       }))
     );
+
+    // Dissolved outline per corridor — a genuine union of that corridor's own
+    // hexes. Falls back to the undissolved cells if the union fails for any
+    // reason, so a geometry edge case degrades to the previous look rather
+    // than dropping the corridor off the map entirely.
+    const edgeFeatures = corridors.map(c => {
+      let dissolved: any = null;
+      try {
+        const polys = c.cells.map(cell => turfPolygon([cell.polygon.map(p => [p.lng, p.lat])]));
+        dissolved = polys.length === 1 ? polys[0] : union(featureCollection(polys) as any);
+      } catch (e) {
+        logger.warn('Corridor outline union failed; falling back to cell fill only', e);
+      }
+      if (!dissolved) return null;
+      // Chaikin corner-cutting over the real dissolved shape (docs §28,
+      // "Smooth the corridor band's own outline") — presentation only, the
+      // EXTENT is still exactly what buildCorridorField computed; this just
+      // rounds off the hex tessellation's own blocky edge at close zoom.
+      // 2 passes matches the same default used for corridor route lines
+      // (`App.tsx`'s `cornerSmoothingIterations`), enough to read as a band
+      // rather than a staircase without eroding the shape's real extent.
+      const geometry = smoothPolygonGeometry(dissolved.geometry, 2);
+      return {
+        type: 'Feature' as const,
+        properties: { corridorId: c.id, rank: c.rank, color: rankColor(c.rank) },
+        geometry,
+      };
+    }).filter((f): f is NonNullable<typeof f> => f !== null);
+
     const routeFeatures = (corridorRoutes ?? []).map(r => ({
       type: 'Feature' as const,
-      properties: {},
+      properties: { corridorId: r.id, color: rankColor(r.rank) },
       geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
     }));
+
+    // Highlight is applied as a MULTIPLIER on each layer's own designed
+    // opacity, so the density gradient inside the chosen band survives.
+    const emphasis = (): number | unknown[] => (
+      highlightedCorridorId
+        ? ['case', ['==', ['get', 'corridorId'], highlightedCorridorId], 1.25, 0.2]
+        : 1
+    );
+    const scaledBy = (base: number | unknown[]): number | unknown[] => {
+      const e = emphasis();
+      if (typeof e === 'number' && typeof base === 'number') return base * e;
+      return ['*', base, e];
+    };
 
     const apply = () => {
       try {
         const cellData = { type: 'FeatureCollection' as const, features: cellFeatures };
+        const edgeData = { type: 'FeatureCollection' as const, features: edgeFeatures };
         const routeData = { type: 'FeatureCollection' as const, features: routeFeatures };
-        const existing = map.getSource('mobility-corridors');
-        if (existing) {
-          existing.setData(cellData);
-          map.getSource('mobility-corridor-routes')?.setData(routeData);
-          return;
+
+        if (map.getSource('mobility-corridors')) {
+          (map.getSource('mobility-corridors') as any).setData(cellData);
+          (map.getSource('mobility-corridor-edge') as any)?.setData(edgeData);
+          (map.getSource('mobility-corridor-routes') as any)?.setData(routeData);
+        } else {
+          map.addSource('mobility-corridors', { type: 'geojson', data: cellData } as any);
+          map.addLayer({
+            id: 'mobility-corridors',
+            type: 'fill',
+            source: 'mobility-corridors',
+            paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0 },
+          } as any);
+          map.addSource('mobility-corridor-edge', { type: 'geojson', data: edgeData } as any);
+          map.addLayer({
+            id: 'mobility-corridor-edge',
+            type: 'line',
+            source: 'mobility-corridor-edge',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            // Crisp, not blurred (2026-07-28, corridor legibility pass —
+            // owner: challenged to "pull out the corridors" from a screenshot
+            // cold and couldn't). A blurred 2px line reads as a smudge at any
+            // real zoom; a solid, wider line reads as an actual boundary.
+            paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0 },
+          } as any);
+          map.addLayer({
+            id: 'mobility-corridor-spine',
+            type: 'fill',
+            source: 'mobility-corridors',
+            filter: ['>=', ['get', 'density'], 0.6],
+            paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0 },
+          } as any);
+          map.addSource('mobility-corridor-routes', { type: 'geojson', data: routeData } as any);
+          // Casing + core (2026-07-28), same pattern already used for
+          // recommended-restriction lines (`mobility-restrictions-casing`):
+          // a wider dark line underneath a narrower, rank-coloured one on top
+          // reads crisply against ANY hex colour behind it. The route line
+          // previously rendered at 0.8px / near-white / 40% opacity — the
+          // single clearest shape a corridor has (a real drawn path, not a
+          // fuzzy fill) was effectively invisible; this is now the star, not
+          // an afterthought.
+          map.addLayer({
+            id: 'mobility-corridor-routes-casing',
+            type: 'line',
+            source: 'mobility-corridor-routes',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#05070a', 'line-width': 6, 'line-opacity': 0 },
+          } as any);
+          map.addLayer({
+            id: 'mobility-corridor-routes',
+            type: 'line',
+            source: 'mobility-corridor-routes',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0 },
+          } as any);
         }
-        map.addSource('mobility-corridors', { type: 'geojson', data: cellData } as any);
-        map.addLayer({
-          id: 'mobility-corridors',
-          type: 'fill',
-          source: 'mobility-corridors',
-          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'opacity'] },
-        });
-        map.addSource('mobility-corridor-routes', { type: 'geojson', data: routeData } as any);
-        map.addLayer({
-          id: 'mobility-corridor-routes',
-          type: 'line',
-          source: 'mobility-corridor-routes',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': '#e2e8f0', 'line-width': 0.8, 'line-opacity': 0.35 },
-        });
+
+        registerOverlayOpacity('mobility-corridors', 'fill-opacity', scaledBy(['get', 'opacity']));
+        registerOverlayOpacity('mobility-corridor-edge', 'line-opacity', scaledBy(0.85));
+        registerOverlayOpacity('mobility-corridor-spine', 'fill-opacity', scaledBy(0.28));
+        registerOverlayOpacity('mobility-corridor-routes-casing', 'line-opacity', scaledBy(0.8));
+        registerOverlayOpacity('mobility-corridor-routes', 'line-opacity', scaledBy(1));
       } catch (e) { logger.warn('Failed to render movement corridors', e); }
     };
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
     return () => remove();
-  }, [corridors, corridorRoutes]);
+  }, [corridors, corridorRoutes, highlightedCorridorId, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // Tapping a corridor band on the map selects it, the same selection the
+  // panel's corridor cards drive — so the map and the panel are two views of
+  // one choice rather than two unrelated lists.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !onCorridorHighlight) return;
+    const onClick = (e: any) => {
+      const id = e?.features?.[0]?.properties?.corridorId;
+      if (typeof id === 'string') onCorridorHighlight(id === highlightedCorridorId ? null : id);
+    };
+    try { map.on('click', 'mobility-corridors', onClick); } catch { /* layer not present yet */ }
+    return () => { try { map.off('click', 'mobility-corridors', onClick); } catch { /* map gone */ } };
+  }, [onCorridorHighlight, highlightedCorridorId, corridors]);
+
+  // Corridor labels — an HTML marker per corridor at its densest cell, so a
+  // band on the map names itself ("CORRIDOR 1 · OPEN · ~180 M") instead of
+  // needing to be cross-referenced against the panel. Deliberately HTML
+  // markers rather than a Mapbox symbol layer: symbol layers need font glyphs
+  // from the style, and this mode's basemap is user-overridable
+  // (VITE_MAPBOX_TACTICAL_STYLE), so a missing glyph set would silently drop
+  // every label.
+  useEffect(() => {
+    const map = mapRef.current;
+    const mapboxgl = mapLibRef.current;
+    const markers = corridorLabelMarkersRef.current;
+    markers.forEach(m => m.remove());
+    markers.length = 0;
+    if (!map || !mapboxgl || !corridors || corridors.length === 0) return;
+    for (const c of corridors) {
+      const densest = c.cells.reduce((best, cell) => (cell.density > best.density ? cell : best), c.cells[0]);
+      if (!densest) continue;
+      const lat = densest.polygon.reduce((s, p) => s + p.lat, 0) / densest.polygon.length;
+      const lng = densest.polygon.reduce((s, p) => s + p.lng, 0) / densest.polygon.length;
+      const el = document.createElement('div');
+      el.className = `corridor-map-label corridor-map-label--rank${Math.min(c.rank, 4)}${highlightedCorridorId && highlightedCorridorId !== c.id ? ' dimmed' : ''}`;
+      // Numbered badge first (docs §28 addendum, 2026-07-28 — owner: "pull out
+      // the corridors ... without excellent prior knowledge" exposed that a
+      // bare text label gives the eye nothing to anchor to). The badge's own
+      // fill is the SAME rank colour the label border/text and the map
+      // shape/route already use, so this one small circle visually ties all
+      // three together instead of each being its own disconnected mark.
+      const badge = document.createElement('span');
+      badge.className = 'corridor-map-label__badge';
+      badge.textContent = String(c.rank);
+      const text = document.createElement('span');
+      text.textContent = `CORRIDOR ${c.rank} · ${c.easeClass.replace('-', ' ').toUpperCase()} · ~${Math.round(c.bottleneckWidthM)} M`;
+      el.appendChild(badge);
+      el.appendChild(text);
+      el.addEventListener('click', ev => {
+        ev.stopPropagation();
+        onCorridorHighlight?.(highlightedCorridorId === c.id ? null : c.id);
+      });
+      try {
+        markers.push(new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map));
+      } catch (e) { logger.warn('Failed to place corridor label', e); }
+    }
+    return () => { markers.forEach(m => m.remove()); markers.length = 0; };
+  }, [corridors, highlightedCorridorId, onCorridorHighlight]);
 
   // Pass 2 — chokepoint markers, sized/coloured by how many of the
   // dissimilar routes cross each cell (docs §4: "the ground everything
@@ -1721,13 +2461,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             'circle-stroke-width': 1.5,
           },
         });
+        registerOverlayOpacity('mobility-chokepoints', 'circle-opacity', 0.55);
+        registerOverlayOpacity('mobility-chokepoints', 'circle-stroke-opacity', 0.9);
       } catch (e) {
         logger.warn('Failed to render chokepoints', e);
       }
     };
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
-  }, [chokepoints]);
+    return () => { unregisterOverlayOpacity('mobility-chokepoints'); remove(); };
+  }, [chokepoints, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Pass 2 — min-cut barrier plan: the cheapest set of segments severing the
   // origin AOI from the objective AOI for the selected profile.
@@ -1761,13 +2503,14 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: { 'line-color': '#D8232A', 'line-width': 5, 'line-opacity': 0.85 },
         });
+        registerOverlayOpacity('mobility-barrier', 'line-opacity', 0.85);
       } catch (e) {
         logger.warn('Failed to render barrier plan', e);
       }
     };
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
-  }, [barrierSegments]);
+    return () => { unregisterOverlayOpacity('mobility-barrier'); remove(); };
+  }, [barrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
@@ -2086,6 +2829,67 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           Clear scan
         </button>
       )}
+      {/* Brush cursor (owner, 2026-07-27: "the mouse icon for painting needs
+          to be different, a size appropriate brush"). A ring approximating
+          the brush's real hex cluster (docs §35: a FIXED ground size —
+          100m-circumradius hexes, brush size sets how many), converted to
+          on-screen pixels at the cursor's own zoom/latitude
+          (`brushCursorPoint.radiusPx`) — genuinely bigger zoomed in, smaller
+          zoomed out, an honest preview of ground coverage at any zoom.
+          Pointer-events off so it never intercepts the stroke it is
+          previewing. */}
+      {tacticalMode && mobilityBoxRole && brushCursorPoint && !panOverrideActive && (
+        <div
+          className={`paint-brush-cursor paint-brush-cursor--${mobilityPaintMode} paint-brush-cursor--${mobilityBoxRole}`}
+          style={{
+            left: brushCursorPoint.x,
+            top: brushCursorPoint.y,
+            width: brushCursorPoint.radiusPx * 2,
+            height: brushCursorPoint.radiusPx * 2,
+          }}
+          aria-hidden
+        >
+          <span className="paint-brush-cursor-dot" />
+        </div>
+      )}
+      {/* Subtle guidance while painting, dismissible and self-dismissing once
+          the area has strokes in it — it is a nudge, not a modal. */}
+      {tacticalMode && mobilityBoxRole && !paintHintDismissed && (
+        <div className="paint-hint" role="status">
+          <strong>
+            {mobilityPaintMode === 'erase' ? 'Drag to erase' : 'Click and drag to paint'}
+            {' '}the {mobilityBoxRole} area
+          </strong>
+          <span>Paint appears as you drag · hold <kbd>Space</kbd> to pan the map · S/M/L changes brush size</span>
+          <button type="button" onClick={() => setPaintHintDismissed(true)} aria-label="Dismiss painting hint">×</button>
+        </div>
+      )}
+      {tacticalMode && panOverrideActive && (
+        <div className="paint-pan-badge" role="status">Pan mode — release <kbd>Space</kbd> to paint</div>
+      )}
+      {/* Terrain-mode run progress. Previously this mode showed nothing at all
+          while the analysis worked (owner: "a long process of churn with no
+          visual update"): the fire-break progress pill above is gated on the
+          optimizer, and the assessment log lives in a panel that is usually
+          collapsed on a phone. Phase, bar and the latest real log line. */}
+      {tacticalMode && mobilityRunning && (
+        <div className="mobility-progress-hud" role="status" aria-live="polite">
+          <div className="mobility-progress-hud-head">
+            <span className="mobility-progress-hud-spinner" aria-hidden />
+            <span className="mobility-progress-hud-stage">{mobilityStageLabel ?? 'Working…'}</span>
+            <strong>{Math.round(mobilityProgress * 100)}%</strong>
+          </div>
+          <div className="mobility-progress-hud-bar">
+            <div
+              className="mobility-progress-hud-fill"
+              style={{ width: `${Math.max(2, Math.min(100, mobilityProgress * 100))}%` }}
+            />
+          </div>
+          {mobilityLatestLog && (
+            <div className="mobility-progress-hud-log tac-mono">{mobilityLatestLog}</div>
+          )}
+        </div>
+      )}
       {tacticalMode && (
         <div className="mobility-overlay-controls">
           <button
@@ -2104,14 +2908,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
           </button>
           {mobilityBoxRole && (
             <div className="mobility-brush-row">
-              {(['small', 'medium', 'large'] as const).map(size => (
+              {(['small', 'medium', 'large', 'xl'] as const).map(size => (
                 <button
                   key={size}
                   type="button"
                   className={`mobility-brush-btn${mobilityBrushSize === size ? ' active' : ''}`}
                   onClick={() => onMobilityBrushSizeChange?.(size)}
+                  title={`${BRUSH_HEX_COUNT[size]} hex${BRUSH_HEX_COUNT[size] === 1 ? '' : 'es'} (${PAINT_HEX_SIZE_M}m each)`}
                 >
-                  {size[0].toUpperCase()}
+                  {BRUSH_LABEL[size]}
                 </button>
               ))}
             </div>

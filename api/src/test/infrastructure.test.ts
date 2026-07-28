@@ -26,7 +26,7 @@ const okJson = (body: any) => Promise.resolve({ ok: true, status: 200, json: asy
 // filtered out (not a way / no geometry).
 const overpassBody = {
   elements: [
-    { type: 'way', tags: { highway: 'track', name: 'Old Mill Rd' }, geometry: [
+    { type: 'way', tags: { highway: 'track', name: 'Old Mill Rd', surface: 'gravel', tracktype: 'grade3' }, geometry: [
       { lat: -35.30, lon: 148.00 }, { lat: -35.29, lon: 148.01 }, { lat: -35.28, lon: 148.02 },
     ] },
     { type: 'node', lat: -35.3, lon: 148.0 },
@@ -45,6 +45,10 @@ async function run() {
   check('maps OSM lon→lng and keeps name/kind',
     r1.trails[0].kind === 'track' && r1.trails[0].name === 'Old Mill Rd' &&
     r1.trails[0].coords.length === 3 && r1.trails[0].coords[0].lng === 148.00);
+  check('surface/tracktype tags pass through for the road-speed model (docs §35)',
+    (r1.trails[0] as any).surface === 'gravel' && (r1.trails[0] as any).tracktype === 'grade3');
+  check('untagged smoothness stays undefined, not fabricated',
+    (r1.trails[0] as any).smoothness === undefined);
 
   // --- cache: identical bbox does not re-hit the network ---
   const callsBefore = calls;
@@ -73,6 +77,67 @@ async function run() {
   setFetch(async () => { after++; return okJson(overpassBody); });
   const r5 = await fetchCorridorInfrastructure(-34.0, 150.0, -33.9, 150.1);
   check('failure not cached — retried and now succeeds', after > 0 && r5.available === true);
+
+  // --- 'highway-mobility' queries the wider set (motorway/trunk/primary),
+  //     deliberately different from the default fire-break REUSABLE_HIGHWAYS
+  //     query (docs §35) — verified by inspecting the actual Overpass query
+  //     body sent, not just the response. ---
+  _clearInfrastructureCache();
+  let lastBody = '';
+  setFetch(async (_url: string, init?: any) => {
+    lastBody = typeof init?.body === 'string' ? decodeURIComponent(init.body) : '';
+    return okJson(overpassBody);
+  });
+  await fetchCorridorInfrastructure(-35.0, 148.0, -34.9, 148.1, 'highway' as any);
+  const defaultQuery = lastBody;
+  _clearInfrastructureCache();
+  await fetchCorridorInfrastructure(-35.0, 148.0, -34.9, 148.1, 'highway-mobility' as any);
+  const mobilityQuery = lastBody;
+  check('default highway query excludes motorway (fire-break reusable set)',
+    !defaultQuery.includes('motorway'));
+  check("'highway-mobility' query includes motorway/trunk/primary",
+    mobilityQuery.includes('motorway') && mobilityQuery.includes('trunk') && mobilityQuery.includes('primary'));
+  check("'highway-mobility' still includes track (rural AU coverage)",
+    mobilityQuery.includes('track'));
+
+  // --- OSM water relations (docs §35 addendum, 2026-07-28) — a real,
+  // live-confirmed gap: multipolygon water bodies (Lake Tuggeranong,
+  // Gungahlin Pond — both Canberra-region, both `relation` not `way` in
+  // real OSM data) were previously never requested or parsed at all, so a
+  // profile with no fording capability could cross one uncontested. Shape
+  // below matches Overpass's REAL `out geom` response for a relation
+  // (confirmed live): `members[].geometry` is inlined directly, no
+  // recursion needed. ---
+  _clearInfrastructureCache();
+  setFetch(async (_url: string, init?: any) => {
+    lastBody = typeof init?.body === 'string' ? decodeURIComponent(init.body) : '';
+    return okJson({
+      elements: [
+        {
+          type: 'relation',
+          tags: { natural: 'water', name: 'Lake Testown' },
+          members: [
+            { type: 'way', role: 'outer', geometry: [
+              { lat: -35.0, lon: 149.0 }, { lat: -35.0, lon: 149.1 }, { lat: -34.9, lon: 149.1 }, { lat: -35.0, lon: 149.0 },
+            ] },
+            { type: 'way', role: 'inner', geometry: [
+              { lat: -34.98, lon: 149.05 }, { lat: -34.98, lon: 149.06 }, { lat: -34.97, lon: 149.05 },
+            ] },
+            { type: 'way', role: 'outer', geometry: [{ lat: -35.0, lon: 149.0 }] }, // too short, must be dropped
+            { type: 'node', role: 'admin_centre' }, // not a way, must be dropped
+          ],
+        },
+      ],
+    });
+  });
+  const relationResult = await fetchCorridorInfrastructure(-35.1, 148.9, -34.8, 149.2, 'water' as any);
+  check("'water' query now also requests relation[natural=water]", lastBody.includes('relation["natural"="water"]'));
+  check('relation outer member becomes a water trail, inner member does not',
+    relationResult.trails.length === 1, `got ${relationResult.trails.length} trail(s)`);
+  check('relation trail carries the relation\'s own name and kind=water',
+    relationResult.trails[0]?.name === 'Lake Testown' && relationResult.trails[0]?.kind === 'water');
+  check('relation trail carries the outer member\'s full geometry (lon→lng mapped)',
+    relationResult.trails[0]?.coords.length === 4 && relationResult.trails[0]?.coords[0].lng === 149.0);
 
   setFetch(origFetch as any);
   if (failures > 0) {

@@ -62,7 +62,7 @@
 
 import { logger } from '../../utils/logger';
 
-const DEA_OWS_BASE = (import.meta.env.VITE_DEA_OWS_URL as string | undefined) || 'https://ows.dea.ga.gov.au/';
+export const DEA_OWS_BASE = ((import.meta as any).env?.VITE_DEA_OWS_URL as string | undefined) || 'https://ows.dea.ga.gov.au/';
 
 /** Technical extent, read from the live GetCapabilities document this
  *  session (`ga_ls_fc_3`'s EX_GeographicBoundingBox — the widest of the

@@ -9,7 +9,7 @@ import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { RouteSegment } from './routeProfile';
 import { authHeader } from './suiteAuth';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 // Temporary diagnostic flag to enable stack-trace logging when backend calls are made.
 // Set to true only when troubleshooting; keep false in normal dev runs.

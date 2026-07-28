@@ -89,7 +89,7 @@ function cubeRoundToAxial(qf: number, rf: number): AxialCoord {
   return { q: rx, r: rz };
 }
 
-const NEIGHBOR_DIRS: AxialCoord[] = [
+export const NEIGHBOR_DIRS: AxialCoord[] = [
   { q: 1, r: 0 },
   { q: 1, r: -1 },
   { q: 0, r: -1 },
@@ -105,6 +105,49 @@ export function hexKey(hex: AxialCoord): string {
 export function hexNeighbors(hex: AxialCoord): AxialCoord[] {
   return NEIGHBOR_DIRS.map(d => ({ q: hex.q + d.q, r: hex.r + d.r }));
 }
+
+/** All hexes exactly `radius` steps from `center` (radius 0 = just the
+ *  centre itself), in ring order — standard Red Blob Games hex-ring walk:
+ *  start `radius` steps out in one fixed direction, then walk `radius` steps
+ *  along each of the 6 sides in turn. */
+export function hexRing(center: AxialCoord, radius: number): AxialCoord[] {
+  if (radius <= 0) return [center];
+  const results: AxialCoord[] = [];
+  let hex: AxialCoord = { q: center.q + NEIGHBOR_DIRS[4].q * radius, r: center.r + NEIGHBOR_DIRS[4].r * radius };
+  for (let side = 0; side < 6; side++) {
+    for (let step = 0; step < radius; step++) {
+      results.push(hex);
+      hex = { q: hex.q + NEIGHBOR_DIRS[side].q, r: hex.r + NEIGHBOR_DIRS[side].r };
+    }
+  }
+  return results;
+}
+
+/** The `count` hexes nearest `center` (centre first, then ring 1, ring 2, …),
+ *  truncating the last ring at exactly `count` in a fixed deterministic
+ *  order — used to stamp a compact, roughly-circular cluster of N hexes for
+ *  one brush dab (docs/ROUTE_INTELLIGENCE.md §35 painting brush). Not a
+ *  perfect circle (a hex ring is a hexagon, not a circle) but close enough
+ *  that a user painting "100 hexes" sees a recognisably round patch, and
+ *  deterministic so the same click always produces the same stamp. */
+export function hexSpiral(center: AxialCoord, count: number): AxialCoord[] {
+  const out: AxialCoord[] = [];
+  let radius = 0;
+  while (out.length < count) {
+    for (const hex of hexRing(center, radius)) {
+      if (out.length >= count) break;
+      out.push(hex);
+    }
+    radius++;
+  }
+  return out;
+}
+
+/** Regular-hexagon area factor: area = factor × circumradius². Exported so
+ *  callers outside this module (e.g. paintedArea.ts's brush sizing) derive
+ *  hex area from the SAME formula `chooseHexSize` uses, rather than a second,
+ *  independently-transcribed copy of the constant. */
+export const HEX_AREA_FACTOR = (3 * Math.sqrt(3)) / 2;
 
 /** 6 vertices (pointy-top) of a hex in local pixel space. */
 export function hexCorners(center: LocalPoint, size: number): LocalPoint[] {
@@ -140,9 +183,6 @@ export function polylineLengthLocal(path: LocalPoint[]): number {
   for (let i = 1; i < path.length; i++) len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
   return len;
 }
-
-/** Regular-hexagon area factor: area = factor × circumradius². */
-const HEX_AREA_FACTOR = (3 * Math.sqrt(3)) / 2;
 
 /** Choose a hex circumradius (metres) that keeps a corridor's cell count near `targetCount`. */
 export function chooseHexSize(corridorLength: number, halfWidth: number, targetCount: number): number {

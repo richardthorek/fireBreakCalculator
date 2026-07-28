@@ -22,6 +22,15 @@ export interface RouteSegment {
   vegetation: VegetationType;
   /** Detection confidence for the vegetation class (0..1). */
   vegetationConfidence?: number;
+  /** True when this segment crosses a mapped waterway or water body — damp
+   *  ground doesn't carry fire, so it already IS a fire break; excluded from
+   *  every equipment's estimate (nothing to construct) rather than costed as
+   *  ordinary fuel to clear. */
+  crossesWater?: boolean;
+  /** Cross-slope (side-slope) in degrees, perpendicular to the line's own
+   *  bearing — distinct from `slopeDegrees` (measured ALONG the line). The
+   *  rollover-risk figure for machinery working a hillside contour. */
+  crossSlopeDegrees?: number;
 }
 
 interface Interval<T> {
@@ -76,10 +85,13 @@ export function buildRouteProfile(
 ): RouteSegment[] {
   if (!distance || distance <= 0) return [];
 
-  const slope = toIntervals(trackAnalysis?.segments ?? [], (s) => s.slope ?? 0);
+  const slope = toIntervals(
+    trackAnalysis?.segments ?? [],
+    (s) => ({ slope: s.slope ?? 0, crossSlope: s.crossSlopeDeg ?? 0 })
+  );
   const veg = toIntervals(
     vegetationAnalysis?.segments ?? [],
-    (s) => ({ type: s.vegetationType, confidence: s.confidence })
+    (s) => ({ type: s.vegetationType, confidence: s.confidence, isWater: !!s.isWater })
   );
 
   const predominant: VegetationType =
@@ -122,12 +134,20 @@ export function buildRouteProfile(
     if (len <= 0.001) continue;
     const mid = (a + b) / 2;
 
-    const slopeDegrees = valueAt(scaledSlope, mid, trackAnalysis?.maxSlope ?? 0);
+    const slopeAt = valueAt(scaledSlope, mid, { slope: trackAnalysis?.maxSlope ?? 0, crossSlope: 0 });
+    const slopeDegrees = slopeAt.slope;
+    const crossSlopeDegrees = slopeAt.crossSlope;
     let vegetation: VegetationType = predominant;
     let vegetationConfidence: number | undefined = vegetationAnalysis?.overallConfidence;
+    // Whether this stretch physically crosses mapped water — independent of
+    // any vegetation-CLASS override below, since overriding the fuel class a
+    // user assigns doesn't change whether the ground here is actually water.
+    const crossesWater = valueAt(
+      scaledVeg, mid, { type: predominant, confidence: 0, isWater: false }
+    ).isWater;
 
     if (!overrideVegetation) {
-      const v = valueAt(scaledVeg, mid, { type: predominant, confidence: vegetationAnalysis?.overallConfidence ?? 0 });
+      const v = valueAt(scaledVeg, mid, { type: predominant, confidence: vegetationAnalysis?.overallConfidence ?? 0, isWater: false });
       vegetation = v.type;
       vegetationConfidence = v.confidence;
 
@@ -145,7 +165,7 @@ export function buildRouteProfile(
       vegetationConfidence = 1;
     }
 
-    segments.push({ length: len, slopeDegrees, vegetation, vegetationConfidence });
+    segments.push({ length: len, slopeDegrees, vegetation, vegetationConfidence, crossesWater, crossSlopeDegrees });
   }
 
   // Degenerate case: no usable geometry — return a single representative segment.
@@ -155,6 +175,7 @@ export function buildRouteProfile(
       slopeDegrees: trackAnalysis?.maxSlope ?? 0,
       vegetation: predominant,
       vegetationConfidence: overrideVegetation ? 1 : vegetationAnalysis?.overallConfidence,
+      crossSlopeDegrees: trackAnalysis?.maxCrossSlope ?? 0,
     });
   }
 

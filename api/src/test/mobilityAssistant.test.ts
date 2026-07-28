@@ -149,12 +149,119 @@ async function main() {
 
   await test('never fabricates a corridor when none was formed', () => {
     const text = buildTemplateMobilityBriefing({ ...basePayload, topCorridors: [] });
-    assert.ok(text.includes('no corridor could be formed'));
+    // Wording changed 2026-07-27 when the "Movement:" heading was given over to
+    // the simulated ensemble and corridors got their own heading.
+    assert.ok(text.includes('Corridors: none could be formed'));
   });
 
   await test('always states this is an appreciation, not a tasking', () => {
     const text = buildTemplateMobilityBriefing(basePayload);
     assert.ok(text.toLowerCase().includes('not a tasking'));
+  });
+
+  // --- Probabilistic movement + recommended restrictions (webapp docs §32) ---
+
+  const movementPayload = {
+    ...basePayload,
+    corridorEvidence: 'simulated-movers' as const,
+    movement: {
+      moverCount: 240,
+      arrivedPercent: 87.5,
+      medianMin: 42,
+      p10Min: 31,
+      p90Min: 78,
+      crossCountryPercent: 22.4,
+      optimalMin: 27,
+      behaviourSpread: 'Mixed / unknown (default)',
+    },
+    restrictions: [
+      { rank: 1, kind: 'road-block', transitPercent: 61, marginalDelayMin: 24, cumulativeDelayMin: 24, arrivedPercentAfter: 74 },
+      { rank: 2, kind: 'ground-denial', transitPercent: 33, marginalDelayMin: 9, cumulativeDelayMin: 33, arrivedPercentAfter: 68 },
+    ],
+    restrictionEffect: {
+      baselineMedianMin: 42,
+      scenarioMedianMin: 75,
+      baselineArrivedPercent: 87.5,
+      scenarioArrivedPercent: 68,
+      baselineCrossCountryPercent: 22.4,
+      scenarioCrossCountryPercent: 54.1,
+      bypassNote: null,
+    },
+  };
+
+  await test('reports unrestricted movement as a distribution, not one ETA', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.includes('240 simulated movers'));
+    assert.ok(text.includes('median 42 min'));
+    assert.ok(text.includes('P10-P90 31-78 min'));
+  });
+
+  await test('states the optimiser figure as a comparison, not the answer', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.includes('27 min'));
+    assert.ok(text.toLowerCase().includes('not optimisers'));
+  });
+
+  await test('labels corridor counts as simulated movers, not analysed routes', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.includes('simulated movers'));
+    assert.ok(!text.includes('analysed routes'));
+  });
+
+  await test('lists recommended restrictions in priority order with marginal and cumulative effect', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.includes('1. road block'));
+    assert.ok(text.includes('2. ground denial'));
+    assert.ok(text.includes('adds 24 min'));
+    assert.ok(text.includes('cumulative 33 min'));
+  });
+
+  await test('reports the whole set effect including movement forced off the road network', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.includes('42 min → 75 min'));
+    assert.ok(text.includes('22% → 54%'));
+  });
+
+  await test('states the behaviour-model caveat whenever simulated figures appear', () => {
+    const text = buildTemplateMobilityBriefing(movementPayload);
+    assert.ok(text.toLowerCase().includes('behaviour model'));
+    assert.ok(text.toLowerCase().includes('not as a prediction'));
+  });
+
+  await test('reports the bypass finding rather than an empty restriction list', () => {
+    const text = buildTemplateMobilityBriefing({
+      ...movementPayload,
+      restrictions: [],
+      restrictionEffect: { ...movementPayload.restrictionEffect, bypassNote: 'No single site is worth blocking.' },
+    });
+    assert.ok(text.includes('Recommended restrictions: none'));
+    assert.ok(text.includes('No single site is worth blocking.'));
+  });
+
+  await test('older payloads without the movement block still narrate (backward compatible)', () => {
+    const text = buildTemplateMobilityBriefing(basePayload);
+    assert.ok(text.includes('Situation:'));
+    assert.ok(!text.includes('Unrestricted movement:'));
+    assert.ok(!text.toLowerCase().includes('behaviour model'));
+  });
+
+  await test('validator accepts a payload with the new optional blocks', () => {
+    assert.ok(isMobilityAssistantPayload(movementPayload));
+  });
+
+  await test('validator accepts a payload without them', () => {
+    assert.ok(isMobilityAssistantPayload(basePayload));
+  });
+
+  await test('validator rejects a half-formed movement block rather than partly narrating it', () => {
+    assert.ok(!isMobilityAssistantPayload({
+      ...movementPayload,
+      movement: { ...movementPayload.movement, arrivedPercent: 'lots' },
+    }));
+  });
+
+  await test('validator rejects an unknown corridor evidence value', () => {
+    assert.ok(!isMobilityAssistantPayload({ ...movementPayload, corridorEvidence: 'vibes' }));
   });
 
   console.log('System prompt audience parameter:');

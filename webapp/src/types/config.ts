@@ -121,6 +121,13 @@ export interface SlopeSegment {
   endElevation: number;
   /** Distance of this segment (meters) */
   distance: number;
+  /** Cross-slope (side-slope) in degrees — terrain gradient PERPENDICULAR to
+   *  the line's own bearing, distinct from `slope` (which is measured ALONG
+   *  the line). This is the rollover-risk figure for machinery operating
+   *  along a hillside contour; a line can have a gentle along-line slope
+   *  while sitting on a steep sidehill. Sampled from DEM points offset either
+   *  side of the line, so it is unset when that sampling didn't run. */
+  crossSlopeDeg?: number;
 }
 
 /** Track analysis data including slope information */
@@ -133,6 +140,9 @@ export interface TrackAnalysis {
   maxSlope: number;
   /** Average slope across the track */
   averageSlope: number;
+  /** Maximum cross-slope (side-slope, perpendicular to the line) encountered —
+   *  see `SlopeSegment.crossSlopeDeg`. */
+  maxCrossSlope?: number;
   /** Distribution of slope categories */
   slopeDistribution: {
     flat: number;
@@ -186,6 +196,24 @@ export interface VegetationSegment {
   /** True for NVIS classes 24/25/26/27/28/99 (aquatic, cleared, unclassified, bare, sea, unknown) —
    *  indicates modified or low-fidelity land; confidence is lower and local verification is advised. */
   isModifiedOrLowFidelity?: boolean;
+  /** True when this segment is within snap distance of a mapped waterway or
+   *  water body (real OSM geometry, not the vegetation classifier — NVIS/
+   *  Mapbox landcover both mislabel open water as low-confidence 'grassland').
+   *  Damp ground doesn't carry fire, so this length already functions as a
+   *  natural fire break — downstream analysis must exclude it from every
+   *  resource's build time/cost (there is nothing to construct) rather than
+   *  cost it as ordinary ground to be cleared. */
+  isWater?: boolean;
+  /** Years since NAFI last detected a fire at this segment (northern
+   *  Australia/rangelands coverage only — unset almost everywhere else, e.g.
+   *  most of NSW/VIC/southern SA). Informational context only: there is no
+   *  sourced fuel-age→clearing-rate curve to fold into the time/cost model
+   *  (unlike the NWCG/Report 56-grounded fuel-class factors), so this is
+   *  surfaced as a fact for the user to weigh, not baked into any number. */
+  yearsSinceFire?: number;
+  /** 'published' inside NAFI's ground-validated coverage band, 'estimated'
+   *  outside it but still within the layer's technical extent. */
+  fireHistoryConfidence?: 'published' | 'estimated';
 }
 
 /** Vegetation analysis data from Mapbox Terrain v2 */

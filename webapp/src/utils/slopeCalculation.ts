@@ -237,6 +237,65 @@ const computeProfilePoints = (
 const DEFAULT_SAMPLE_METERS = 10; // sample every 10m along the track for detailed profiles
 const DEFAULT_TERRAIN_ZOOM = 15; // higher zoom gives ~4-8m/pixel depending on latitude
 
+// --- Cross-slope (side-slope) sampling -------------------------------------
+// The along-line slope above answers "how steep is the ground in the
+// direction of travel". A line can be gentle in that direction while running
+// along a hillside contour — the SIDEHILL gradient, perpendicular to travel,
+// is the figure NWCG guidance and CALCULATION_REVIEW.md (F2) cite as the real
+// dozer-rollover constraint (~45% sidehill vs ~55% straight uphill: two
+// different limits). Nothing in this module measured that until now.
+
+/** Initial bearing from a to b, degrees (0=N, 90=E), standard great-circle formula. */
+const bearingDegrees = (a: { lat: number; lng: number }, b: { lat: number; lng: number }): number => {
+  const phi1 = toRadians(a.lat), phi2 = toRadians(b.lat);
+  const dLambda = toRadians(b.lng - a.lng);
+  const y = Math.sin(dLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+  return (Math.atan2(y, x) * (180 / Math.PI) + 360) % 360;
+};
+
+/** Destination point given a start, bearing (degrees) and distance (metres). */
+const destinationPoint = (
+  start: { lat: number; lng: number }, bearingDeg: number, distanceM: number
+): { lat: number; lng: number } => {
+  const R = 6371000;
+  const delta = distanceM / R;
+  const theta = toRadians(bearingDeg);
+  const phi1 = toRadians(start.lat), lambda1 = toRadians(start.lng);
+  const phi2 = Math.asin(Math.sin(phi1) * Math.cos(delta) + Math.cos(phi1) * Math.sin(delta) * Math.cos(theta));
+  const lambda2 = lambda1 + Math.atan2(
+    Math.sin(theta) * Math.sin(delta) * Math.cos(phi1),
+    Math.cos(delta) - Math.sin(phi1) * Math.sin(phi2)
+  );
+  return { lat: phi2 * (180 / Math.PI), lng: lambda2 * (180 / Math.PI) };
+};
+
+// Offset either side of the line for the cross-slope probe. Wide enough to
+// sit above DEM/Terrain-RGB pixel noise (~4-8 m/pixel at the zoom this module
+// uses — see F4 in CALCULATION_REVIEW.md on along-slope's own noise
+// sensitivity), narrow enough to still describe the hillside right at the
+// drawn line rather than an unrelated slope further away.
+const CROSS_SLOPE_OFFSET_M = 15;
+
+/** One perpendicular probe: a left/right point pair straddling `at`, offset
+ *  from the line's bearing through `from`→`to`. */
+interface CrossSlopeProbe { at: { lat: number; lng: number }; left: { lat: number; lng: number }; right: { lat: number; lng: number }; }
+
+const buildCrossSlopeProbes = (
+  start: { lat: number; lng: number }, end: { lat: number; lng: number }
+): CrossSlopeProbe[] => {
+  const brg = bearingDegrees(start, end);
+  const mid = { lat: (start.lat + end.lat) / 2, lng: (start.lng + end.lng) / 2 };
+  // Probe at start, mid and end of the mini-segment — the max of the three
+  // becomes the segment's representative cross-slope (same "flag the hazard,
+  // don't average it away" convention as maxSubSlope for along-line slope).
+  return [start, mid, end].map((at) => ({
+    at,
+    left: destinationPoint(at, brg - 90, CROSS_SLOPE_OFFSET_M),
+    right: destinationPoint(at, brg + 90, CROSS_SLOPE_OFFSET_M),
+  }));
+};
+
 /**
  * Generate points every 100m along a polyline (default). Interval can be overridden.
  */
@@ -315,18 +374,28 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   // Precompute each mini-segment and its detailed elevation sample points so we
   // can request all elevations in ONE backend call instead of hundreds of tile
   // fetches. Sampling is deterministic (computeProfilePoints), so keys line up.
-  const segmentPlan: { start: { lat: number; lng: number }; end: { lat: number; lng: number }; distance: number; profilePoints: { lat: number; lng: number }[] }[] = [];
+  const segmentPlan: {
+    start: { lat: number; lng: number }; end: { lat: number; lng: number }; distance: number;
+    profilePoints: { lat: number; lng: number }[]; crossSlopeProbes: CrossSlopeProbe[];
+  }[] = [];
   for (let i = 0; i < interpolatedPoints.length - 1; i++) {
     const start = normalizeCoord(interpolatedPoints[i]);
     const end = normalizeCoord(interpolatedPoints[i + 1]);
     const distance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
     if (distance <= 0.001) continue;
-    segmentPlan.push({ start, end, distance, profilePoints: computeProfilePoints(start, end, distance) });
+    segmentPlan.push({
+      start, end, distance,
+      profilePoints: computeProfilePoints(start, end, distance),
+      crossSlopeProbes: buildCrossSlopeProbes(start, end),
+    });
   }
 
-  // One batch request to the authoritative DEM (if configured/available).
+  // One batch request to the authoritative DEM (if configured/available) —
+  // the cross-slope left/right probe points ride along in the SAME request,
+  // not a second network round trip.
   let demCache: Map<string, number> | null = null;
-  const allPoints = segmentPlan.flatMap(s => s.profilePoints);
+  const crossSlopePoints = segmentPlan.flatMap(s => s.crossSlopeProbes.flatMap(p => [p.left, p.right]));
+  const allPoints = [...segmentPlan.flatMap(s => s.profilePoints), ...crossSlopePoints];
   if (allPoints.length > 0) {
     const profile = await fetchElevationProfile(allPoints);
     if (profile) {
@@ -343,12 +412,13 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   let totalDistance = 0;
   let slopeDistanceSum = 0; // for weighted average
   let maxSlope = 0;
+  let maxCrossSlope = 0;
   // Fine-grained elevation profile (chainage → elevation/local slope) kept for
   // the elevation-profile chart; sampled from the same ~10 m points as slopes.
   const elevationProfile: { distanceM: number; elevation: number; slope: number }[] = [];
 
   for (const plan of segmentPlan) {
-    const { start, end, distance, profilePoints } = plan;
+    const { start, end, distance, profilePoints, crossSlopeProbes } = plan;
 
     // Resolve elevations: authoritative DEM batch value if present, else Terrain-RGB.
     const elevs = await Promise.all(
@@ -377,6 +447,21 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
       });
     }
 
+    // Cross-slope: resolve the left/right probe pairs (same DEM/Terrain-RGB
+    // resolution path as the along-line points — already batched above) and
+    // take the steepest of the three probes as this mini-segment's
+    // representative side-slope, same "flag the hazard" convention as
+    // maxSubSlope above.
+    let segCrossSlope = 0;
+    for (const probe of crossSlopeProbes) {
+      const [elevLeft, elevRight] = await Promise.all([
+        resolveElevation(probe.left.lat, probe.left.lng, demCache),
+        resolveElevation(probe.right.lat, probe.right.lng, demCache),
+      ]);
+      const cs = calculateSlope(elevLeft, elevRight, CROSS_SLOPE_OFFSET_M * 2);
+      if (cs > segCrossSlope) segCrossSlope = cs;
+    }
+
     // Use maxSubSlope to detect steep gullies; use weighted average as segment slope
     const slope = totalSubDist > 0 ? (weightedSlopeSum / totalSubDist) : 0;
     const category = categorizeSlope(maxSubSlope); // categorize by max local slope to flag hazards
@@ -392,12 +477,14 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
       category,
       startElevation: elevs[0],
       endElevation: elevs[elevs.length - 1],
-      distance
+      distance,
+      crossSlopeDeg: segCrossSlope,
     });
 
     totalDistance += distance;
     slopeDistanceSum += slope * distance;
     if (slope > maxSlope) maxSlope = slope;
+    if (segCrossSlope > maxCrossSlope) maxCrossSlope = segCrossSlope;
   }
 
   // Merge consecutive segments that share the same category to avoid many small pieces
@@ -418,6 +505,10 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
       const combinedDistance = last.distance + seg.distance;
       last.slope = (last.slope * last.distance + seg.slope * seg.distance) / combinedDistance;
       last.distance = combinedDistance;
+      // Cross-slope is a hazard figure like maxSubSlope above — take the max
+      // across the merged run, not a distance-weighted average, so a short
+      // sidehill stretch inside a longer easy run isn't diluted away.
+      if ((seg.crossSlopeDeg ?? 0) > (last.crossSlopeDeg ?? 0)) last.crossSlopeDeg = seg.crossSlopeDeg;
     }
   }
 
@@ -441,6 +532,7 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
     totalDistance,
     segments: mergedSegments,
     maxSlope,
+    maxCrossSlope,
     averageSlope: totalDistance > 0 ? slopeDistanceSum / totalDistance : 0,
     slopeDistribution,
     elevationProfile: profileOut,

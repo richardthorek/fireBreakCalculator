@@ -12,9 +12,11 @@
     "@mapbox/mapbox-gl-draw": "^1.5.1",
     "@mapbox/shp-write": "^0.4.3",
     "@simplewebauthn/browser": "^13.3.0",
+    "@turf/area": "^7.3.5",
     "@turf/boolean-point-in-polygon": "^7.3.5",
     "@turf/difference": "^7.3.5",
     "@turf/helpers": "^7.3.5",
+    "@turf/intersect": "^7.3.5",
     "@turf/union": "^7.3.5",
     "fflate": "^0.8.3",
     "lucide-react": "^1.27.0",
@@ -30,7 +32,7 @@
     "@types/node": "^25.2.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.2.0",
+    "@vitejs/plugin-react": "^6.0.4",
     "typescript": "^5.9.3",
     "vite": "^8.1.5"
   }

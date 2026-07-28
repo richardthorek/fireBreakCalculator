@@ -35,12 +35,22 @@
 
 import { LatLng } from './chainage';
 import { logger } from './logger';
+import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
+import { polygon as turfPolygon } from '@turf/helpers';
 
 export interface InfrastructureTrail {
   name?: string;
   /** OSM highway/waterway value, e.g. "track", "path", "service". */
   kind: string;
   coords: LatLng[];
+  /** OSM `surface` tag, e.g. "gravel", "unpaved" — road-class speed model
+   *  (terrain/roadSpeedModel.ts, docs §35). Undefined when untagged. */
+  surface?: string;
+  /** OSM `tracktype` tag, e.g. "grade3" — only meaningful on `highway=track`
+   *  ways. Undefined when untagged. */
+  tracktype?: string;
+  /** OSM `smoothness` tag, e.g. "bad", "impassable". Undefined when untagged. */
+  smoothness?: string;
 }
 
 export interface InfrastructureData {
@@ -59,7 +69,7 @@ export interface InfrastructureData {
  * behaviour is exactly the network path (used by tests and non-map callers).
  */
 export type LocalTrailProvider = (
-  south: number, west: number, north: number, east: number
+  south: number, west: number, north: number, east: number, kind: InfrastructureKind
 ) => InfrastructureTrail[] | null;
 
 let localTrailProvider: LocalTrailProvider | null = null;
@@ -73,8 +83,8 @@ const env = (import.meta as any).env ?? {};
  *  server-side cache. Primary path; the direct endpoints below are the
  *  fallback when this isn't deployed. */
 const apiBase = (env.VITE_API_BASE_URL as string | undefined) || '/api';
-const infraProxyUrl = (s: number, w: number, n: number, e: number) =>
-  `${apiBase}/infrastructure?s=${s}&w=${w}&n=${n}&e=${e}`;
+const infraProxyUrl = (s: number, w: number, n: number, e: number, kind: InfrastructureKind = 'highway') =>
+  `${apiBase}/infrastructure?s=${s}&w=${w}&n=${n}&e=${e}` + (kind === 'highway' ? '' : `&kind=${kind}`);
 /** Set false after the proxy 404s once (endpoint not deployed) so we don't
  *  re-probe it on every leg of a run — go straight to the direct endpoints. */
 let proxyAvailable = true;
@@ -99,6 +109,26 @@ let preferredEndpointIndex = 0;
 /** Highway classes that represent reusable broken ground for a fire break. */
 const REUSABLE_HIGHWAYS = 'track|path|service|unclassified|road|tertiary|secondary|residential';
 
+/** Highway classes for Terrain Mobility / counter-mobility (docs §35 —
+ *  deliberately a SEPARATE, wider set from REUSABLE_HIGHWAYS rather than
+ *  widening it: fire-break reuse and movement/denial planning genuinely want
+ *  different answers to "which roads matter here". motorway/trunk/primary
+ *  are excluded from the fire-break set (not realistically "reusable broken
+ *  ground" to hand-clear alongside) but are exactly the highest-value roads
+ *  to identify for an approaching force — the fastest way in is the one most
+ *  worth being able to deny. MUST match the API's MOBILITY_HIGHWAYS. */
+const MOBILITY_HIGHWAYS =
+  'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
+  'tertiary|tertiary_link|unclassified|residential|living_street|service|track|path|road';
+
+/** Waterway/water-body classes for the Terrain Mobility hydrology gate (docs
+ *  §34) — MUST match the API's WATER_WATERWAYS/WATER_NATURAL so the proxy and
+ *  the direct-Overpass fallback return the same set. */
+const WATER_WATERWAYS = 'river|canal|stream';
+const WATER_NATURAL = 'water';
+
+export type InfrastructureKind = 'highway' | 'highway-mobility' | 'water';
+
 // Cache per rounded bbox so repeated optimizations of the same corridor are free.
 const bboxCache = new Map<string, InfrastructureData>();
 
@@ -108,8 +138,61 @@ const bboxCache = new Map<string, InfrastructureData>();
 // the same Overpass query twice, wasting the strict per-IP slot quota.
 const bboxInFlight = new Map<string, Promise<InfrastructureData>>();
 
-const bboxKey = (s: number, w: number, n: number, e: number) =>
-  [s, w, n, e].map(v => v.toFixed(3)).join(',');
+const bboxKey = (s: number, w: number, n: number, e: number, kind: InfrastructureKind) =>
+  [kind, s, w, n, e].map(v => typeof v === 'number' ? v.toFixed(3) : v).join(',');
+
+function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e: number): string {
+  if (kind === 'water') {
+    return (
+      `[out:json][timeout:12];` +
+      `(way["waterway"~"^(${WATER_WATERWAYS})$"](${s},${w},${n},${e});` +
+      `way["natural"="${WATER_NATURAL}"](${s},${w},${n},${e});` +
+      // Multipolygon water bodies (docs §35, "OSM water relations" —
+      // real, live-confirmed gap: Lake Tuggeranong and Gungahlin Pond, both
+      // in the same Canberra region this project's own test scenarios live
+      // in, are mapped as `relation` not `way`). MUST match the API's
+      // identical addition — see `extractWaterRelationTrails`'s own doc
+      // comment for how the response is parsed.
+      `relation["natural"="${WATER_NATURAL}"](${s},${w},${n},${e}););` +
+      `out geom;`
+    );
+  }
+  const highways = kind === 'highway-mobility' ? MOBILITY_HIGHWAYS : REUSABLE_HIGHWAYS;
+  return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
+}
+
+/**
+ * Multipolygon water bodies come back as `relation` elements, not `way` —
+ * confirmed live via Overpass (docs §35 addendum, 2026-07-28): Overpass's
+ * `out geom` inlines each member's own node geometry directly on the
+ * relation element (`members[].geometry`), no separate recursion query
+ * needed. Each `outer`-role member way becomes its own standalone water-body
+ * `InfrastructureTrail` — deliberately NOT reassembled into one true ring
+ * with `inner` members subtracted as holes (a real, stated scope cut: a
+ * multi-part outer ring split across several way members is not
+ * re-stitched, and island/inner rings are not excluded). Both directions of
+ * that cut are safe for this gate's purpose: at worst an island cell is
+ * conservatively treated as water (a false NO-GO, not a false crossing —
+ * the safe direction to be wrong in for a hard-block hydrology gate), and a
+ * multi-member outer ring still gates correctly member-by-member even if
+ * not literally one closed polygon.
+ */
+function extractWaterRelationTrails(elements: any[]): InfrastructureTrail[] {
+  const out: InfrastructureTrail[] = [];
+  for (const el of elements) {
+    if (el.type !== 'relation' || el.tags?.natural !== WATER_NATURAL) continue;
+    for (const member of el.members ?? []) {
+      if (member.type !== 'way' || member.role !== 'outer') continue;
+      if (!Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      out.push({
+        name: el.tags?.name,
+        kind: 'water',
+        coords: member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+      });
+    }
+  }
+  return out;
+}
 
 /** One attempt against a single Overpass endpoint. Throws on any failure
  *  (non-2xx status, network error, timeout) — never a silent empty result,
@@ -147,33 +230,51 @@ export async function fetchCorridorInfrastructure(
   west: number,
   north: number,
   east: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  kind: InfrastructureKind = 'highway'
 ): Promise<InfrastructureData> {
   // Zero-network first: the Mapbox road tiles already on the map (same OSM
   // lineage as Overpass, CORS-clean, available offline once cached). Only a
   // NON-EMPTY result is trusted — an empty set can't tell "no roads" from
   // "tiles not loaded", so that case falls through to the network below. Not
   // cached here: it's synchronous and free to recompute, and caching a partial
-  // (few-tiles-loaded) answer would lock it in for the session.
-  if (localTrailProvider) {
+  // (few-tiles-loaded) answer would lock it in for the session. Mapbox's own
+  // vector tiles don't carry waterway geometry at all, so this never applies
+  // to `kind === 'water'`.
+  //
+  // 2026-07-28: widened to ALSO cover `highway-mobility`, not just the plain
+  // `highway` kind — live-tested finding: Overpass being unreachable for an
+  // area left `onTrail` false for every cell, so a real, clearly-visible
+  // highway along a Lake George shoreline was classified NO-GO end to end
+  // (the mapped-road exemption on the hydrology/vegetation gates never
+  // fired, because there was no road data to exempt against). The Mapbox
+  // tiles were ALREADY loaded and showing that exact road the whole time.
+  // Real, honest cost: (mapboxTrails.ts's `MOBILITY_CLASSES`/
+  // `MAPBOX_CLASS_TO_OSM_HIGHWAY`) no `surface`/`tracktype`/`smoothness` —
+  // Mapbox's schema doesn't carry them — so a way sourced this way gets a
+  // highway-class-only speed ceiling, never the full OSM-tag refinement.
+  // Strictly better than the alternative this fixes (zero road data at all).
+  if ((kind === 'highway' || kind === 'highway-mobility') && localTrailProvider) {
     try {
-      const local = localTrailProvider(south, west, north, east);
+      const local = localTrailProvider(south, west, north, east, kind);
       if (local && local.length > 0) {
         logger.debug(`Corridor trails from Mapbox tiles: ${local.length} ways`);
         return { trails: local, available: true };
       }
     } catch (e) {
-      logger.warn('Local (Mapbox) trail provider failed, falling back to network', e);
+      // Routine, expected fallback (tiles not loaded yet at this zoom/area) —
+      // the network path below covers it, so this isn't warning-worthy.
+      logger.debug('Local (Mapbox) trail provider failed, falling back to network', e);
     }
   }
 
-  const key = bboxKey(south, west, north, east);
+  const key = bboxKey(south, west, north, east, kind);
   const cached = bboxCache.get(key);
   if (cached) return cached;
   const inFlight = bboxInFlight.get(key);
   if (inFlight) return inFlight;
 
-  const promise = fetchCorridorUncached(south, west, north, east, key, signal);
+  const promise = fetchCorridorUncached(south, west, north, east, key, kind, signal);
   bboxInFlight.set(key, promise);
   try {
     return await promise;
@@ -182,12 +283,42 @@ export async function fetchCorridorInfrastructure(
   }
 }
 
+/** Waterway/water-body geometry for the Terrain Mobility hydrology gate (docs
+ *  §34) — same proxy, cache and Overpass-failover machinery as
+ *  `fetchCorridorInfrastructure`, just a different query. */
+export function fetchCorridorWaterways(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  signal?: AbortSignal
+): Promise<InfrastructureData> {
+  return fetchCorridorInfrastructure(south, west, north, east, signal, 'water');
+}
+
+/** Road/track network for Terrain Mobility movement & counter-mobility (docs
+ *  §35) — the wider `MOBILITY_HIGHWAYS` set (includes motorway/trunk/primary,
+ *  deliberately excluded from the fire-break `REUSABLE_HIGHWAYS` set), each
+ *  way carrying `surface`/`tracktype`/`smoothness` for the road-speed model.
+ *  Same proxy, cache and Overpass-failover machinery as
+ *  `fetchCorridorInfrastructure`, just a different query. */
+export function fetchCorridorMobilityRoads(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  signal?: AbortSignal
+): Promise<InfrastructureData> {
+  return fetchCorridorInfrastructure(south, west, north, east, signal, 'highway-mobility');
+}
+
 async function fetchCorridorUncached(
   south: number,
   west: number,
   north: number,
   east: number,
   key: string,
+  kind: InfrastructureKind,
   signal?: AbortSignal
 ): Promise<InfrastructureData> {
   // Primary: our own backend proxy (same-origin → no CORS, shared cache). Only
@@ -197,7 +328,7 @@ async function fetchCorridorUncached(
   // next time (its cache/quota-pooling is still the better primary).
   if (proxyAvailable) {
     try {
-      const resp = await fetch(infraProxyUrl(south, west, north, east), { signal });
+      const resp = await fetch(infraProxyUrl(south, west, north, east, kind), { signal });
       if (resp.status === 404) {
         proxyAvailable = false; // endpoint not present in this deployment
       } else if (resp.ok) {
@@ -207,17 +338,20 @@ async function fetchCorridorUncached(
           available: true,
         };
         bboxCache.set(key, data);
-        logger.debug(`Overpass corridor via API proxy: ${data.trails.length} reusable ways`);
+        logger.debug(`Overpass corridor via API proxy (${kind}): ${data.trails.length} ways`);
         return data;
       }
       // Other non-OK (e.g. 502 upstream, 429 rate limit) → try direct below.
     } catch (e) {
       // Network error reaching our own origin — unusual; fall through.
-      logger.warn('Infrastructure API proxy unreachable, trying Overpass directly', e);
+      // Same-origin proxy failing is an anticipated (if less common) branch of
+      // the same graceful-degradation chain — the direct-Overpass fallback
+      // below covers it, so this is informational, not a warning.
+      logger.info('Infrastructure API proxy unreachable, trying Overpass directly', e);
     }
   }
 
-  const query = `[out:json][timeout:12];way["highway"~"^(${REUSABLE_HIGHWAYS})$"](${south},${west},${north},${east});out geom;`;
+  const query = buildQuery(kind, south, west, north, east);
 
   const order = [
     ...OVERPASS_ENDPOINTS.slice(preferredEndpointIndex),
@@ -233,24 +367,39 @@ async function fetchCorridorUncached(
         .filter((el: any) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2)
         .map((el: any) => ({
           name: el.tags?.name,
-          kind: el.tags?.highway ?? 'track',
+          kind: kind === 'water' ? (el.tags?.waterway ?? el.tags?.natural ?? 'water') : (el.tags?.highway ?? 'track'),
           coords: el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+          // Already present in every `out geom` response — previously read
+          // only as far as `kind` above and discarded. Road-speed model
+          // (docs §35) needs these for the mobility highway set; harmless
+          // (and simplest) to extract unconditionally rather than branch on
+          // kind here. Undefined when the way carries no such tag.
+          surface: el.tags?.surface,
+          tracktype: el.tags?.tracktype,
+          smoothness: el.tags?.smoothness,
         }));
+      if (kind === 'water') trails.push(...extractWaterRelationTrails(json?.elements ?? []));
 
       const data: InfrastructureData = { trails, available: true };
       bboxCache.set(key, data);
       preferredEndpointIndex = OVERPASS_ENDPOINTS.indexOf(url);
-      logger.debug(`Overpass corridor query via ${new URL(url).host}: ${trails.length} reusable ways`);
+      logger.debug(`Overpass corridor query via ${new URL(url).host} (${kind}): ${trails.length} ways`);
       return data;
     } catch (e) {
       lastError = e;
-      logger.warn(`Overpass endpoint failed (${new URL(url).host}), trying next`, e);
+      // One mirror failing and moving to the next is the designed retry
+      // behaviour (public Overpass instances are rate-limited/flaky by
+      // nature, see this module's own doc comment) — routine, not a warning.
+      logger.debug(`Overpass endpoint failed (${new URL(url).host}), trying next`, e);
     }
   }
 
   // Do NOT cache failures — a later attempt (different endpoint order, or
-  // the primary's quota having refreshed) may succeed.
-  logger.warn('All Overpass endpoints failed; optimizing on terrain/fuel only', lastError);
+  // the primary's quota having refreshed) may succeed. Every endpoint failing
+  // is a real, terminal outcome for this call (the analysis proceeds with
+  // `infrastructureAvailable: false`, honestly flagged to the user) — not an
+  // application error, so informational rather than a warning.
+  logger.info(`All Overpass endpoints failed for ${kind}; continuing without it`, lastError);
   return { trails: [], available: false };
 }
 
@@ -290,6 +439,43 @@ export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrai
     }
   }
   return best;
+}
+
+/**
+ * Distance (metres) from a point to the nearest water feature, treating
+ * `natural=water` ways as filled bodies rather than just their boundary ring.
+ *
+ * `distanceToNearestTrail` alone is exactly right for a LINEAR watercourse
+ * (river/stream/canal — the geometry Overpass returns IS the thing) but wrong
+ * for a lake: a closed ring's edge-distance says a point deep in the middle of
+ * a large lake is FAR from "the trail", which is backwards for a filled body —
+ * a mover standing in the middle of a lake is not near water, it IS water.
+ * Point-in-polygon (via the same @turf/boolean-point-in-polygon this project
+ * already depends on for painted areas) catches that case; edge-distance alone
+ * still covers the (far more common) case of standing near a lake's shore.
+ */
+export function distanceToNearestWater(point: LatLng, waterFeatures: InfrastructureTrail[], earlyExitThreshold = 0): number {
+  const edgeDistance = distanceToNearestTrail(point, waterFeatures, earlyExitThreshold);
+  if (edgeDistance <= earlyExitThreshold) return edgeDistance;
+
+  for (const feature of waterFeatures) {
+    if (feature.kind !== 'water') continue; // natural=water bodies only — waterway=* lines have no interior
+    const c = feature.coords;
+    if (c.length < 4) continue; // not enough vertices to be a meaningful closed ring
+    const first = c[0], last = c[c.length - 1];
+    const closed = Math.abs(first.lat - last.lat) < 1e-7 && Math.abs(first.lng - last.lng) < 1e-7;
+    if (!closed) continue; // an unclosed way tagged natural=water is a data-quality edge case, not modelled here
+    try {
+      const inside = booleanPointInPolygon(
+        [point.lng, point.lat],
+        turfPolygon([c.map(p => [p.lng, p.lat])])
+      );
+      if (inside) return 0;
+    } catch {
+      // Malformed ring (self-intersecting, etc.) — fall back to the edge distance already computed.
+    }
+  }
+  return edgeDistance;
 }
 
 /** Clear the bbox cache (tests). */

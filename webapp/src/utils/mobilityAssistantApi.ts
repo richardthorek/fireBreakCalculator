@@ -57,7 +57,51 @@ export interface MobilityAssistantPayload {
   barrierSegmentCount: number | null;
   barrierCutValue: number | null;
   placements: MobilityPlacementSummary[];
+  /** Mirrors the API-side optional block (api/src/types/mobilityAssistant.ts).
+   *  Optional there and here for the same reason: a missing figure is reported
+   *  as missing, never defaulted into a number. */
+  corridorEvidence?: 'optimiser-routes' | 'simulated-movers';
+  movement?: MobilityMovementSummary;
+  restrictions?: MobilityRestrictionSummary[];
+  restrictionEffect?: MobilityRestrictionEffectSummary;
 }
+
+export interface MobilityMovementSummary {
+  moverCount: number;
+  arrivedPercent: number;
+  medianMin: number | null;
+  p10Min: number | null;
+  p90Min: number | null;
+  crossCountryPercent: number;
+  optimalMin: number | null;
+  behaviourSpread: string;
+}
+
+export interface MobilityRestrictionSummary {
+  rank: number;
+  kind: string;
+  transitPercent: number;
+  marginalDelayMin: number;
+  cumulativeDelayMin: number;
+  arrivedPercentAfter: number;
+}
+
+export interface MobilityRestrictionEffectSummary {
+  baselineMedianMin: number | null;
+  scenarioMedianMin: number | null;
+  baselineArrivedPercent: number;
+  scenarioArrivedPercent: number;
+  baselineCrossCountryPercent: number;
+  scenarioCrossCountryPercent: number;
+  bypassNote: string | null;
+}
+
+const min1 = (seconds: number | null | undefined): number | null =>
+  seconds === null || seconds === undefined || !isFinite(seconds)
+    ? null
+    : Math.round((seconds / 60) * 10) / 10;
+
+const pct1 = (fraction: number): number => Math.round(fraction * 1000) / 10;
 
 /** Build the compact payload the mobility assistant endpoint validates
  *  responses against, straight from the same results the panels render —
@@ -68,7 +112,43 @@ export function buildMobilityAssistantPayload(
   ledger: DelayLedgerEntry[] | null
 ): MobilityAssistantPayload {
   const cf = result.corridorField;
+  const ens = result.ensemble;
+  const plan = result.restrictionPlan;
   return {
+    corridorEvidence: cf?.evidence,
+    movement: ens
+      ? {
+        moverCount: ens.moverCount,
+        arrivedPercent: pct1(ens.arrivedCount / Math.max(1, ens.moverCount)),
+        medianMin: min1(ens.arrivalP50Seconds),
+        p10Min: min1(ens.arrivalP10Seconds),
+        p90Min: min1(ens.arrivalP90Seconds),
+        crossCountryPercent: pct1(ens.crossCountryFraction),
+        optimalMin: min1(ens.optimalSeconds),
+        behaviourSpread: ens.spread.label,
+      }
+      : undefined,
+    restrictions: plan
+      ? plan.restrictions.map(r => ({
+        rank: r.rank,
+        kind: r.kind,
+        transitPercent: pct1(r.baselineTransitFraction),
+        marginalDelayMin: min1(r.marginalMedianDelaySeconds) ?? 0,
+        cumulativeDelayMin: min1(r.cumulativeMedianDelaySeconds) ?? 0,
+        arrivedPercentAfter: pct1(r.arrivedFractionAfter),
+      }))
+      : undefined,
+    restrictionEffect: plan
+      ? {
+        baselineMedianMin: min1(plan.baselineMedianSeconds),
+        scenarioMedianMin: min1(plan.scenarioMedianSeconds),
+        baselineArrivedPercent: pct1(plan.baselineArrivedFraction),
+        scenarioArrivedPercent: pct1(plan.scenarioArrivedFraction),
+        baselineCrossCountryPercent: pct1(plan.baselineCrossCountryFraction),
+        scenarioCrossCountryPercent: pct1(plan.scenarioCrossCountryFraction),
+        bypassNote: plan.bypassNote,
+      }
+      : undefined,
     moverProfileLabel: result.profile.label,
     moverProfileConfidence: result.profile.confidence,
     nightMode,

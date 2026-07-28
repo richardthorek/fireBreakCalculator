@@ -12,7 +12,8 @@ import { CreateVegetationMappingInput, VegetationFormationMappingApi } from '../
 
 // Use relative /api by default so Vite dev server proxy (configured in vite.config.ts)
 // can forward requests to the Functions host and avoid CORS during development.
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+// import.meta.env is undefined outside Vite — see logger.ts's own guard.
+const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -98,7 +99,8 @@ const mockVegetationMappings: VegetationFormationMappingApi[] = [
 ];
 
 // Development mode fallback helper
-const isDevelopment = import.meta.env.DEV;
+// import.meta.env is undefined outside Vite — see logger.ts's own guard.
+const isDevelopment = (import.meta as any).env?.DEV;
 async function withFallback<T>(apiCall: () => Promise<T>, fallback: T): Promise<T> {
   if (!isDevelopment) {
     return apiCall();

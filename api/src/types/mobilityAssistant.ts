@@ -53,6 +53,51 @@ export interface MobilityAssistantPayload {
   barrierCutValue: number | null;
   /** Proposed counter-measures already scored against the delay ledger. */
   placements: MobilityPlacementSummary[];
+
+  // --- Probabilistic movement (webapp docs §32) ------------------------------
+  // All optional so an older client's payload still validates: these fields
+  // arrived after the endpoint shipped, and the contract's own rule is that a
+  // missing figure is reported as missing, never defaulted into a number.
+  /** What the corridor counts above are counts OF. 'simulated-movers' means a
+   *  behaviour model with ASSUMED parameters produced them — the narration
+   *  must say so rather than presenting them as measured or optimal. */
+  corridorEvidence?: 'optimiser-routes' | 'simulated-movers';
+  movement?: MobilityMovementSummary;
+  restrictions?: MobilityRestrictionSummary[];
+  restrictionEffect?: MobilityRestrictionEffectSummary;
+}
+
+/** The unrestricted movement ensemble, as a distribution rather than one ETA. */
+export interface MobilityMovementSummary {
+  moverCount: number;
+  arrivedPercent: number;
+  medianMin: number | null;
+  p10Min: number | null;
+  p90Min: number | null;
+  /** Share of simulated movement off the road/trail network, 0-100. */
+  crossCountryPercent: number;
+  /** The optimiser's single best route, for comparison. */
+  optimalMin: number | null;
+  behaviourSpread: string;
+}
+
+export interface MobilityRestrictionSummary {
+  rank: number;
+  kind: string;
+  transitPercent: number;
+  marginalDelayMin: number;
+  cumulativeDelayMin: number;
+  arrivedPercentAfter: number;
+}
+
+export interface MobilityRestrictionEffectSummary {
+  baselineMedianMin: number | null;
+  scenarioMedianMin: number | null;
+  baselineArrivedPercent: number;
+  scenarioArrivedPercent: number;
+  baselineCrossCountryPercent: number;
+  scenarioCrossCountryPercent: number;
+  bypassNote: string | null;
 }
 
 function isFiniteNumber(v: any): boolean {
@@ -111,6 +156,55 @@ export function isMobilityAssistantPayload(v: any): v is MobilityAssistantPayloa
     (v.barrierSegmentCount === null || isFiniteNumber(v.barrierSegmentCount)) &&
     (v.barrierCutValue === null || isFiniteNumber(v.barrierCutValue)) &&
     Array.isArray(v.placements) &&
-    v.placements.every(isPlacementSummary)
+    v.placements.every(isPlacementSummary) &&
+    // Optional blocks: absent is valid; present must be well-formed. Anything
+    // half-formed is rejected rather than partially narrated.
+    (v.corridorEvidence === undefined || v.corridorEvidence === 'optimiser-routes' || v.corridorEvidence === 'simulated-movers') &&
+    (v.movement === undefined || isMovementSummary(v.movement)) &&
+    (v.restrictions === undefined || (Array.isArray(v.restrictions) && v.restrictions.every(isRestrictionSummary))) &&
+    (v.restrictionEffect === undefined || isRestrictionEffectSummary(v.restrictionEffect))
+  );
+}
+
+function isNullableFiniteNumber(v: any): boolean {
+  return v === null || isFiniteNumber(v);
+}
+
+function isMovementSummary(v: any): boolean {
+  return !!(
+    v &&
+    isFiniteNumber(v.moverCount) &&
+    isFiniteNumber(v.arrivedPercent) &&
+    isNullableFiniteNumber(v.medianMin) &&
+    isNullableFiniteNumber(v.p10Min) &&
+    isNullableFiniteNumber(v.p90Min) &&
+    isFiniteNumber(v.crossCountryPercent) &&
+    isNullableFiniteNumber(v.optimalMin) &&
+    typeof v.behaviourSpread === 'string'
+  );
+}
+
+function isRestrictionSummary(v: any): boolean {
+  return !!(
+    v &&
+    isFiniteNumber(v.rank) &&
+    typeof v.kind === 'string' &&
+    isFiniteNumber(v.transitPercent) &&
+    isFiniteNumber(v.marginalDelayMin) &&
+    isFiniteNumber(v.cumulativeDelayMin) &&
+    isFiniteNumber(v.arrivedPercentAfter)
+  );
+}
+
+function isRestrictionEffectSummary(v: any): boolean {
+  return !!(
+    v &&
+    isNullableFiniteNumber(v.baselineMedianMin) &&
+    isNullableFiniteNumber(v.scenarioMedianMin) &&
+    isFiniteNumber(v.baselineArrivedPercent) &&
+    isFiniteNumber(v.scenarioArrivedPercent) &&
+    isFiniteNumber(v.baselineCrossCountryPercent) &&
+    isFiniteNumber(v.scenarioCrossCountryPercent) &&
+    (v.bypassNote === null || typeof v.bypassNote === 'string')
   );
 }
