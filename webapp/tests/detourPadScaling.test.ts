@@ -45,8 +45,9 @@ const INITIAL_PAD_FACTOR = 0.3;
 test('a foot profile gets a real, but modest, detour floor', () => {
   const foot = getMoverProfile('foot-individual-unladen')!;
   const padM = minDetourPadM(foot);
-  // 5.0 km/h for 1 hour = 5000 m.
-  assert.ok(padM > 4000 && padM < 6000, `expected foot's detour pad near 5000m, got ${padM.toFixed(0)}m`);
+  // 5.0 km/h for 15 minutes = 1250 m — matches the owner's own "1-2km"
+  // framing for the reported hill-crossing scenario (docs §39 revision).
+  assert.ok(padM > 1000 && padM < 1500, `expected foot's detour pad near 1250m, got ${padM.toFixed(0)}m`);
 });
 
 test('a vehicle profile gets proportionately MORE detour room than foot, not the same flat number', () => {

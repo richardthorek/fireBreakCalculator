@@ -273,21 +273,44 @@ export function edgeMobilityCost(
   const slopeDeg = signedSlopeDegrees(from.elevation, to.elevation, distM);
   const grade = gradeFraction(from.elevation, to.elevation, distM);
   const absSlope = Math.abs(slopeDeg);
+  // Declared once, reused below by both the hard slope gates and the speed
+  // model's own onTrail bonus (previously declared separately, closer to its
+  // speed-model use — now shared since the slope-gate exemption needs the
+  // identical condition).
+  const onNetwork = from.onTrail && to.onTrail;
 
-  // --- Hard slope gates (climb + cross-slope) -------------------------------
-  if (absSlope > profile.maxClimbDeg) {
-    return {
-      timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-      trafficability: 'NO-GO', blockedReason: `climb ${absSlope.toFixed(1)}° exceeds ${profile.label} limit (${profile.maxClimbDeg}°)`,
-      estimated: estimatedBase, dataTier: 0,
-    };
-  }
-  if (crossSlopeDeg !== null && Math.abs(crossSlopeDeg) > profile.maxSideSlopeDeg) {
-    return {
-      timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-      trafficability: 'NO-GO', blockedReason: `side-slope ${Math.abs(crossSlopeDeg).toFixed(1)}° exceeds ${profile.label} limit (${profile.maxSideSlopeDeg}°)`,
-      estimated: estimatedBase, dataTier: 0,
-    };
+  // --- Hard slope gates (climb + cross-slope). Skipped when BOTH ends are on
+  // the mapped trail/road network — same "ground here is already
+  // broken/engineered" exemption the vegetation and hydrology gates below
+  // already get, extended here (2026-07-28, live-tested): a real road cut
+  // through a ridge or along a lake shelf is SPECIFICALLY engineered (cut and
+  // fill) to manage its own grade, so the raw DEM-derived slope sampled
+  // across a whole hex cell — which necessarily blends the road bed with
+  // whatever terrain surrounds it — is a WORSE estimate of the road's actual
+  // driveable grade than simply trusting that a signed, mapped road exists
+  // and is used by vehicles. Without this, two real cases were confirmed
+  // live: a highway along a Lake George shoreline shelf, and a paved road
+  // descending a steep ridge, both painted NO-GO end to end despite being
+  // the exact "narrow, location-specific passable gap" this app exists to
+  // find. The road-CLASS speed model (roadSpeedModel.ts, applied elsewhere
+  // via the onTrail bonus) is what actually governs speed on these edges —
+  // this gate was never adding real information for an OSM-mapped road, only
+  // false negatives from hex-resolution slope averaging. --------------------
+  if (!onNetwork) {
+    if (absSlope > profile.maxClimbDeg) {
+      return {
+        timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
+        trafficability: 'NO-GO', blockedReason: `climb ${absSlope.toFixed(1)}° exceeds ${profile.label} limit (${profile.maxClimbDeg}°)`,
+        estimated: estimatedBase, dataTier: 0,
+      };
+    }
+    if (crossSlopeDeg !== null && Math.abs(crossSlopeDeg) > profile.maxSideSlopeDeg) {
+      return {
+        timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
+        trafficability: 'NO-GO', blockedReason: `side-slope ${Math.abs(crossSlopeDeg).toFixed(1)}° exceeds ${profile.label} limit (${profile.maxSideSlopeDeg}°)`,
+        estimated: estimatedBase, dataTier: 0,
+      };
+    }
   }
 
   // --- Hydrology: fording (docs §34). Skipped when both ends are on the
@@ -348,7 +371,6 @@ export function edgeMobilityCost(
   }
 
   // --- Speed ----------------------------------------------------------------
-  const onNetwork = from.onTrail && to.onTrail;
   let speedKmh: number;
   switch (profile.speedModel) {
     case 'irmischer-clarke-offpath':

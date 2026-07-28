@@ -284,15 +284,26 @@ const MIN_PAD_M = 200;
  * distance, because a vehicle can cover far more ground in the same time as a
  * foot mover and should get proportionately more search room for the
  * identical trip (owner: "anything that would be a path within 1 or 2 hours
- * — so 'foot' would be quite constrained compared to vehicles"). Deliberately
- * literal and uncapped (owner decision, over a smaller time budget or a fixed
- * distance cap): a fast profile's resulting wider box costs hex RESOLUTION
- * via `computeCellBudget`'s existing distance-scaling, not runaway cell
- * count, so this doesn't reintroduce the large-AOI performance problem — it
- * only matters at all when the direct span is short enough that the
- * proportional term would otherwise fall short of it.
+ * — so 'foot' would be quite constrained compared to vehicles").
+ *
+ * BOUNDED, not literal (revised same day, live-tested): an initial "literal
+ * 1-2 hours, no cap" version inflated a vehicle profile's box to ~120 km wide
+ * for the exact 1.25 km ridge-crossing case this fix targets — no cell
+ * budget can keep hex resolution fine over that much area, and the owner's
+ * own follow-up report ("the whole ridge is red instead... these narrow
+ * location-specific pathways are the entire point of this app") makes clear
+ * that resolution, not detour coverage at any distance, is the actual
+ * priority. 15 minutes keeps the floor generous relative to the REPORTED
+ * scenario (a foot profile at 5 km/h covers ~1.25 km in 15 min — almost
+ * exactly the owner's own "1-2 km" framing) while bounding how far the box
+ * can grow for a fast profile. A genuinely far-away ROAD-based detour for
+ * vehicle profiles is still covered independently by the box-free road-graph
+ * search (`roadRouteSearch.ts`, Slice A) — full fidelity, no hex coarsening,
+ * because it searches the real road network directly rather than a
+ * tessellated grid. This floor is specifically for the cross-country/
+ * terrain-driven case that search doesn't cover.
  */
-const DETOUR_TIME_BUDGET_SECONDS = 60 * 60; // 1 hour
+const DETOUR_TIME_BUDGET_SECONDS = 15 * 60; // 15 minutes
 
 /** Extra room (metres, each side of the direct span) a `profile` should get
  *  purely from its own sourced road speed — see `DETOUR_TIME_BUDGET_SECONDS`'s
@@ -527,16 +538,29 @@ export async function buildMobilityGrid(
   if (!padded) return null;
   const { boundsSw, boundsNe } = padded;
 
-  // Cell budget scales with the REAL origin<->objective distance and the
+  // Cell budget scales with the REAL SIZE OF THE SEARCHED BOX and the
   // caller's chosen fidelity (docs §35) — NOT a fixed constant regardless of
   // AOI size, which either wasted resolution on small areas or silently
   // coarsened large ones into unusably big hexes with no user control over
   // the trade-off.
-  const originCentroidForBudget: LatLng = { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 };
-  const objectiveCentroidForBudget: LatLng = { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 };
-  const spanMForBudget = calculateDistance(
-    originCentroidForBudget.lat, originCentroidForBudget.lng, objectiveCentroidForBudget.lat, objectiveCentroidForBudget.lng
-  );
+  //
+  // FIELD-CONFIRMED REGRESSION (2026-07-28, live test after the profile-
+  // scaled detour-pad fix, §39): this used to be the raw origin<->objective
+  // distance, ignoring padding entirely. A vehicle profile's detour floor can
+  // make the ACTUAL box several times wider than that raw distance — the
+  // same fixed cell budget then had to stretch over a much bigger area,
+  // ballooning hex size everywhere, including right along the direct route.
+  // Reported live: "the whole 'ridge' is red instead" of showing the real,
+  // narrow paved-road gap through it — exactly this effect, the hex grown
+  // too coarse to resolve a location-specific gap. Fixed by deriving the
+  // budget from the FINAL padded box's own dimensions (works identically
+  // whether the box came from `boundsPadFactor`, the detour floor, or a
+  // frontier-growth retry's `explicitBounds` — all three already land in
+  // `boundsSw`/`boundsNe` by this point) rather than re-deriving a stale,
+  // pre-padding distance.
+  const boxWidthM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsSw.lat, boundsNe.lng);
+  const boxHeightM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsSw.lng);
+  const spanMForBudget = Math.max(boxWidthM, boxHeightM);
   const { targetCellCount, maxHexCells } = computeCellBudget(spanMForBudget, fidelity);
 
   const center: LatLng = { lat: (boundsSw.lat + boundsNe.lat) / 2, lng: (boundsSw.lng + boundsNe.lng) / 2 };

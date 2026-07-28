@@ -4625,5 +4625,62 @@ still green; `tsc`/build clean.
 
 ---
 
+## 41. Page-hang regression: uncapped detour floor + missing onTrail slope exemption (2026-07-28)
+
+Owner, live-testing after §39/§40 shipped: the page hung around 50% progress
+and eventually forced a browser tab-kill dialog. Traced to the ALREADY-
+PUSHED §39 detour floor (commit e9ec36b), which at the time used a literal,
+uncapped 1-hour time budget: for a fast vehicle profile on a short trip this
+inflates the search box to roughly 120 km wide. That box feeds `roadWays`
+into `findVehicleRoadRoute` (Slice A), which builds and searches a road
+graph SYNCHRONOUSLY on the main thread — correctly documented as "cheap
+enough... a handful of OSM ways, not a grid" for a small bbox, but at 120 km
+wide that's a whole regional road network, plausibly thousands of ways,
+freezing the UI thread exactly as reported.
+
+**Two fixes, both already scoped/approved this same session before the hang
+was reported:**
+
+1. **§39's time budget capped at 15 minutes** (was 1 hour, uncapped).
+   Revised after the owner's own follow-up report that the uncapped version
+   also destroyed fine local resolution ("the whole ridge is red instead...
+   these narrow location-specific pathways are the entire point of this
+   app") — 15 minutes keeps the floor generous relative to the ORIGINAL
+   reported scenario (foot at 5 km/h covers ~1.25 km in 15 min, matching the
+   owner's own "1-2 km" framing) while bounding box growth for fast
+   profiles. This alone shrinks the road-graph size driving the hang by
+   roughly the square of the distance reduction (~16x area for a ~4x
+   distance cut).
+2. **Cell budget now derives from the actual padded box, not the raw
+   origin↔objective distance** (`buildMobilityGrid`, mobilityGrid.ts) — a
+   second, independent bug the detour floor exposed: the SAME fixed cell
+   budget was being stretched over a much bigger box, ballooning hex size
+   everywhere (859m for the reported ridge scenario, even after the 15-min
+   cap reduced it from ~121km/859m to ~31km/310m — see tests below for the
+   before/after).
+3. **Hard climb/cross-slope gates now exempt onTrail cells** (both
+   `edgeMobilityCost` in mobilityCost.ts and `classifyCellTerrain` in
+   accumulatedCost.ts) — the actual root fix for "the whole ridge is red
+   instead of the legitimate gap" and, on inspection, the IDENTICAL root
+   cause as §40's Lake George highway case. Vegetation and hydrology already
+   exempt a mapped road ("already broken/bridged"); the hard slope gates
+   never did, so a hex blending an engineered road bed with the steep
+   ground it cuts through still hard-blocked regardless of hex size. A road
+   is specifically engineered (cut/fill) to manage its own grade — trusting
+   the mapped road is a better estimate of driveability than a hex-averaged
+   raw DEM slope. Exemption requires BOTH edge endpoints onTrail (matching
+   the existing vegetation/hydrology exemption's own rule); off-trail
+   terrain is completely unaffected — confirmed by explicit CONTROL tests.
+
+**Tests:** `slopeGateOnTrailExemption.test.ts` (6 checks — the reported
+climb/cross-slope scenarios exempted onTrail, both with off-trail and
+single-ended-trail controls proving the gate still applies everywhere it
+should); `cellBudgetVsDetourPad.test.ts` and `detourPadScaling.test.ts`
+updated for the 15-minute constant. Full existing road/infrastructure/
+padded-bounds/cell-budget suite (18 files) still green; `tsc`/build clean
+in both packages.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
