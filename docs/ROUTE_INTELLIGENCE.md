@@ -4212,6 +4212,53 @@ carries a non-null `representativeRoute`; it agrees with the corridor's own
 unrelated live-data `nvis-fidelity.test.ts` fails); `tsc --noEmit` and
 `npm run build` clean.
 
+### Corridor band outline smoothing (§28, roadmap follow-up)
+
+The route-rendering fix above left one thing explicitly deferred: the
+corridor BAND's own outline (`mobility-corridor-edge`, `MapboxMapView.tsx`)
+is a real `@turf/union` of the corridor's own hex cells — a genuine
+dissolved shape, not a drawn approximation — but the hex tessellation still
+leaves it visibly blocky/crenellated at close zoom, since a union of hexagons
+still traces hexagon edges. Next item on the roadmap by the master plan's
+own smallest-effort-first ordering; picked up as the direct follow-on.
+
+**Fix:** `polygonSmoothing.ts` (new) — Chaikin corner-cutting, applied to
+every ring of the dissolved geometry (`chaikinSmoothRing` for one closed
+ring, `smoothPolygonGeometry` walking every ring of a `Polygon` or
+`MultiPolygon` — `@turf/union` can legitimately produce either depending on
+how a corridor's hexes happen to dissolve together). Chaikin is the
+standard choice for this: each edge is replaced by two points at 1/4 and
+3/4 along it, converging toward a quadratic B-spline as passes increase.
+Deliberately a DIFFERENT algorithm from `pathRefinement.ts`'s open-path
+corner smoothing (`smoothFreeVertices`, the moving-average pass added for
+corridor ROUTE lines above) rather than reused: a closed ring has no
+endpoints to preserve and no "locked/snapped-to-trail" concept — every
+vertex participates equally and cyclically, which is exactly what Chaikin
+gives and a moving-average anchored at fixed endpoints does not. `App.tsx`'s
+route smoothing and this outline smoothing both change ONLY presentation —
+the corridor's real extent is still exactly what `buildCorridorField`
+computed; 2 passes (matching the route lines' own default) is enough to
+read as a band rather than a staircase without eroding that real extent.
+
+**A genuine measurement pitfall, caught before it shipped a bad test:** the
+obvious "does total turning angle go down" check (the same measure
+`pathSmoothing.test.ts` uses for open routes) does NOT work for a closed
+polygon — summed unsigned turning across a rectilinear staircase ring is
+near-invariant under Chaikin (each 90° corner splits into two ~45°(-ish)
+turns rather than the total shrinking), so the sum barely moves. The
+MAXIMUM single-vertex turn is what actually captures "still has sharp
+staircase corners vs. reads as a smooth curve", and is what the tests check
+instead (measured directly: a fixture's 90° corners drop to 63°/34°/18° over
+3 passes).
+
+Tests: `polygonSmoothing.test.ts` (9 checks — max-turn reduction is
+monotonic across 1/2/3 passes, the ring stays closed, area stays sane
+(corner-cutting can only shrink it slightly, never balloon or collapse it),
+0 iterations and a too-small ring are both safe no-ops, and both `Polygon`
+holes and `MultiPolygon` are walked correctly). Full regression green (only
+the pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
+`tsc --noEmit` and `npm run build` clean.
+
 ---
 
 ## Update policy

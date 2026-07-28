@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — corridor route rendering consolidated to one refined, road-snapped line per corridor (was up to 24 raw hex-centre hairlines); see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — corridor band outlines now Chaikin-smoothed (rounds off the hex tessellation's own blocky edge); see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -65,6 +65,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 27 | Progress-bar dead zones + real results reach the map early | The Dijkstra search reported nothing while it ran (the single largest silent stretch); a retry's sampling progress replayed from zero (visible rewind); the ensemble worker call's internal 'restrictions' progress could already exceed a later hard-coded checkpoint (another visible rewind). Fixed: real incremental search progress (`runAccumulatedCostSearch`'s new `onProgress`), a monotonic guard around the whole run's `onProgress` (a value at/below the high-water mark is dropped, never forwarded — the general fix, not per-bug patches), and a new `onPartialResult` callback that surfaces the real reachability field + cheapest route as soon as the search settles, well before the ensemble/corridors/chokepoints/min-cut that follow | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
 | 28 | Road graph had zero water awareness — vehicle route crossed Lake George | Live-tested: a vehicle route ran straight across the real lake. Ruled out the OSM-relation hypothesis by direct testing (Lake George is a real, well-formed `way`, not a `relation`) and confirmed the hex-grid's own fording gate already works correctly against the real polygon. Root cause: `roadGraph.ts`/`roadRouting.ts` (the box-free vehicle road route, §35 Slice A) had NO water logic at all. Fixed: `buildRoadGraph` flags a CONTIGUOUS run of a way's edges through a mapped water body's interior longer than a plausible bridge span (250 m) as `crossesStandingWater`; `edgeTravelTime` blocks it for any profile whose fording capability is under the same assumed-depth (2.5 m) the hex grid already uses. A short bridge-like dip stays passable | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
 | 29 | Corridor route rendering was analysis noise, not presentation — consolidated to 1 refined route per corridor | Owner: *"the individual white lines of the considered paths don't work as a visualisation... they end up being 'triangles' between the grid centres and they don't follow the road geometry... consolidate to show substantive differences... reduce the analysis noise and show insights rather than raw thinking."* Was drawing up to 24 raw, un-refined hex-centre route polylines regardless of corridor count. Fixed: `Corridor.representativeRoute` (new, `corridorField.ts`) — the single fastest analysed route actually using that corridor; `App.tsx` draws exactly one per corridor (2-5, matching the target), refined through the fire-break optimizer's own `pathRefinement.ts` (snap onto a nearby real road, unchanged). Owner follow-up — *"some corridors may be overland"* — meant snapping alone wasn't enough: added `smoothFreeVertices`/`cornerSmoothingIterations` (opt-in, fire-break optimizer's default behaviour unchanged) so a stretch with no nearby road is corner-smoothed instead of staying a raw zig-zag | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
+| 30 | Smooth the corridor band's own outline | Direct roadmap follow-on to step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — genuine, not approximated — but still traced the hex tessellation's own blocky edge. `polygonSmoothing.ts` (new) applies Chaikin corner-cutting to every ring of the dissolved geometry (`Polygon` or `MultiPolygon` — union can produce either), a deliberately different algorithm from the route lines' moving-average (a closed ring has no endpoints/locked vertices to preserve; Chaikin treats every vertex cyclically). Caught a real test-methodology trap before shipping: summed turning angle is near-invariant under Chaikin for a closed ring (unlike an open path) — the maximum single-corner turn is the measure that actually captures "no more staircase corners" | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 
 ### Next up
 
@@ -72,7 +73,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
-| Smooth the corridor BAND's own outline (not just its route line) | Lower-priority remainder of step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — a genuine dissolved shape, not approximated — but still carries the hex tessellation's own blocky edge at close zoom. Not the complaint that was actually reported (the ROUTE lines were); tracked separately rather than assumed done | S | step 29 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
@@ -108,6 +108,30 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Corridor band outline smoothing (step 30)**: direct
+  roadmap follow-on to step 29 (smallest-effort-first ordering). The band's
+  own outline (`mobility-corridor-edge`) is a real `@turf/union` of the
+  corridor's hex cells — genuine, not approximated — but still traced the
+  hex tessellation's own blocky edge at close zoom. `polygonSmoothing.ts`
+  (new) applies Chaikin corner-cutting to every ring of the dissolved
+  geometry, correctly handling both `Polygon` (incl. holes) and
+  `MultiPolygon` shapes a union can produce. Deliberately a different
+  algorithm from step 29's route-line smoothing (moving-average, anchored at
+  fixed endpoints) — a closed ring has neither endpoints nor a
+  locked/snapped-to-trail concept, so every vertex is treated cyclically.
+
+  Caught a real test-methodology trap before it shipped a false-negative
+  test: summed turning angle (the measure that worked for open routes in
+  step 29) is near-invariant under Chaikin on a closed rectilinear ring —
+  each 90° corner splits into two ~45°(-ish) turns rather than the total
+  shrinking. Switched to the MAXIMUM single-corner turn, which does capture
+  it correctly (measured: 90° → 63° → 34° → 18° over 3 passes on a test
+  fixture).
+
+  9 new tests (`polygonSmoothing.test.ts`); full regression green (only the
+  pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
+  tsc/build clean.
 
 - **2026-07-28 — Corridor route rendering consolidated to one refined line
   per corridor (step 29)**: owner: *"the individual white lines of the

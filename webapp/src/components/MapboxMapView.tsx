@@ -15,6 +15,7 @@ import { applyLiveFeedLayers, LiveFeedMapData } from '../utils/liveFeedLayers';
 import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
+import { smoothPolygonGeometry } from '../utils/polygonSmoothing';
 import {
   metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
   BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
@@ -2255,10 +2256,18 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.warn('Corridor outline union failed; falling back to cell fill only', e);
       }
       if (!dissolved) return null;
+      // Chaikin corner-cutting over the real dissolved shape (docs §28,
+      // "Smooth the corridor band's own outline") — presentation only, the
+      // EXTENT is still exactly what buildCorridorField computed; this just
+      // rounds off the hex tessellation's own blocky edge at close zoom.
+      // 2 passes matches the same default used for corridor route lines
+      // (`App.tsx`'s `cornerSmoothingIterations`), enough to read as a band
+      // rather than a staircase without eroding the shape's real extent.
+      const geometry = smoothPolygonGeometry(dissolved.geometry, 2);
       return {
         type: 'Feature' as const,
         properties: { corridorId: c.id, rank: c.rank, color: rankColor(c.rank) },
-        geometry: dissolved.geometry,
+        geometry,
       };
     }).filter((f): f is NonNullable<typeof f> => f !== null);
 
