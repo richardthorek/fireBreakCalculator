@@ -67,6 +67,12 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 29 | Corridor route rendering was analysis noise, not presentation — consolidated to 1 refined route per corridor | Owner: *"the individual white lines of the considered paths don't work as a visualisation... they end up being 'triangles' between the grid centres and they don't follow the road geometry... consolidate to show substantive differences... reduce the analysis noise and show insights rather than raw thinking."* Was drawing up to 24 raw, un-refined hex-centre route polylines regardless of corridor count. Fixed: `Corridor.representativeRoute` (new, `corridorField.ts`) — the single fastest analysed route actually using that corridor; `App.tsx` draws exactly one per corridor (2-5, matching the target), refined through the fire-break optimizer's own `pathRefinement.ts` (snap onto a nearby real road, unchanged). Owner follow-up — *"some corridors may be overland"* — meant snapping alone wasn't enough: added `smoothFreeVertices`/`cornerSmoothingIterations` (opt-in, fire-break optimizer's default behaviour unchanged) so a stretch with no nearby road is corner-smoothed instead of staying a raw zig-zag | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 30 | Smooth the corridor band's own outline | Direct roadmap follow-on to step 29: `mobility-corridor-edge` is a real `@turf/union` of the corridor's hex cells — genuine, not approximated — but still traced the hex tessellation's own blocky edge. `polygonSmoothing.ts` (new) applies Chaikin corner-cutting to every ring of the dissolved geometry (`Polygon` or `MultiPolygon` — union can produce either), a deliberately different algorithm from the route lines' moving-average (a closed ring has no endpoints/locked vertices to preserve; Chaikin treats every vertex cyclically). Caught a real test-methodology trap before shipping: summed turning angle is near-invariant under Chaikin for a closed ring (unlike an open path) — the maximum single-corner turn is the measure that actually captures "no more staircase corners" | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
 | 31 | OSM water relations — picked ahead of queue order for 1.0 demo risk | Owner: "one more push then we're done for a 1.0 demo... pick the item most critical." Assessed demo risk rather than following size-first order: confirmed LIVE that Lake Tuggeranong and Gungahlin Pond — both in the same Canberra region this project's own test scenarios already live in — are OSM `relation`, not `way`, so either would have repeated the exact "water doesn't block movement" bug class just fixed twice already, live, in front of the demoed geography. Fixed in both `webapp` and `api` (kept in lock-step, matching their existing "MUST match" query-constant discipline): the water query now also requests `relation["natural"="water"]`; `out geom` inlines each member's geometry directly (confirmed live, no recursion needed); each `outer`-role member becomes its own water-body trail. Stated scope cut: multi-part outer rings aren't re-stitched and `inner`/island members aren't subtracted as holes — both safe directions to be wrong in for a hard-block gate (worst case: an island cell over-blocks, never under-blocks) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
+| 32 | Cloud-offload scoping + mobility run telemetry | Owner asked to scope cloud infrastructure for large-area Terrain Mobility runs (Static Web Apps + Functions vs. Container Apps vs. an on-demand Container Apps Job for big jobs only) and to start collecting real per-run scale/performance data now, since device variance (owner's own two machines) makes a guessed cell-count threshold unreliable. Design: a three-tier model (client Worker default → same-algorithm Function-hosted tier → on-demand Container Apps Job for genuine outliers), explicitly NOT building tiers 2–3 until telemetry shows real demand. `POST /api/mobility-telemetry` (new, rate-limited, Table Storage-backed) + `webapp/src/terrain/mobilityTelemetry.ts` now record cell counts, GO/SLOW-GO/NO-GO + vegetation-difficulty histograms, distance, per-stage elapsed time, and coarse device hints for every completed run — no location, no identity, fire-and-forget. Also confirmed the road-routing piece from the same conversation was NOT missing (Slice A's `roadRouteSearch.ts` already gives a fast, box-free vehicle route independent of the slow hex-grid search) and flagged the one real gap: it currently waits on the same grid-sampling pass instead of being surfaced first | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| 33 | Small-AOI detour padding, profile-scaled (revised — see step 35) | Owner-reported defect: a short (~1-2km) hill crossing never considered an equally short detour 1-2km north/south, because the search box is sized proportionally to the direct span — short trips got proportionately short padding regardless of whether a much better route sat just outside it. `minDetourPadM(profile)` (mobilityGrid.ts) adds a floor derived from the mover profile's own sourced road speed over a time budget, so a vehicle gets proportionately more search room than foot for the identical trip. Originally shipped uncapped (1 hour); revised to a 15-minute cap same day — see step 35 for why | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39/§41 |
+| 34 | Mapbox-tile road fallback widened to Terrain Mobility | Owner, live-testing near Lake George: a real, signed highway along the shoreline was painted NO-GO end to end, and asked whether the road network visible on the map tiles is real queryable data or just an image. Answer: real vector geometry, already loaded zero-network/CORS-free/offline-capable (`mapboxTrails.ts`) — but that fast-path was restricted to the fire-break `'highway'` kind and never applied to Terrain Mobility's `'highway-mobility'` kind. Root cause confirmed by this same session's own console evidence: Overpass unreachable for that area left `onTrail` false everywhere, and the hard slope gates in `mobilityCost.ts` (unlike the vegetation/hydrology gates) carry no mapped-road exemption at all, so a narrow lake-edge shelf read NO-GO from raw DEM alone. Fixed: `extractCorridorTrails` now takes a `kind`, widening to `MOBILITY_CLASSES` (motorway/trunk/primary included) with a Mapbox-class → OSM-highway translation table; honest stated cost is a highway-class-only speed ceiling (Mapbox carries no surface/tracktype/smoothness) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
+| 35 | Page-hang regression fixed: detour floor capped, cell budget fixed, onTrail slope exemption added | Owner reported the page hanging around 50% progress until the browser offered to kill the tab. Traced to step 33's uncapped 1-hour detour floor: for a fast vehicle profile on a short trip it inflated the search box to ~120km wide, which fed the box-free road-graph route search (`findVehicleRoadRoute`, runs synchronously on the main thread, only ever "cheap" for a small bbox) — at 120km wide that's a whole regional road network, freezing the UI. Three fixes: (1) detour floor capped to a 15-minute budget (was 1hr uncapped) — still profile-scaled, but bounded; (2) cell budget (`buildMobilityGrid`) now derives from the ACTUAL padded box, not the raw origin↔objective distance — a second bug the detour floor exposed, where a fixed budget stretched over a much bigger box ballooned hex size everywhere; (3) the hard climb/cross-slope gates now exempt onTrail cells (both `edgeMobilityCost` and `classifyCellTerrain`) — the actual root cause of "the whole ridge is red instead of the legitimate gap", and on inspection the IDENTICAL root cause as step 34's Lake George case: vegetation/hydrology already exempt a mapped road, the slope gates never did | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
+| 36 | Road-graph route fused into chokepoint/corridor analysis | Owner proposed a hex grid aligned to roads at fine width, cross-country filling in around it — challenged instead: a hex grid, even fine, still quantizes the road (the identical failure step 35 just fixed), while the box-free road-graph search already routes over the road's EXACT geometry with zero quantization. Owner's real instinct ("roads are known good, treat them specially") is already Slice A's own philosophy; the actual gap was that the road route sat only as an ADDITIVE display, never counted by chokepoint/corridor analysis. `roadRouteToDissimilarRoute` (new) converts the road route into the same shape the hex-optimiser's/ensemble's own routes use, resampled to even spacing and snapped onto the hex grid, then folded into both corridor-building calls in `mobilityAppreciation.ts` — so chokepoints and corridor bands now count the real road route as a genuine avenue. Stated, not fused: the ensemble's own per-step movement (still hex-quantized with a road-affinity bias) and min-cut (still hex-adjacency-only) — both real, larger follow-up work | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
+| 37 | Corridor legibility pass — route line becomes the star, real label/shape colour bug fixed | Owner challenged Claude to identify corridors from a live screenshot with no prior context; only one hazy shape was findable for two labelled corridors. Root causes in the actual paint properties: the representative route line rendered at 0.8px/near-white/40% opacity (effectively invisible); the corridor outline was blurred; a REAL bug — the map label text colour (`styles-tactical.css`) was still on the pre-fix red/amber rank palette, identical to the trafficability heatmap's own NO-GO/SLOW-GO colours, never updated when the corridor SHAPE colours moved to blue/violet/cyan for exactly that collision. Fixed (3 of 4 offered options, owner declined the 4th as more structural than needed): route line now casing+core (dark 6px under rank-coloured 3px, full opacity, same pattern as restriction lines); outline de-blurred and widened; map label gained a numbered rank-coloured badge and its text colour now matches the shape palette exactly. `corridorRoutesForMap` (App.tsx) had to start carrying each route's rank/id so the map could colour-match it to its owning corridor. Not done: splitting corridors and trafficability onto independent opacity sliders | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
 
 ### Next up
 
@@ -76,7 +82,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 |------|-------|------|------------|--------|
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| Fuse road-graph routes into movement simulation / chokepoints / min-cut | Slice A.9's road-network route is currently ADDITIVE — a separate, correctly-labelled result alongside the hex-grid search — not fused into the ensemble, corridor field, chokepoints or min-cut barrier, which still only ever see hex-grid routes | M | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| Fuse road-graph routes into movement simulation / min-cut (partially done — see step 36) | Step 36 fused the road route into chokepoint ranking and corridor-band clustering (via a `DissimilarRoute` conversion). Still open: the movement ensemble's own per-step decision logic (`movementSimulation.ts`) still walks hex-to-hex with a road-affinity bias rather than the road graph's exact edges, and min-cut (`minCutBarrier.ts`) is still hex-adjacency-only — a real mixed hex+road-graph adjacency across these core search primitives, not a route-list injection | M | step 36 (✅, partial) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
 | Full OSM water-relation topology (multi-part outer rings, inner/island holes) | Step 31 shipped the common case (single outer ring per relation); proper multipolygon reassembly (stitching split outer rings, subtracting inner rings as real holes) is a stated, deliberate scope cut, not forgotten | S | step 31 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
@@ -85,6 +91,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
 | Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| Road-route decoupling — surface ahead of the hex-grid search | `findVehicleRoadRoute` (Slice A) is already fast but currently runs after `buildMobilityGrid`'s full retry loop settles, because it reads the same `highway-mobility` fetch. Fetch the road network and run the road route in parallel with elevation/vegetation sampling, surfaced via a new `onRoadRoute` callback — the genuine "instant on-road result while the area analysis runs" the original conversation asked for | S | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
 | Restriction siting at a surveyed point | Currently hex-cell resolution, not a specific point — an architecture change to the placement model | L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
@@ -109,6 +118,197 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Corridor legibility pass: route line becomes the star, a
+  real label/shape colour bug fixed (step 37)**: owner, reviewing a
+  screenshot of a live run with 2 corridors present, challenged Claude to
+  "pull out the corridors and different options in the screenshot without
+  excellent prior knowledge." Honest attempt found only one hazy shape for
+  two labelled corridors, and one label floating over ground with no
+  visible feature nearby at all.
+
+  Root causes traced in the actual paint properties, not just the image:
+  (1) the corridor's own representative route — the single least-ambiguous
+  shape a corridor has, a real drawn line — rendered at 0.8px width,
+  near-white, 40% opacity: effectively invisible at any normal zoom.
+  (2) The outline had `line-blur: 0.4` on a 2px line — a smudge, not a
+  boundary. (3) **A real, live bug**: the corridor map label's text colour
+  (`styles-tactical.css`) was still on the OLD red/amber rank palette from
+  before the corridor SHAPE colours were moved to blue/violet/cyan
+  specifically to stop colliding with the trafficability heatmap's own
+  NO-GO/SLOW-GO colours — the label was simply never updated when that fix
+  shipped, so rank 1's text was the exact same red as a NO-GO hex while its
+  shape on the map was blue. (4) Trafficability and every corridor layer
+  share one global opacity slider, so raising either raises both.
+
+  Offered 4 concrete fixes; owner selected 3 (declined splitting the shared
+  opacity slider as more structural than needed right now). Shipped: route
+  line now casing+core (dark 6px under a rank-coloured 3px core, full
+  opacity — same pattern already used for recommended-restriction lines);
+  outline de-blurred and widened 2px→3px; map label gained a numbered,
+  rank-coloured badge and its text colour now matches the shape palette
+  exactly, closing the collision bug. `corridorRoutesForMap` (App.tsx) had
+  to start carrying each route's own `rank`/`id` — previously stripped to
+  bare `{ path }`, so the map had no way to colour-match a route line to its
+  owning corridor, and a naive index correlation would have silently
+  desynced the moment any corridor lacked a representative route (the array
+  is filtered before mapping).
+
+  Presentation-only: `tsc`/build clean, untouched corridor-logic tests
+  (clustering, path/polygon smoothing) still pass, but actual rendered
+  legibility needs the live preview to confirm — stated, not claimed
+  verified in this sandbox, same limitation every prior visual-only change
+  in this doc has carried. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43.
+
+- **2026-07-28 — Road-graph route fused into chokepoint/corridor analysis
+  (step 36)**: owner proposed a hex grid aligned to the road network at a
+  fine width (~50m), coarser elsewhere for cross-country, so passable roads
+  would show up cleanly and cross-country corridors could fill in around
+  them — "roads are known good... why not just complete the grid over the
+  top of them", asked to be challenged if wrong.
+
+  Challenged and redirected: a hex grid, even a fine one aligned to roads,
+  is still a quantized approximation subject to the exact slope-averaging
+  failure step 35 just fixed. The box-free road-graph search (Slice A,
+  already shipped) already solves this better — it routes over the road's
+  EXACT OSM/Mapbox vertex geometry, zero quantization. The owner's real
+  instinct ("treat roads specially, let cross-country fill in around them")
+  is already that module's own philosophy (docs §35: "roads are a network;
+  hexes are a tessellation"), just implemented as a graph, not a grid.
+
+  The genuine gap: that road-graph route was ADDITIVE — a separate display
+  alongside the hex search — never counted by chokepoint ranking or
+  corridor-band clustering, which only ever saw hex-grid routes. This was
+  already the tracked "fuse road-graph routes" roadmap item. Fixed (the
+  chokepoint/corridor half of it): `roadRouteToDissimilarRoute` (new,
+  `roadRouteSearch.ts`) converts the road route into the same shape the
+  hex-optimiser's k routes and the ensemble's tracks already use — resampled
+  to 64 evenly-spaced points first (real road waypoint spacing is very
+  uneven, and the corridor code samples by index fraction assuming roughly
+  even spacing), then snapped onto the caller's own hex grid. Folded into
+  both corridor-building calls in `mobilityAppreciation.ts`, so chokepoints
+  and corridor bands now count the real road route as a genuine avenue.
+
+  Stated, not attempted this pass: the movement ensemble's own per-step
+  logic still walks hex-to-hex with a road-affinity bias, not the road
+  graph's literal edges; min-cut is still hex-adjacency-only. Both need a
+  genuinely mixed hex+road-graph adjacency across several core search
+  primitives — real, larger follow-up work, not silently claimed as done.
+  6 new tests (`roadRouteFusion.test.ts`); full existing road/corridor/
+  chokepoint suite still green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42.
+
+- **2026-07-28 — Mapbox-tile road fallback widened to Terrain Mobility
+  (step 34)**: live-testing near Lake George, owner reported a real, signed
+  highway along the shoreline painted NO-GO end to end by the terrain
+  overlay, then asked the sharper diagnostic question directly: "we can
+  literally see the road network on the underlying map tiles? is that data
+  present or is it just an image?" Answer: real, queryable vector geometry —
+  `mapboxTrails.ts` already adds the Mapbox Streets v8 source as an
+  invisible, always-queryable layer (zero extra network, no CORS, works
+  offline once cached) and has been the first-tried source for the
+  fire-break optimizer for a while. The gap was narrower than "no data at
+  all": this shortcut was restricted to the fire-break `'highway'` kind and
+  never applied to Terrain Mobility's `'highway-mobility'` kind, for two
+  real reasons — the class filter excluded motorway/trunk, and the tileset
+  carries no surface/tracktype/smoothness tags.
+
+  Root-caused with this same session's own evidence: earlier console output
+  (this exact testing session) showed the backend Overpass proxy 502-ing for
+  `kind=highway-mobility`, then every direct Overpass mirror failing
+  CORS/timeout. With zero road data, `onTrail` is false for every cell, so
+  the mapped-road exemption the hydrology/vegetation gates already give a
+  road never fires — and the hard slope/cross-slope gates in
+  `mobilityCost.ts` have NO such exemption at all, applying regardless of
+  `onTrail`. A narrow, engineered lake-edge shelf between a steep hillside
+  and the water reads as NO-GO from raw DEM alone, exactly matching the
+  screenshot.
+
+  Fixed: `mapboxTrails.ts` gained `MOBILITY_CLASSES` (motorway/trunk/primary
+  included) alongside the existing `REUSABLE_CLASSES`, queried from the SAME
+  underlying layer and filtered per call rather than maintaining two Mapbox
+  GL layers; a `MAPBOX_CLASS_TO_OSM_HIGHWAY` table translates Mapbox's
+  bucketed classes (`street` covers OSM residential/unclassified/
+  living_street alike) to a real OSM tag so the speed-by-class table gets an
+  honest entry instead of its generic untagged-track fallback.
+  `infrastructureService.ts`'s `LocalTrailProvider` gained a `kind`
+  parameter; the Mapbox-first shortcut now covers `'highway-mobility'` too
+  (never `'water'` — no waterway geometry in Mapbox's schema). Stated cost:
+  a way sourced this way gets a highway-class-only speed ceiling, no
+  surface/tracktype/smoothness refinement — strictly better than the
+  failure mode it fixes. 6 new tests (`mapboxTrailsMobility.test.ts`) against
+  a stubbed Mapbox GL map; full existing road/infrastructure suite still
+  green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40.
+
+- **2026-07-28 — Small-AOI detour padding, profile-scaled (step 33)**: owner
+  reported that a short (~1-2km) hill crossing never considered an equally
+  short, genuinely viable detour 1-2km north or south — the search box
+  (`computePaddedBounds`, §35) is sized proportionally to the direct
+  origin↔objective span, so a short trip gets proportionately short padding
+  regardless of whether a much better route sits just outside it. Confirmed
+  with the owner before implementing: a literal "1-2 hours of travel"
+  padding floor, uncapped, since the existing distance-scaled cell budget
+  (step 25) already coarsens hex resolution rather than exploding cell count
+  as the resulting box grows — this doesn't reintroduce the large-AOI
+  performance problem from step 32.
+
+  `minDetourPadM(profile)` (mobilityGrid.ts) derives extra room, metres each
+  side, from the mover profile's own sourced `roadSpeedKmh` over a 1-hour
+  budget — a vehicle at 60 km/h gets ~60km of floor room, foot at 5 km/h
+  gets ~5km, matching the owner's own framing ("foot would be quite
+  constrained compared to vehicles"). Threaded through `computePaddedBounds`
+  as an additional `Math.max()` term (default 0, fully backward compatible)
+  and wired in from `mobilityAppreciation.ts`'s first search attempt where
+  the profile is already resolved; only binds when the direct span is short
+  enough that the existing proportional term would otherwise fall short —
+  long-range runs are unaffected. 6 new tests (`detourPadScaling.test.ts`);
+  full existing padded-bounds/frontier-growth/cell-budget/road-routing suite
+  still green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39.
+
+- **2026-07-28 — Cloud-offload design scoping + mobility run telemetry
+  (step 32)**: continuing a conversation about why Terrain Mobility runs feel
+  slow on some devices and fast on others (owner: "my snapdragon ultra does
+  quite well on large areas, my hp elitebook grinds... hard to give a
+  definitive answer myself"). Owner asked for three things: whether the
+  offline-first premise still buys much given elevation/veg already need
+  network; what infrastructure would support cloud offload for the slow
+  cross-country search (Static Web Apps + Functions vs. Container Apps vs.
+  an on-demand container for big jobs only); and to start logging real
+  per-run metadata now rather than guess a threshold.
+
+  Scoped, not built speculatively: a three-tier model — client Worker stays
+  the default (interactive iterate loop, §14.1's latency reasoning still
+  holds), a same-algorithm Function-hosted tier is the cheap next step for
+  runs too big for a comfortable client experience but inside a Function's
+  timeout, and an on-demand Container Apps Job is reserved for genuine
+  outliers only, gated on tier-2 evidence. Explicitly did NOT build tiers
+  2–3 this pass — a fixed cell-count cutoff can't account for the device
+  variance that started this conversation, so telemetry has to exist first.
+
+  What DID ship: `POST /api/mobility-telemetry` (new, `telemetry`-tagged
+  rate limit, Azure Table Storage) and `webapp/src/terrain/mobilityTelemetry.ts`,
+  wired into every completed `runMobilityAppreciation` call in `App.tsx`.
+  Records cell counts, the GO/SLOW-GO/NO-GO split, a per-vegetation-kind
+  histogram (the actual terrain/veg difficulty breakdown), origin↔objective
+  distance, elapsed time per run stage (grid/sampling/search/ensemble/
+  corridors/chokepoints/barrier), and coarse device hints
+  (`hardwareConcurrency`/`deviceMemory`) — deliberately no location, no
+  identity, fire-and-forget so it can never affect the run it's reporting on.
+
+  Mid-scoping, owner asked directly whether the road-routing idea from
+  earlier in the conversation had been dropped. It hadn't been designed away
+  — checking the code found Slice A's `roadRouteSearch.ts` already gives a
+  fast, box-free vehicle route independent of the slow hex-grid search, so
+  it was never the bottleneck this section is about. Did find one real,
+  previously unflagged gap: that road route currently waits on the same
+  grid-sampling pass instead of being computed in parallel and surfaced
+  first, which is the genuine remainder of the original "instant road result
+  while the area analysis runs" ask — tracked as its own small Next-up item,
+  independent of the cloud-offload work. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38.
 
 - **2026-07-28 — OSM water relations, picked ahead of queue order for 1.0
   demo risk (step 31)**: owner: *"one more push then we're done for a 1.0

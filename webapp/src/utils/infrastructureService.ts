@@ -69,7 +69,7 @@ export interface InfrastructureData {
  * behaviour is exactly the network path (used by tests and non-map callers).
  */
 export type LocalTrailProvider = (
-  south: number, west: number, north: number, east: number
+  south: number, west: number, north: number, east: number, kind: InfrastructureKind
 ) => InfrastructureTrail[] | null;
 
 let localTrailProvider: LocalTrailProvider | null = null;
@@ -239,20 +239,32 @@ export async function fetchCorridorInfrastructure(
   // "tiles not loaded", so that case falls through to the network below. Not
   // cached here: it's synchronous and free to recompute, and caching a partial
   // (few-tiles-loaded) answer would lock it in for the session. Mapbox's own
-  // vector tiles don't carry waterway geometry the way they carry roads, and
-  // (mapboxTrails.ts) filter to the fire-break REUSABLE_CLASSES set with no
-  // surface/tracktype/smoothness tags at all — neither the wider highway set
-  // nor the road-speed model's tags survive that path — so this shortcut
-  // applies only to the plain 'highway' kind, never 'highway-mobility'.
-  if (kind === 'highway' && localTrailProvider) {
+  // vector tiles don't carry waterway geometry at all, so this never applies
+  // to `kind === 'water'`.
+  //
+  // 2026-07-28: widened to ALSO cover `highway-mobility`, not just the plain
+  // `highway` kind — live-tested finding: Overpass being unreachable for an
+  // area left `onTrail` false for every cell, so a real, clearly-visible
+  // highway along a Lake George shoreline was classified NO-GO end to end
+  // (the mapped-road exemption on the hydrology/vegetation gates never
+  // fired, because there was no road data to exempt against). The Mapbox
+  // tiles were ALREADY loaded and showing that exact road the whole time.
+  // Real, honest cost: (mapboxTrails.ts's `MOBILITY_CLASSES`/
+  // `MAPBOX_CLASS_TO_OSM_HIGHWAY`) no `surface`/`tracktype`/`smoothness` —
+  // Mapbox's schema doesn't carry them — so a way sourced this way gets a
+  // highway-class-only speed ceiling, never the full OSM-tag refinement.
+  // Strictly better than the alternative this fixes (zero road data at all).
+  if ((kind === 'highway' || kind === 'highway-mobility') && localTrailProvider) {
     try {
-      const local = localTrailProvider(south, west, north, east);
+      const local = localTrailProvider(south, west, north, east, kind);
       if (local && local.length > 0) {
         logger.debug(`Corridor trails from Mapbox tiles: ${local.length} ways`);
         return { trails: local, available: true };
       }
     } catch (e) {
-      logger.warn('Local (Mapbox) trail provider failed, falling back to network', e);
+      // Routine, expected fallback (tiles not loaded yet at this zoom/area) —
+      // the network path below covers it, so this isn't warning-worthy.
+      logger.debug('Local (Mapbox) trail provider failed, falling back to network', e);
     }
   }
 
@@ -332,7 +344,10 @@ async function fetchCorridorUncached(
       // Other non-OK (e.g. 502 upstream, 429 rate limit) → try direct below.
     } catch (e) {
       // Network error reaching our own origin — unusual; fall through.
-      logger.warn('Infrastructure API proxy unreachable, trying Overpass directly', e);
+      // Same-origin proxy failing is an anticipated (if less common) branch of
+      // the same graceful-degradation chain — the direct-Overpass fallback
+      // below covers it, so this is informational, not a warning.
+      logger.info('Infrastructure API proxy unreachable, trying Overpass directly', e);
     }
   }
 
@@ -372,13 +387,19 @@ async function fetchCorridorUncached(
       return data;
     } catch (e) {
       lastError = e;
-      logger.warn(`Overpass endpoint failed (${new URL(url).host}), trying next`, e);
+      // One mirror failing and moving to the next is the designed retry
+      // behaviour (public Overpass instances are rate-limited/flaky by
+      // nature, see this module's own doc comment) — routine, not a warning.
+      logger.debug(`Overpass endpoint failed (${new URL(url).host}), trying next`, e);
     }
   }
 
   // Do NOT cache failures — a later attempt (different endpoint order, or
-  // the primary's quota having refreshed) may succeed.
-  logger.warn(`All Overpass endpoints failed for ${kind}; continuing without it`, lastError);
+  // the primary's quota having refreshed) may succeed. Every endpoint failing
+  // is a real, terminal outcome for this call (the analysis proceeds with
+  // `infrastructureAvailable: false`, honestly flagged to the user) — not an
+  // application error, so informational rather than a warning.
+  logger.info(`All Overpass endpoints failed for ${kind}; continuing without it`, lastError);
   return { trails: [], available: false };
 }
 

@@ -35,7 +35,8 @@ import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/m
 import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
 import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
-import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY } from './terrain/mobilityGrid';
+import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, originObjectiveDistanceM } from './terrain/mobilityGrid';
+import { recordMobilityRunTelemetry, MobilityStageTimestamp } from './terrain/mobilityTelemetry';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
@@ -576,6 +577,13 @@ const App: React.FC = () => {
     setCmCorridorComparison(null);
     setCmAfterField(null);
     setCorridorView('baseline');
+    // Scale/performance telemetry (docs/ROUTE_INTELLIGENCE.md §38) — timed
+    // around the whole run, with a timestamp per stage transition, so a
+    // completed run can report which phase actually dominated on this
+    // device. Never affects the run itself: recorded fire-and-forget after
+    // the result is already in hand, and the recorder swallows every failure.
+    const runStartMs = performance.now();
+    const stageTimestamps: MobilityStageTimestamp[] = [];
     try {
       const result = await runMobilityAppreciation(mobilityOriginPaint, mobilityObjectivePaint, {
         profileId: mobilityProfileId,
@@ -586,7 +594,11 @@ const App: React.FC = () => {
         fidelity: mobilityFidelity,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
         onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
-        onStage: stage => { if (!controller.signal.aborted) setMobilityStage(stage); },
+        onStage: stage => {
+          if (controller.signal.aborted) return;
+          setMobilityStage(stage);
+          stageTimestamps.push({ key: stage.key, atMs: performance.now() - runStartMs });
+        },
         onPreviewCells: cells => {
           if (controller.signal.aborted) return;
           // Terrain classification only — no arrival times exist yet, so
@@ -621,6 +633,12 @@ const App: React.FC = () => {
       }
       setMobilityResult(result);
       setMobilityPreviewCells(null); // the real result supersedes the preview
+      recordMobilityRunTelemetry(
+        result,
+        performance.now() - runStartMs,
+        stageTimestamps,
+        originObjectiveDistanceM(mobilityOriginPaint, mobilityObjectivePaint)
+      );
     } catch (error) {
       if (controller.signal.aborted) return;
       logger.error('Terrain mobility appreciation failed', error);
@@ -737,11 +755,18 @@ const App: React.FC = () => {
   const corridorRoutesForMap = useMemo(() => {
     const corridors = displayedMovementCorridorField?.corridors ?? [];
     const roadWays = mobilityResult?.roadWays ?? [];
+    // Carries `rank`/`id` alongside the refined path (2026-07-28, corridor
+    // legibility pass) so the map can colour each route line to match its
+    // OWN corridor's rank colour rather than a flat, uncorrelated grey —
+    // a corridor with no representativeRoute is filtered out first, so a
+    // naive index-into-`corridors` alignment would silently desync as soon
+    // as any corridor lacked one; carrying the id/rank through avoids that.
     return corridors
-      .map(c => c.representativeRoute)
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .map(r => ({
-        path: refinePath(r.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
+      .filter((c): c is typeof c & { representativeRoute: NonNullable<typeof c.representativeRoute> } => c.representativeRoute !== null)
+      .map(c => ({
+        id: c.id,
+        rank: c.rank,
+        path: refinePath(c.representativeRoute.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
           .map(p => ({ lat: p.lat, lng: p.lng })),
       }));
   }, [displayedMovementCorridorField, mobilityResult]);

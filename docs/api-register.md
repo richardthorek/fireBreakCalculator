@@ -1,6 +1,6 @@
 # API Register
 
-**Last Updated**: July 27, 2026  
+**Last Updated**: July 28, 2026  
 **Purpose**: Machine-readable catalog of all API endpoints
 **Update Policy**: MUST update when endpoints are added, modified, or removed
 
@@ -134,6 +134,37 @@ endpoint.
 | Endpoint | Method | Purpose | Request | Response | Auth Required |
 |----------|--------|---------|---------|----------|---------------|
 | `/api/infrastructure` | GET | Reusable trails/roads (or waterways, see `kind`) within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°), optional `kind=highway\|water` | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
+
+## Terrain Mobility Telemetry
+
+Fire-and-forget scale/performance sink for Terrain Mobility runs — cell
+counts, terrain/veg difficulty mix, elapsed time by phase, device hints. No
+location, no user identity. Feeds the cloud-offload threshold decision in
+[ROUTE_INTELLIGENCE.md](ROUTE_INTELLIGENCE.md) §38. Rate-limited (`telemetry`
+tag). Always returns `202` on a structurally valid payload even if the table
+write fails — telemetry must never surface as an error to the caller.
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/api/mobility-telemetry` | POST | Record one completed Terrain Mobility run's scale/performance metadata | `MobilityRunTelemetry` (see below) | `202 Accepted` (no body) | No |
+
+```typescript
+interface MobilityRunTelemetry {
+  sessionId: string;      // random per browser session, not tied to identity
+  timestamp: string;      // ISO, client clock
+  profileId: string;
+  fidelity: string;
+  cellCount: number; targetCellCount: number;
+  reachableCount: number; noGoCount: number; slowGoCount: number; goCount: number;
+  distanceM: number | null;
+  searchAttempts: number; usedExpandedSearch: boolean; routeFound: boolean;
+  elapsedMs: number;
+  stageDurationsMs: Record<string, number>;    // grid/sampling/search/ensemble/corridors/chokepoints/barrier/restrictions/done
+  vegetationHistogram: Record<string, number>; // vegetation kind -> cell count
+  hardwareConcurrency: number | null;
+  deviceMemoryGb: number | null;
+}
+```
 
 ## AI Assistant Endpoints
 

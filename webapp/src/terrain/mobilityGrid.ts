@@ -41,6 +41,7 @@ import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './pa
 import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
 import { RoadWayTags } from './roadSpeedModel';
+import { MoverProfile } from './moverProfiles';
 
 // Historical fixed values (2026-07-26, "think about a larger area"), now the
 // 'standard' fidelity tier's baseline at CELL_BUDGET_REFERENCE_DISTANCE_M —
@@ -232,7 +233,7 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
  *  whatever `generateBoxHexes` happened to emit first/last — typically a
  *  corner of the bounding box, nowhere near where the user actually
  *  painted. Squared distance only (comparison, not a real length). */
-function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
+export function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
   let bestKey = cells[0].key;
   let bestD = Infinity;
   for (const c of cells) {
@@ -267,6 +268,49 @@ function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
  *  origin and objective are painted close together (spanM near 0) but the
  *  search still needs SOME room to route around a small local obstacle. */
 const MIN_PAD_M = 200;
+
+/**
+ * Owner-reported defect, small AOIs (2026-07-28): moving ~1-2 km around one
+ * side of a hill to the other never considered an equally short detour 1-2 km
+ * to the north or south, because the box above is sized PROPORTIONALLY to the
+ * direct span — a short trip gets proportionately short padding, regardless
+ * of whether a genuinely better route sits just outside it. The search itself
+ * is fine (the multi-source Dijkstra already finds the cheapest path within
+ * whatever cells it's given); the box just never contained the better path's
+ * cells in the first place.
+ *
+ * Fix: an ADDITIONAL floor on top of the proportional term, sized by how far
+ * THIS mover could reasonably travel in a bounded time budget — not a flat
+ * distance, because a vehicle can cover far more ground in the same time as a
+ * foot mover and should get proportionately more search room for the
+ * identical trip (owner: "anything that would be a path within 1 or 2 hours
+ * — so 'foot' would be quite constrained compared to vehicles").
+ *
+ * BOUNDED, not literal (revised same day, live-tested): an initial "literal
+ * 1-2 hours, no cap" version inflated a vehicle profile's box to ~120 km wide
+ * for the exact 1.25 km ridge-crossing case this fix targets — no cell
+ * budget can keep hex resolution fine over that much area, and the owner's
+ * own follow-up report ("the whole ridge is red instead... these narrow
+ * location-specific pathways are the entire point of this app") makes clear
+ * that resolution, not detour coverage at any distance, is the actual
+ * priority. 15 minutes keeps the floor generous relative to the REPORTED
+ * scenario (a foot profile at 5 km/h covers ~1.25 km in 15 min — almost
+ * exactly the owner's own "1-2 km" framing) while bounding how far the box
+ * can grow for a fast profile. A genuinely far-away ROAD-based detour for
+ * vehicle profiles is still covered independently by the box-free road-graph
+ * search (`roadRouteSearch.ts`, Slice A) — full fidelity, no hex coarsening,
+ * because it searches the real road network directly rather than a
+ * tessellated grid. This floor is specifically for the cross-country/
+ * terrain-driven case that search doesn't cover.
+ */
+const DETOUR_TIME_BUDGET_SECONDS = 15 * 60; // 15 minutes
+
+/** Extra room (metres, each side of the direct span) a `profile` should get
+ *  purely from its own sourced road speed — see `DETOUR_TIME_BUDGET_SECONDS`'s
+ *  doc comment above for why this is time-based rather than a flat number. */
+export function minDetourPadM(profile: Pick<MoverProfile, 'roadSpeedKmh'>): number {
+  return ((profile.roadSpeedKmh * 1000) / 3600) * DETOUR_TIME_BUDGET_SECONDS;
+}
 
 export interface PaddedBounds {
   boundsSw: LatLng;
@@ -305,7 +349,15 @@ export interface PaddedBounds {
 export function computePaddedBounds(
   originBounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
   objectiveBounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
-  boundsPadFactor: number
+  boundsPadFactor: number,
+  /** See `minDetourPadM()`'s doc comment above — extra room (metres, each
+   *  side) floored by the mover profile's own travel speed rather than the
+   *  direct span, so a short trip still gets a profile-appropriate detour
+   *  allowance. Defaults to 0 (no change) for callers that don't have a
+   *  profile in scope, matching every pre-existing call site/test. Named
+   *  distinctly from the `minDetourPadM()` helper above (same concept, this
+   *  is the resolved metres value a caller passes in) to avoid shadowing it. */
+  detourPadM = 0
 ): PaddedBounds | null {
   const minLat = Math.min(originBounds.minLat, objectiveBounds.minLat);
   const maxLat = Math.max(originBounds.maxLat, objectiveBounds.maxLat);
@@ -329,7 +381,14 @@ export function computePaddedBounds(
   // centred on the origin/objective midpoint, giving the perpendicular axis
   // genuinely comparable room from the FIRST attempt, not just after a
   // targeted retry.
-  const targetSideM = Math.max(spanM * (1 + 2 * boundsPadFactor), MIN_PAD_M * 2);
+  const targetSideM = Math.max(
+    spanM * (1 + 2 * boundsPadFactor),
+    // Profile-scaled detour floor (see `minDetourPadM()`'s doc comment) — only
+    // binds when the direct span is short enough that the proportional term
+    // above wouldn't otherwise give this mover a reasonable amount of room.
+    spanM + 2 * detourPadM,
+    MIN_PAD_M * 2
+  );
   const halfSideM = targetSideM / 2;
   const midLat = (minLat + maxLat) / 2;
   const midLng = (minLng + maxLng) / 2;
@@ -457,9 +516,16 @@ export async function buildMobilityGrid(
      *  original fixed cell budget exactly for a typical short-range run.
      *  See `computeCellBudget`'s own doc comment. */
     fidelity?: MobilityFidelity;
+    /** Profile-scaled detour floor, metres each side — see `minDetourPadM()`'s
+     *  doc comment. Ignored when `explicitBounds` is supplied (that path
+     *  bypasses `computePaddedBounds` entirely already). Defaults to 0. */
+    minDetourPadM?: number;
   } = {}
 ): Promise<MobilityGridResult | null> {
-  const { signal, onProgress, boundsPadFactor = 0.2, explicitBounds, fidelity = DEFAULT_MOBILITY_FIDELITY } = options;
+  const {
+    signal, onProgress, boundsPadFactor = 0.2, explicitBounds, fidelity = DEFAULT_MOBILITY_FIDELITY,
+    minDetourPadM: detourPadM = 0,
+  } = options;
 
   const originBounds = paintedAreaBounds(origin);
   const objectiveBounds = paintedAreaBounds(objective);
@@ -468,20 +534,33 @@ export async function buildMobilityGrid(
   // Pad either side so the search has room to route around obstacles rather
   // than being boxed in exactly between the two AOIs — see
   // `computePaddedBounds`'s own doc comment for the bug this formula fixes.
-  const padded = explicitBounds ?? computePaddedBounds(originBounds, objectiveBounds, boundsPadFactor);
+  const padded = explicitBounds ?? computePaddedBounds(originBounds, objectiveBounds, boundsPadFactor, detourPadM);
   if (!padded) return null;
   const { boundsSw, boundsNe } = padded;
 
-  // Cell budget scales with the REAL origin<->objective distance and the
+  // Cell budget scales with the REAL SIZE OF THE SEARCHED BOX and the
   // caller's chosen fidelity (docs §35) — NOT a fixed constant regardless of
   // AOI size, which either wasted resolution on small areas or silently
   // coarsened large ones into unusably big hexes with no user control over
   // the trade-off.
-  const originCentroidForBudget: LatLng = { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 };
-  const objectiveCentroidForBudget: LatLng = { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 };
-  const spanMForBudget = calculateDistance(
-    originCentroidForBudget.lat, originCentroidForBudget.lng, objectiveCentroidForBudget.lat, objectiveCentroidForBudget.lng
-  );
+  //
+  // FIELD-CONFIRMED REGRESSION (2026-07-28, live test after the profile-
+  // scaled detour-pad fix, §39): this used to be the raw origin<->objective
+  // distance, ignoring padding entirely. A vehicle profile's detour floor can
+  // make the ACTUAL box several times wider than that raw distance — the
+  // same fixed cell budget then had to stretch over a much bigger area,
+  // ballooning hex size everywhere, including right along the direct route.
+  // Reported live: "the whole 'ridge' is red instead" of showing the real,
+  // narrow paved-road gap through it — exactly this effect, the hex grown
+  // too coarse to resolve a location-specific gap. Fixed by deriving the
+  // budget from the FINAL padded box's own dimensions (works identically
+  // whether the box came from `boundsPadFactor`, the detour floor, or a
+  // frontier-growth retry's `explicitBounds` — all three already land in
+  // `boundsSw`/`boundsNe` by this point) rather than re-deriving a stale,
+  // pre-padding distance.
+  const boxWidthM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsSw.lat, boundsNe.lng);
+  const boxHeightM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsSw.lng);
+  const spanMForBudget = Math.max(boxWidthM, boxHeightM);
   const { targetCellCount, maxHexCells } = computeCellBudget(spanMForBudget, fidelity);
 
   const center: LatLng = { lat: (boundsSw.lat + boundsNe.lat) / 2, lng: (boundsSw.lng + boundsNe.lng) / 2 };

@@ -168,7 +168,16 @@ function classifyCellTerrain(
   // mobilityGrid.ts/dataLayers/demDerivatives.ts) instead of reusing the
   // same steepest-neighbour number for both purposes, which conflated two
   // different physical failure modes (pitching over vs rolling over).
-  if (steepestAbsDeg > profile.maxClimbDeg || cell.crossSlopeDeg > profile.maxSideSlopeDeg) {
+  //
+  // Skipped on a mapped trail (2026-07-28, live-tested) — see
+  // `edgeMobilityCost`'s identical exemption in mobilityCost.ts for the full
+  // reasoning: a real road is engineered (cut/fill) to manage its own grade,
+  // so hex-averaged raw DEM slope is a worse estimate of driveability than
+  // trusting the mapped road exists. Without this, a highway along a Lake
+  // George shoreline shelf and a paved road descending a steep ridge both
+  // painted NO-GO end to end — the exact narrow, location-specific passable
+  // gap this overlay exists to show.
+  if (!cell.onTrail && (steepestAbsDeg > profile.maxClimbDeg || cell.crossSlopeDeg > profile.maxSideSlopeDeg)) {
     return { trafficability: 'NO-GO', estimated: true };
   }
 

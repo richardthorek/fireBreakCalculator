@@ -10,14 +10,19 @@
  * independent of the hex grid's box. This is what actually fixes Lake George
  * for vehicles in the RUNNING app, not just in a test fixture.
  *
- * DELIBERATELY ADDITIVE, NOT A REPLACEMENT: this result sits ALONGSIDE the
- * hex-grid search's path/corridors/simulation, which still runs unchanged.
- * Fusing the two into one search (so movement simulation, chokepoints and
- * min-cut all see road-graph routes too) is real future work, tracked in
- * master_plan.md, not attempted here. What THIS gives a vehicle profile
- * today: a genuine, box-free route recommendation even when the hex-grid
- * search inside its padded box finds nothing at all — exactly the Lake
- * George failure mode.
+ * PARTIALLY FUSED (docs §42, 2026-07-28): `roadRouteToDissimilarRoute` below
+ * converts this route into the hex-grid's own `DissimilarRoute` shape so it
+ * can be injected into the chokepoint/corridor-band analysis alongside the
+ * hex-optimiser's k cheapest routes and the movement ensemble's tracks —
+ * "the known-good road is a real route candidate", not just a separate
+ * additive display. STATED SCOPE, not yet done: the movement ensemble's own
+ * per-step decision logic still walks hex-to-hex (with a road-affinity
+ * preference, `movementSimulation.ts`), not the road graph's own edges — a
+ * simulated mover "on" a road is still hex-quantized, just biased to stay
+ * there. Min-cut (`minCutBarrier.ts`) is UNCHANGED — its max-flow graph is
+ * the hex adjacency graph only; a genuine road-graph-aware min-cut (so a
+ * counter-mobility cut can target an exact road choke point rather than a
+ * whole hex) remains real, open follow-up work, not attempted here.
  *
  * HONESTY ON SCOPE: the returned route runs between the nearest road ACCESS
  * POINT to the origin area and the nearest to the objective area — it does
@@ -32,6 +37,10 @@ import { buildRoadGraph, nodesWithin, RoadWay, RoadGraph, WaterBodyPolygon } fro
 import { findRoadRoute } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';
 import { MoverProfile } from './moverProfiles';
+import { calculateDistance } from '../utils/slopeCalculation';
+import { nearestCellKey } from './mobilityGrid';
+import { MobilityGridCell } from './accumulatedCost';
+import { DissimilarRoute } from './corridorAnalysis';
 
 export interface RoadRouteWaypoint {
   lat: number;
@@ -131,4 +140,77 @@ export function findVehicleRoadRoute(
   }
 
   return { waypoints, totalSeconds: route.totalSeconds, totalDistanceM, wayNames };
+}
+
+/** How many points to resample the road route into before snapping onto the
+ *  hex grid — real road waypoint spacing is very uneven (long straight
+ *  stretches vs. many closely-packed curve vertices), but
+ *  `corridorField.ts`'s `sampleRoutePoint` samples a `DissimilarRoute.path`
+ *  by INDEX fraction, assuming roughly even spacing the way a hex-stepped
+ *  search path naturally has. Resampling to evenly-spaced-by-distance points
+ *  first keeps that assumption true for a road route too, rather than
+ *  silently skewing which "25%/50%/75% of the way" ends up sampled. */
+const ROAD_ROUTE_RESAMPLE_POINTS = 64;
+
+/**
+ * Convert a road-network route into the SAME `DissimilarRoute` shape the
+ * hex-optimiser's k-cheapest-routes search and the movement ensemble's
+ * tracks already produce — so the real, box-free road route can be injected
+ * into chokepoint counting and corridor-band clustering as one more genuine
+ * route candidate, not just displayed alongside them. See this module's own
+ * header comment for what remains unfused (the ensemble's per-step movement,
+ * min-cut).
+ *
+ * `keys` (hex cell keys the route passes through, for chokepoint counting)
+ * are resolved by snapping each resampled point onto the CALLER's own hex
+ * grid (`cells` — the same grid the rest of the run already sampled), so a
+ * cell counted here is directly comparable to one counted from a hex-grid
+ * route. Cumulative time is distributed proportionally by distance along the
+ * route — an honest, stated approximation: this module doesn't retain a
+ * per-original-edge time breakdown, only the aggregate, so mid-route timing
+ * is linear-by-distance rather than reflecting real speed changes between
+ * road classes along the way (the aggregate `totalSeconds` itself IS exact).
+ */
+export function roadRouteToDissimilarRoute(
+  route: RoadRouteSearchResult,
+  cells: MobilityGridCell[]
+): DissimilarRoute | null {
+  if (route.waypoints.length < 2 || cells.length === 0) return null;
+
+  // Cumulative distance at each ORIGINAL waypoint.
+  const cumDist: number[] = [0];
+  for (let i = 1; i < route.waypoints.length; i++) {
+    const prev = route.waypoints[i - 1];
+    const cur = route.waypoints[i];
+    cumDist.push(cumDist[i - 1] + calculateDistance(prev.lat, prev.lng, cur.lat, cur.lng));
+  }
+  const totalDist = cumDist[cumDist.length - 1];
+  if (totalDist <= 0) return null;
+
+  const resampled: { lat: number; lng: number; cumulativeSeconds: number }[] = [];
+  for (let i = 0; i < ROAD_ROUTE_RESAMPLE_POINTS; i++) {
+    const targetDist = (i / (ROAD_ROUTE_RESAMPLE_POINTS - 1)) * totalDist;
+    // Find the original segment this target distance falls within.
+    let seg = 0;
+    while (seg < cumDist.length - 2 && cumDist[seg + 1] < targetDist) seg++;
+    const segStart = cumDist[seg];
+    const segEnd = cumDist[seg + 1];
+    const segFrac = segEnd > segStart ? (targetDist - segStart) / (segEnd - segStart) : 0;
+    const a = route.waypoints[seg];
+    const b = route.waypoints[seg + 1];
+    resampled.push({
+      lat: a.lat + (b.lat - a.lat) * segFrac,
+      lng: a.lng + (b.lng - a.lng) * segFrac,
+      cumulativeSeconds: (targetDist / totalDist) * route.totalSeconds,
+    });
+  }
+
+  const keys: string[] = [];
+  for (const p of resampled) {
+    const key = nearestCellKey(cells, { lat: p.lat, lng: p.lng });
+    if (keys[keys.length - 1] !== key) keys.push(key);
+  }
+  if (keys.length === 0) return null;
+
+  return { keys, path: resampled, totalSeconds: route.totalSeconds };
 }

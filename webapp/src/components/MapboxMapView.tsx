@@ -198,7 +198,7 @@ interface MapboxMapViewProps {
     bottleneckWidthM: number;
     cells: { polygon: { lat: number; lng: number }[]; density: number }[];
   }[] | null;
-  corridorRoutes?: { path: { lat: number; lng: number }[] }[] | null;
+  corridorRoutes?: { id: string; rank: number; path: { lat: number; lng: number }[] }[] | null;
   /** Corridor the user has picked out in the panel. That band keeps full
    *  strength and every other one drops back, which is the only reliable way
    *  to answer "which of these overlapping bands is the one I'm reading
@@ -938,7 +938,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       // trail source; it falls back to the backend Overpass proxy whenever this
       // returns nothing (tiles not loaded for the corridor).
       ensureStreetsSource(map);
-      setLocalTrailProvider((s, w, n, e) => extractCorridorTrails(map, s, w, n, e));
+      setLocalTrailProvider((s, w, n, e, kind) => extractCorridorTrails(map, s, w, n, e, kind));
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
@@ -2198,7 +2198,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const layerIds = ['mobility-corridor-routes', 'mobility-corridor-spine', 'mobility-corridor-edge', 'mobility-corridors'];
+    const layerIds = ['mobility-corridor-routes', 'mobility-corridor-routes-casing', 'mobility-corridor-spine', 'mobility-corridor-edge', 'mobility-corridors'];
     const remove = () => {
       try {
         for (const id of layerIds) {
@@ -2273,7 +2273,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
 
     const routeFeatures = (corridorRoutes ?? []).map(r => ({
       type: 'Feature' as const,
-      properties: {},
+      properties: { corridorId: r.id, color: rankColor(r.rank) },
       geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
     }));
 
@@ -2314,7 +2314,11 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             type: 'line',
             source: 'mobility-corridor-edge',
             layout: { 'line-cap': 'round', 'line-join': 'round' },
-            paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0, 'line-blur': 0.4 },
+            // Crisp, not blurred (2026-07-28, corridor legibility pass —
+            // owner: challenged to "pull out the corridors" from a screenshot
+            // cold and couldn't). A blurred 2px line reads as a smudge at any
+            // real zoom; a solid, wider line reads as an actual boundary.
+            paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0 },
           } as any);
           map.addLayer({
             id: 'mobility-corridor-spine',
@@ -2324,19 +2328,35 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0 },
           } as any);
           map.addSource('mobility-corridor-routes', { type: 'geojson', data: routeData } as any);
+          // Casing + core (2026-07-28), same pattern already used for
+          // recommended-restriction lines (`mobility-restrictions-casing`):
+          // a wider dark line underneath a narrower, rank-coloured one on top
+          // reads crisply against ANY hex colour behind it. The route line
+          // previously rendered at 0.8px / near-white / 40% opacity — the
+          // single clearest shape a corridor has (a real drawn path, not a
+          // fuzzy fill) was effectively invisible; this is now the star, not
+          // an afterthought.
+          map.addLayer({
+            id: 'mobility-corridor-routes-casing',
+            type: 'line',
+            source: 'mobility-corridor-routes',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#05070a', 'line-width': 6, 'line-opacity': 0 },
+          } as any);
           map.addLayer({
             id: 'mobility-corridor-routes',
             type: 'line',
             source: 'mobility-corridor-routes',
             layout: { 'line-cap': 'round', 'line-join': 'round' },
-            paint: { 'line-color': '#e2e8f0', 'line-width': 0.8, 'line-opacity': 0 },
+            paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0 },
           } as any);
         }
 
         registerOverlayOpacity('mobility-corridors', 'fill-opacity', scaledBy(['get', 'opacity']));
-        registerOverlayOpacity('mobility-corridor-edge', 'line-opacity', scaledBy(0.7));
+        registerOverlayOpacity('mobility-corridor-edge', 'line-opacity', scaledBy(0.85));
         registerOverlayOpacity('mobility-corridor-spine', 'fill-opacity', scaledBy(0.28));
-        registerOverlayOpacity('mobility-corridor-routes', 'line-opacity', scaledBy(0.4));
+        registerOverlayOpacity('mobility-corridor-routes-casing', 'line-opacity', scaledBy(0.8));
+        registerOverlayOpacity('mobility-corridor-routes', 'line-opacity', scaledBy(1));
       } catch (e) { logger.warn('Failed to render movement corridors', e); }
     };
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
@@ -2378,7 +2398,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       const lng = densest.polygon.reduce((s, p) => s + p.lng, 0) / densest.polygon.length;
       const el = document.createElement('div');
       el.className = `corridor-map-label corridor-map-label--rank${Math.min(c.rank, 4)}${highlightedCorridorId && highlightedCorridorId !== c.id ? ' dimmed' : ''}`;
-      el.textContent = `CORRIDOR ${c.rank} · ${c.easeClass.replace('-', ' ').toUpperCase()} · ~${Math.round(c.bottleneckWidthM)} M`;
+      // Numbered badge first (docs §28 addendum, 2026-07-28 — owner: "pull out
+      // the corridors ... without excellent prior knowledge" exposed that a
+      // bare text label gives the eye nothing to anchor to). The badge's own
+      // fill is the SAME rank colour the label border/text and the map
+      // shape/route already use, so this one small circle visually ties all
+      // three together instead of each being its own disconnected mark.
+      const badge = document.createElement('span');
+      badge.className = 'corridor-map-label__badge';
+      badge.textContent = String(c.rank);
+      const text = document.createElement('span');
+      text.textContent = `CORRIDOR ${c.rank} · ${c.easeClass.replace('-', ' ').toUpperCase()} · ~${Math.round(c.bottleneckWidthM)} M`;
+      el.appendChild(badge);
+      el.appendChild(text);
       el.addEventListener('click', ev => {
         ev.stopPropagation();
         onCorridorHighlight?.(highlightedCorridorId === c.id ? null : c.id);

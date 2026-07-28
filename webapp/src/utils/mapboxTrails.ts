@@ -27,7 +27,7 @@
  * lineage means reused ways still carry the "verify trafficability" caveat.
  */
 
-import type { InfrastructureTrail } from './infrastructureService';
+import type { InfrastructureTrail, InfrastructureKind } from './infrastructureService';
 import { logger } from './logger';
 
 const STREETS_SOURCE_ID = 'fbc-streets-v8';
@@ -43,7 +43,47 @@ const REUSABLE_CLASSES = [
   'tertiary', 'secondary', 'primary', 'road',
 ];
 
-const classFilter = ['match', ['get', 'class'], REUSABLE_CLASSES, true, false] as any;
+/**
+ * Terrain Mobility's wider class set (docs §35's MOBILITY_HIGHWAYS, Mapbox
+ * Streets v8 naming) — added 2026-07-28 after a live-tested failure: Overpass
+ * being unreachable for an area left `onTrail` false for every cell, so the
+ * hard slope/hydrology gates (which the mapped-road exemption would otherwise
+ * bypass) applied along an engineered lake-edge highway shelf and painted it
+ * NO-GO end to end, even though the road is plainly visible on the very same
+ * map tiles this module already has loaded for zero extra cost. Unlike
+ * `REUSABLE_CLASSES` above, motorway/trunk ARE included — mobility mode wants
+ * the fastest routes an approaching force would actually use, not just
+ * "reusable broken ground" for a fire break. */
+const MOBILITY_CLASSES = [
+  'motorway', 'motorway_link', 'trunk', 'trunk_link',
+  'primary', 'primary_link', 'secondary', 'secondary_link',
+  'tertiary', 'tertiary_link', 'street', 'street_limited',
+  'track', 'service', 'path', 'road',
+];
+
+/** Mapbox Streets v8 buckets several distinct OSM `highway` values into one
+ *  class (`street` covers residential/unclassified/living_street alike) —
+ *  the tileset simply doesn't carry the original tag. Translated to a single
+ *  representative OSM value here so `roadSpeedModel.ts`'s speed-by-highway
+ *  table gets a real entry instead of falling through to its generic
+ *  untagged-track estimate, which is a worse (and mislabelled) guess than
+ *  "residential" for what is visibly a suburban/rural sealed street. Classes
+ *  that already match an OSM `highway` value 1:1 (motorway, track, ...) pass
+ *  through unchanged. Fidelity cost, stated rather than hidden: this cannot
+ *  recover `surface`/`tracktype`/`smoothness` — Mapbox's schema doesn't carry
+ *  them at all — so a way sourced this way only ever gets the highway-class
+ *  speed, never a surface/tracktype/smoothness refinement. */
+const MAPBOX_CLASS_TO_OSM_HIGHWAY: Record<string, string> = {
+  street: 'residential',
+  street_limited: 'living_street',
+};
+
+/** A single query layer, filtered to the UNION of both class sets — cheaper
+ *  than two separate Mapbox GL layers, since which subset actually matters is
+ *  a per-call, per-`kind` decision made in `extractCorridorTrails` below, not
+ *  a per-layer one. */
+const ALL_QUERYABLE_CLASSES = Array.from(new Set([...REUSABLE_CLASSES, ...MOBILITY_CLASSES]));
+const classFilter = ['match', ['get', 'class'], ALL_QUERYABLE_CLASSES, true, false] as any;
 
 /**
  * Add the Mapbox Streets vector source + an invisible query layer so the road
@@ -84,16 +124,26 @@ export function ensureStreetsSource(map: any): void {
  * Extract reusable trails/roads within a bbox from the currently-loaded Mapbox
  * road tiles. Returns null when the layer isn't present or no roads are loaded
  * for the corridor (so the caller falls back to the network), never throws.
+ *
+ * `kind` selects which class set this call actually wants — `'highway'`
+ * (fire-break reuse) keeps the narrower `REUSABLE_CLASSES` filter it always
+ * had; `'highway-mobility'` widens to `MOBILITY_CLASSES` (motorway/trunk/
+ * primary included). The underlying Mapbox GL layer is queried once against
+ * the union of both (see `ALL_QUERYABLE_CLASSES`) and filtered here per call,
+ * rather than maintaining two separate map layers for a filter that only
+ * needs to change per caller, not per tile load.
  */
 export function extractCorridorTrails(
   map: any,
   south: number,
   west: number,
   north: number,
-  east: number
+  east: number,
+  kind: InfrastructureKind = 'highway'
 ): InfrastructureTrail[] | null {
   try {
     if (!map || !map.getLayer || !map.getLayer(STREETS_QUERY_LAYER_ID)) return null;
+    const wantedClasses = kind === 'highway-mobility' ? MOBILITY_CLASSES : REUSABLE_CLASSES;
     const feats = map.querySourceFeatures(STREETS_SOURCE_ID, {
       sourceLayer: ROAD_SOURCE_LAYER,
       filter: classFilter,
@@ -105,6 +155,8 @@ export function extractCorridorTrails(
     // and clipped at tile edges; dedupe the obvious repeats by a cheap key.
     const seen = new Set<string>();
     for (const f of feats) {
+      const mapboxClass = (f.properties?.class as string) || 'road';
+      if (!wantedClasses.includes(mapboxClass)) continue;
       const g = f.geometry;
       if (!g) continue;
       const lines: number[][][] =
@@ -124,9 +176,16 @@ export function extractCorridorTrails(
         if (seen.has(key)) continue;
         seen.add(key);
         trails.push({
-          kind: (f.properties?.class as string) || 'road',
+          // See `MAPBOX_CLASS_TO_OSM_HIGHWAY`'s doc comment — translated where
+          // Mapbox buckets several OSM highway values into one class.
+          kind: MAPBOX_CLASS_TO_OSM_HIGHWAY[mapboxClass] ?? mapboxClass,
           name: f.properties?.name,
           coords: line.map((c: number[]) => ({ lat: c[1], lng: c[0] })),
+          // surface/tracktype/smoothness left undefined — Mapbox's schema
+          // doesn't carry them (see MAPBOX_CLASS_TO_OSM_HIGHWAY's doc
+          // comment). roadSpeedModel.ts already treats an absent tag as "no
+          // cap from this dimension", so this degrades gracefully to a
+          // highway-class-only speed rather than a full OSM-tag refinement.
         });
       }
     }

@@ -32,7 +32,7 @@
 
 import {
   buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
-  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY,
+  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM,
 } from './mobilityGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
@@ -46,7 +46,7 @@ import {
 } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
-import { findVehicleRoadRoute, RoadRouteSearchResult } from './roadRouteSearch';
+import { findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult } from './minCutBarrier';
@@ -326,6 +326,12 @@ export async function runMobilityAppreciation(
       );
     } else {
       buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
+      // Profile-scaled detour floor (docs §35 addendum, 2026-07-28 — owner:
+      // a 1-2 km hill crossing never considered an equally short detour 1-2
+      // km north/south, because the proportional pad above is a fraction of
+      // a SHORT direct span and so stays short itself). Only binds on the
+      // first attempt — retries already grow from the real search frontier.
+      buildOptions.minDetourPadM = minDetourPadM(profile);
     }
     // Sampling owns the first 40% of the run's progress bar; the search
     // that follows now reports its OWN real progress (§35 addendum,
@@ -609,14 +615,25 @@ export async function runMobilityAppreciation(
     // wrong guess anyway. The stage label is still useful on its own.
     onStage?.({ key: 'corridors', label: 'Smoothing simulated movement into corridors', fraction: highWaterProgress });
 
+    // Road-graph fusion (docs §42, 2026-07-28): the box-free vehicle route
+    // (roadRoute, computed earlier) is a genuine, exact-geometry route
+    // candidate — converted here into the SAME DissimilarRoute shape the
+    // hex-optimiser's and the ensemble's own routes already use, so it can
+    // be counted as a real avenue for chokepoints and corridor-band
+    // clustering instead of sitting only as a separate, additive display.
+    // Null when there's no vehicle road route for this run (foot profiles,
+    // no road data, or the network genuinely doesn't connect the areas).
+    const roadRouteAsDissimilar = roadRoute ? roadRouteToDissimilarRoute(roadRoute, grid.cells) : null;
+
     // Corridors from the SIMULATION where one exists, from the optimiser
     // otherwise. Both go through the identical pipeline, so the two views can
     // never drift into disagreeing about what a corridor is.
     if (ensemble && ensemble.tracks.length > 0) {
+      const ensembleRoutes = ensembleTracksToRoutes(ensemble.tracks, grid.cells);
       corridorField = buildCorridorField(
         grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
         {
-          routesOverride: ensembleTracksToRoutes(ensemble.tracks, grid.cells),
+          routesOverride: roadRouteAsDissimilar ? [...ensembleRoutes, roadRouteAsDissimilar] : ensembleRoutes,
           evidence: 'simulated-movers',
           weightByAttractiveness: false,
         }
@@ -630,6 +647,19 @@ export async function runMobilityAppreciation(
     optimiserCorridorField = buildCorridorField(
       grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj
     );
+    // Re-cluster once more with the real road route folded in, so it counts
+    // as its own avenue (or merges into an existing one, if it's genuinely
+    // the same ground) rather than being invisible to chokepoint/corridor
+    // analysis. Only pays this second (cheap — same small route-set
+    // clustering, not a grid search) pass when there's actually a road route
+    // to add.
+    if (roadRouteAsDissimilar && optimiserCorridorField) {
+      onLog?.('FOLDING THE REAL ROAD-NETWORK ROUTE INTO CORRIDOR/CHOKEPOINT ANALYSIS AS A KNOWN-GOOD AVENUE…');
+      optimiserCorridorField = buildCorridorField(
+        grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
+        { routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar] }
+      ) ?? optimiserCorridorField;
+    }
     dissimilarRoutes = optimiserCorridorField?.routes ?? [];
     if (!corridorField) corridorField = optimiserCorridorField;
 
