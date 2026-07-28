@@ -755,11 +755,18 @@ const App: React.FC = () => {
   const corridorRoutesForMap = useMemo(() => {
     const corridors = displayedMovementCorridorField?.corridors ?? [];
     const roadWays = mobilityResult?.roadWays ?? [];
+    // Carries `rank`/`id` alongside the refined path (2026-07-28, corridor
+    // legibility pass) so the map can colour each route line to match its
+    // OWN corridor's rank colour rather than a flat, uncorrelated grey —
+    // a corridor with no representativeRoute is filtered out first, so a
+    // naive index-into-`corridors` alignment would silently desync as soon
+    // as any corridor lacked one; carrying the id/rank through avoids that.
     return corridors
-      .map(c => c.representativeRoute)
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .map(r => ({
-        path: refinePath(r.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
+      .filter((c): c is typeof c & { representativeRoute: NonNullable<typeof c.representativeRoute> } => c.representativeRoute !== null)
+      .map(c => ({
+        id: c.id,
+        rank: c.rank,
+        path: refinePath(c.representativeRoute.path, roadWays, { snapToTrails: true, cornerSmoothingIterations: 2 })
           .map(p => ({ lat: p.lat, lng: p.lng })),
       }));
   }, [displayedMovementCorridorField, mobilityResult]);

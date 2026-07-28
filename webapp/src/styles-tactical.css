@@ -900,12 +900,23 @@
 }
 
 /* ---------- Corridor map labels ---------- */
+/* Rank colours MUST match MapboxMapView.tsx's own `rankColor()` exactly —
+   this file previously used a stale red/amber/light-blue/slate set (#D8232A,
+   #F6A609, #38bdf8, #94a3b8) left over from before the corridor SHAPE colours
+   were moved off red/amber (2026-07-27, avoiding the trafficability heatmap's
+   NO-GO/SLOW-GO collision) — the label text was never updated to match, so
+   rank 1 read in the exact same red as a NO-GO hex while its own shape on the
+   map was blue. Fixed 2026-07-28 (owner: "the corridors ... need to be more
+   distinct", live-testing found the label/shape mismatch on inspection). */
 .corridor-map-label {
   font-family: var(--tac-mono-font, monospace);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 3px 7px;
   border-radius: 4px;
   cursor: pointer;
@@ -914,10 +925,34 @@
   color: #94a3b8;
   transition: opacity 140ms ease;
 }
-.corridor-map-label--rank1 { color: #D8232A; }
-.corridor-map-label--rank2 { color: #F6A609; }
-.corridor-map-label--rank3 { color: #38bdf8; }
+/* Numbered rank badge — a solid circle so the label reads as "attached to a
+   specific coloured thing" rather than plain floating text (owner: "pull out
+   the corridors ... without excellent prior knowledge" — a bare text label
+   gave no visual anchor at all). Filled with the SAME rank colour the badge
+   text sits in, white numeral for contrast against any hue in the family. */
+.corridor-map-label__badge {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  /* Dark numeral on a rank-coloured fill — background set per rank below,
+     NOT via currentColor (this element also needs its OWN text colour, and
+     currentColor can only resolve to one or the other on the same element). */
+  color: #05070a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  line-height: 1;
+}
+.corridor-map-label--rank1 { color: #3B82F6; }
+.corridor-map-label--rank2 { color: #8B5CF6; }
+.corridor-map-label--rank3 { color: #06B6D4; }
 .corridor-map-label--rank4 { color: #94a3b8; }
+.corridor-map-label--rank1 .corridor-map-label__badge { background: #3B82F6; }
+.corridor-map-label--rank2 .corridor-map-label__badge { background: #8B5CF6; }
+.corridor-map-label--rank3 .corridor-map-label__badge { background: #06B6D4; }
+.corridor-map-label--rank4 .corridor-map-label__badge { background: #94a3b8; }
 .corridor-map-label.dimmed { opacity: 0.28; }
 
 /* ---------- Recommended restriction badges ---------- */

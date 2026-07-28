@@ -4751,5 +4751,62 @@ suite still green; `tsc`/build clean.
 
 ---
 
+## 43. Corridor legibility pass — the route line becomes the star (2026-07-28)
+
+Owner, reviewing a screenshot of a live run with 2 corridors present:
+challenged Claude to "pull out the corridors and different options in the
+screenshot without excellent prior knowledge." Honestly attempted: only one
+hazy shape was findable for two labelled corridors, and one label ("Corridor
+2") floated over ground with no visible feature near it at all.
+
+**Root causes, found in the actual paint properties, not just the image:**
+1. The corridor's own representative route — a real drawn line, the single
+   least-ambiguous shape a corridor has — rendered at 0.8px width, `#e2e8f0`
+   (near-white), 40% opacity. Effectively invisible at any normal zoom.
+2. The corridor outline (`mobility-corridor-edge`) had `line-blur: 0.4` on a
+   2px line — reads as a smudge, not a boundary.
+3. **A real, live bug**, found while checking colours: the corridor MAP
+   LABEL text (`styles-tactical.css`) was still on the OLD rank-colour
+   palette (`#D8232A` red, `#F6A609` amber) from before the corridor SHAPE
+   colours were moved to blue/violet/cyan specifically to stop colliding
+   with the trafficability heatmap's NO-GO/SLOW-GO colours (§28-era fix) —
+   the label was never updated to match, so rank 1's text was the exact same
+   red as a NO-GO hex while its own shape on the map was blue.
+4. The trafficability heatmap (50-55% fill-opacity) and every corridor layer
+   share ONE global opacity slider (`MobilityLegend`) — raising either
+   raises both, so corridors can't out-contrast the layer they're competing
+   against without the user also boosting it further.
+
+**Fixed (owner selected 3 of 4 offered options; the global-slider split was
+declined as more structural than needed right now):**
+- **Route line, casing + core** (`mobility-corridor-routes-casing` +
+  `mobility-corridor-routes`, same pattern already used for recommended-
+  restriction lines): a 6px dark casing under a 3px rank-coloured core,
+  full opacity. Reads crisply against any hex colour underneath. This
+  needed `corridorRoutesForMap` (App.tsx) to start carrying each route's
+  `rank`/`id` — previously stripped down to bare `{ path }`, so the map had
+  no way to colour-match a route to its owning corridor; a naive index
+  correlation would have desynced as soon as any corridor lacked a
+  representative route (the array is filtered before mapping).
+- **Crisp outline**: `line-blur` removed, width 2→3, opacity 0.7→0.85.
+- **Numbered rank badge in the map label** (`corridor-map-label__badge`,
+  new): a small solid circle, rank-coloured fill, dark numeral, prepended to
+  the existing text label — AND the label's own colour palette fixed to
+  match the shape's `rankColor()` exactly (blue/violet/cyan/slate), closing
+  the red/amber collision bug above.
+
+**Deliberately not done this pass**: splitting corridors and trafficability
+onto independent opacity controls (owner's 4th offered option) — a real,
+larger UI change to the shared overlay-opacity mechanism, left for if the
+above isn't enough on its own.
+
+**Verification limits, stated plainly**: this is presentation-layer paint
+property and DOM/CSS work — `tsc`/build are clean and the untouched corridor-
+logic tests (clustering, path/polygon smoothing) still pass, but actual
+rendered legibility needs the live preview to confirm, the same limitation
+every other visual-only change in this doc's history has carried.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

@@ -72,6 +72,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 34 | Mapbox-tile road fallback widened to Terrain Mobility | Owner, live-testing near Lake George: a real, signed highway along the shoreline was painted NO-GO end to end, and asked whether the road network visible on the map tiles is real queryable data or just an image. Answer: real vector geometry, already loaded zero-network/CORS-free/offline-capable (`mapboxTrails.ts`) — but that fast-path was restricted to the fire-break `'highway'` kind and never applied to Terrain Mobility's `'highway-mobility'` kind. Root cause confirmed by this same session's own console evidence: Overpass unreachable for that area left `onTrail` false everywhere, and the hard slope gates in `mobilityCost.ts` (unlike the vegetation/hydrology gates) carry no mapped-road exemption at all, so a narrow lake-edge shelf read NO-GO from raw DEM alone. Fixed: `extractCorridorTrails` now takes a `kind`, widening to `MOBILITY_CLASSES` (motorway/trunk/primary included) with a Mapbox-class → OSM-highway translation table; honest stated cost is a highway-class-only speed ceiling (Mapbox carries no surface/tracktype/smoothness) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
 | 35 | Page-hang regression fixed: detour floor capped, cell budget fixed, onTrail slope exemption added | Owner reported the page hanging around 50% progress until the browser offered to kill the tab. Traced to step 33's uncapped 1-hour detour floor: for a fast vehicle profile on a short trip it inflated the search box to ~120km wide, which fed the box-free road-graph route search (`findVehicleRoadRoute`, runs synchronously on the main thread, only ever "cheap" for a small bbox) — at 120km wide that's a whole regional road network, freezing the UI. Three fixes: (1) detour floor capped to a 15-minute budget (was 1hr uncapped) — still profile-scaled, but bounded; (2) cell budget (`buildMobilityGrid`) now derives from the ACTUAL padded box, not the raw origin↔objective distance — a second bug the detour floor exposed, where a fixed budget stretched over a much bigger box ballooned hex size everywhere; (3) the hard climb/cross-slope gates now exempt onTrail cells (both `edgeMobilityCost` and `classifyCellTerrain`) — the actual root cause of "the whole ridge is red instead of the legitimate gap", and on inspection the IDENTICAL root cause as step 34's Lake George case: vegetation/hydrology already exempt a mapped road, the slope gates never did | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
 | 36 | Road-graph route fused into chokepoint/corridor analysis | Owner proposed a hex grid aligned to roads at fine width, cross-country filling in around it — challenged instead: a hex grid, even fine, still quantizes the road (the identical failure step 35 just fixed), while the box-free road-graph search already routes over the road's EXACT geometry with zero quantization. Owner's real instinct ("roads are known good, treat them specially") is already Slice A's own philosophy; the actual gap was that the road route sat only as an ADDITIVE display, never counted by chokepoint/corridor analysis. `roadRouteToDissimilarRoute` (new) converts the road route into the same shape the hex-optimiser's/ensemble's own routes use, resampled to even spacing and snapped onto the hex grid, then folded into both corridor-building calls in `mobilityAppreciation.ts` — so chokepoints and corridor bands now count the real road route as a genuine avenue. Stated, not fused: the ensemble's own per-step movement (still hex-quantized with a road-affinity bias) and min-cut (still hex-adjacency-only) — both real, larger follow-up work | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
+| 37 | Corridor legibility pass — route line becomes the star, real label/shape colour bug fixed | Owner challenged Claude to identify corridors from a live screenshot with no prior context; only one hazy shape was findable for two labelled corridors. Root causes in the actual paint properties: the representative route line rendered at 0.8px/near-white/40% opacity (effectively invisible); the corridor outline was blurred; a REAL bug — the map label text colour (`styles-tactical.css`) was still on the pre-fix red/amber rank palette, identical to the trafficability heatmap's own NO-GO/SLOW-GO colours, never updated when the corridor SHAPE colours moved to blue/violet/cyan for exactly that collision. Fixed (3 of 4 offered options, owner declined the 4th as more structural than needed): route line now casing+core (dark 6px under rank-coloured 3px, full opacity, same pattern as restriction lines); outline de-blurred and widened; map label gained a numbered rank-coloured badge and its text colour now matches the shape palette exactly. `corridorRoutesForMap` (App.tsx) had to start carrying each route's rank/id so the map could colour-match it to its owning corridor. Not done: splitting corridors and trafficability onto independent opacity sliders | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
 
 ### Next up
 
@@ -117,6 +118,48 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Corridor legibility pass: route line becomes the star, a
+  real label/shape colour bug fixed (step 37)**: owner, reviewing a
+  screenshot of a live run with 2 corridors present, challenged Claude to
+  "pull out the corridors and different options in the screenshot without
+  excellent prior knowledge." Honest attempt found only one hazy shape for
+  two labelled corridors, and one label floating over ground with no
+  visible feature nearby at all.
+
+  Root causes traced in the actual paint properties, not just the image:
+  (1) the corridor's own representative route — the single least-ambiguous
+  shape a corridor has, a real drawn line — rendered at 0.8px width,
+  near-white, 40% opacity: effectively invisible at any normal zoom.
+  (2) The outline had `line-blur: 0.4` on a 2px line — a smudge, not a
+  boundary. (3) **A real, live bug**: the corridor map label's text colour
+  (`styles-tactical.css`) was still on the OLD red/amber rank palette from
+  before the corridor SHAPE colours were moved to blue/violet/cyan
+  specifically to stop colliding with the trafficability heatmap's own
+  NO-GO/SLOW-GO colours — the label was simply never updated when that fix
+  shipped, so rank 1's text was the exact same red as a NO-GO hex while its
+  shape on the map was blue. (4) Trafficability and every corridor layer
+  share one global opacity slider, so raising either raises both.
+
+  Offered 4 concrete fixes; owner selected 3 (declined splitting the shared
+  opacity slider as more structural than needed right now). Shipped: route
+  line now casing+core (dark 6px under a rank-coloured 3px core, full
+  opacity — same pattern already used for recommended-restriction lines);
+  outline de-blurred and widened 2px→3px; map label gained a numbered,
+  rank-coloured badge and its text colour now matches the shape palette
+  exactly, closing the collision bug. `corridorRoutesForMap` (App.tsx) had
+  to start carrying each route's own `rank`/`id` — previously stripped to
+  bare `{ path }`, so the map had no way to colour-match a route line to its
+  owning corridor, and a naive index correlation would have silently
+  desynced the moment any corridor lacked a representative route (the array
+  is filtered before mapping).
+
+  Presentation-only: `tsc`/build clean, untouched corridor-logic tests
+  (clustering, path/polygon smoothing) still pass, but actual rendered
+  legibility needs the live preview to confirm — stated, not claimed
+  verified in this sandbox, same limitation every prior visual-only change
+  in this doc has carried. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43.
 
 - **2026-07-28 — Road-graph route fused into chokepoint/corridor analysis
   (step 36)**: owner proposed a hex grid aligned to the road network at a
