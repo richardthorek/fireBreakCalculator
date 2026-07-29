@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — `api-register.md`/`component-register.md`, the two "MUST update" machine-readable catalogs, corrected against the live codebase after both were found stale; see Recent Updates for the dated history.
+**Last Updated**: July 29, 2026 — every "Next up" and "Blocked" roadmap row now carries an outcome, required changes, and difficulty; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -100,6 +100,62 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Agency hand-off | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike | L | — | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 |
 
+#### Next up — outcome, changes required, difficulty
+
+- **Slice B — full lazy-grid architecture** (Difficulty: L)
+  - Outcome: large/awkward AOIs resolve smoothly instead of hitting an all-or-nothing box — stays fast even at continental scale.
+  - Changes: replace whole-box-then-retry with true per-cell lazy materialisation under an A* frontier · async tile-ring data fetch so DEM/vegetation/OSM data streams in as the frontier grows · self-sizing `α·C*` cost-budget ellipse (replacing 4 fixed padding factors) + a "2–5 distinct corridors found" stop rule instead of route/no-route.
+  - Note: touches 5+ modules that currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut).
+
+- **Road-speed user-override confidence into GIS export + AI briefing** (Difficulty: S)
+  - Outcome: an edited road-speed table shows up in exported GIS attributes and the AI briefing text, not just the live panel.
+  - Changes: add override/confidence fields to `mobilityGisExport.ts`'s GeoJSON/KML properties (mirrors step 42's hydrology pattern) · add the same fields to `MobilityAssistantPayload` (webapp+API, kept in lock-step) + validator · template narration line when overrides were used.
+
+- **End-user guide** (Difficulty: S)
+  - Outcome: a first-time user or a crew member handed a tablet in the field has a real written walkthrough instead of learning the tool from the UI alone.
+  - Changes: decide where it lives — this repo's `docs/` vs Station Manager's in-app wiki · write it (draw/paint → read the estimate → read confidence flags → export/share).
+  - Note: no code, but genuinely unstarted — needs an actual writing pass, not plumbing.
+
+- **Restrictions costed against `delayLedger.ts`** (Difficulty: S/M)
+  - Outcome: two equally-effective counter-mobility placements get a real $/time cost difference shown, so a commander can pick the cheaper one instead of guessing.
+  - Changes: wire `restrictionPlanner.ts`'s ranked candidate set through the existing `computeDelayLedger` cost model · surface the cost alongside the existing delay-effectiveness ranking in `CounterMobilityPanel.tsx` · extend GIS export/AI briefing placement fields with the cost figure.
+
+- **A real fuel-age → clearing-rate relationship** (Difficulty: M+, blocked on a source)
+  - Outcome: fire-history age would actually move the time/cost estimate instead of only being shown as text — but only once there's a real number to move it by.
+  - Changes: find a citable fuel-accumulation-vs-clearing-rate curve (research literature or agency guidance) — the actual blocker · once sourced, apply as a segment-level multiplier alongside the existing NWCG/Report 56 fuel-class factors · flag the applied adjustment as estimated, not measured (data-honesty rule).
+
+- **UI/UX uplift, moves 4–5** (Difficulty: M)
+  - Outcome: fire-break mode and Terrain Mobility mode feel like one consistent product — confidence badges, type labels, and control placement read the same regardless of mode.
+  - Changes: align vegetation/data confidence display — fire-break's numeric "% confidence" badge vs Terrain Mobility's tiered `DataConfidenceBadge` (measured/published/estimated/generic-fallback) — pick one shared vocabulary · extend Terrain mode's mobile floating-overlay control pattern (§21) to fire-break mode's own panel/controls.
+  - Note: genuinely fuzzy scope — the only existing documentation is this one roadmap line, no detailed design yet.
+
+- **Function-hosted (tier 2) mobility search** (Difficulty: M)
+  - Outcome: a user on an underpowered device gets the same Terrain Mobility search run server-side instead of stalling their browser.
+  - Changes: port the existing `webapp/src/terrain/*` search/corridor modules into an Azure Function entry point (API is already Node/TS, no rewrite) · decide the client/server split trigger (cell-count threshold, device hint, or explicit user choice).
+  - Note: gated on telemetry (step 32, still collecting) confirming which run phase actually dominates on slow devices.
+
+- **On-demand Container Apps Job (tier 3)** (Difficulty: L)
+  - Outcome: genuine outlier runs (very large AOIs) complete reliably instead of timing out, even over a flaky field connection.
+  - Changes: scale-to-zero Container Apps Job for runs beyond a Function's timeout/memory ceiling · resumable, chunked result-delivery protocol tolerant of interrupted connectivity.
+  - Note: explicitly not to be built speculatively — gated on tier 2 telemetry showing a real tail of oversized runs.
+
+- **Vector RAG via Azure AI Search** (Difficulty: M)
+  - Outcome: AI assistant doctrine citations get measurably more relevant once retrieval is semantic instead of keyword-overlap, and the corpus can grow past what keyword scoring handles well.
+  - Changes: provision an Azure AI Search resource + IaC (`infra/main.bicep`) · build a corpus-loading/indexing pipeline for the doctrine chunks (integrated vectorization) · swap `retrieveDoctrine(query, topK)`'s implementation — already the designed swap point, no caller changes needed.
+
+- **Restriction siting at a surveyed point** (Difficulty: L)
+  - Outcome: a recommended counter-mobility restriction points at an actual surveyed spot on a road, not "somewhere along this hex edge" — closes the gap between the recommendation and where a crew can actually place something.
+  - Changes: change the placement model from grid-edge siting to a point on the underlying road-graph geometry · re-thread `restrictionPlanner.ts`/`delayLedger.ts`'s siting logic to the new representation · update map rendering + GIS export/briefing to carry a real point, not a cell reference.
+
+- **Field hardening** (Difficulty: L)
+  - Outcome: the tool keeps working — at least for reading a previously-run analysis — when a crew loses signal, and is usable regardless of assistive technology.
+  - Changes: offline-first PWA — service worker caching of map tiles + completed analyses for offline reference · WCAG 2.1 AA completion, auditing across the app (some pieces, e.g. `ConfirmDialog`'s focus-trap/ARIA, are already built but unused — see step 44).
+  - Note: no detailed design doc currently backs this row — the linked `NVIS_INTEGRATION.md` doesn't actually cover offline/WCAG specifics; scoping is itself part of the work.
+
+- **Agency hand-off** (Difficulty: L)
+  - Outcome: a plan can be pushed straight into an agency's existing GIS tooling (ArcGIS dashboards, Avenza on a phone) instead of a crew manually re-importing an export file.
+  - Changes: ArcGIS Online — OAuth 2.0 PKCE sign-in (user's own AGOL org, no stored credentials) + REST create-feature-service/`addFeatures` push, one-way explicit action · Avenza — spike a server-side geo-registered PDF (Mapbox Static Images + `pdf-lib`) against a real Avenza import before committing; fall back to the existing KMZ-via-Avenza-import path if the spike fails.
+
 ### Blocked
 
 Not next regardless of size — each needs something outside this codebase to resolve first.
@@ -112,6 +168,33 @@ Not next regardless of size — each needs something outside this codebase to re
 | VCI/RCI-weighted min-cut capacity | Needs Pass 3's soil layers, not yet sampled |
 | Real entitlement/backend gating for Terrain Mobility | Deliberately deferred pending a release decision — feasibility assessed (§14.1): entitlement source of truth lives in the separate Station Manager repo, and moving compute server-side trades away the offline/interactive properties the field tool depends on |
 
+#### Blocked — outcome, changes required, difficulty
+
+- **AFDRS fire danger** (Difficulty: Blocked, not effort)
+  - Outcome: the plan's district/date would show the OFFICIAL AFDRS fire-danger rating instead of nothing — display only, no rebuild of fire-behaviour prediction.
+  - Changes: apply for BOM's Registered User program (or find a redistributor) — an organisational decision, not resolvable from inside the codebase; `afdrs.com.au` itself has no public API.
+  - Note: once access exists, the display work itself is a small, well-scoped lift (same pattern as the existing hotspots/boundaries feeds).
+
+- **Water-point & cadastre advisory layers** (Difficulty: Blocked, not effort)
+  - Outcome: mapped water-fill points and cadastre boundaries show as advisory overlays when planning a break, plus a stronger waterway-based anchor rule for the optimizer.
+  - Changes: licensing/attribution check with NSW DCS Spatial Services before any code is written.
+  - Note: once cleared, the overlay work itself is S/M, reusing the existing OSM-overlay pattern.
+
+- **AI live model verification + eval suite** (Difficulty: Blocked, not effort)
+  - Outcome: confidence that the AI assistant's live model responses are actually accurate/grounded in practice, not just passing the deterministic-template tests that exist today.
+  - Changes: deploy an actual Azure AI Foundry model endpoint (currently off by default, `deployAiAssistant` flag) — grounding gate and citation validation already exist and are unit-tested against it.
+  - Note: the eval suite itself is S/M once a deployed endpoint exists to test against.
+
+- **VCI/RCI-weighted min-cut capacity** (Difficulty: Blocked on data, then M)
+  - Outcome: min-cut barrier siting weights capacity by real vehicle-class trafficability (VCI₁ one-pass vs VCI₅₀ fifty-pass) against actual soil strength, instead of the current flat/class-tiered capacity model.
+  - Changes: sample Pass 3's soil layers (not yet built) for the AOI · join VCI/RCI verdict tables into `computeMinCutBarrier`'s capacity function.
+  - Note: the model itself is already designed with a real, sourced worked example (105 mm howitzer VCI₁ 21 / VCI₅₀ 49 at RCI 43) in `ROUTE_INTELLIGENCE.md` — just unfed.
+
+- **Real entitlement/backend gating for Terrain Mobility** (Difficulty: Blocked, release decision)
+  - Outcome: Terrain Mobility becomes a properly licensed, server-enforced feature (like saved plans already are) instead of a client-side UI toggle discoverable by anyone who looks.
+  - Changes: Station Manager (separate repo) needs to expose a `terrainMobilityEnabled` entitlement (`fireBreakEnabled` is the existing precedent) before this repo can gate server-side · then apply the same route-level code-split + entitlement check pattern already proven for saved plans.
+  - Note: moving compute server-side also trades away the offline/interactive properties the field tool depends on — not a pure "just add a check" fix.
+
 ## Architecture snapshot
 
 React 18 + Vite + TS (`/webapp`) · Azure Functions Node 22 (`/api`) · Azure Table Storage · Mapbox GL JS · Azure Static Web Apps, Bicep IaC (`/infra`, OIDC).
@@ -119,6 +202,27 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-29 — Every "Next up"/"Blocked" roadmap row expanded with
+  outcome, required changes, and difficulty**: owner asked for each open
+  roadmap item to carry a 1-line outcome, 2–3 concrete change bullets, and a
+  difficulty rating, added into the plan rather than just reported back.
+  Added `#### Next up — outcome, changes required, difficulty` and
+  `#### Blocked — outcome, changes required, difficulty` subsections
+  directly under the existing summary tables (tables stay as the compact
+  index; the new subsections give depth per item). Grounded each entry in
+  the actual linked doc section rather than re-summarising from the table's
+  own one-line Scope text — e.g. pulled the exact `restrictionPlanner.ts`
+  "still open" list from `ROUTE_INTELLIGENCE.md` §32 for the restriction
+  siting/costing rows, the real VCI₁/VCI₅₀ worked example for the min-cut
+  capacity row, and the RAG swap-point contract (`retrieveDoctrine`'s
+  signature is already the designed extension point) from `AI_ASSISTANT.md`.
+  Surfaced one thing along the way worth flagging rather than silently
+  fixing: the "Field hardening" row's linked doc (`NVIS_INTEGRATION.md`)
+  doesn't actually contain any offline/WCAG content — the row has never had
+  a real design behind it, only a two-clause scope description; noted
+  in-place rather than treated as another stale-doc fix, since inventing
+  the missing design isn't a documentation-accuracy task.
 
 - **2026-07-28 — `api-register.md`/`component-register.md` corrected against
   the live codebase (step 44)**: owner: "move into the next priority
