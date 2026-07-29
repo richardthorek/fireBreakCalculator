@@ -31,6 +31,7 @@
  */
 
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
+import { carriesWaterSignal } from './accumulatedCost';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
@@ -56,15 +57,11 @@ import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
 } from './corridorField';
 
-/** A cell carries a real water signal — in a standing body, near a mapped
- *  watercourse, or a high DEA WOfS wet-frequency (docs §34). The single
- *  source of truth for "does this cell count as hydrology-affected" — the
- *  run's own assessment log, the GIS export (`mobilityGisExport.ts`) and the
- *  AI briefing payload (`mobilityAssistantApi.ts`) all call this SAME
- *  function rather than each tuning their own threshold, so none of them can
- *  quietly disagree about what counts. */
-export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
-  c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
+/** Moved to `accumulatedCost.ts` (see its own doc comment on why — corridor
+ *  risk scoring needed it without a circular import) — re-exported here so
+ *  every existing caller (`mobilityGisExport.ts`, `mobilityAssistantApi.ts`)
+ *  keeps working from the same import path. */
+export { carriesWaterSignal };
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -268,6 +265,12 @@ export interface MobilityAppreciationOptions {
    *  ceilings (`mobilityLazyGrid.ts`); does not change the tile-growth
    *  behaviour itself. */
   fidelity?: MobilityFidelity;
+  /** docs §35 design point 2 — the α multiplier on the best-found cost C*
+   *  that bounds how far the lazy grid grows while still looking for a
+   *  second/third avenue (`mobilityLazyGrid.ts`). Design default 2.0,
+   *  "user-adjustable" per the owner's own framing — this is the plumbing
+   *  for that control; no UI is wired to it yet. */
+  corridorBudgetAlpha?: number;
 }
 
 export async function runMobilityAppreciation(
@@ -284,6 +287,7 @@ export async function runMobilityAppreciation(
     planRestrictions = true,
     roadSpeedOverrides,
     fidelity = DEFAULT_MOBILITY_FIDELITY,
+    corridorBudgetAlpha,
   } = options;
   // Progress across this run is assembled from several sources that don't
   // know about each other — a retry's own sampling pass, the worker's search
@@ -362,7 +366,7 @@ export async function runMobilityAppreciation(
   // Lake-George-shaped run pays for more, and only for the new ground.
   let samplingAnnounced = false;
   const lazy = await runLazyMobilitySearch(origin, objective, {
-    signal, fidelity, profileId, nightMode, roadSpeedOverrides,
+    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha,
     onProgress: f => {
       onProgress(f * 0.55);
       if (f > 0.02 && !samplingAnnounced) {
@@ -386,7 +390,7 @@ export async function runMobilityAppreciation(
     onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
     return null;
   }
-  const { grid, results, path, roundsUsed, hitCeiling } = lazy;
+  const { grid, results, path, roundsUsed, hitCeiling, costStarSeconds, corridorCountAtStop } = lazy;
   onProgress(0.55);
 
   onLog?.(
@@ -396,6 +400,21 @@ export async function runMobilityAppreciation(
   );
   if (!path && hitCeiling) {
     onLog?.('SEARCH CEILING REACHED WHILE WIDENING — STOPPING GROWTH HERE, SEE RESULT BELOW');
+  }
+  // docs §35 remainder — the α·C*/corridor-count stop rule's own honesty
+  // line: says plainly whether the search found its target 2–5 avenues, hit
+  // the travel-time budget first, or hit the hard ceiling first — the same
+  // "there is no way" vs "I wasn't allowed to look far enough" distinction
+  // §35's original Lake George fix established, now applied to CORRIDOR
+  // count rather than just route existence.
+  if (path && costStarSeconds !== null) {
+    if (corridorCountAtStop >= 2) {
+      onLog?.(`${corridorCountAtStop} DISTINCT AVENUE(S) CONFIRMED WITHIN THE α×C* TRAVEL-TIME BUDGET (C* = ${(costStarSeconds / 60).toFixed(0)} MIN)`);
+    } else if (hitCeiling) {
+      onLog?.(`ONLY ${corridorCountAtStop} AVENUE FOUND BEFORE THE SEARCH CEILING — MAY BE MORE, NOT YET RULED OUT`);
+    } else {
+      onLog?.(`ONLY ${corridorCountAtStop} AVENUE FOUND — THE α×C* BUDGET (${(costStarSeconds / 60).toFixed(0)} MIN × α) GENUINELY RAN OUT OF NEW GROUND, NOT A CEILING ARTEFACT`);
+    }
   }
 
   const usedExpandedSearch = roundsUsed > 1;
@@ -668,9 +687,33 @@ export async function runMobilityAppreciation(
           'THIS GROUND DOES NOT CANALISE MOVEMENT: THERE ARE NO REAL CHOKEPOINTS TO DENY.'
         );
       }
-      for (const c of corridorField.corridors.slice(0, 4)) {
+      // docs §35 remainder (owner: "we should be seeing a 'most likely' and
+      // 'most risky' type of option to inform our planning") — MOST LIKELY
+      // is simply rank 1 (already the busiest corridor); MOST RISKY is
+      // whichever corridor's own computed `riskScore` is highest (terrain
+      // hazard + water crossings + how hard it pinches — see
+      // `Corridor.riskScore`'s own doc comment for the exact formula). The
+      // two commonly point at DIFFERENT corridors — the busiest is usually
+      // busiest BECAUSE it's easiest — and that divergence is the actual
+      // planning value here, not a coincidence to smooth over.
+      const riskiest = corridorField.corridors.find(c => c.id === corridorField!.mostRiskyCorridorId);
+      if (riskiest && corridorField.mostRiskyCorridorId !== corridorField.mostLikelyCorridorId) {
         onLog?.(
-          `CORRIDOR ${c.rank} — ${Math.round(c.shareOfRoutes * 100)}% OF ${evidenceLabel} · ${c.easeClass.toUpperCase()} · ` +
+          `MOST LIKELY: CORRIDOR ${corridorField.corridors[0]?.rank ?? 1} · MOST RISKY: CORRIDOR ${riskiest.rank} ` +
+          `(${Math.round(riskiest.riskScore * 100)}% RISK — ${Math.round((riskiest.slowGoFraction + riskiest.noGoFraction) * 100)}% SLOW/NO-GO, ` +
+          `${Math.round(riskiest.waterCrossingFraction * 100)}% WATER SIGNAL, PINCH RATIO ${riskiest.pinchRatio.toFixed(2)})`
+        );
+      } else if (riskiest) {
+        onLog?.(`ONLY ONE CORRIDOR FOUND — IT IS BOTH THE MOST LIKELY AND THE ONLY OPTION TO PLAN AROUND`);
+      }
+      for (const c of corridorField.corridors.slice(0, 4)) {
+        const picks = [
+          c.id === corridorField.mostLikelyCorridorId ? 'MOST LIKELY' : null,
+          c.id === corridorField.mostRiskyCorridorId ? 'MOST RISKY' : null,
+        ].filter((p): p is string => p !== null);
+        onLog?.(
+          `CORRIDOR ${c.rank}${picks.length > 0 ? ` [${picks.join(' + ')}]` : ''} — ` +
+          `${Math.round(c.shareOfRoutes * 100)}% OF ${evidenceLabel} · ${c.easeClass.toUpperCase()} · ` +
           `BOTTLENECK ~${c.bottleneckWidthM.toFixed(0)} M (${c.bottleneckAbreast} ABREAST) · ` +
           `MEDIAN ${(c.medianTravelSeconds / 60).toFixed(0)} MIN`
         );

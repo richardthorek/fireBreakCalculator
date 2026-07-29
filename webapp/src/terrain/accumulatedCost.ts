@@ -97,6 +97,21 @@ export interface MobilityGridCell {
   waterFrequency: number | null;
 }
 
+/** A cell carries a real water signal — in a standing body, near a mapped
+ *  watercourse, or a high DEA WOfS wet-frequency (docs §34). The single
+ *  source of truth for "does this cell count as hydrology-affected" — the
+ *  run's own assessment log, the GIS export (`mobilityGisExport.ts`), the AI
+ *  briefing payload (`mobilityAssistantApi.ts`) and per-corridor risk scoring
+ *  (`corridorField.ts`) all call this SAME function rather than each tuning
+ *  their own threshold, so none of them can quietly disagree about what
+ *  counts. Lives here (not `mobilityAppreciation.ts`, which originally
+ *  defined it) so `corridorField.ts` — a lower-level module
+ *  `mobilityAppreciation.ts` itself imports — can use it without a circular
+ *  import; re-exported from `mobilityAppreciation.ts` for every existing
+ *  caller's import path. */
+export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
+  c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
+
 /**
  * Project a grid cell down to the `MobilitySample` shape `edgeMobilityCost`
  * consumes — ONE place that lists every field the cost function reads off a

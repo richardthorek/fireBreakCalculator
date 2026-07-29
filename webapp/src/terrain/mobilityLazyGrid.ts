@@ -55,10 +55,12 @@ import {
 import {
   MobilityGridCell, MobilityCellResult, AccumulatedCostSearchResult, assembleMobilityResults,
 } from './accumulatedCost';
-import { getMoverProfile } from './moverProfiles';
+import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
 import { RoadSpeedOverrides } from './roadSpeedModel';
+import { findKDissimilarPaths } from './corridorAnalysis';
+import { clusterRoutes } from './corridorField';
 
 /** Hexes per tile side — a tile is a batch of roughly `TILE_HEX_SPAN²` hexes,
  *  fetched with ONE round of area-batched network calls (docs §35 point 5:
@@ -87,6 +89,77 @@ const LAZY_CELL_CEILING_MULTIPLIER = 4;
  *  winding reachable channel) that would otherwise take many rounds to hit
  *  the cell ceiling. */
 const MAX_LAZY_ROUNDS = 14;
+
+/**
+ * docs §35 design point 2 ("a cost budget replaces the geometric bound") and
+ * point 3 ("stop on corridor count, not path count") — the two remaining
+ * pieces of Slice B, built on top of the tile-growth/resumable-search
+ * mechanism above rather than replacing it.
+ *
+ * TWO-PHASE STRUCTURE, exactly as designed:
+ *  - PHASE 1 (unconstrained): grow with no cost limit until the objective is
+ *    first reached at all — `costStarSeconds` below. Frontier growth before
+ *    this point is bounded only by the existing cell/tile/round ceilings.
+ *  - PHASE 2 (budgeted): once `costStarSeconds` (C*) is known, further tile
+ *    growth is restricted to the frontier WITHIN `alpha * C*` travel-time of
+ *    the origin — cells beyond that budget don't pull in new tiles. This is
+ *    a genuine travel-time ISOCHRONE boundary (it self-sizes to however hard
+ *    the terrain actually is, since C* itself is the search's own real
+ *    result), not a literal geometric ellipse — truer to "self-sizing" than
+ *    a shape drawn on the map would be, since real terrain rarely detours in
+ *    a mathematically elliptical arc.
+ *
+ * The corridor-count check (`estimateDistinctCorridorCount`) only runs
+ * inside Phase 2 (a route must already exist to have corridors at all), and
+ * only until the target range is reached — see `runLazyMobilitySearch`'s own
+ * loop for exactly where these compose with the ceiling safety net.
+ */
+const DEFAULT_ALPHA = 2.0;
+
+/** Stop growing once at least this many distinct corridors are confirmed —
+ *  owner: "ensure every analysis result has 2-5 corridors surfaced." Below
+ *  this, growth continues (budget/ceiling permitting) specifically to look
+ *  for a genuine second avenue, rather than settling for "found A route,
+ *  done" the moment the cheapest one is found. */
+const MIN_TARGET_CORRIDORS = 2;
+
+/** Stop growing once this many distinct corridors are confirmed, regardless
+ *  of remaining budget — matches the design's own "2–5" ceiling: more
+ *  alternatives past this point are diminishing returns for a commander
+ *  reading the panel, not diminishing accuracy, so capping effort here is a
+ *  presentation choice, not an honesty compromise (the FULL, separate
+ *  `buildCorridorField` pass `mobilityAppreciation.ts` runs afterward can
+ *  still find more if the underlying route set actually has them). */
+const MAX_TARGET_CORRIDORS = 5;
+
+/** How many dissimilar routes the INTERIM per-round corridor-count check
+ *  derives — capped at `MAX_TARGET_CORRIDORS` since deriving more than the
+ *  target we're checking for wastes a search with no decision value. The
+ *  FINAL, presented corridor field (`mobilityAppreciation.ts`) still uses
+ *  its own larger `DEFAULT_CORRIDOR_ROUTE_COUNT` (14) — this is only a
+ *  cheap growth-decision signal, not the presented analysis. */
+const CORRIDOR_CHECK_ROUTE_COUNT = MAX_TARGET_CORRIDORS;
+
+/** How many genuinely distinct avenues (route clusters, the SAME similarity
+ *  test `corridorField.ts`'s own presentation pass uses — see
+ *  `clusterRoutes`'s doc comment) currently exist over `cells`. A cheap
+ *  proxy for the eventual PRESENTED corridor count (the full pass also
+ *  applies a spatial-density membership threshold that can occasionally
+ *  drop a very thin cluster), used purely to decide whether tile growth
+ *  should keep looking for a second avenue. */
+function estimateDistinctCorridorCount(
+  cells: MobilityGridCell[],
+  originKeys: string[],
+  objectiveKeys: string[],
+  profile: MoverProfile,
+  nightMode: boolean,
+  hexSize: number
+): number {
+  const routes = findKDissimilarPaths(cells, originKeys, objectiveKeys, profile, nightMode, CORRIDOR_CHECK_ROUTE_COUNT);
+  if (routes.length === 0) return 0;
+  const hexWidthM = hexSize * Math.sqrt(3);
+  return clusterRoutes(routes, hexWidthM).length;
+}
 
 /** Exported purely for direct, network-free unit testing (docs precedent:
  *  `mobilityGrid.ts` exports `computePaddedBounds`/`frontierTouchedEdges`
@@ -139,6 +212,13 @@ export interface LazyMobilitySearchOptions {
   nightMode: boolean;
   fidelity?: MobilityFidelity;
   roadSpeedOverrides?: RoadSpeedOverrides;
+  /** docs §35 design point 2 — the α multiplier on the best-found cost C*
+   *  that bounds Phase 2 growth (see the constants' own doc comment above).
+   *  Design calls this "user-adjustable" (owner: "2x default with a UI
+   *  option to expand or contract"); the option is threaded all the way
+   *  through from `mobilityAppreciation.ts` so that control point exists,
+   *  though no UI slider is wired to it yet — defaults to `DEFAULT_ALPHA`. */
+  alpha?: number;
   /** Overall progress across sampling+search for ALL rounds combined, 0..1.
    *  Heuristic, not exact (the total round count isn't known upfront): each
    *  round closes half the remaining distance to 1, so a decisive first
@@ -169,8 +249,18 @@ export interface LazyMobilitySearchResult {
   tilesUsed: number;
   /** True when growth stopped because the ceiling (cells/tiles/rounds) was
    *  hit rather than because the frontier ran out of anywhere left to grow
-   *  (a genuine enclosure) or a route was found. */
+   *  (a genuine enclosure), a route was found with the corridor target met,
+   *  or the α·C* travel-time budget was genuinely exhausted. */
   hitCeiling: boolean;
+  /** The cheapest confirmed origin→objective cost, seconds — C* in the
+   *  design's own `α·C*` notation. Null when no route was ever found. */
+  costStarSeconds: number | null;
+  /** How many distinct avenues (`estimateDistinctCorridorCount`) were
+   *  confirmed by the time growth stopped — 0 when no route was found. Not
+   *  necessarily the same number `buildCorridorField`'s own, separate,
+   *  larger-k final pass will report (see that function's own doc comment),
+   *  but the real signal this loop's own stop decision was made from. */
+  corridorCountAtStop: number;
 }
 
 /**
@@ -220,7 +310,10 @@ export async function runLazyMobilitySearch(
   objective: PaintedArea,
   options: LazyMobilitySearchOptions
 ): Promise<LazyMobilitySearchResult | null> {
-  const { signal, fidelity = DEFAULT_MOBILITY_FIDELITY, roadSpeedOverrides, onProgress, onLog, onRoundStart, onPreviewCells } = options;
+  const {
+    signal, fidelity = DEFAULT_MOBILITY_FIDELITY, roadSpeedOverrides, onProgress, onLog, onRoundStart, onPreviewCells,
+    alpha = DEFAULT_ALPHA,
+  } = options;
   const profile = getMoverProfile(options.profileId);
   if (!profile) return null;
 
@@ -252,6 +345,11 @@ export async function runLazyMobilitySearch(
   let path: SimPathNode[] | null = null;
   let hitCeiling = false;
   let round = 0;
+  // docs §35 design points 2+3 — Phase 1 (unconstrained) until a route
+  // exists at all, then Phase 2 (budgeted by α·C*, stopping once 2–5
+  // distinct corridors are confirmed). See the constants' own doc comment.
+  let costStar: number | undefined;
+  let corridorCountAtStop = 0;
 
   while (true) {
     round++;
@@ -333,15 +431,49 @@ export async function runLazyMobilitySearch(
     results = outcome.results;
     path = outcome.path;
 
-    if (path) break; // found it
+    // Phase 1 → Phase 2 transition: the first time a route exists, record
+    // C* — the cheapest confirmed origin→objective cost — and never let it
+    // get WORSE on a later round (later rounds can only refine/improve
+    // reachability, never regress it, but this guards the edge case of a
+    // still-undefined objective-key arrival cleanly).
+    if (path) {
+      const objectiveTimes = objectiveKeys
+        .map(k => reach!.best.get(k)?.timeSeconds)
+        .filter((t): t is number => typeof t === 'number' && isFinite(t));
+      if (objectiveTimes.length > 0) {
+        const thisCostStar = Math.min(...objectiveTimes);
+        costStar = costStar === undefined ? thisCostStar : Math.min(costStar, thisCostStar);
+      }
+    }
+
+    // Once a route exists, check whether enough genuinely distinct avenues
+    // have been found yet (docs §35 design point 3) — this is the PRIMARY
+    // stop rule; the frontier/ceiling checks below are the safety bounds
+    // behind it, exactly as designed.
+    if (path && costStar !== undefined) {
+      corridorCountAtStop = estimateDistinctCorridorCount(
+        allCells, originKeys, objectiveKeys, profile, options.nightMode, hexSize
+      );
+      if (corridorCountAtStop >= MIN_TARGET_CORRIDORS || corridorCountAtStop >= MAX_TARGET_CORRIDORS) {
+        break; // 2–5 distinct corridors confirmed — done
+      }
+      onLog?.(
+        `ROUTE FOUND (${(costStar / 60).toFixed(0)} MIN) BUT ONLY ${corridorCountAtStop} DISTINCT CORRIDOR(S) SO FAR — ` +
+        `WIDENING WITHIN α×C* (${alpha}×${(costStar / 60).toFixed(0)} MIN) TO LOOK FOR MORE`
+      );
+    }
 
     // Which tiles does the reachable frontier actually border? Only cells
     // this round's search could reach at all are relevant — an unreached
     // cell's neighbours say nothing about where growth would help (matches
     // `frontierTouchedEdges`'s own "unreachable cells don't count" rule from
-    // the old fixed-box approach).
+    // the old fixed-box approach). Once C* is known (Phase 2), a cell beyond
+    // the α·C* travel-time budget doesn't get to pull in new tiles either —
+    // the self-sizing cost-budget "ellipse" (docs §35 design point 2) falls
+    // straight out of this filter rather than needing separate geometry.
     const nextNeeded = new Set<string>();
-    for (const key of reach.best.keys()) {
+    for (const [key, arrival] of reach.best) {
+      if (costStar !== undefined && arrival.timeSeconds > alpha * costStar) continue;
       const cell = materialized.get(key);
       if (!cell) continue;
       for (const nHex of hexNeighbors(cell.hex)) {
@@ -353,12 +485,14 @@ export async function runLazyMobilitySearch(
       }
     }
 
-    if (nextNeeded.size === 0) break; // reachable frontier is fully enclosed by terrain, not by missing tiles
+    if (nextNeeded.size === 0) break; // enclosed by terrain, or (Phase 2) genuinely exhausted the α·C* budget
     if (materialized.size >= cellCeiling || materializedTiles.size >= tileCeiling || round >= MAX_LAZY_ROUNDS) {
       hitCeiling = true;
       break;
     }
-    onLog?.(`NO ROUTE YET — MATERIALISING ${nextNeeded.size} MORE TILE(S) TOWARD THE REACHABLE FRONTIER (ROUND ${round + 1})`);
+    if (!path) {
+      onLog?.(`NO ROUTE YET — MATERIALISING ${nextNeeded.size} MORE TILE(S) TOWARD THE REACHABLE FRONTIER (ROUND ${round + 1})`);
+    }
     neededTiles = nextNeeded;
   }
 
@@ -397,7 +531,11 @@ export async function runLazyMobilitySearch(
     targetCellCount,
   };
 
-  return { grid, results, path, roundsUsed: round, tilesUsed: materializedTiles.size, hitCeiling };
+  return {
+    grid, results, path, roundsUsed: round, tilesUsed: materializedTiles.size, hitCeiling,
+    costStarSeconds: costStar ?? null,
+    corridorCountAtStop,
+  };
 }
 
 /** Diminishing-returns progress curve — see `LazyMobilitySearchOptions.onProgress`'s

@@ -505,6 +505,16 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
                   {c.easeClass.replace('-', ' ').toUpperCase()}
                 </span>
               </div>
+              {(c.id === displayedCorridorField.mostLikelyCorridorId || c.id === displayedCorridorField.mostRiskyCorridorId) && (
+                <div className="corridor-picks">
+                  {c.id === displayedCorridorField.mostLikelyCorridorId && (
+                    <span className="corridor-pick corridor-pick--likely">MOST LIKELY</span>
+                  )}
+                  {c.id === displayedCorridorField.mostRiskyCorridorId && (
+                    <span className="corridor-pick corridor-pick--risky">MOST RISKY</span>
+                  )}
+                </div>
+              )}
               <div className="corridor-figures tac-mono">
                 <div>
                   {Math.round(c.shareOfRoutes * 100)}% OF{' '}
@@ -515,6 +525,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
                 <div>BOTTLENECK ~{c.bottleneckWidthM.toFixed(0)} M</div>
                 <div>{c.bottleneckAbreast} ABREAST · {c.frontage.replace('-', ' ').toUpperCase()}</div>
                 <div>{Math.round(c.goFraction * 100)}% GO · {Math.round(c.slowGoFraction * 100)}% SLOW</div>
+                <div>{Math.round(c.riskScore * 100)}% RISK · {Math.round(c.waterCrossingFraction * 100)}% WATER</div>
                 <div>{c.cells.length} CELLS</div>
               </div>
               {c.usedEstimatedData && (
