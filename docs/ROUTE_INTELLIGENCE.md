@@ -3123,8 +3123,17 @@ was reviewed and found correctly connected — no further gaps found.
 
 ## 35. The bounding box is the bug — lazy grid, cost budget, corridor-count stop (design, 2026-07-27)
 
-**Status: DESIGN ONLY. Not built.** Recorded here before implementation per
-CLAUDE.md's roadmap-first rule.
+**Status (2026-07-29): points 1, 5 and 6 of "the design" below — lazy grid
+materialisation, tile-ring data fetch, honest failure — are BUILT** (step 45,
+`mobilityLazyGrid.ts` + `accumulatedCost.ts`'s `resumeFrom`; see "Shipped:
+lazy grid materialisation" immediately after the design below for what
+actually landed and how it differs from the design as originally specified).
+**Points 2, 3 and 4 — the `α·C*` cost-budget ellipse, the 2–5-corridor stop
+rule, and the two-pass coarse/fine resolution split — remain DESIGN ONLY**,
+tracked as the narrower "Slice B remainder" item in `master_plan.md`'s Next
+up. The design as originally written is left below UNCHANGED as the
+reference for that remaining work; do not edit it to match what shipped —
+the shipped addendum after it is where implementation reality lives.
 
 ### The field report
 
@@ -3313,6 +3322,95 @@ but real at very fine resolution over very large areas.
 
 - **Mixed-size cells in one graph** — superseded by the two-pass approach
   above.
+
+---
+
+### Shipped: lazy grid materialisation + resumable search (2026-07-29, step 45)
+
+Builds points 1 ("delete the box"), 5 ("eager coarse tiles, lazy fine
+cells") and 6 ("honest failure") of the design above. Deliberately does
+**not** attempt points 2–4 (the `α·C*` ellipse, the corridor-count stop
+rule, the two-pass coarse/fine split) — those still govern how the search
+decides WHEN it has enough; this pass only changed HOW the grid it searches
+gets assembled.
+
+**What actually shipped, and one deliberate simplification from the design
+as written:**
+
+- **Tiles, not per-cell materialisation.** The design's point 1 frames this
+  as per-CELL lazy materialisation under an A* frontier; point 5 separately
+  notes cell-by-cell awaiting would "wreck" the worker's synchronous search
+  and proposes coarse-tile batching as the resolution. What's built goes
+  straight to tile batching as the ONLY unit of materialisation — a tile
+  (~10×10 hexes) is fetched, sampled and added to the grid as one atomic
+  batch, never a single cell at a time. This is a simplification of the
+  design's two-tier framing (per-cell frontier reasoning, tile-batched I/O
+  underneath it), not an addition to it: the frontier check that decides
+  WHICH tiles to fetch next still runs per-cell (`mobilityLazyGrid.ts` scans
+  every reachable cell's hex neighbours each round), so resolution at the
+  frontier is exactly as fine as the design calls for — only the atomic unit
+  of "fetch this next" is a tile rather than a cell, which is what point 5
+  already required regardless.
+- **Resumable Dijkstra, not restart-with-a-bigger-box.** The mechanism that
+  makes tile-by-tile growth affordable — `accumulatedCost.ts`'s new
+  `resumeFrom` option — isn't named explicitly in the original design text,
+  but is exactly what "materialise a hex only when the A* frontier reaches
+  it... the explored region grows organically" requires in practice: without
+  it, every tile added would force a full grid rebuild + full Dijkstra
+  restart, which is functionally the OLD `boundsPadFactor` retry this step
+  replaces, just with smaller box-growth increments. `resumeFrom` seeds a
+  fresh search's heap from a prior partial result's already-settled `best`/
+  `prev` maps — correct because Dijkstra with non-negative edges never
+  revises a settled distance once popped, so this is equivalent to having
+  run one longer, uninterrupted search all along.
+- **Fixed hex size for the whole run**, chosen once from an initial footprint
+  sized by the SAME `computePaddedBounds` math the old first attempt used —
+  this is what keeps `demDerivatives.ts`, `corridorField.ts`, chokepoints and
+  min-cut completely untouched: they still receive one ordinary, uniform-hex,
+  finished `MobilityGridCell[]`, exactly as before. A typical short-range run
+  (the common case) uses the identical hex count/resolution it always did.
+- **Growth stop condition is a cell/tile ceiling, not a cost budget.** This is
+  the honest gap versus the full design: point 6 ("honest failure") is built
+  — a hard ceiling produces a stated "stopped at the search ceiling, not yet
+  proven unreachable" outcome, distinguished in the log/result from a genuine
+  terrain enclosure ("the reachable frontier ran out of new ground to grow
+  into") — but the ceiling itself is `computeCellBudget`'s existing
+  fidelity-tier `hardCeiling` × a fixed multiplier, not the self-sizing
+  `α·C*` travel-time ellipse point 2 specifies. That remains the "Slice B
+  remainder" item in `master_plan.md`.
+- **crossSlopeDeg caveat** (honestly documented, not solved): a cell's local
+  plane-fit slope is computed from whichever neighbours are materialised at
+  the moment ITS round runs and is never retroactively recomputed once the
+  cell is settled — a cell settled at a transient tile edge keeps that
+  round's value even if a later round completes its neighbourhood. This is
+  the same "incomplete-neighbourhood edge effect" the old fixed-box approach
+  already had for its outer ring (a real, pre-existing, accepted
+  characteristic of a locally-fit derivative on a finite sample), now
+  transient rather than permanent. `crossSlopeDeg` was already documented
+  elsewhere as a conservative upper-bound proxy, not a precise per-edge
+  figure — this doesn't change what any caller may assume about it.
+
+**Files:** `webapp/src/terrain/mobilityLazyGrid.ts` (new — the tile
+partition + materialisation loop), `accumulatedCost.ts` (`resumeFrom` on
+`runAccumulatedCostSearch`), `mobilityGrid.ts` (`sampleCellsForHexes`/
+`applyCrossSlope` extracted from `buildMobilityGrid`, behaviour-preserving —
+`buildMobilityGrid` itself, and its other callers `unitSimulation.ts`/
+`roadRouteSearch.ts`, are unchanged), `mobilityWorker.ts`/
+`mobilityWorkerClient.ts` (`resumeFrom`/`reach` threaded across the worker
+boundary — `Map`s structured-clone natively, same precedent as `RoadGraph`),
+`mobilityAppreciation.ts` (the `MAX_ATTEMPTS`/`boundsPadFactor` retry loop
+replaced by one call into `runLazyMobilitySearch`).
+
+**Tests:** `resumableSearch.test.ts` (resumed search matches a from-scratch
+search over the identical final cell set exactly; never revises an
+already-settled distance; a synthetic barrier-with-a-gap grid proven
+reachable only once a resumed round materialises the gap's tile, not on the
+narrower first round) and `lazyTilePartition.test.ts` (the tile partition
+never double-materialises or drops a hex) — both at the engine level, no
+network, matching this suite's own established precedent for exactly the
+same reason `buildMobilityGrid` itself was never given a full-pipeline test
+(the orchestration is network-coupled). Full existing Terrain Mobility test
+suite (32 files) still green.
 
 ---
 
