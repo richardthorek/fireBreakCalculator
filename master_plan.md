@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — hydrology water-gate fields (already computed since Pass 6) now reach the GIS export and AI briefing, closing a real visibility gap; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — existing-trail reuse, computed by the fire-break optimizer's own pathfinding but silently discarded before costing, is now surfaced to the user; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -78,6 +78,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 40 | Road-route decoupling — the instant road-network preview | Owner, picking the next priority explicitly for confidence/accuracy AND visual impact over "nice to have" controls. The box-free vehicle road route never actually depended on the hex-grid retry loop, only on the road-network fetch — but ran after the whole grid/search pipeline settled purely because of where the code sat, so a real result that could appear in seconds instead waited tens of seconds. `findEarlyVehicleRoadRoutePreview` (new) fetches independently, using the EXACT same first-attempt bounds the grid pipeline's own attempt 0 computes, so the existing bbox cache collapses the two into one real network round trip, not a duplicate. New `onRoadRoute` callback wired into `App.tsx` — the map shows the real road route seconds in, always superseded outright by the authoritative result the instant it lands (never a stale preview surviving the real answer) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
 | 41 | Full OSM water-relation topology — multipolygon reassembly | Owner's second confidence/accuracy pick alongside step 40. Step 31's scope cut was framed as "safe either direction", but reading `distanceToNearestWater`'s actual code found a sharper gap: an unclosed fragment (exactly what one piece of a multi-member outer ring usually is) was skipped entirely by the interior point-in-polygon test, so a point deep in a large multi-fragment lake could go UNDETECTED as water — a real under-block risk for a hard-block gate, not just the documented "island over-blocks" direction. `stitchRings` (new, kept in lock-step between webapp and API) reassembles same-role way fragments into closed rings by endpoint-matching; `inner` fragments become real holes assigned to whichever stitched outer ring actually contains them. `distanceToNearestWater`/`roadGraph.ts`'s `isInAnyWaterBody` both now correctly treat a point on a real island as dry ground, not water | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
 | 42 | Hydrology attributes in GIS export / AI briefing | Water-gate fields have been computed by the hard-block hydrology gate since Pass 6, but never reached the exported GeoJSON/KML attributes or the AI briefing payload — a user reading either had no way to see WHY a route avoided or crossed water. `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is now the single predicate the run's own assessment log, the GIS export, and the AI briefing payload all share. GIS export: mission-level water counts plus PER-CORRIDOR `crosses_water`/`water_cell_count` scoped to each corridor's own cells (proven distinct from the grid-wide total). AI briefing: `hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` added as required payload fields (kept in lock-step, webapp+API), with a template caution when data is unavailable or a plain-language summary when water is found — silent when data was available and genuinely found none. Also corrected a stale roadmap item found along the way: "Vegetation NVIS-first uplift" (both stated criteria were already shipped in PR #178, 2026-07-16 — only `NVIS_INTEGRATION.md`'s checklist and this table weren't updated) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
+| 43 | Existing-trail reuse: computed then silently discarded before costing, now surfaced | Found while checking a second stale roadmap item ("Road class modelling") against the live code. Real defect, not a doc issue this time: `routeOptimizer.ts` already computes which parts of a route follow a mapped trail and uses it to PREFER trail-following routes during pathfinding (`×0.35` fuel discount) — but that fact never reached `RouteSegment[]`, the exact shape POSTed to `/api/analysis/calculate`, the sole authoritative cost engine. A route reusing a real formed track — including the app's own auto-optimized suggestion — was costed identically to virgin bush, with the AdvisorPanel's own "existing trail used" stat left disconnected from the $/hours shown next to it. Fixed the same way NAFI fire history was handled: `vegetationAnalysis.ts` now also fetches the reusable-trail set once per line and flags each segment (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`, a real merge boundary) — surfaced in `AnalysisPanel.tsx` with an explicit note that the estimate does NOT already discount for it, since (unlike the optimizer's own uncited `×0.35`) there is no sourced existing-track-vs-virgin clearing-rate figure to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Infrastructure-aware cost surface" |
 
 ### Next up
 
@@ -91,7 +92,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
-| Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
@@ -156,6 +156,50 @@ Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both i
   change to be citable. Template narrates a caution when hydrology data was
   unavailable, or a summary when real water was found — silent when data WAS
   available and genuinely found none, so a clean AOI's briefing stays clean.
+
+- **2026-07-28 — Existing-trail reuse: computed then silently discarded
+  before costing, now surfaced (step 43)**: owner: "move into the next
+  priority roadmap item." The Next-up queue's own "Road class modelling" row
+  was checked against the live code first and turned out to be a second
+  stale entry — its language ("a highway and a farm track are identical to a
+  mover") is Terrain Mobility terminology describing a gap Slice A
+  (`roadSpeedModel.ts`) already closed months earlier; its cited section
+  (§32, "Probabilistic movement") doesn't discuss road class at all. Removed
+  the stale row — but the investigation surfaced a real, more serious defect
+  in the OTHER route-planning subsystem: the fire-break optimizer.
+
+  `routeOptimizer.ts` already computes which parts of a candidate route
+  follow a mapped trail/track/road (`TRAIL_SNAP_M = 30m`) and applies a
+  `×0.35` fuel discount to PREFER trail-following routes during pathfinding
+  — but that fact was never carried into `RouteSegment[]`, the exact shape
+  `BackendAnalysisRequest.segments` POSTs to `/api/analysis/calculate`, the
+  SOLE authoritative cost engine (CLAUDE.md). A route that reused a real
+  formed track — including the app's own auto-optimized suggestion, chosen
+  specifically because it favours trails — was costed identically to virgin
+  bush of the same vegetation class, with nothing anywhere in the final
+  estimate to say otherwise; the optimizer's own before/after "existing
+  trail used" stat (`AdvisorPanel.tsx`) is a distance figure disconnected
+  from the $/hours shown next to it. A confidently-wrong-answer defect, not
+  a missing nice-to-have.
+
+  Fixed the same way NAFI fire history was: `vegetationAnalysis.ts` now
+  also fetches the reusable-trail set (`fetchCorridorInfrastructure`, the
+  same default `highway` kind `routeOptimizer.ts` already queries) once per
+  line, alongside the existing waterway fetch, and flags each segment
+  (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`) —
+  a real merge boundary, mirroring `isWater`, never blended across. The
+  `×0.35` pathfinding discount is itself an uncited constant, so extending
+  it into the authoritative cost model would repeat exactly the
+  "invented factor" problem F3 replaced (`CALCULATION_REVIEW.md`) — there
+  is no sourced existing-track-vs-virgin clearing-rate figure, unlike
+  water's structural "already broken" certainty. So the flag is
+  deliberately NOT wired into any time/cost number: `AnalysisPanel.tsx`
+  shows a note stating the total reused length AND that the estimate does
+  not already discount for it, so a user never mistakes the headline figure
+  for one that already accounts for the track. Proven with
+  `routeProfileExistingTrail.test.ts` (4 tests): boundary correctness,
+  no cross-boundary merge, zero effect on length/slope/vegetation, and a
+  safe `false` default for older inputs with no trail data at all.
 
   14 new tests: `mobilityHydrologyExport.test.ts` (webapp, 6),
   `mobilityHydrologyBriefing.test.ts` (webapp, 3 — including a genuine

@@ -204,6 +204,20 @@ export interface VegetationSegment {
    *  resource's build time/cost (there is nothing to construct) rather than
    *  cost it as ordinary ground to be cleared. */
   isWater?: boolean;
+  /** True when this segment is within snap distance of a mapped, reusable
+   *  trail/track/road (docs/CALCULATION_REVIEW.md, 2026-07-28) — the SAME
+   *  reusable-ground set `routeOptimizer.ts` already uses to prefer
+   *  trail-following routes during pathfinding. INFORMATIONAL ONLY: unlike
+   *  `isWater` (a structural fact — damp ground genuinely carries no fire, so
+   *  it needs zero construction), there is no sourced figure for how much
+   *  faster an existing track is to turn into a fire break than clearing
+   *  virgin ground, so this does NOT reduce the time/cost estimate — it is
+   *  surfaced for the user to weigh, the same treatment already given to
+   *  `yearsSinceFire` below and for the identical reason (do not invent a
+   *  coefficient). Before this field existed, a route that reused an
+   *  existing formed track was costed identically to virgin bush of the same
+   *  vegetation class, with nothing in the final estimate to say otherwise. */
+  onExistingTrail?: boolean;
   /** Years since NAFI last detected a fire at this segment (northern
    *  Australia/rangelands coverage only — unset almost everywhere else, e.g.
    *  most of NSW/VIC/southern SA). Informational context only: there is no

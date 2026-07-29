@@ -12,13 +12,20 @@ import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchStateVegetation } from './stateVegetationRouter';
 import { logger } from './logger';
 import { mapFormationToVegetationType } from './vegetationMappingHelper';
-import { fetchCorridorWaterways, distanceToNearestWater, InfrastructureData } from './infrastructureService';
+import { fetchCorridorWaterways, distanceToNearestWater, fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureData } from './infrastructureService';
 import { fetchNAFITimeSinceFire } from '../terrain/dataLayers/nafiFireHistoryService';
 
 /** Same snap distance Terrain Mobility's hydrology gate uses (docs
  *  ROUTE_INTELLIGENCE.md §34) — a mapped waterway/water-body within this of a
  *  sample point is treated as actually crossing the line, not just nearby. */
 const WATER_SNAP_M = 30;
+
+/** Same snap distance `routeOptimizer.ts`'s own `TRAIL_SNAP_M` uses for its
+ *  internal path-selection "on trail" test — kept identical so this
+ *  segment-level flag and the optimizer's own before/after trail-reuse stat
+ *  (`RouteComparisonStats.existingTrailDistance`) describe the same ground,
+ *  not two different snap radii quietly disagreeing. */
+const TRAIL_SNAP_M = 30;
 
 /**
  * Helper function to get longitude from coordinate object that may use lng or lon
@@ -369,15 +376,31 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   // an unavailable water layer degrades to "no water detected" rather than
   // blocking vegetation analysis.
   let waterways: InfrastructureData = { trails: [], available: false };
+  // Existing-trail check (docs/CALCULATION_REVIEW.md, 2026-07-28) — the SAME
+  // reusable-trail set `routeOptimizer.ts` already fetches to prefer
+  // trail-following routes during pathfinding, but that fact was previously
+  // discarded before segments reached the API's cost model: a manually-drawn
+  // line (or even the OPTIMIZED route the optimizer itself produced) along a
+  // real formed track was costed identically to virgin bush of the same
+  // vegetation class, with no indication anywhere in the final estimate that
+  // ground was already broken. INFORMATIONAL ONLY, not an auto-discount —
+  // there is no sourced existing-track-vs-virgin-clearing-rate factor to
+  // apply (the same "do not invent a coefficient" reasoning already applied
+  // to NAFI fire history/DEA fractional cover below), so this is surfaced as
+  // a fact for the user to weigh, exactly like those two.
+  let existingTrails: InfrastructureData = { trails: [], available: false };
   try {
     let south = Infinity, west = Infinity, north = -Infinity, east = -Infinity;
     for (const p of points) {
       south = Math.min(south, p.lat); north = Math.max(north, p.lat);
       west = Math.min(west, getLng(p)); east = Math.max(east, getLng(p));
     }
-    waterways = await fetchCorridorWaterways(south, west, north, east);
+    [waterways, existingTrails] = await Promise.all([
+      fetchCorridorWaterways(south, west, north, east),
+      fetchCorridorInfrastructure(south, west, north, east),
+    ]);
   } catch (err) {
-    logger.warn('Water-crossing check failed; proceeding without it:', err);
+    logger.warn('Water-crossing / existing-trail check failed; proceeding without it:', err);
   }
   const crossesWaterAt = (spec: SegSpec): boolean => {
     if (waterways.trails.length === 0) return false;
@@ -387,6 +410,15 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       { lat: spec.end.lat, lng: getLng(spec.end) },
     ];
     return pts.some((p) => distanceToNearestWater(p, waterways.trails, WATER_SNAP_M) <= WATER_SNAP_M);
+  };
+  const onExistingTrailAt = (spec: SegSpec): boolean => {
+    if (existingTrails.trails.length === 0) return false;
+    const pts = [
+      { lat: spec.start.lat, lng: getLng(spec.start) },
+      { lat: spec.midLat, lng: spec.midLng },
+      { lat: spec.end.lat, lng: getLng(spec.end) },
+    ];
+    return pts.some((p) => distanceToNearestTrail(p, existingTrails.trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M);
   };
 
   const resolveVegetation = async (spec: SegSpec, i: number) => {
@@ -471,6 +503,7 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       distance: spec.distance,
       isModifiedOrLowFidelity: r.isModifiedOrLowFidelity,
       isWater: crossesWaterAt(spec),
+      onExistingTrail: onExistingTrailAt(spec),
       yearsSinceFire: r.yearsSinceFire,
       fireHistoryConfidence: r.fireHistoryConfidence,
     });
@@ -479,13 +512,15 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   }
 
   // Merge consecutive segments with the same vegetation type — but never
-  // across a water-crossing boundary, so a narrow river/lake crossing inside
-  // a longer grassland run stays a distinct, separately-flagged segment
-  // rather than disappearing into the merge.
+  // across a water-crossing OR existing-trail boundary, so a narrow
+  // river/lake crossing or a stretch that reuses a mapped track inside a
+  // longer grassland run stays a distinct, separately-flagged segment rather
+  // than disappearing into the merge.
   const mergedSegments: VegetationSegment[] = [];
   for (const seg of rawSegments) {
     const last = mergedSegments[mergedSegments.length - 1];
-    if (!last || last.vegetationType !== seg.vegetationType || !!last.isWater !== !!seg.isWater) {
+    if (!last || last.vegetationType !== seg.vegetationType || !!last.isWater !== !!seg.isWater
+      || !!last.onExistingTrail !== !!seg.onExistingTrail) {
       mergedSegments.push({ ...seg, coords: seg.coords ? [...seg.coords] : [seg.start, seg.end] });
     } else {
       // Merge segments
