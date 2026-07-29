@@ -50,8 +50,8 @@ or no reception, and it must **never present fabricated data as real analysis**.
 
 - **Vegetation:** NVIS national is the confirmed spine; NSW SVTM is a high-fidelity
   overlay. Per-state expansion is **frozen** (deferred future overlays are recorded
-  in `NVIS_INTEGRATION.md`). Next: the small "Vegetation NVIS-first uplift" in the
-  roadmap (explicit `NoData` handling, flag cleared/modified segments).
+  in `NVIS_INTEGRATION.md`). The "NVIS-first uplift" (explicit `NoData` handling,
+  flag cleared/modified segments) is done — both shipped in PR #178, 2026-07-16.
 - **Estimates:** per-segment production model lives in the API and is the sole
   accurate engine; the frontend delegates to it. See `CALCULATION_REVIEW.md`.
 - For anything else, the roadmap in `master_plan.md` is authoritative.

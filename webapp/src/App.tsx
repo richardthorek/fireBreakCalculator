@@ -505,6 +505,12 @@ const App: React.FC = () => {
   const [mobilityPreviewCells, setMobilityPreviewCells] = useState<
     { polygon: { lat: number; lng: number }[]; trafficability: 'GO' | 'SLOW-GO' | 'NO-GO'; timeSeconds: number; bandIndex: number }[] | null
   >(null);
+  /** The box-free vehicle road route, painted the moment it resolves — well
+   *  before the full grid/search pipeline settles (docs §38's stated
+   *  remainder, closed via `onRoadRoute`). Superseded by `mobilityResult`'s
+   *  own authoritative `roadRoute` the instant that lands; see the map
+   *  `roadRoute` prop below for the precedence. */
+  const [mobilityEarlyRoadRoute, setMobilityEarlyRoadRoute] = useState<{ lat: number; lng: number }[] | null>(null);
   /** One master opacity for the analysis overlays (owner, 2026-07-27). */
   const [mobilityOverlayOpacity, setMobilityOverlayOpacity] = useState(1);
   /** Corridor picked out in the panel or on the map — dims the others. */
@@ -565,6 +571,7 @@ const App: React.FC = () => {
     setMobilityProgress(0);
     setMobilityStage(null);
     setMobilityPreviewCells(null);
+    setMobilityEarlyRoadRoute(null);
     setHighlightedCorridorId(null);
     setMovementView('unrestricted');
     // A fresh run resamples the grid, so any prior min-cut segment indices/
@@ -624,6 +631,13 @@ const App: React.FC = () => {
           if (controller.signal.aborted) return;
           setMobilityResult(partial);
           setMobilityPreviewCells(null);
+        },
+        // Fires seconds in, well before onPartialResult — see that option's
+        // own doc comment in mobilityAppreciation.ts for why this never
+        // depended on the grid/search pipeline in the first place.
+        onRoadRoute: route => {
+          if (controller.signal.aborted) return;
+          setMobilityEarlyRoadRoute(route.waypoints);
         },
       });
       if (controller.signal.aborted) return;
@@ -1442,7 +1456,11 @@ const App: React.FC = () => {
             onCursorMove={setMobilityCursor}
             unitSimPosition={unitSimPosition}
             unitSimPath={unitSimPath}
-            roadRoute={mobilityResult?.roadRoute?.waypoints ?? null}
+            // The authoritative result, once it exists, always wins outright
+            // — including a null roadRoute (e.g. a retry-widened box moved
+            // the route out of range) — never silently falls back to a stale
+            // early preview once the real answer is in.
+            roadRoute={mobilityResult ? (mobilityResult.roadRoute?.waypoints ?? null) : mobilityEarlyRoadRoute}
             corridors={displayedMovementCorridorField?.corridors ?? null}
             corridorRoutes={corridorRoutesForMap}
             highlightedCorridorId={highlightedCorridorId}

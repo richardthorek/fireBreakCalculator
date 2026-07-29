@@ -205,6 +205,75 @@ test('CONTROL: a short bridge-like dip into a SMALL water body is NOT blocked (g
   assert.ok(route, 'FAILED: a short bridge-like crossing over a small water body must still be assumed passable');
 });
 
+test('a real island (holes, docs §35 addendum, full multipolygon reassembly): a long track across the ISLAND itself is NOT blocked', () => {
+  // A large water body with a real island in the middle — the island is well
+  // over MAX_ASSUMED_BRIDGE_SPAN_M across, so if `holes` were ignored a track
+  // running the length of it would be (wrongly) treated as an unbroken
+  // in-water run and blocked, exactly like the lakebed-crossing case above.
+  const centre = { lat: -34.6, lng: 150.0 };
+  const outerRing: WaterBodyPolygon['coords'] = [
+    { lat: centre.lat - 0.01, lng: centre.lng - 0.01 },
+    { lat: centre.lat - 0.01, lng: centre.lng + 0.01 },
+    { lat: centre.lat + 0.01, lng: centre.lng + 0.01 },
+    { lat: centre.lat + 0.01, lng: centre.lng - 0.01 },
+    { lat: centre.lat - 0.01, lng: centre.lng - 0.01 },
+  ];
+  const islandRing = [
+    { lat: centre.lat - 0.006, lng: centre.lng - 0.006 },
+    { lat: centre.lat - 0.006, lng: centre.lng + 0.006 },
+    { lat: centre.lat + 0.006, lng: centre.lng + 0.006 },
+    { lat: centre.lat + 0.006, lng: centre.lng - 0.006 },
+    { lat: centre.lat - 0.006, lng: centre.lng - 0.006 },
+  ];
+  const lakeWithIsland: WaterBodyPolygon = { coords: outerRing, holes: [islandRing] };
+
+  const islandRoad: RoadWay = {
+    kind: 'tertiary',
+    coords: [
+      { lat: centre.lat, lng: centre.lng - 0.005 }, // on the island, near its west edge
+      { lat: centre.lat, lng: centre.lng },          // island centre
+      { lat: centre.lat, lng: centre.lng + 0.005 },  // on the island, near its east edge
+    ],
+  };
+  const graph = buildRoadGraph([islandRoad], [lakeWithIsland]);
+  const a = nearestNode(graph, { lat: centre.lat, lng: centre.lng - 0.005 }, 50)!;
+  const b = nearestNode(graph, { lat: centre.lat, lng: centre.lng + 0.005 }, 50)!;
+  assert.ok(a && b, 'test setup: island road nodes must exist');
+  const route = findRoadRoute(graph, [a.id], [b.id], vehicle);
+  assert.ok(route, 'FAILED: a road entirely on a real island must not be treated as an in-water crossing');
+});
+
+test('CONTROL: the SAME lake, without the island road, still correctly blocks a track across the surrounding water', () => {
+  const centre = { lat: -34.6, lng: 150.0 };
+  const outerRing: WaterBodyPolygon['coords'] = [
+    { lat: centre.lat - 0.01, lng: centre.lng - 0.01 },
+    { lat: centre.lat - 0.01, lng: centre.lng + 0.01 },
+    { lat: centre.lat + 0.01, lng: centre.lng + 0.01 },
+    { lat: centre.lat + 0.01, lng: centre.lng - 0.01 },
+    { lat: centre.lat - 0.01, lng: centre.lng - 0.01 },
+  ];
+  const islandRing = [
+    { lat: centre.lat - 0.006, lng: centre.lng - 0.006 },
+    { lat: centre.lat - 0.006, lng: centre.lng + 0.006 },
+    { lat: centre.lat + 0.006, lng: centre.lng + 0.006 },
+    { lat: centre.lat + 0.006, lng: centre.lng - 0.006 },
+    { lat: centre.lat - 0.006, lng: centre.lng - 0.006 },
+  ];
+  const lakeWithIsland: WaterBodyPolygon = { coords: outerRing, holes: [islandRing] };
+  // A track skirting just OUTSIDE the island (still well within the outer
+  // ring) — genuinely open water on both sides, not the island's own ground.
+  const openWaterCoords = Array.from({ length: 21 }, (_, i) => ({
+    lat: centre.lat - 0.009,
+    lng: centre.lng - 0.009 + (0.018 * i) / 20,
+  }));
+  const openWaterRoad: RoadWay = { kind: 'track', coords: openWaterCoords };
+  const graph = buildRoadGraph([openWaterRoad], [lakeWithIsland]);
+  const a = nearestNode(graph, openWaterCoords[0], 50)!;
+  const b = nearestNode(graph, openWaterCoords[openWaterCoords.length - 1], 50)!;
+  const route = findRoadRoute(graph, [a.id], [b.id], vehicle);
+  assert.strictEqual(route, null, 'FAILED: a long track through genuine open water (not the island) must still be blocked');
+});
+
 if (process.exitCode === 1) {
   console.error(`\nRoad-graph water awareness did NOT hold.`);
 } else {

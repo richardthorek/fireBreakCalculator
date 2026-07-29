@@ -74,6 +74,15 @@ export interface InfrastructureTrail {
   tracktype?: string;
   /** OSM `smoothness` tag. Undefined when untagged. */
   smoothness?: string;
+  /** Real inner (island) rings subtracted as holes from this water body's
+   *  outer ring (docs §35 "OSM water relations" — full multipolygon
+   *  reassembly, 2026-07-28). Only ever populated for `kind === 'water'`
+   *  features stitched from a relation with usable `inner` members. MUST
+   *  match the webapp's identical field — the webapp's own point-inside-the-
+   *  body tests (`distanceToNearestWater`, `roadGraph.ts`'s
+   *  `isInAnyWaterBody`) depend on this shape surviving the API round trip
+   *  unchanged. */
+  holes?: { lat: number; lng: number }[][];
 }
 
 export interface InfrastructureResult {
@@ -113,34 +122,123 @@ function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e
   return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
 }
 
+/** Coordinate-equality tolerance for OSM shared-node matching (docs §35
+ *  addendum, full multipolygon reassembly, 2026-07-28) — a fraction of a
+ *  millimetre at the equator, far tighter than any two genuinely distinct
+ *  OSM nodes could collide within, loose enough to absorb float round-
+ *  tripping through Overpass's own JSON encoding. MUST match the webapp's
+ *  identical constant (`webapp/src/utils/infrastructureService.ts`). */
+const RING_JOIN_EPS = 1e-7;
+
+type LatLngPt = { lat: number; lng: number };
+
+function samePoint(a: LatLngPt, b: LatLngPt): boolean {
+  return Math.abs(a.lat - b.lat) < RING_JOIN_EPS && Math.abs(a.lng - b.lng) < RING_JOIN_EPS;
+}
+
+function isClosedRing(ring: LatLngPt[]): boolean {
+  return ring.length >= 4 && samePoint(ring[0], ring[ring.length - 1]);
+}
+
+/** Reassemble a relation's same-role way-member fragments into closed
+ *  ring(s) — MUST match the webapp's identical `stitchRings`, see that
+ *  copy's own doc comment for the full reasoning. */
+function stitchRings(fragments: LatLngPt[][]): { closed: LatLngPt[][]; open: LatLngPt[][] } {
+  const closed: LatLngPt[][] = [];
+  const open: LatLngPt[][] = [];
+  const remaining = fragments.filter(f => f.length >= 2).map(f => f.slice());
+
+  while (remaining.length > 0) {
+    let current = remaining.shift()!;
+    if (isClosedRing(current)) { closed.push(current); continue; }
+
+    let joinedAny = true;
+    while (!isClosedRing(current) && joinedAny) {
+      joinedAny = false;
+      const tail = current[current.length - 1];
+      for (let i = 0; i < remaining.length; i++) {
+        const frag = remaining[i];
+        if (samePoint(tail, frag[0])) {
+          current = current.concat(frag.slice(1));
+          remaining.splice(i, 1);
+          joinedAny = true;
+          break;
+        }
+        if (samePoint(tail, frag[frag.length - 1])) {
+          current = current.concat(frag.slice(0, -1).reverse());
+          remaining.splice(i, 1);
+          joinedAny = true;
+          break;
+        }
+      }
+    }
+    if (isClosedRing(current)) closed.push(current);
+    else open.push(current);
+  }
+  return { closed, open };
+}
+
+/** Self-contained ray-casting point-in-ring test, used only to decide which
+ *  outer ring a stitched hole belongs to — MUST match the webapp's identical
+ *  `pointInRing` (that copy also documents why this doesn't need to be the
+ *  same implementation the actual point-in-water-body test uses). */
+function pointInRing(p: LatLngPt, ring: LatLngPt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i].lng, yi = ring[i].lat;
+    const xj = ring[j].lng, yj = ring[j].lat;
+    const intersect = (yi > p.lat) !== (yj > p.lat) &&
+      p.lng < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 /**
  * Multipolygon water bodies come back as `relation` elements, not `way` —
  * confirmed live via Overpass (docs §35 addendum, 2026-07-28): Overpass's
  * `out geom` inlines each member's own node geometry directly on the
  * relation element (`members[].geometry`), no separate recursion query
- * needed. Each `outer`-role member way becomes its own standalone water-body
- * `InfrastructureTrail` — deliberately NOT reassembled into one true ring
- * with `inner` members subtracted as holes (a real, stated scope cut: a
- * multi-part outer ring split across several way members is not
- * re-stitched, and island/inner rings are not excluded). Both directions of
- * that cut are safe for this gate's purpose: at worst an island cell is
- * conservatively treated as water (a false NO-GO, not a false crossing —
- * the safe direction to be wrong in for a hard-block hydrology gate), and a
- * multi-member outer ring still gates correctly member-by-member even if
- * not literally one closed polygon.
+ * needed. Full reassembly (2026-07-28, MUST match the webapp's identical
+ * logic): `outer`-role fragments are stitched into closed ring(s) via
+ * `stitchRings` (previously: each fragment became its own standalone,
+ * often-unclosed "water body" — a real under-detection risk for a
+ * multi-fragment lake's interior, not just the documented "island
+ * over-blocks" direction). `inner`-role fragments are stitched the same way
+ * and assigned as holes to whichever stitched outer ring actually contains
+ * them (`pointInRing`). An outer fragment that genuinely can't be stitched
+ * closed is still emitted as a plain edge feature — the same
+ * degraded-but-safe behaviour every fragment got before this fix.
  */
 function extractWaterRelationTrails(elements: any[]): InfrastructureTrail[] {
   const out: InfrastructureTrail[] = [];
   for (const el of elements) {
     if (el.type !== 'relation' || el.tags?.natural !== WATER_NATURAL) continue;
+    const outerFragments: LatLngPt[][] = [];
+    const innerFragments: LatLngPt[][] = [];
     for (const member of el.members ?? []) {
-      if (member.type !== 'way' || member.role !== 'outer') continue;
-      if (!Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      if (member.type !== 'way' || !Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      const coords: LatLngPt[] = member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon }));
+      if (member.role === 'outer') outerFragments.push(coords);
+      else if (member.role === 'inner') innerFragments.push(coords);
+    }
+    if (outerFragments.length === 0) continue;
+
+    const outer = stitchRings(outerFragments);
+    const inner = stitchRings(innerFragments);
+    const holeRings = inner.closed;
+
+    for (const outerRing of outer.closed) {
+      const holes = holeRings.filter(h => h.length > 0 && pointInRing(h[0], outerRing));
       out.push({
         name: el.tags?.name,
         kind: 'water',
-        coords: member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+        coords: outerRing,
+        holes: holes.length > 0 ? holes : undefined,
       });
+    }
+    for (const openFragment of outer.open) {
+      out.push({ name: el.tags?.name, kind: 'water', coords: openFragment });
     }
   }
   return out;

@@ -27,6 +27,14 @@ export interface RouteSegment {
    *  every equipment's estimate (nothing to construct) rather than costed as
    *  ordinary fuel to clear. */
   crossesWater?: boolean;
+  /** True when this segment is within snap distance of a mapped, reusable
+   *  trail/track/road (docs/CALCULATION_REVIEW.md, 2026-07-28) — mirrors
+   *  `VegetationSegment.onExistingTrail`. INFORMATIONAL ONLY: does NOT reduce
+   *  this segment's time/cost — there is no sourced existing-track-vs-virgin
+   *  clearing-rate factor to apply. Surfaced so a route that reuses a formed
+   *  track no longer gets costed identically to virgin bush with nothing in
+   *  the final estimate to say otherwise. */
+  onExistingTrail?: boolean;
   /** Cross-slope (side-slope) in degrees, perpendicular to the line's own
    *  bearing — distinct from `slopeDegrees` (measured ALONG the line). The
    *  rollover-risk figure for machinery working a hillside contour. */
@@ -91,7 +99,7 @@ export function buildRouteProfile(
   );
   const veg = toIntervals(
     vegetationAnalysis?.segments ?? [],
-    (s) => ({ type: s.vegetationType, confidence: s.confidence, isWater: !!s.isWater })
+    (s) => ({ type: s.vegetationType, confidence: s.confidence, isWater: !!s.isWater, onExistingTrail: !!s.onExistingTrail })
   );
 
   const predominant: VegetationType =
@@ -139,15 +147,19 @@ export function buildRouteProfile(
     const crossSlopeDegrees = slopeAt.crossSlope;
     let vegetation: VegetationType = predominant;
     let vegetationConfidence: number | undefined = vegetationAnalysis?.overallConfidence;
-    // Whether this stretch physically crosses mapped water — independent of
-    // any vegetation-CLASS override below, since overriding the fuel class a
-    // user assigns doesn't change whether the ground here is actually water.
+    // Whether this stretch physically crosses mapped water, or reuses a
+    // mapped existing trail — both independent of any vegetation-CLASS
+    // override below, since overriding the fuel class a user assigns doesn't
+    // change whether the ground here is actually water or already tracked.
     const crossesWater = valueAt(
-      scaledVeg, mid, { type: predominant, confidence: 0, isWater: false }
+      scaledVeg, mid, { type: predominant, confidence: 0, isWater: false, onExistingTrail: false }
     ).isWater;
+    const onExistingTrail = valueAt(
+      scaledVeg, mid, { type: predominant, confidence: 0, isWater: false, onExistingTrail: false }
+    ).onExistingTrail;
 
     if (!overrideVegetation) {
-      const v = valueAt(scaledVeg, mid, { type: predominant, confidence: vegetationAnalysis?.overallConfidence ?? 0, isWater: false });
+      const v = valueAt(scaledVeg, mid, { type: predominant, confidence: vegetationAnalysis?.overallConfidence ?? 0, isWater: false, onExistingTrail: false });
       vegetation = v.type;
       vegetationConfidence = v.confidence;
 
@@ -165,7 +177,7 @@ export function buildRouteProfile(
       vegetationConfidence = 1;
     }
 
-    segments.push({ length: len, slopeDegrees, vegetation, vegetationConfidence, crossesWater, crossSlopeDegrees });
+    segments.push({ length: len, slopeDegrees, vegetation, vegetationConfidence, crossesWater, onExistingTrail, crossSlopeDegrees });
   }
 
   // Degenerate case: no usable geometry — return a single representative segment.

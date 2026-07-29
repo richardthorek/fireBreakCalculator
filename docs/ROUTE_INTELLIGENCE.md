@@ -70,6 +70,8 @@ Two Node smoke scripts (rolldown-bundled, stubbed DEM/vegetation/infrastructure)
 3. **Honesty:** failure across ALL three tiers returns `available:false` (never cached) → the result carries `infrastructureAvailable:false` and the UI says trail data was unavailable rather than implying no trails exist. Reused trails are labelled "OSM-mapped — verify trafficability" regardless of which tier supplied them (Mapbox Streets and Overpass share the OSM lineage and staleness caveat).
 4. **Anchor insights** (`planInsights.ts`): when either end of a >400 m line terminates in medium scrub or heavy forest, a chainage-located warning explains the outflanking risk and suggests tying into a road, waterway or cleared ground.
 
+**Estimate-honesty gap closed (2026-07-28, docs/CALCULATION_REVIEW.md)**: point 1's `×0.35` discount only ever applied inside the OPTIMIZER's own pathfinding graph — it steered which route got suggested, but was discarded before segments reached `/api/analysis/calculate`, the sole authoritative cost engine. A route that reuses a real formed track (including the app's own optimized suggestion) was costed identically to virgin bush, with the AdvisorPanel's "existing trail used" stat left disconnected from the $ / hours shown next to it. `vegetationAnalysis.ts` now flags each segment (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`), surfaced in `AnalysisPanel.tsx` — but deliberately NOT wired into the time/cost number itself, since (unlike this section's own `×0.35`) there is no sourced existing-track-vs-virgin clearing-rate figure to apply.
+
 **Still designed (📋):** water fill points and cadastre boundaries as advisory overlays (NSW DCS Spatial Services — **licensing/attribution check required before shipping**), and waterway/cleared-land anchor *detection* (current anchor rule is fuel-based only; OSM waterways would let the assistant name the feature to tie into).
 
 ---
@@ -4751,6 +4753,169 @@ suite still green; `tsc`/build clean.
 
 ---
 
+### 42a. Road-graph fusion extended: ensemble tie-break + min-cut class-tiered capacity (2026-07-28)
+
+Direct continuation of §42, picked as the next roadmap item (master_plan.md,
+"Fuse road-graph routes into movement simulation / min-cut"). §42 explicitly
+left two things unfused: the movement ensemble's per-step logic still walks
+hex-to-hex with a generic road-affinity bias, and min-cut's max-flow graph
+treated every mapped trail as identical (`TRAIL_CAPACITY_MULTIPLIER = 3`
+regardless of a two-lane highway vs. a single-track fire trail). The roadmap
+framed the FULL fix as "a genuinely mixed hex+road-graph adjacency across
+these core search primitives" — real, larger work this project's own
+discipline (avoid a confidently-wrong shortcut on a core algorithm) has twice
+now flagged as too risky to attempt in one pass. This entry ships two
+bounded, honest, real improvements instead — not the full rewrite, and not
+silently presented as though it were.
+
+**1. Ensemble known-route tie-break** (`movementSimulation.ts`). At a genuine
+hex-grid FORK — a junction where two or more `onTrail` neighbours are
+candidates — the existing road-affinity term (module note 0) can't tell them
+apart: every onTrail step looks equally "on the network". The box-free
+road-graph search already knows, by exact-geometry A*, which fork is
+actually part of the fastest route. New option `preferredRouteKeys` (hex keys
+of the resolved road route, already computed and snapped onto the grid by
+`roadRouteToDissimilarRoute`) adds a small, fixed
+`KNOWN_ROAD_ROUTE_BONUS_SECONDS` (60s) pull toward those cells — small
+enough on purpose to sit below the smallest `ROAD_AFFINITY_BASE_SECONDS`
+base (150s), so it sharpens a fork decision without overriding the
+ensemble's own stochastic spread (τ still governs how decisive it is per
+mover). Threaded through the full call chain that already exists for
+`blockedEdges`/`edgeCache`: `mobilityAppreciation.ts` (converts the road
+route once, up front, reusing it for both this and the existing
+corridor/chokepoint fusion — previously two independent conversions) →
+`mobilityWorkerClient.ts` → `mobilityWorker.ts`'s request shape → both the
+baseline ensemble call and `restrictionPlanner.ts`'s re-runs (kept IDENTICAL
+between baseline and every candidate/scenario evaluation, so a restriction's
+measured effect is never confounded by the bias changing between runs).
+
+**2. Min-cut road-class-tiered capacity** (`minCutBarrier.ts`). Replaces the
+flat `TRAIL_CAPACITY_MULTIPLIER = 3` with `HIGHWAY_CAPACITY_TIER`, keyed off
+the SAME real, sourced `nearestTrailTags.highway` classification the
+road-class speed model already uses (motorway/trunk 7-8×, primary/secondary
+5-6×, tertiary 4×, unclassified/residential/service/untagged 3× — matching
+the old flat default exactly, so nothing regresses for an untagged trail).
+The exact multiplier VALUES remain an engineering judgement (no source gives
+a real vehicle-capacity-per-road-class figure — the original flat 3× already
+held this same honesty position); what's new is that they now vary by real
+classification instead of collapsing every trail into one bucket, so a
+genuine highway chokepoint and a farm-track chokepoint no longer tie on cut
+value for no real reason.
+
+**Stated, NOT done, same as §42**: neither change makes the ensemble walk
+the road graph's own edges, nor makes min-cut's graph road-graph-aware — a
+mover still steps hex-to-hex, and a cut still severs whole hexes, never an
+exact point narrower than one. Both remain the same real, larger follow-up
+work §42 already named.
+
+**Tests** (`roadGraphEnsembleMinCutFusion.test.ts`, 6 checks): a synthetic
+two-fork hex grid (built from real `axialToLocal` geometry, not a hand-rolled
+approximation, so both forks are genuinely equal-cost) proves the baseline
+fork balance sits near parity, and that biasing toward EITHER fork shifts the
+balance decisively in that direction (not a one-directional artefact); a
+preferred-route key set with no matching cells in the grid is silently
+ignored, not a crash. Separately, a motorway-tagged trail chain is proven to
+carry strictly more min-cut capacity than an identically-shaped untagged
+track, while an off-trail chain is proven UNCHANGED at unit (1×) capacity.
+Full existing road/ensemble/restriction/min-cut-adjacent suite still green;
+`tsc`/build clean.
+
+---
+
+### 42b. The genuinely mixed hex+road-graph adjacency — road usage complete (2026-07-28)
+
+Owner: "Finish the bigger slice of work so the road usage is fully complete."
+§42/§42a both deferred the actual mixed-adjacency rewrite as real, larger,
+riskier work — this entry does it, in two bounded pieces that together close
+the roadmap item without rewriting either core search primitive from
+scratch.
+
+**1. Ensemble mixed-mode movement** (`movementSimulation.ts`). A mover's
+recorded POSITION stays a hex cell always — every downstream consumer
+(`TransitCell`'s polygon, `MoverTrack.keys`, corridor/chokepoint hex-band
+clustering) still gets exactly the shape it already expects, so none of that
+machinery needed to change. What changed is the CANDIDATE SET a mover chooses
+from at each step: when it is on a hex cell linked to a road-graph node
+(within `HEX_ROAD_LINK_SNAP_M`, 150m — onTrail cells and the road graph's own
+nodes come from the same OSM/Mapbox geometry, so a real link sits far closer
+than that in the common case), a bounded forward walk (`roadLandingCandidates`,
+`MAX_ROAD_HOP_CHAIN` = 40 real edges) follows the road graph's OWN exact
+edges — real per-edge distance, real class-based speed via
+`edgeTravelTime`, never a hex-approximated straight line — until it reaches a
+road node whose nearest onTrail hex genuinely differs from the mover's
+current one, then offers THAT hex as a candidate with the exact cumulative
+time to reach it. A long straight highway segment is no longer forced
+through artificial hex-sized steps, and a real junction offers its actual
+branches, not just "any onTrail hex neighbour" the tessellation happens to
+present. Every branch at a fork right at the start node is walked
+independently (a junction is not silently collapsed to its first-found arm),
+and both the linked-node map (per onTrail cell, eager, cheap) and the
+per-node "nearest hex" / per-walk landing results are memoised across the
+whole ensemble run — most movers revisit the same handful of real road nodes.
+
+**SAFETY-MOTIVATED SCOPE CUT, load-bearing, not incidental**: mixed-mode is
+wired in ONLY for the unrestricted baseline ensemble. `blockedEdges` is keyed
+by hex edges; a road-graph shortcut can legitimately skip past several
+intermediate hexes in one step, and there is no cheap way to prove such a
+skip never crosses a blocked hex edge along the way. Rather than risk a
+recommended road block being silently bypassed by the very mechanism meant to
+make movement more realistic, `restrictionPlanner.ts` continues to build its
+own plain hex-only `EdgeCostCache` (no road graph passed in) for every
+candidate evaluation AND the final restricted re-run — enforced structurally
+(the road graph is simply never threaded to that call site), not by a runtime
+flag that could be forgotten. The restricted picture always falls back to the
+same hex-only movement this mode already used before this change.
+
+**2. Road-network-exact min-cut** (`minCutBarrier.ts`,
+`computeRoadNetworkMinCut`). A SEPARATE max-flow problem, run directly over
+the road graph's own nodes/edges — deliberately not a rewrite of
+`computeMinCutBarrier` to accept a mixed adjacency (`ResidualGraph`/
+`bfsAugmentingPath` are reused completely unchanged; both were already
+generic over string node IDs, nothing hex-specific in either). Where the hex
+cut answers "the cheapest set of HEXES that severs all movement, on- or
+off-road", this answers "the cheapest set of REAL road segments that severs
+the road network specifically" — at the road graph's own resolution, a
+single OSM vertex-to-vertex edge, very often narrower than one hex. Capacity
+reuses the identical `HIGHWAY_CAPACITY_TIER` table §42a introduced (one real
+classification, not a second independently-tuned hierarchy); edges are
+excluded via the SAME `edgeTravelTime` blocked-check `roadRouteSearch.ts`
+already uses (impassable smoothness, unfordable standing water). Wired in
+`mobilityAppreciation.ts` as `roadNetworkBarrier` — vehicle profiles only,
+alongside (not replacing) the existing hex `barrier`, since the two answer
+genuinely different questions for the same profile (all ground vs.
+road-network specifically).
+
+**Stated scope, not silently expanded**: `roadNetworkBarrier` is computed and
+logged (`ROAD-NETWORK MIN-CUT — N EXACT ROAD SEGMENT(S)...`) and carried on
+`MobilityAppreciationResult`, but this pass did NOT add new Mapbox map layers,
+legend entries, GIS export attributes, or AI-briefing text for it — the
+existing hex `barrier` still owns the on-map counter-mobility answer. Surfacing
+the road-network-exact result visually is real, smaller follow-up work,
+explicitly not claimed as done here.
+
+**Tests** (`roadGraphMixedAdjacency.test.ts`, 10 checks). Ensemble: a
+deliberately extreme two-hex fixture with NO hex adjacency between them and
+NO intermediate hex cells at all proves the baseline (no road graph) leaves
+100% of movers stuck, while supplying the road graph lets 100% cross — via
+the road graph's real chained edges (proven by an intermediate pass-through
+node deliberately placed beyond the hex-link snap distance of EITHER hex, so
+a single-hop shortcut could not explain the result) — at the EXACT
+independently-computed travel time (not a hex approximation, since there is
+no hex edge to approximate from at all); the safety gate is proven directly
+(a defined-but-empty `blockedEdges` set disables the bridge entirely); an
+off-trail current cell never receives road candidates even when a road graph
+is supplied. Min-cut: a single-path chain cuts to exactly one segment, and
+BFS over the post-cut graph confirms origin and objective are genuinely
+disconnected (not just a plausible-looking answer); a motorway chain
+out-capacities an identical residential chain; two parallel equal-capacity
+branches require severing both, cut value summing correctly; an
+impassable-tagged edge is excluded from the flow graph entirely (returns
+null — already disconnected, nothing to cut); an empty graph returns null,
+not a crash. Full existing test suite still green (only the pre-existing,
+unrelated live-data `nvis-fidelity.test.ts` fails); `tsc`/build clean.
+
+---
+
 ## 43. Corridor legibility pass — the route line becomes the star (2026-07-28)
 
 Owner, reviewing a screenshot of a live run with 2 corridors present:
@@ -4805,6 +4970,197 @@ property and DOM/CSS work — `tsc`/build are clean and the untouched corridor-
 logic tests (clustering, path/polygon smoothing) still pass, but actual
 rendered legibility needs the live preview to confirm, the same limitation
 every other visual-only change in this doc's history has carried.
+
+---
+
+## 44. Road-route decoupling — the instant road-network preview (2026-07-28)
+
+Owner, choosing the next priority: "pick an item that improves the
+confidence or accuracy of the system and that will visually 'sell' it...
+make sure the core is rock solid and reliable before we start adding
+controls and adjustments." This closes the stated remainder flagged back in
+§38's cloud-offload scoping: the box-free vehicle road route
+(`findVehicleRoadRoute`, Slice A) never actually depended on the hex-grid
+retry loop — it only needs the road-network fetch, one of several already-
+parallel fetches inside `buildMobilityGrid` — but was computed AFTER the
+whole grid/search pipeline settled purely because of where the code
+happened to sit. On a large or fine-fidelity AOI that pipeline can take
+tens of seconds; the road route itself resolves in a couple.
+
+**Fixed**: `findEarlyVehicleRoadRoutePreview` (new, `roadRouteSearch.ts`)
+fetches road/water data for the road route INDEPENDENTLY of
+`mobilityAppreciation.ts`'s retry loop, using the exact same
+`computePaddedBounds` call with the exact same first-attempt inputs
+(`INITIAL_PAD_FACTOR`, `minDetourPadM(profile)`) the grid pipeline's own
+attempt 0 uses — not a coincidence, a hard requirement: `infrastructureService.ts`'s
+existing bbox result/in-flight cache only collapses two requests into one
+real network round trip when they round to the IDENTICAL bbox key. Get the
+inputs even slightly out of sync and this becomes a genuine duplicate
+fetch instead of a free one — the two call sites are commented accordingly,
+pointing at each other. A new `onRoadRoute` callback
+(`MobilityAppreciationOptions`) fires the moment this resolves, wired into
+`App.tsx` as `mobilityEarlyRoadRoute` — a fresh piece of state feeding the
+map's existing `roadRoute` prop ahead of the authoritative
+`mobilityResult.roadRoute`, which always supersedes it outright the instant
+it lands (including correctly clearing to null if a retry-widened box moved
+the route out of range — no stale preview can survive the real answer
+arriving).
+
+**Deliberately a preview, not a second source of truth**: this is
+best-effort only — any fetch/compute failure resolves to nothing shown, and
+`onRoadRoute` never fires; the authoritative pipeline never depends on it
+succeeding, and its own log line is clearly labelled "EARLY... PREVIEW...
+WHILE THE FULL AREA ANALYSIS IS STILL RUNNING" so a user watching the
+assessment log never mistakes it for the final figure.
+
+**Tests** (`roadRouteDecoupling.test.ts`, 6 checks, global `fetch` stubbed —
+no real network): a foot profile triggers zero fetches (road class never
+modulates foot movement, so there's nothing to preview); a vehicle profile
+finds the same real route the live pipeline finds via a synthetic network
+matching `roadRouteSearch.test.ts`'s own fixture; the bbox actually SENT in
+the query is parsed back out of the stubbed request and checked against an
+INDEPENDENTLY-computed `computePaddedBounds` call for the same inputs —
+proving the cache-collapse claim by construction, not just asserting it;
+a without-the-connector control still correctly finds no route; no road
+data and a simulated network failure both resolve to `null` cleanly, never
+a throw. Full existing suite still green (only the pre-existing, unrelated
+live-data `nvis-fidelity.test.ts` fails); `tsc`/build clean.
+
+---
+
+## 45. Full OSM water-relation topology — multipolygon reassembly (2026-07-28)
+
+Owner, picking the second of two priorities alongside step 40 (road-route
+decoupling): "improves the confidence or accuracy of the system... make
+sure the core is rock solid and reliable." Step 31 ("OSM water relations")
+shipped the common case — a relation's `outer`-role members each became
+their own standalone water-body trail — and stated a deliberate scope cut:
+a multi-part outer ring split across several way members was never
+re-stitched into one true ring, and `inner` (island) members were excluded
+entirely rather than subtracted as holes. That doc entry framed both
+directions as safe ("at worst an island cell is conservatively treated as
+water").
+
+**A sharper finding than the stated cut, found by reading the actual
+consumer code, not just the extraction code**: `distanceToNearestWater`'s
+point-in-polygon interior test already had a defensive `if (!closed)
+continue` guard — meaning an UNCLOSED fragment (exactly what one piece of a
+multi-member outer ring usually is on its own) was skipped entirely, not
+"gated member-by-member" as the old doc comment claimed. A point deep in
+the middle of a large multi-fragment lake, far from any single fragment's
+own edge, was therefore not reliably detected as water at all — a real
+UNDER-detection risk for a hard-block hydrology gate, the opposite of the
+documented safe direction. This made the fix a correctness gap, not just a
+"nice to have" completeness item.
+
+**Fixed, in both `webapp/src/utils/infrastructureService.ts` and
+`api/src/services/infrastructureService.ts` (kept in explicit lock-step,
+matching the existing "MUST match" discipline)**:
+
+- `stitchRings` reassembles a relation's same-role way-member fragments into
+  closed ring(s) by matching endpoint coordinates in EITHER orientation (a
+  member way's own direction is arbitrary), chaining until each ring closes.
+  Nothing is ever fabricated into a false closure — an unstitchable fragment
+  (a genuine data-quality edge case) still surfaces as a plain edge feature,
+  the exact same degraded-but-safe behaviour every fragment got before this
+  fix, not a regression for the cases the old code already handled.
+- `inner`-role fragments are stitched the same way and assigned as HOLES to
+  whichever stitched OUTER ring actually contains them (`pointInRing`, a
+  self-contained ray-casting test — a relation can have multiple disjoint
+  outer rings, each with its own islands, so this must be a real containment
+  check, not "first ring wins").
+- `InfrastructureTrail` gained an optional `holes?: LatLng[][]` field,
+  populated only for `kind === 'water'` features stitched from a relation
+  with usable inner members.
+- `distanceToNearestWater` (webapp) builds a proper multi-ring GeoJSON
+  `Polygon` — `[outer, hole1, hole2, ...]` — when holes are present;
+  `@turf/boolean-point-in-polygon` already implements "outer minus holes"
+  correctly per the GeoJSON spec, so no new point-in-polygon logic was
+  needed there. `distanceToNearestTrail` (the edge-proximity half) now also
+  scans hole boundaries — a real island's own shoreline is a genuine
+  water/land edge too, exactly as much as the lake's own outer shore.
+- `roadGraph.ts`'s self-contained `isInAnyWaterBody` (used by
+  `buildRoadGraph`'s water-crossing detection, docs §37) gained the same
+  hole check: inside the outer ring AND NOT inside any hole. A road entirely
+  on a real island is correctly NOT flagged as an in-water crossing, closing
+  the same failure mode §37's Lake George fix targeted, for the island case
+  specifically.
+
+**Tests**: `waterRelationTopology.test.ts` (webapp, 4 checks, global `fetch`
+stubbed): a three-fragment outer ring stitches into one closed ring and a
+point at its CENTRE (far from every individual fragment's own edge, so only
+a genuinely closed ring's interior test can find it) reads as water — the
+core regression this fix closes; a real island is subtracted as a hole
+(island centre reads as NOT water, the surrounding lake still does); two
+disjoint outer rings in one relation each get only their OWN island
+(structurally verified, not just "some hole exists"); an unstitchable
+fragment degrades safely, no crash, no fabricated closure. Mirrored in the
+API's `infrastructure.test.ts` (4 new checks, same fixtures, "MUST match"
+webapp behaviour). `roadWaterCrossing.test.ts` (webapp, 2 new checks): a
+long track running the length of a real island is NOT blocked as an
+in-water crossing; the SAME lake, without the island road, still correctly
+blocks a track through genuine open water (a control proving the fix didn't
+just turn the whole gate off). Full existing suite green in both packages
+(only the pre-existing, unrelated live-data `nvis-fidelity.test.ts` fails);
+`tsc`/build clean in both.
+
+---
+
+## 46. Hydrology attributes in GIS export / AI briefing (2026-07-28)
+
+Owner: "on to the next priority, again focus on functional improvements and
+quality — don't add 'nice to haves'." The water-gate fields (§34) have been
+computed by the hard-block hydrology gate since Pass 6 — `inWaterBody`,
+`nearestWaterwayKind`, `waterFrequency`, `hydrologyAvailable` — but never
+reached the exported GeoJSON/KML attributes or the AI briefing payload. A
+user reading either had no way to see WHY a route avoided (or crossed)
+water, even though the system had already worked it out — the exact same
+"real, computed data, invisible outside the live map" gap step 44 closed for
+the road route, applied here to hydrology.
+
+**Single shared predicate, not three independently-tuned copies**:
+`carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is the
+literal water-signal query the run's own assessment log already computed
+inline (`inWaterBody || nearestWaterwayKind !== null || waterFrequency >=
+0.15`), extracted so the log, the GIS export, and the AI briefing payload all
+call the SAME function — none of them can quietly drift onto a different
+threshold.
+
+**GIS export** (`mobilityGisExport.ts`): `ExportMobilityInput` gained
+`hydrologyAvailable`; `missionProperties()` reports `hydrology_available` +
+mission-wide `water_affected_cell_count`/`water_body_cell_count`.
+`corridorProperties()` now takes a `cellsByKey` map (hoisted once per export
+call, previously only built inside the placement-export branch) so each
+CORRIDOR feature can report `crosses_water`/`water_cell_count` scoped to
+**its own cells only** — proven by a test with a dry corridor and a wet
+corridor in the same export where the wet corridor's count is neither zero
+nor the grid-wide total. KML mission/corridor descriptions gained matching
+plain-language notes.
+
+**AI briefing** (`mobilityAssistantApi.ts` + `api/src/types/mobilityAssistant.ts`
++ `mobilityBriefingTemplate.ts`, kept in lock-step): payload gained
+`hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` as
+REQUIRED fields (not optional — these are computed on every run, same
+treatment as `estimatedData`, unlike the movement/restriction blocks which
+are optional because they arrived after other clients existed).
+`flattenPayloadNumbers` (aiGrounding.ts) already walks the payload
+generically, so the new counts are automatically available for the model to
+cite without any grounding-layer change. Template briefing gains a caution
+line when hydrology data was unavailable, or a plain-language water-signal
+summary when real water was found — deliberately silent when data WAS
+available and genuinely found none, so a clean AOI's briefing doesn't gain
+noise.
+
+**Tests**: 14 new checks split across `mobilityHydrologyExport.test.ts`
+(webapp, 6 — mission-level counts, per-corridor scoping proven with a
+dry/wet corridor pair, KML mission and per-corridor notes), 3 more in
+`mobilityHydrologyBriefing.test.ts` (webapp — `buildMobilityAssistantPayload`
+computes the fields correctly, including a genuine below-threshold
+`waterFrequency` cell correctly NOT counted), plus 5 in the API's
+`mobilityAssistant.test.ts` (validator rejects a payload missing either new
+required field; template narrates the no-data caution, the water-found
+summary, and stays silent on a clean AOI). Full existing suite green in both
+packages; `tsc`/build clean in both.
 
 ---
 

@@ -241,11 +241,13 @@ explicit and honest.
    instead of resolving to a bogus MVG via `Raster.SORT_ORDER`/`COUNT`. Empty
    `results` arrays already fall through. Validated with a standalone Node repro
    of the extractor (the webapp package has no unit-test runner configured yet).
-2. **Surface "modified/low-fidelity" segments.** Carry a boolean flag (e.g.
-   `modified` / `lowFidelity`) on `StateVegetationResult` → `VegetationSegment`
-   for MVG 24/25/26/27/28/99, and show it in the analysis panel ("Cleared/modified
-   land — verify locally"), wired to the existing vegetation-override workflow
-   (`VEGETATION_OVERRIDES.md`). This is the main "account for structure" item.
+2. ~~**Surface "modified/low-fidelity" segments.**~~ ✅ **Done (PR #178,
+   2026-07-16, doc corrected 2026-07-28 — the code shipped but this checkbox
+   was never flipped).** `isModifiedOrLowFidelityMVG` (MVG 24/25/26/27/28/99)
+   → `StateVegetationResult.isModifiedOrLowFidelity` →
+   `VegetationSegment.isModifiedOrLowFidelity` → `segmentJoin.ts` →
+   `SegmentBreakdown.tsx`'s "⚠ Modified or low-fidelity land — verify
+   locally" marker, end to end.
 3. **Keep the NSW overlay; freeze state expansion.** Leave `stateDetection.ts`
    and `stateVegetationRouter.ts` as the NSW-overlay + NVIS mechanism. Remove the
    `// VIC/QLD/... Phase 3` TODO scaffolding so contributors don't resume it.

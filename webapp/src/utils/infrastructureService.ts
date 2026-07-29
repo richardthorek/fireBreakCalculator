@@ -51,6 +51,15 @@ export interface InfrastructureTrail {
   tracktype?: string;
   /** OSM `smoothness` tag, e.g. "bad", "impassable". Undefined when untagged. */
   smoothness?: string;
+  /** Real inner (island) rings subtracted as holes from this water body's
+   *  outer ring (docs §35 "OSM water relations" — full multipolygon
+   *  reassembly, 2026-07-28). Only ever populated for `kind === 'water'`
+   *  features stitched from a relation with usable `inner` members. Any
+   *  consumer doing a point-INSIDE-the-body test (`distanceToNearestWater`,
+   *  `roadGraph.ts`'s `isInAnyWaterBody`) must treat a point inside `coords`
+   *  but ALSO inside one of these as NOT water — dry ground on a real
+   *  island, not the lake. */
+  holes?: LatLng[][];
 }
 
 export interface InfrastructureData {
@@ -161,34 +170,142 @@ function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e
   return `[out:json][timeout:12];way["highway"~"^(${highways})$"](${s},${w},${n},${e});out geom;`;
 }
 
+/** Coordinate-equality tolerance for OSM shared-node matching (docs §35
+ *  addendum, full multipolygon reassembly, 2026-07-28) — a fraction of a
+ *  millimetre at the equator, far tighter than any two genuinely distinct
+ *  OSM nodes could collide within, loose enough to absorb float round-
+ *  tripping through Overpass's own JSON encoding. MUST match the API's
+ *  identical constant (`api/src/services/infrastructureService.ts`). */
+const RING_JOIN_EPS = 1e-7;
+
+function samePoint(a: LatLng, b: LatLng): boolean {
+  return Math.abs(a.lat - b.lat) < RING_JOIN_EPS && Math.abs(a.lng - b.lng) < RING_JOIN_EPS;
+}
+
+function isClosedRing(ring: LatLng[]): boolean {
+  return ring.length >= 4 && samePoint(ring[0], ring[ring.length - 1]);
+}
+
+/**
+ * Reassemble a relation's same-role way-member fragments into closed ring(s)
+ * (docs §35 addendum, full multipolygon reassembly, 2026-07-28) — OSM often
+ * splits a large lake's outer boundary (or an island's inner ring) across
+ * several way members sharing endpoint nodes at their junctions, rather than
+ * one single closed way. Matches endpoints in EITHER orientation (a member
+ * way's own direction is arbitrary) and chains fragments until each ring
+ * closes. Returns `closed`/`open` separately: `open` is whatever couldn't be
+ * joined into a closed ring — nothing is ever fabricated into a false
+ * closure, so an unstitchable fragment is kept as a real, honest edge
+ * feature (the SAME degraded-but-safe behaviour this module used for every
+ * fragment before this fix) rather than silently dropped.
+ */
+function stitchRings(fragments: LatLng[][]): { closed: LatLng[][]; open: LatLng[][] } {
+  const closed: LatLng[][] = [];
+  const open: LatLng[][] = [];
+  const remaining = fragments.filter(f => f.length >= 2).map(f => f.slice());
+
+  while (remaining.length > 0) {
+    let current = remaining.shift()!;
+    if (isClosedRing(current)) { closed.push(current); continue; }
+
+    let joinedAny = true;
+    while (!isClosedRing(current) && joinedAny) {
+      joinedAny = false;
+      const tail = current[current.length - 1];
+      for (let i = 0; i < remaining.length; i++) {
+        const frag = remaining[i];
+        if (samePoint(tail, frag[0])) {
+          current = current.concat(frag.slice(1));
+          remaining.splice(i, 1);
+          joinedAny = true;
+          break;
+        }
+        if (samePoint(tail, frag[frag.length - 1])) {
+          current = current.concat(frag.slice(0, -1).reverse());
+          remaining.splice(i, 1);
+          joinedAny = true;
+          break;
+        }
+      }
+    }
+    if (isClosedRing(current)) closed.push(current);
+    else open.push(current);
+  }
+  return { closed, open };
+}
+
+/** Self-contained ray-casting point-in-ring test — mirrors `roadGraph.ts`'s
+ *  own `pointInPolygon` ("no import dependency" design), used here only to
+ *  decide which OUTER ring a stitched hole belongs to (a relation can have
+ *  multiple disjoint outer rings, each with its own islands). The actual
+ *  point-inside-a-water-body test consumers make (`distanceToNearestWater`)
+ *  uses `@turf/boolean-point-in-polygon` against a proper multi-ring
+ *  `Polygon`, which already handles holes correctly — this helper is ONLY
+ *  for ring-to-ring assignment at extraction time. */
+function pointInRing(p: LatLng, ring: LatLng[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i].lng, yi = ring[i].lat;
+    const xj = ring[j].lng, yj = ring[j].lat;
+    const intersect = (yi > p.lat) !== (yj > p.lat) &&
+      p.lng < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 /**
  * Multipolygon water bodies come back as `relation` elements, not `way` —
  * confirmed live via Overpass (docs §35 addendum, 2026-07-28): Overpass's
  * `out geom` inlines each member's own node geometry directly on the
  * relation element (`members[].geometry`), no separate recursion query
- * needed. Each `outer`-role member way becomes its own standalone water-body
- * `InfrastructureTrail` — deliberately NOT reassembled into one true ring
- * with `inner` members subtracted as holes (a real, stated scope cut: a
- * multi-part outer ring split across several way members is not
- * re-stitched, and island/inner rings are not excluded). Both directions of
- * that cut are safe for this gate's purpose: at worst an island cell is
- * conservatively treated as water (a false NO-GO, not a false crossing —
- * the safe direction to be wrong in for a hard-block hydrology gate), and a
- * multi-member outer ring still gates correctly member-by-member even if
- * not literally one closed polygon.
+ * needed. Full reassembly (2026-07-28): `outer`-role fragments are stitched
+ * into closed ring(s) via `stitchRings` (previously: each fragment became
+ * its own standalone, often-unclosed "water body", which silently skipped
+ * the interior point-in-polygon test entirely for any multi-fragment lake —
+ * a real under-detection risk for a hard-block gate, not just the documented
+ * "island over-blocks" direction). `inner`-role fragments are stitched the
+ * same way and assigned as HOLES to whichever stitched outer ring actually
+ * contains them (`pointInRing`), so a real island now correctly reads as dry
+ * ground rather than being conservatively treated as water. An outer
+ * fragment that genuinely can't be stitched closed (a real data-quality
+ * edge case) is still emitted as a plain edge feature — the exact same
+ * degraded-but-safe behaviour every fragment got before this fix, not a
+ * regression for the cases the old code already handled.
  */
 function extractWaterRelationTrails(elements: any[]): InfrastructureTrail[] {
   const out: InfrastructureTrail[] = [];
   for (const el of elements) {
     if (el.type !== 'relation' || el.tags?.natural !== WATER_NATURAL) continue;
+    const outerFragments: LatLng[][] = [];
+    const innerFragments: LatLng[][] = [];
     for (const member of el.members ?? []) {
-      if (member.type !== 'way' || member.role !== 'outer') continue;
-      if (!Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      if (member.type !== 'way' || !Array.isArray(member.geometry) || member.geometry.length < 2) continue;
+      const coords: LatLng[] = member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon }));
+      if (member.role === 'outer') outerFragments.push(coords);
+      else if (member.role === 'inner') innerFragments.push(coords);
+    }
+    if (outerFragments.length === 0) continue;
+
+    const outer = stitchRings(outerFragments);
+    const inner = stitchRings(innerFragments);
+    // Only a genuinely CLOSED hole ring is a meaningful subtraction — an
+    // unstitchable inner fragment contributes nothing as a hole and is
+    // dropped (the same "safe to over-block" direction this gate already
+    // documented, not a new risk).
+    const holeRings = inner.closed;
+
+    for (const outerRing of outer.closed) {
+      const holes = holeRings.filter(h => h.length > 0 && pointInRing(h[0], outerRing));
       out.push({
         name: el.tags?.name,
         kind: 'water',
-        coords: member.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })),
+        coords: outerRing,
+        holes: holes.length > 0 ? holes : undefined,
       });
+    }
+    for (const openFragment of outer.open) {
+      out.push({ name: el.tags?.name, kind: 'water', coords: openFragment });
     }
   }
   return out;
@@ -419,8 +536,7 @@ export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrai
   let best = Infinity;
   const mPerDegLat = 111320;
   const mPerDegLng = 111320 * Math.cos((point.lat * Math.PI) / 180);
-  for (const trail of trails) {
-    const c = trail.coords;
+  const scanRing = (c: LatLng[]): boolean => {
     for (let i = 1; i < c.length; i++) {
       const ax = (c[i - 1].lng - point.lng) * mPerDegLng;
       const ay = (c[i - 1].lat - point.lat) * mPerDegLat;
@@ -434,8 +550,20 @@ export function distanceToNearestTrail(point: LatLng, trails: InfrastructureTrai
       const d = Math.hypot(ax + t * dx, ay + t * dy);
       if (d < best) {
         best = d;
-        if (best <= earlyExitThreshold) return best;
+        if (best <= earlyExitThreshold) return true; // caller should stop scanning entirely
       }
+    }
+    return false;
+  };
+  for (const trail of trails) {
+    if (scanRing(trail.coords)) return best;
+    // A real island's own shoreline (docs §35 addendum, full multipolygon
+    // reassembly, 2026-07-28) is a genuine water/land boundary too — a point
+    // standing near an island's edge is near water exactly as much as one
+    // near the lake's own outer shore. Only ever populated on `kind ===
+    // 'water'` features (see `InfrastructureTrail.holes`'s own doc comment).
+    for (const hole of trail.holes ?? []) {
+      if (scanRing(hole)) return best;
     }
   }
   return best;
@@ -466,9 +594,20 @@ export function distanceToNearestWater(point: LatLng, waterFeatures: Infrastruct
     const closed = Math.abs(first.lat - last.lat) < 1e-7 && Math.abs(first.lng - last.lng) < 1e-7;
     if (!closed) continue; // an unclosed way tagged natural=water is a data-quality edge case, not modelled here
     try {
+      // A real island (docs §35 addendum, full multipolygon reassembly,
+      // 2026-07-28): `feature.holes`, when present, are genuine inner rings
+      // stitched and assigned to THIS outer ring at extraction time
+      // (`extractWaterRelationTrails`). A standard multi-ring GeoJSON
+      // `Polygon` — `[outer, hole1, hole2, ...]` — already means "outer
+      // minus holes" per the spec, so `booleanPointInPolygon` handles this
+      // correctly with no extra logic here; a point on a real island
+      // reads as OUTSIDE the water body.
+      const rings = feature.holes && feature.holes.length > 0
+        ? [c, ...feature.holes]
+        : [c];
       const inside = booleanPointInPolygon(
         [point.lng, point.lat],
-        turfPolygon([c.map(p => [p.lng, p.lat])])
+        turfPolygon(rings.map(ring => ring.map(p => [p.lng, p.lat])))
       );
       if (inside) return 0;
     } catch {

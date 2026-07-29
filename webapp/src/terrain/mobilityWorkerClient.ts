@@ -17,6 +17,7 @@ import {
 import { MovementEnsembleResult } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
 import { RoadSpeedOverrides } from './roadSpeedModel';
+import { RoadGraph } from './roadGraph';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
@@ -92,6 +93,13 @@ export interface MovementEnsembleRequestOptions {
   roadSpeedOverrides?: RoadSpeedOverrides;
   onProgress?: (fraction: number, phase: 'ensemble' | 'restrictions' | 'rerun') => void;
   onLog?: (line: string) => void;
+  /** Hex keys of the box-free road-graph route, when one was found for this
+   *  run — see `movementSimulation.ts`'s `preferredRouteKeys` option. */
+  preferredRouteKeys?: string[];
+  /** The road graph itself, for the baseline ensemble's mixed-mode movement
+   *  (docs §42b) — see `MobilityMovementRequest.roadGraph`'s doc comment for
+   *  why this is unrestricted-baseline-only by construction. */
+  roadGraph?: RoadGraph;
 }
 
 export interface MovementEnsembleOutcome {
@@ -135,6 +143,8 @@ export function runMovementEnsembleInWorker(
       moverCount: options.moverCount, spreadId: options.spreadId, seed: options.seed,
       planRestrictions: options.planRestrictions, maxRestrictions: options.maxRestrictions,
       roadSpeedOverrides: options.roadSpeedOverrides,
+      preferredRouteKeys: options.preferredRouteKeys,
+      roadGraph: options.roadGraph,
     };
     w.postMessage(request);
   });

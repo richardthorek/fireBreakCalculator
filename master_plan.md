@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — OSM water relations (multipolygon lakes) now fetched and gated, closing the last known instance of the "water doesn't block movement" bug class ahead of the 1.0 demo; see Recent Updates for the dated history.
+**Last Updated**: July 29, 2026 — every "Next up" and "Blocked" roadmap row now carries an outcome, required changes, and difficulty; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -73,6 +73,13 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 35 | Page-hang regression fixed: detour floor capped, cell budget fixed, onTrail slope exemption added | Owner reported the page hanging around 50% progress until the browser offered to kill the tab. Traced to step 33's uncapped 1-hour detour floor: for a fast vehicle profile on a short trip it inflated the search box to ~120km wide, which fed the box-free road-graph route search (`findVehicleRoadRoute`, runs synchronously on the main thread, only ever "cheap" for a small bbox) — at 120km wide that's a whole regional road network, freezing the UI. Three fixes: (1) detour floor capped to a 15-minute budget (was 1hr uncapped) — still profile-scaled, but bounded; (2) cell budget (`buildMobilityGrid`) now derives from the ACTUAL padded box, not the raw origin↔objective distance — a second bug the detour floor exposed, where a fixed budget stretched over a much bigger box ballooned hex size everywhere; (3) the hard climb/cross-slope gates now exempt onTrail cells (both `edgeMobilityCost` and `classifyCellTerrain`) — the actual root cause of "the whole ridge is red instead of the legitimate gap", and on inspection the IDENTICAL root cause as step 34's Lake George case: vegetation/hydrology already exempt a mapped road, the slope gates never did | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
 | 36 | Road-graph route fused into chokepoint/corridor analysis | Owner proposed a hex grid aligned to roads at fine width, cross-country filling in around it — challenged instead: a hex grid, even fine, still quantizes the road (the identical failure step 35 just fixed), while the box-free road-graph search already routes over the road's EXACT geometry with zero quantization. Owner's real instinct ("roads are known good, treat them specially") is already Slice A's own philosophy; the actual gap was that the road route sat only as an ADDITIVE display, never counted by chokepoint/corridor analysis. `roadRouteToDissimilarRoute` (new) converts the road route into the same shape the hex-optimiser's/ensemble's own routes use, resampled to even spacing and snapped onto the hex grid, then folded into both corridor-building calls in `mobilityAppreciation.ts` — so chokepoints and corridor bands now count the real road route as a genuine avenue. Stated, not fused: the ensemble's own per-step movement (still hex-quantized with a road-affinity bias) and min-cut (still hex-adjacency-only) — both real, larger follow-up work | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
 | 37 | Corridor legibility pass — route line becomes the star, real label/shape colour bug fixed | Owner challenged Claude to identify corridors from a live screenshot with no prior context; only one hazy shape was findable for two labelled corridors. Root causes in the actual paint properties: the representative route line rendered at 0.8px/near-white/40% opacity (effectively invisible); the corridor outline was blurred; a REAL bug — the map label text colour (`styles-tactical.css`) was still on the pre-fix red/amber rank palette, identical to the trafficability heatmap's own NO-GO/SLOW-GO colours, never updated when the corridor SHAPE colours moved to blue/violet/cyan for exactly that collision. Fixed (3 of 4 offered options, owner declined the 4th as more structural than needed): route line now casing+core (dark 6px under rank-coloured 3px, full opacity, same pattern as restriction lines); outline de-blurred and widened; map label gained a numbered rank-coloured badge and its text colour now matches the shape palette exactly. `corridorRoutesForMap` (App.tsx) had to start carrying each route's rank/id so the map could colour-match it to its owning corridor. Not done: splitting corridors and trafficability onto independent opacity sliders | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
+| 38 | Road-graph fusion extended: ensemble tie-break + min-cut class-tiered capacity (still not full mixed adjacency) | Direct continuation of step 36's stated remainder. Ensemble: new `preferredRouteKeys` option gives movers a small, fixed pull toward the resolved road-graph route's own hex cells — sharpens which fork a mover picks at a genuine junction (where the old generic road-affinity term can't tell two onTrail forks apart) without overriding the ensemble's own stochastic spread. Min-cut: flat 3× trail capacity replaced with `HIGHWAY_CAPACITY_TIER`, keyed off the same real OSM highway classification the road-class speed model already uses, so a highway chokepoint no longer ties with a farm-track chokepoint on cut value. Neither change makes the ensemble walk the road graph's exact edges or makes min-cut road-graph-aware — both real, larger follow-up work, stated not attempted | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a |
+| 39 | Fuse road-graph routes into movement simulation / min-cut — genuinely mixed hex+road-graph adjacency, CLOSED | Owner: "finish the bigger slice of work so the road usage is fully complete." Ensemble: a mover's recorded position stays a hex cell (no downstream rendering/clustering code needed to change), but its CANDIDATE SET now includes real road-graph "next landing" options — a bounded walk of the road graph's own exact edges (real distance, real class speed) until it reaches a road node whose nearest onTrail hex genuinely differs from the mover's own, so a long straight road is no longer hex-quantized and a real junction offers its actual branches. Safety-motivated scope cut, structural not a flag: mixed-mode is wired ONLY into the unrestricted baseline (`restrictionPlanner.ts` never receives a road graph), so a recommended block can never be silently bypassed by the shortcut. Min-cut: a SEPARATE `computeRoadNetworkMinCut`, reusing the identical max-flow machinery over the road graph's own nodes/edges directly — targets a real road segment, often narrower than a hex, alongside (not replacing) the existing hex-based cut. Not done this pass: new map layers/GIS export/briefing text for the road-network-exact cut — computed, logged, and carried on the result type, not yet visualised | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
+| 40 | Road-route decoupling — the instant road-network preview | Owner, picking the next priority explicitly for confidence/accuracy AND visual impact over "nice to have" controls. The box-free vehicle road route never actually depended on the hex-grid retry loop, only on the road-network fetch — but ran after the whole grid/search pipeline settled purely because of where the code sat, so a real result that could appear in seconds instead waited tens of seconds. `findEarlyVehicleRoadRoutePreview` (new) fetches independently, using the EXACT same first-attempt bounds the grid pipeline's own attempt 0 computes, so the existing bbox cache collapses the two into one real network round trip, not a duplicate. New `onRoadRoute` callback wired into `App.tsx` — the map shows the real road route seconds in, always superseded outright by the authoritative result the instant it lands (never a stale preview surviving the real answer) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
+| 41 | Full OSM water-relation topology — multipolygon reassembly | Owner's second confidence/accuracy pick alongside step 40. Step 31's scope cut was framed as "safe either direction", but reading `distanceToNearestWater`'s actual code found a sharper gap: an unclosed fragment (exactly what one piece of a multi-member outer ring usually is) was skipped entirely by the interior point-in-polygon test, so a point deep in a large multi-fragment lake could go UNDETECTED as water — a real under-block risk for a hard-block gate, not just the documented "island over-blocks" direction. `stitchRings` (new, kept in lock-step between webapp and API) reassembles same-role way fragments into closed rings by endpoint-matching; `inner` fragments become real holes assigned to whichever stitched outer ring actually contains them. `distanceToNearestWater`/`roadGraph.ts`'s `isInAnyWaterBody` both now correctly treat a point on a real island as dry ground, not water | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
+| 42 | Hydrology attributes in GIS export / AI briefing | Water-gate fields have been computed by the hard-block hydrology gate since Pass 6, but never reached the exported GeoJSON/KML attributes or the AI briefing payload — a user reading either had no way to see WHY a route avoided or crossed water. `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is now the single predicate the run's own assessment log, the GIS export, and the AI briefing payload all share. GIS export: mission-level water counts plus PER-CORRIDOR `crosses_water`/`water_cell_count` scoped to each corridor's own cells (proven distinct from the grid-wide total). AI briefing: `hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` added as required payload fields (kept in lock-step, webapp+API), with a template caution when data is unavailable or a plain-language summary when water is found — silent when data was available and genuinely found none. Also corrected a stale roadmap item found along the way: "Vegetation NVIS-first uplift" (both stated criteria were already shipped in PR #178, 2026-07-16 — only `NVIS_INTEGRATION.md`'s checklist and this table weren't updated) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
+| 43 | Existing-trail reuse: computed then silently discarded before costing, now surfaced | Found while checking a second stale roadmap item ("Road class modelling") against the live code. Real defect, not a doc issue this time: `routeOptimizer.ts` already computes which parts of a route follow a mapped trail and uses it to PREFER trail-following routes during pathfinding (`×0.35` fuel discount) — but that fact never reached `RouteSegment[]`, the exact shape POSTed to `/api/analysis/calculate`, the sole authoritative cost engine. A route reusing a real formed track — including the app's own auto-optimized suggestion — was costed identically to virgin bush, with the AdvisorPanel's own "existing trail used" stat left disconnected from the $/hours shown next to it. Fixed the same way NAFI fire history was handled: `vegetationAnalysis.ts` now also fetches the reusable-trail set once per line and flags each segment (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`, a real merge boundary) — surfaced in `AnalysisPanel.tsx` with an explicit note that the estimate does NOT already discount for it, since (unlike the optimizer's own uncited `×0.35`) there is no sourced existing-track-vs-virgin clearing-rate figure to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Infrastructure-aware cost surface" |
+| 44 | `api-register.md`/`component-register.md` corrected against the live codebase | An audit of every "MUST match" webapp/api duplicated-logic pair (a bug class with two prior confirmed hits this session) came back clean — but checking the two doc registers themselves against the live code turned up real staleness in both, despite each doc's own "MUST update" policy and a same-day "Last Updated" date. `api-register.md`: the whole `/api/assistant/smeacs` endpoint was undocumented, and `MobilityAssistantPayload`'s documented shape was missing the 3 hydrology fields (step 42) plus the entire probabilistic-movement optional block (step 12) — both live and required/validated in `api/src/types/mobilityAssistant.ts`. `component-register.md`: `EquipmentResults`/`GuidancePanel` were documented but no longer exist in the codebase; ~10 live, in-use components were entirely absent, most strikingly `MobilityPanel.tsx` itself — the main Terrain Mobility screen, shipped and iterated on since step 10 — plus `CounterMobilityPanel`, `DataConfidenceBadge`, `RoadSpeedOverridePanel`, `TacticalCoordinateReadout`, `AssessmentLog`, `MapEmptyState`, `DistributionBar`, `HelpContent`, `LiveFeedsControl`; `ConfirmDialog` was listed as "📋 Planned" though the file already exists (built, WCAG-complete, just never wired into the app — corrected to say so precisely rather than either extreme) | [api-register.md](docs/api-register.md), [component-register.md](docs/component-register.md) |
 
 ### Next up
 
@@ -82,22 +89,72 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 |------|-------|------|------------|--------|
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| Fuse road-graph routes into movement simulation / min-cut (partially done — see step 36) | Step 36 fused the road route into chokepoint ranking and corridor-band clustering (via a `DissimilarRoute` conversion). Still open: the movement ensemble's own per-step decision logic (`movementSimulation.ts`) still walks hex-to-hex with a road-affinity bias rather than the road graph's exact edges, and min-cut (`minCutBarrier.ts`) is still hex-adjacency-only — a real mixed hex+road-graph adjacency across these core search primitives, not a route-list injection | M | step 36 (✅, partial) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
-| Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
-| Full OSM water-relation topology (multi-part outer rings, inner/island holes) | Step 31 shipped the common case (single outer ring per relation); proper multipolygon reassembly (stitching split outer rings, subtracting inner rings as real holes) is a stated, deliberate scope cut, not forgotten | S | step 31 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
-| Vegetation NVIS-first uplift | Explicit `NoData` handling; flag cleared/modified segments distinctly | S | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
-| Road class modelling | OSM `highway=*` is fetched and discarded — a highway and a farm track are identical to a mover; needs a speed/limit-by-class table | M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
-| Road-route decoupling — surface ahead of the hex-grid search | `findVehicleRoadRoute` (Slice A) is already fast but currently runs after `buildMobilityGrid`'s full retry loop settles, because it reads the same `highway-mobility` fetch. Fetch the road network and run the road route in parallel with elevation/vegetation sampling, surfaced via a new `onRoadRoute` callback — the genuine "instant on-road result while the area analysis runs" the original conversation asked for | S | Slice A.9 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
 | Restriction siting at a surveyed point | Currently hex-cell resolution, not a specific point — an architecture change to the placement model | L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Agency hand-off | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike | L | — | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 |
+
+#### Next up — outcome, changes required, difficulty
+
+- **Slice B — full lazy-grid architecture** (Difficulty: L)
+  - Outcome: large/awkward AOIs resolve smoothly instead of hitting an all-or-nothing box — stays fast even at continental scale.
+  - Changes: replace whole-box-then-retry with true per-cell lazy materialisation under an A* frontier · async tile-ring data fetch so DEM/vegetation/OSM data streams in as the frontier grows · self-sizing `α·C*` cost-budget ellipse (replacing 4 fixed padding factors) + a "2–5 distinct corridors found" stop rule instead of route/no-route.
+  - Note: touches 5+ modules that currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut).
+
+- **Road-speed user-override confidence into GIS export + AI briefing** (Difficulty: S)
+  - Outcome: an edited road-speed table shows up in exported GIS attributes and the AI briefing text, not just the live panel.
+  - Changes: add override/confidence fields to `mobilityGisExport.ts`'s GeoJSON/KML properties (mirrors step 42's hydrology pattern) · add the same fields to `MobilityAssistantPayload` (webapp+API, kept in lock-step) + validator · template narration line when overrides were used.
+
+- **End-user guide** (Difficulty: S)
+  - Outcome: a first-time user or a crew member handed a tablet in the field has a real written walkthrough instead of learning the tool from the UI alone.
+  - Changes: decide where it lives — this repo's `docs/` vs Station Manager's in-app wiki · write it (draw/paint → read the estimate → read confidence flags → export/share).
+  - Note: no code, but genuinely unstarted — needs an actual writing pass, not plumbing.
+
+- **Restrictions costed against `delayLedger.ts`** (Difficulty: S/M)
+  - Outcome: two equally-effective counter-mobility placements get a real $/time cost difference shown, so a commander can pick the cheaper one instead of guessing.
+  - Changes: wire `restrictionPlanner.ts`'s ranked candidate set through the existing `computeDelayLedger` cost model · surface the cost alongside the existing delay-effectiveness ranking in `CounterMobilityPanel.tsx` · extend GIS export/AI briefing placement fields with the cost figure.
+
+- **A real fuel-age → clearing-rate relationship** (Difficulty: M+, blocked on a source)
+  - Outcome: fire-history age would actually move the time/cost estimate instead of only being shown as text — but only once there's a real number to move it by.
+  - Changes: find a citable fuel-accumulation-vs-clearing-rate curve (research literature or agency guidance) — the actual blocker · once sourced, apply as a segment-level multiplier alongside the existing NWCG/Report 56 fuel-class factors · flag the applied adjustment as estimated, not measured (data-honesty rule).
+
+- **UI/UX uplift, moves 4–5** (Difficulty: M)
+  - Outcome: fire-break mode and Terrain Mobility mode feel like one consistent product — confidence badges, type labels, and control placement read the same regardless of mode.
+  - Changes: align vegetation/data confidence display — fire-break's numeric "% confidence" badge vs Terrain Mobility's tiered `DataConfidenceBadge` (measured/published/estimated/generic-fallback) — pick one shared vocabulary · extend Terrain mode's mobile floating-overlay control pattern (§21) to fire-break mode's own panel/controls.
+  - Note: genuinely fuzzy scope — the only existing documentation is this one roadmap line, no detailed design yet.
+
+- **Function-hosted (tier 2) mobility search** (Difficulty: M)
+  - Outcome: a user on an underpowered device gets the same Terrain Mobility search run server-side instead of stalling their browser.
+  - Changes: port the existing `webapp/src/terrain/*` search/corridor modules into an Azure Function entry point (API is already Node/TS, no rewrite) · decide the client/server split trigger (cell-count threshold, device hint, or explicit user choice).
+  - Note: gated on telemetry (step 32, still collecting) confirming which run phase actually dominates on slow devices.
+
+- **On-demand Container Apps Job (tier 3)** (Difficulty: L)
+  - Outcome: genuine outlier runs (very large AOIs) complete reliably instead of timing out, even over a flaky field connection.
+  - Changes: scale-to-zero Container Apps Job for runs beyond a Function's timeout/memory ceiling · resumable, chunked result-delivery protocol tolerant of interrupted connectivity.
+  - Note: explicitly not to be built speculatively — gated on tier 2 telemetry showing a real tail of oversized runs.
+
+- **Vector RAG via Azure AI Search** (Difficulty: M)
+  - Outcome: AI assistant doctrine citations get measurably more relevant once retrieval is semantic instead of keyword-overlap, and the corpus can grow past what keyword scoring handles well.
+  - Changes: provision an Azure AI Search resource + IaC (`infra/main.bicep`) · build a corpus-loading/indexing pipeline for the doctrine chunks (integrated vectorization) · swap `retrieveDoctrine(query, topK)`'s implementation — already the designed swap point, no caller changes needed.
+
+- **Restriction siting at a surveyed point** (Difficulty: L)
+  - Outcome: a recommended counter-mobility restriction points at an actual surveyed spot on a road, not "somewhere along this hex edge" — closes the gap between the recommendation and where a crew can actually place something.
+  - Changes: change the placement model from grid-edge siting to a point on the underlying road-graph geometry · re-thread `restrictionPlanner.ts`/`delayLedger.ts`'s siting logic to the new representation · update map rendering + GIS export/briefing to carry a real point, not a cell reference.
+
+- **Field hardening** (Difficulty: L)
+  - Outcome: the tool keeps working — at least for reading a previously-run analysis — when a crew loses signal, and is usable regardless of assistive technology.
+  - Changes: offline-first PWA — service worker caching of map tiles + completed analyses for offline reference · WCAG 2.1 AA completion, auditing across the app (some pieces, e.g. `ConfirmDialog`'s focus-trap/ARIA, are already built but unused — see step 44).
+  - Note: no detailed design doc currently backs this row — the linked `NVIS_INTEGRATION.md` doesn't actually cover offline/WCAG specifics; scoping is itself part of the work.
+
+- **Agency hand-off** (Difficulty: L)
+  - Outcome: a plan can be pushed straight into an agency's existing GIS tooling (ArcGIS dashboards, Avenza on a phone) instead of a crew manually re-importing an export file.
+  - Changes: ArcGIS Online — OAuth 2.0 PKCE sign-in (user's own AGOL org, no stored credentials) + REST create-feature-service/`addFeatures` push, one-way explicit action · Avenza — spike a server-side geo-registered PDF (Mapbox Static Images + `pdf-lib`) against a real Avenza import before committing; fall back to the existing KMZ-via-Avenza-import path if the spike fails.
 
 ### Blocked
 
@@ -111,6 +168,33 @@ Not next regardless of size — each needs something outside this codebase to re
 | VCI/RCI-weighted min-cut capacity | Needs Pass 3's soil layers, not yet sampled |
 | Real entitlement/backend gating for Terrain Mobility | Deliberately deferred pending a release decision — feasibility assessed (§14.1): entitlement source of truth lives in the separate Station Manager repo, and moving compute server-side trades away the offline/interactive properties the field tool depends on |
 
+#### Blocked — outcome, changes required, difficulty
+
+- **AFDRS fire danger** (Difficulty: Blocked, not effort)
+  - Outcome: the plan's district/date would show the OFFICIAL AFDRS fire-danger rating instead of nothing — display only, no rebuild of fire-behaviour prediction.
+  - Changes: apply for BOM's Registered User program (or find a redistributor) — an organisational decision, not resolvable from inside the codebase; `afdrs.com.au` itself has no public API.
+  - Note: once access exists, the display work itself is a small, well-scoped lift (same pattern as the existing hotspots/boundaries feeds).
+
+- **Water-point & cadastre advisory layers** (Difficulty: Blocked, not effort)
+  - Outcome: mapped water-fill points and cadastre boundaries show as advisory overlays when planning a break, plus a stronger waterway-based anchor rule for the optimizer.
+  - Changes: licensing/attribution check with NSW DCS Spatial Services before any code is written.
+  - Note: once cleared, the overlay work itself is S/M, reusing the existing OSM-overlay pattern.
+
+- **AI live model verification + eval suite** (Difficulty: Blocked, not effort)
+  - Outcome: confidence that the AI assistant's live model responses are actually accurate/grounded in practice, not just passing the deterministic-template tests that exist today.
+  - Changes: deploy an actual Azure AI Foundry model endpoint (currently off by default, `deployAiAssistant` flag) — grounding gate and citation validation already exist and are unit-tested against it.
+  - Note: the eval suite itself is S/M once a deployed endpoint exists to test against.
+
+- **VCI/RCI-weighted min-cut capacity** (Difficulty: Blocked on data, then M)
+  - Outcome: min-cut barrier siting weights capacity by real vehicle-class trafficability (VCI₁ one-pass vs VCI₅₀ fifty-pass) against actual soil strength, instead of the current flat/class-tiered capacity model.
+  - Changes: sample Pass 3's soil layers (not yet built) for the AOI · join VCI/RCI verdict tables into `computeMinCutBarrier`'s capacity function.
+  - Note: the model itself is already designed with a real, sourced worked example (105 mm howitzer VCI₁ 21 / VCI₅₀ 49 at RCI 43) in `ROUTE_INTELLIGENCE.md` — just unfed.
+
+- **Real entitlement/backend gating for Terrain Mobility** (Difficulty: Blocked, release decision)
+  - Outcome: Terrain Mobility becomes a properly licensed, server-enforced feature (like saved plans already are) instead of a client-side UI toggle discoverable by anyone who looks.
+  - Changes: Station Manager (separate repo) needs to expose a `terrainMobilityEnabled` entitlement (`fireBreakEnabled` is the existing precedent) before this repo can gate server-side · then apply the same route-level code-split + entitlement check pattern already proven for saved plans.
+  - Note: moving compute server-side also trades away the offline/interactive properties the field tool depends on — not a pure "just add a check" fix.
+
 ## Architecture snapshot
 
 React 18 + Vite + TS (`/webapp`) · Azure Functions Node 22 (`/api`) · Azure Table Storage · Mapbox GL JS · Azure Static Web Apps, Bicep IaC (`/infra`, OIDC).
@@ -118,6 +202,346 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-29 — Every "Next up"/"Blocked" roadmap row expanded with
+  outcome, required changes, and difficulty**: owner asked for each open
+  roadmap item to carry a 1-line outcome, 2–3 concrete change bullets, and a
+  difficulty rating, added into the plan rather than just reported back.
+  Added `#### Next up — outcome, changes required, difficulty` and
+  `#### Blocked — outcome, changes required, difficulty` subsections
+  directly under the existing summary tables (tables stay as the compact
+  index; the new subsections give depth per item). Grounded each entry in
+  the actual linked doc section rather than re-summarising from the table's
+  own one-line Scope text — e.g. pulled the exact `restrictionPlanner.ts`
+  "still open" list from `ROUTE_INTELLIGENCE.md` §32 for the restriction
+  siting/costing rows, the real VCI₁/VCI₅₀ worked example for the min-cut
+  capacity row, and the RAG swap-point contract (`retrieveDoctrine`'s
+  signature is already the designed extension point) from `AI_ASSISTANT.md`.
+  Surfaced one thing along the way worth flagging rather than silently
+  fixing: the "Field hardening" row's linked doc (`NVIS_INTEGRATION.md`)
+  doesn't actually contain any offline/WCAG content — the row has never had
+  a real design behind it, only a two-clause scope description; noted
+  in-place rather than treated as another stale-doc fix, since inventing
+  the missing design isn't a documentation-accuracy task.
+
+- **2026-07-28 — `api-register.md`/`component-register.md` corrected against
+  the live codebase (step 44)**: owner: "move into the next priority
+  roadmap item," continuing the same investigation-first pattern that found
+  the last few real defects. This round's investigation came back clean —
+  spawned an audit of every place the codebase comments as needing to stay
+  "in lock-step" between `webapp` and `api` (a bug class with two confirmed
+  prior hits this session: the multi-fragment water topology gap and an
+  earlier Overpass query drift). Checked Overpass query constants,
+  ring-stitching logic, vegetation tile constants, both AI assistant payload
+  validators, provenance strings, and the equipment catalogue — all
+  genuinely in sync. No fix needed there.
+
+  Turned the same "compare the doc's claim against the live code" lens on
+  the two doc registers themselves, since CLAUDE.md names them as
+  "machine-readable catalogs; update when endpoints/components change" and
+  both carry an explicit same-day "Last Updated" stamp that turned out not
+  to be earned. `api-register.md`: `/api/assistant/smeacs`
+  (`assistantSmeacsBriefing.ts`, live since the SMEACS briefing pack
+  shipped) was entirely undocumented; the `MobilityAssistantPayload`
+  TypeScript block was missing the 3 hydrology fields this session's own
+  step 42 added as REQUIRED, and the whole probabilistic-movement optional
+  block from step 12 (`corridorEvidence`/`movement`/`restrictions`/
+  `restrictionEffect`). Added the endpoint row, `SmeacsBriefing` type, the
+  `AssistantPayload` SMEACS optional fields, and both missing
+  `MobilityAssistantPayload` blocks — copied field-for-field from the
+  actual validator (`api/src/types/mobilityAssistant.ts`), not
+  re-summarised from memory.
+
+  `component-register.md` was in worse shape: `EquipmentResults` and
+  `GuidancePanel` are documented rows for components that no longer exist
+  anywhere in `webapp/src` — confirmed by grep, not just a missing file.
+  More seriously, `MobilityPanel.tsx` — the actual Terrain Mobility screen,
+  the single most-worked-on UI surface across this session's steps 10
+  through 43 — was never in the register at all, alongside 9 other real,
+  imported, live components (`CounterMobilityPanel`, `DataConfidenceBadge`,
+  `RoadSpeedOverridePanel`, `TacticalCoordinateReadout`, `AssessmentLog`,
+  `MapEmptyState`, `DistributionBar`, `HelpContent`, `LiveFeedsControl`).
+  Added a new "Terrain Mobility Components" table for them, verified each
+  one's actual import site first (not assumed from the filename) so the
+  "Key Dependencies" column is real. Along the way, confirmed
+  `ConfirmDialog.tsx`, `ConfigPanelComponents.tsx`, `ConfigTest.tsx`, and
+  `VegetationOverridePanel.tsx` are built but imported nowhere — left out
+  of the live tables rather than added, since documenting orphaned code as
+  active architecture would just be a different kind of inaccurate;
+  `ConfirmDialog`'s "📋 Planned" row was corrected to say "built, not wired
+  in" rather than leave the stronger, also-wrong claim that it doesn't
+  exist yet. No `webapp`/`api` runtime code changed this pass — pure
+  documentation-accuracy correction, but a live one: an agent (or a person)
+  trusting either register at face value this morning would have missed a
+  real endpoint and the app's flagship Terrain Mobility panel entirely.
+
+- **2026-07-28 — Hydrology attributes in GIS export / AI briefing (step
+  42)**: owner: "on to the next priority, again focus on functional
+  improvements and quality — don't add 'nice to haves'." CLAUDE.md's own
+  "next step" pointer named "Vegetation NVIS-first uplift" — investigated
+  first, and found it stale: both stated acceptance criteria (explicit
+  `NoData` handling, flagging modified/low-fidelity segments) were already
+  fully shipped in PR #178 (2026-07-16), just never checked off in
+  `NVIS_INTEGRATION.md` or removed from this roadmap. Corrected both docs
+  (no code change needed there) and moved to the next real, unshipped item:
+  the water-gate fields computed by the hydrology hard-block gate since Pass
+  6 were never carried into the GIS export or the AI briefing — a user
+  reading either had no way to see WHY a route avoided or crossed water,
+  even though the system had already worked it out.
+
+  `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) lifts
+  the exact water-signal query the run's own assessment log already computed
+  inline into a shared function — the log, the GIS export, and the AI
+  briefing payload now all call the SAME predicate, so none of the three can
+  quietly drift onto a different threshold.
+
+  GIS export (`mobilityGisExport.ts`): mission-level `hydrology_available` +
+  `water_affected_cell_count`/`water_body_cell_count`; each CORRIDOR feature
+  gained `crosses_water`/`water_cell_count` scoped to ONLY its own cells
+  (`corridorProperties()` now takes a hoisted `cellsByKey` map) — proven with
+  a dry/wet corridor pair where the wet corridor's count is neither zero nor
+  the grid-wide total. KML mission/corridor descriptions gained matching
+  plain-language notes.
+
+  AI briefing (`mobilityAssistantApi.ts` + `api/src/types/mobilityAssistant.ts`
+  + `mobilityBriefingTemplate.ts`, kept in lock-step): payload gained the same
+  three fields as REQUIRED (matching `estimatedData`'s always-computed
+  treatment, not the optional movement/restriction blocks that arrived after
+  other clients existed). `aiGrounding.ts`'s `flattenPayloadNumbers` already
+  walks the payload generically, so the new counts needed no grounding-layer
+  change to be citable. Template narrates a caution when hydrology data was
+  unavailable, or a summary when real water was found — silent when data WAS
+  available and genuinely found none, so a clean AOI's briefing stays clean.
+
+- **2026-07-28 — Existing-trail reuse: computed then silently discarded
+  before costing, now surfaced (step 43)**: owner: "move into the next
+  priority roadmap item." The Next-up queue's own "Road class modelling" row
+  was checked against the live code first and turned out to be a second
+  stale entry — its language ("a highway and a farm track are identical to a
+  mover") is Terrain Mobility terminology describing a gap Slice A
+  (`roadSpeedModel.ts`) already closed months earlier; its cited section
+  (§32, "Probabilistic movement") doesn't discuss road class at all. Removed
+  the stale row — but the investigation surfaced a real, more serious defect
+  in the OTHER route-planning subsystem: the fire-break optimizer.
+
+  `routeOptimizer.ts` already computes which parts of a candidate route
+  follow a mapped trail/track/road (`TRAIL_SNAP_M = 30m`) and applies a
+  `×0.35` fuel discount to PREFER trail-following routes during pathfinding
+  — but that fact was never carried into `RouteSegment[]`, the exact shape
+  `BackendAnalysisRequest.segments` POSTs to `/api/analysis/calculate`, the
+  SOLE authoritative cost engine (CLAUDE.md). A route that reused a real
+  formed track — including the app's own auto-optimized suggestion, chosen
+  specifically because it favours trails — was costed identically to virgin
+  bush of the same vegetation class, with nothing anywhere in the final
+  estimate to say otherwise; the optimizer's own before/after "existing
+  trail used" stat (`AdvisorPanel.tsx`) is a distance figure disconnected
+  from the $/hours shown next to it. A confidently-wrong-answer defect, not
+  a missing nice-to-have.
+
+  Fixed the same way NAFI fire history was: `vegetationAnalysis.ts` now
+  also fetches the reusable-trail set (`fetchCorridorInfrastructure`, the
+  same default `highway` kind `routeOptimizer.ts` already queries) once per
+  line, alongside the existing waterway fetch, and flags each segment
+  (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`) —
+  a real merge boundary, mirroring `isWater`, never blended across. The
+  `×0.35` pathfinding discount is itself an uncited constant, so extending
+  it into the authoritative cost model would repeat exactly the
+  "invented factor" problem F3 replaced (`CALCULATION_REVIEW.md`) — there
+  is no sourced existing-track-vs-virgin clearing-rate figure, unlike
+  water's structural "already broken" certainty. So the flag is
+  deliberately NOT wired into any time/cost number: `AnalysisPanel.tsx`
+  shows a note stating the total reused length AND that the estimate does
+  not already discount for it, so a user never mistakes the headline figure
+  for one that already accounts for the track. Proven with
+  `routeProfileExistingTrail.test.ts` (4 tests): boundary correctness,
+  no cross-boundary merge, zero effect on length/slope/vegetation, and a
+  safe `false` default for older inputs with no trail data at all.
+
+  14 new tests: `mobilityHydrologyExport.test.ts` (webapp, 6),
+  `mobilityHydrologyBriefing.test.ts` (webapp, 3 — including a genuine
+  below-threshold `waterFrequency` cell correctly NOT counted), 5 more in the
+  API's `mobilityAssistant.test.ts` (validator + template), plus the 2 doc
+  corrections above. Full existing suite green in both packages; `tsc`/build
+  clean in both. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46.
+
+- **2026-07-28 — Full OSM water-relation topology: multipolygon reassembly
+  (step 41)**: owner's second confidence/accuracy pick alongside step 40.
+  Step 31 ("OSM water relations") shipped the common case and stated a
+  scope cut — multi-part outer rings weren't re-stitched, islands weren't
+  subtracted as holes — framed as safe in both directions.
+
+  Reading the actual consumer code (not just the extraction code) found a
+  sharper problem: `distanceToNearestWater`'s interior point-in-polygon
+  test already had a defensive `if (!closed) continue` guard, so an
+  UNCLOSED fragment — exactly what one piece of a multi-member outer ring
+  usually is on its own — was skipped entirely, not "gated member-by-member"
+  as the old comment claimed. A point deep in a large multi-fragment lake,
+  far from any single fragment's own edge, could go completely undetected
+  as water. That's a real UNDER-block risk for a hard-block hydrology gate —
+  the opposite of the documented safe direction — which made this a
+  correctness fix, not just a completeness item.
+
+  Fixed, kept in explicit lock-step between `webapp` and `api` (matching
+  the existing "MUST match" discipline): `stitchRings` reassembles a
+  relation's same-role way fragments into closed ring(s) by matching
+  endpoints in either orientation, chaining until each ring closes — an
+  unstitchable fragment still surfaces as a plain edge feature, never a
+  fabricated closure. `inner` fragments are stitched the same way and
+  assigned as holes to whichever stitched OUTER ring actually contains them
+  (a relation can have multiple disjoint lakes, each with its own islands).
+  `InfrastructureTrail` gained `holes?: LatLng[][]`; `distanceToNearestWater`
+  builds a proper multi-ring GeoJSON `Polygon` (Turf already implements
+  "outer minus holes" correctly, no new logic needed there);
+  `distanceToNearestTrail` now also scans hole boundaries for edge-proximity
+  (a real island's shoreline is a genuine water/land edge too);
+  `roadGraph.ts`'s self-contained `isInAnyWaterBody` gained the matching
+  hole check, so a road entirely on a real island is correctly not flagged
+  as an in-water crossing.
+
+  8 new tests total: `waterRelationTopology.test.ts` (webapp, 4 checks) —
+  a three-fragment ring correctly detects water at its centre (the core
+  regression), an island reads as dry with the surrounding lake still wet,
+  two disjoint lakes each get only their own island, an unstitchable
+  fragment degrades safely; mirrored in the API's `infrastructure.test.ts`
+  (4 checks, same fixtures); `roadWaterCrossing.test.ts` gained 2 more — a
+  road on a real island is not blocked, the same lake without the island
+  road still correctly blocks a crossing through genuine open water. Full
+  existing suite green in both packages; `tsc`/build clean in both. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45.
+
+- **2026-07-28 — Road-route decoupling: the instant road-network preview
+  (step 40)**: owner, picking the next priority after step 39 shipped:
+  "improves the confidence or accuracy of the system and... visually
+  'sell[s]' it... make sure the core is rock solid and reliable before we
+  start adding controls and adjustments" — explicitly deprioritising a
+  road-speed-override-confidence export item in favour of this and the
+  water-relation topology fix below.
+
+  The box-free vehicle road route (`findVehicleRoadRoute`, Slice A) never
+  actually depended on the hex-grid retry loop below it in
+  `mobilityAppreciation.ts` — it only ever needed the road-network fetch, one
+  of several fetches already running in parallel inside `buildMobilityGrid`
+  — but sat, uncalled, until the ENTIRE grid/search pipeline finished, purely
+  because of where the code happened to live. On a large or fine-fidelity
+  AOI that's tens of seconds; the road route itself resolves in a couple.
+
+  Fixed: `findEarlyVehicleRoadRoutePreview` (new, `roadRouteSearch.ts`)
+  fetches road/water data INDEPENDENTLY of the retry loop, using the exact
+  same `computePaddedBounds` inputs (`INITIAL_PAD_FACTOR`,
+  `minDetourPadM(profile)`) the grid pipeline's own first attempt uses — not
+  a coincidence, a hard requirement: the existing bbox result/in-flight
+  cache (`infrastructureService.ts`) only collapses two requests into ONE
+  real network round trip when they land on the identical rounded bbox key.
+  A new `onRoadRoute` callback fires the moment this resolves; `App.tsx`
+  wires it into a fresh `mobilityEarlyRoadRoute` state feeding the map's
+  existing `roadRoute` prop ahead of the authoritative
+  `mobilityResult.roadRoute` — which always supersedes it outright the
+  instant it lands, including correctly clearing to null if a retry-widened
+  box moved the route out of range. Best-effort only: any failure resolves
+  to nothing shown, never throws, never blocks the real pipeline.
+
+  6 new tests (`roadRouteDecoupling.test.ts`, global `fetch` stubbed): a foot
+  profile triggers zero fetches; a vehicle profile finds the same route the
+  live pipeline finds; the bbox actually sent is parsed back out of the
+  stubbed request and checked against an independently-computed
+  `computePaddedBounds` call — proving the cache-collapse claim by
+  construction; a without-the-connector control still correctly finds
+  nothing; no road data and a simulated network failure both resolve
+  cleanly to null. Full existing suite still green; `tsc`/build clean. Full
+  detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44.
+
+- **2026-07-28 — The genuinely mixed hex+road-graph adjacency, road usage now
+  fully complete (step 39)**: owner, after step 38 shipped: "finish the
+  bigger slice of work so the road usage is fully complete." §42/§42a both
+  deferred this exact rewrite as real, larger, riskier work — done here in
+  two bounded pieces, together closing the "fuse road-graph routes into
+  movement simulation / min-cut" roadmap item completely.
+
+  **Ensemble** (`movementSimulation.ts`): a mover's recorded position stays a
+  hex cell always, so every downstream consumer (`TransitCell` polygons,
+  `MoverTrack.keys`, corridor/chokepoint hex-band clustering) needed zero
+  changes. What's new is the CANDIDATE SET offered at each step: on a hex
+  linked to a road-graph node, a bounded forward walk follows the road
+  graph's own real edges — exact distance, exact class speed — until it
+  reaches a node whose nearest onTrail hex genuinely differs from the
+  mover's own, offering that hex with the real cumulative time. A long
+  straight road is no longer forced through hex-sized steps, and a real fork
+  offers its actual branches rather than "any onTrail neighbour hex" the
+  tessellation happens to present.
+
+  **Load-bearing safety cut**: mixed-mode is wired ONLY into the unrestricted
+  baseline ensemble — `restrictionPlanner.ts` always builds its own plain
+  hex-only cache (no road graph passed in), enforced structurally rather than
+  by a runtime flag, because `blockedEdges` is keyed by hex edges and a
+  road-graph shortcut could otherwise skip past a blocked one undetected. A
+  recommended road block can never be silently bypassed by the very mechanism
+  meant to make movement more realistic.
+
+  **Min-cut** (`minCutBarrier.ts`, `computeRoadNetworkMinCut`): a SEPARATE
+  max-flow problem run directly over the road graph's own nodes/edges,
+  reusing the identical, already-proven `ResidualGraph`/`bfsAugmentingPath`
+  machinery unchanged. Targets a real road segment — often narrower than a
+  hex — rather than a whole hex boundary, using the same
+  `HIGHWAY_CAPACITY_TIER` table step 38 introduced. Wired in as
+  `roadNetworkBarrier`, alongside (not replacing) the existing hex `barrier`,
+  since the two answer genuinely different questions (all ground vs.
+  road-network specifically) for the same profile.
+
+  **Not done this pass, stated**: no new Mapbox map layers, GIS export
+  attributes, or AI-briefing text for `roadNetworkBarrier` — it's computed,
+  logged, and carried on the result type, real smaller follow-up work to
+  surface it visually.
+
+  10 new tests (`roadGraphMixedAdjacency.test.ts`): a deliberately extreme
+  two-hex fixture with zero hex adjacency and no intermediate hex cells
+  proves movement is impossible without the road graph and 100% successful
+  with it, at the exact independently-computed travel time; the safety gate
+  is proven directly; min-cut correctness is checked by BFS over the
+  post-cut graph (not just a plausible-looking cut value), plus capacity
+  tiering, parallel-path summing, and impassable-edge exclusion. Full
+  existing suite still green; `tsc`/build clean. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b.
+
+- **2026-07-28 — Road-graph fusion extended: ensemble tie-break + min-cut
+  class-tiered capacity (step 38)**: continuation of step 36's stated
+  remainder, picked as the next roadmap item after PR #198 merged. Two
+  bounded, honest fixes — NOT the full "genuinely mixed hex+road-graph
+  adjacency" rewrite the roadmap item calls for, which this project's own
+  discipline (avoid a confidently-wrong shortcut on a core algorithm) has now
+  twice flagged as too risky to attempt in one pass.
+
+  (1) The movement ensemble's per-step logic still walks hex-to-hex, but at a
+  genuine junction where two or more `onTrail` hex neighbours are candidates,
+  the old generic road-affinity term can't tell them apart — every onTrail
+  step looked equally "on the network". The box-free road-graph route already
+  knows, via exact-geometry A*, which fork is fastest. New
+  `preferredRouteKeys` option (`movementSimulation.ts`) gives a small, fixed
+  60s pull toward those cells — small enough to sit below the smallest
+  road-affinity base (150s), sharpening a fork decision without overriding
+  the ensemble's own stochastic spread. Threaded through the existing
+  worker-boundary plumbing into both the baseline ensemble and
+  `restrictionPlanner.ts`'s re-runs (kept identical across all of them, so a
+  restriction's measured effect is never confounded by the bias changing
+  between runs).
+
+  (2) Min-cut's flat `TRAIL_CAPACITY_MULTIPLIER = 3` (every mapped trail
+  treated as identical capacity) replaced with `HIGHWAY_CAPACITY_TIER`, keyed
+  off the same real, sourced `nearestTrailTags.highway` classification the
+  road-class speed model already uses — a two-lane highway and a
+  single-track fire trail no longer tie on cut value. Untagged trails keep
+  the exact old default (3×), so nothing regresses for the common case.
+
+  Stated, not done: neither change makes the ensemble walk the road graph's
+  own edges or makes min-cut's graph road-graph-aware — both remain the same
+  real, larger follow-up work step 36 already named. 6 new tests
+  (`roadGraphEnsembleMinCutFusion.test.ts`) — a synthetic two-fork hex grid
+  (built from real hex geometry) proves the bias shifts movement balance
+  toward whichever fork is designated, in either direction; a motorway trail
+  chain is proven to carry strictly more min-cut capacity than an identical
+  untagged one, with an off-trail control unchanged at unit capacity. Full
+  existing road/ensemble/restriction/corridor suite still green; `tsc`/build
+  clean. Full detail: [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a.
 
 - **2026-07-28 — Corridor legibility pass: route line becomes the star, a
   real label/shape colour bug fixed (step 37)**: owner, reviewing a

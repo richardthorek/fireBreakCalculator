@@ -40,6 +40,17 @@ export interface MobilityAssistantPayload {
   slowGoCount: number;
   /** True when any sampled cell used estimated/fallback data. */
   estimatedData: boolean;
+  /** True when either hydrology source (OSM waterway/water-body geometry, DEA
+   *  WOfS frequency, docs §34) returned real data for this AOI. False means
+   *  the water-crossing gate had nothing to check against — stated rather
+   *  than silently absent. */
+  hydrologyAvailable: boolean;
+  /** Cells carrying a water signal (standing body, mapped watercourse, or a
+   *  high DEA wet-frequency) — mirrors the webapp's own `carriesWaterSignal`
+   *  query. */
+  waterAffectedCellCount: number;
+  /** Subset of the above literally inside a mapped standing water body. */
+  waterBodyCellCount: number;
   /** True when the AOI does not canalise movement — corridors/chokepoints
    *  are a weak description of it (see corridorField.ts's own module note). */
   unconstrained: boolean;
@@ -147,6 +158,9 @@ export function isMobilityAssistantPayload(v: any): v is MobilityAssistantPayloa
     isFiniteNumber(v.noGoCount) &&
     isFiniteNumber(v.slowGoCount) &&
     typeof v.estimatedData === 'boolean' &&
+    typeof v.hydrologyAvailable === 'boolean' &&
+    isFiniteNumber(v.waterAffectedCellCount) &&
+    isFiniteNumber(v.waterBodyCellCount) &&
     typeof v.unconstrained === 'boolean' &&
     isFiniteNumber(v.coveragePercent) &&
     Array.isArray(v.topCorridors) &&

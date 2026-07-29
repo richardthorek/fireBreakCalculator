@@ -868,6 +868,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     );
   }, [vegetationAnalysis]);
 
+  // Metres of the line within snap distance of a mapped, reusable trail/
+  // track/road (docs/CALCULATION_REVIEW.md, 2026-07-28) — INFORMATIONAL
+  // ONLY, unlike waterCrossingMetres above: there is no sourced existing-
+  // track-vs-virgin clearing-rate factor, so this length is NOT excluded
+  // from any resource's time/cost estimate. Surfaced so the user can see
+  // the estimate doesn't already account for it, rather than silently
+  // pricing a formed track as if it were unbroken bush.
+  const existingTrailMetres = useMemo(() => {
+    return (vegetationAnalysis?.segments ?? []).reduce(
+      (sum, seg) => (seg.onExistingTrail ? sum + seg.distance : sum), 0
+    );
+  }, [vegetationAnalysis]);
+
   // Most recent fire NAFI recorded along the line (northern Australia/
   // rangelands coverage only — usually absent for the app's core NSW/VIC
   // userbase). Informational only, not folded into any time/cost figure —
@@ -1122,6 +1135,19 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               Older, long-unburnt fuel typically means more clearing effort than the vegetation
               class alone suggests — not factored into the estimates below, as there's no sourced
               figure for how much. Use this as context alongside the numbers, not a correction to them.
+            </div>
+          </div>
+        )}
+        {distance && existingTrailMetres > 0 && (
+          <div className="data-quality-note" role="status">
+            <span className="data-quality-icon" aria-hidden="true">🛤️</span>
+            <div>
+              <strong>Existing trail nearby.</strong>{' '}
+              ~{formatChainage(existingTrailMetres)} of this line is within 30 m of a
+              mapped trail, track or road. The estimates below price it as unbroken ground — there's
+              no sourced figure for how much faster an existing track is to turn into a break than
+              clearing virgin bush, so this isn't factored in. Expect actual time/cost to be lower
+              where a track is genuinely usable; verify width and condition on the ground.
             </div>
           </div>
         )}

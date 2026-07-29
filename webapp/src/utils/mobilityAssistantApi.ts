@@ -16,7 +16,7 @@
  * assistant's own template fallback.
  */
 
-import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
+import { MobilityAppreciationResult, carriesWaterSignal } from '../terrain/mobilityAppreciation';
 import { DelayLedgerEntry } from '../terrain/delayLedger';
 import { AssistantResponse, postAssistant } from './assistantApi';
 
@@ -49,6 +49,19 @@ export interface MobilityAssistantPayload {
   noGoCount: number;
   slowGoCount: number;
   estimatedData: boolean;
+  /** True when either hydrology source (OSM waterway/water-body geometry, DEA
+   *  WOfS frequency, docs §34) returned real data for this AOI — mirrors
+   *  `MobilityAppreciationResult.hydrologyAvailable`. False means the
+   *  water-crossing gate had nothing to check against, stated rather than
+   *  silently absent. */
+  hydrologyAvailable: boolean;
+  /** Cells carrying a water signal (in a standing body, near a mapped
+   *  watercourse, or a high DEA wet-frequency) — the SAME query
+   *  `mobilityAppreciation.ts`'s own assessment log already computes. */
+  waterAffectedCellCount: number;
+  /** Subset of the above that sit literally inside a mapped standing water
+   *  body (a lake/reservoir), the maximally-severe case. */
+  waterBodyCellCount: number;
   unconstrained: boolean;
   coveragePercent: number;
   topCorridors: MobilityCorridorSummary[];
@@ -157,6 +170,9 @@ export function buildMobilityAssistantPayload(
     noGoCount: result.noGoCount,
     slowGoCount: result.slowGoCount,
     estimatedData: result.usedEstimatedData,
+    hydrologyAvailable: result.hydrologyAvailable,
+    waterAffectedCellCount: result.cells.filter(carriesWaterSignal).length,
+    waterBodyCellCount: result.cells.filter(c => c.inWaterBody).length,
     unconstrained: cf?.unconstrained ?? false,
     coveragePercent: cf ? Math.round(cf.coverageFraction * 1000) / 10 : 0,
     topCorridors: (cf?.corridors ?? []).slice(0, 3).map((c) => ({

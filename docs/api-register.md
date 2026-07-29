@@ -173,6 +173,7 @@ interface MobilityRunTelemetry {
 | `/api/assistant/briefing` | POST | One-shot field briefing narrating the current analysis. Always 200: returns a validated AI narration when the model is configured and stays grounded, otherwise a deterministic template built from the payload. | `{ payload: AssistantPayload }` | `AssistantResponse` | No |
 | `/api/assistant/chat` | POST | Grounded Q&A over the current plan. No template fallback — an unconfigured/unreachable model or a failed grounding check returns `source: 'unavailable'` with a plain message, never a guess. | `{ payload: AssistantPayload, question: string, history?: {role,content}[] }` (question ≤500 chars, history ≤6 turns of ≤800 chars) | `AssistantResponse` | No |
 | `/api/assistant/mobility-briefing` | POST | One-shot plain-language appreciation narrating a Terrain Mobility & Counter-Mobility result (corridors, chokepoints, min-cut barrier, scored counter-measure placements). Same always-200 contract as `/assistant/briefing`: validated AI narration when grounded, otherwise a deterministic template built straight from the payload. | `{ payload: MobilityAssistantPayload }` | `AssistantResponse` | No |
+| `/api/assistant/smeacs` | POST | SMEACS-structured briefing (six NSW RFS doctrinal sections: situation/mission/execution/administration/command/safety) built deterministically from the same fire-break `AssistantPayload` — no AI model layer yet, always 200. | `{ payload: AssistantPayload }` | `SmeacsBriefing` | No |
 
 ```typescript
 interface AssistantPayload {
@@ -181,6 +182,13 @@ interface AssistantPayload {
   difficultyScore: number; difficultyLabel: string;
   topEquipment: { name: string; type: string; timeHours: number; cost: number; compatibilityLevel: string }[];
   insights: { severity: string; title: string; detail: string }[];
+  // SMEACS briefing fields (optional — an older client's payload still validates)
+  startCoords?: { lat: number; lng: number };
+  endCoords?: { lat: number; lng: number };
+  locality?: string;
+  taskedResourceTypes?: string[];
+  entryPoint?: { coords: { lat: number; lng: number }; roadName?: string; roadKind: string; gapM: number; forLineEnd: 'start' | 'end' };
+  approachSteps?: { roadName: string; distanceM: number }[];
 }
 
 interface AssistantResponse {
@@ -189,10 +197,28 @@ interface AssistantResponse {
   citations: { id: string; title: string; source: string }[];
 }
 
+interface SmeacsBriefing {
+  sections: { section: 'situation' | 'mission' | 'execution' | 'administration' | 'command' | 'safety';
+    heading: string; lines: string[]; userEditable: boolean;
+    citations: { id: string; title: string; source: string }[] }[];
+  generatedAt: string;
+  dataHonestyCaveat?: string;
+  disclaimer: string;
+  /** Reproducibility stamp: which estimate engine produced these numbers. */
+  provenance: string;
+}
+
 interface MobilityAssistantPayload {
   moverProfileLabel: string; moverProfileConfidence: string; nightMode: boolean;
   cellCount: number; reachableCount: number; noGoCount: number; slowGoCount: number;
-  estimatedData: boolean; unconstrained: boolean; coveragePercent: number;
+  estimatedData: boolean;
+  // True when either hydrology source (OSM waterway/water-body geometry, DEA WOfS
+  // frequency) returned real data for this AOI — false states "nothing to check
+  // against" rather than leaving water-affected counts silently absent.
+  hydrologyAvailable: boolean;
+  waterAffectedCellCount: number; // any water signal: standing body, watercourse, high DEA wet-frequency
+  waterBodyCellCount: number; // subset literally inside a mapped standing water body
+  unconstrained: boolean; coveragePercent: number;
   topCorridors: { rank: number; easeClass: string; routeCount: number; routeTotal: number;
     medianTravelMin: number; bottleneckWidthM: number; bottleneckAbreast: number;
     frontage: string; goFractionPct: number }[];
@@ -200,6 +226,19 @@ interface MobilityAssistantPayload {
   barrierSegmentCount: number | null; barrierCutValue: number | null;
   placements: { measureId: string; measureLabel: string; delayImposedMin: number;
     bypassDelayMin: number | null; egressSafe: boolean }[];
+  // Probabilistic movement (ROUTE_INTELLIGENCE.md §32) — all optional so an older
+  // client's payload still validates; a missing figure is reported as missing,
+  // never defaulted into a number.
+  corridorEvidence?: 'optimiser-routes' | 'simulated-movers';
+  movement?: { moverCount: number; arrivedPercent: number; medianMin: number | null;
+    p10Min: number | null; p90Min: number | null; crossCountryPercent: number;
+    optimalMin: number | null; behaviourSpread: string };
+  restrictions?: { rank: number; kind: string; transitPercent: number; marginalDelayMin: number;
+    cumulativeDelayMin: number; arrivedPercentAfter: number }[];
+  restrictionEffect?: { baselineMedianMin: number | null; scenarioMedianMin: number | null;
+    baselineArrivedPercent: number; scenarioArrivedPercent: number;
+    baselineCrossCountryPercent: number; scenarioCrossCountryPercent: number;
+    bypassNote: string | null };
 }
 ```
 

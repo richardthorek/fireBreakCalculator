@@ -40,6 +40,7 @@ import { MoverProfile } from '../terrain/moverProfiles';
 import { MobilityGridCell } from '../terrain/accumulatedCost';
 import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
 import { CounterMeasure } from '../terrain/counterMeasures';
+import { carriesWaterSignal } from '../terrain/mobilityAppreciation';
 import { provenanceProperties, provenanceStamp, DISCLAIMER_LONG } from '../config/provenance';
 import { LatLng } from '../utils/chainage';
 import { xmlEscape, kmlColor, kmlCoords } from './gisExport';
@@ -51,6 +52,11 @@ export interface ExportMobilityInput {
   /** Grid-level honesty flag — at least one sampled cell used estimated/
    *  fallback data somewhere in the AOI. */
   usedEstimatedData: boolean;
+  /** True when either hydrology source (OSM waterway/water-body geometry, DEA
+   *  WOfS frequency, docs §34) returned real data for this AOI — false means
+   *  the water-crossing gate had nothing to work from, stated rather than
+   *  silently absent (mirrors `MobilityAppreciationResult.hydrologyAvailable`). */
+  hydrologyAvailable: boolean;
   corridorField: CorridorField | null;
   chokepoints: ChokepointCell[];
   barrier: MinCutResult | null;
@@ -73,7 +79,14 @@ const round = (v: number, dp = 0): number | null => {
 
 const ringCoords = (ring: LatLng[]): number[][] => ring.map(p => [p.lng, p.lat]);
 
+function hydrologySummary(cells: MobilityGridCell[]) {
+  const waterAffectedCellCount = cells.filter(carriesWaterSignal).length;
+  const waterBodyCellCount = cells.filter(c => c.inWaterBody).length;
+  return { waterAffectedCellCount, waterBodyCellCount };
+}
+
 function missionProperties(input: ExportMobilityInput) {
+  const { waterAffectedCellCount, waterBodyCellCount } = hydrologySummary(input.cells);
   return {
     kind: 'terrain_mobility_appreciation',
     name: input.name || 'Terrain mobility appreciation',
@@ -82,10 +95,20 @@ function missionProperties(input: ExportMobilityInput) {
     mover_profile_confidence: input.profile.confidence,
     night_mode: input.nightMode,
     estimated_data_present: input.usedEstimatedData,
+    hydrology_available: input.hydrologyAvailable,
+    water_affected_cell_count: waterAffectedCellCount,
+    water_body_cell_count: waterBodyCellCount,
   };
 }
 
-function corridorProperties(c: Corridor, totalRoutes: number, evidence: string) {
+function corridorProperties(
+  c: Corridor,
+  totalRoutes: number,
+  evidence: string,
+  cellsByKey: Map<string, MobilityGridCell>
+) {
+  const corridorCells = c.cells.map(cc => cellsByKey.get(cc.key)).filter((cc): cc is MobilityGridCell => !!cc);
+  const waterCellCount = corridorCells.filter(carriesWaterSignal).length;
   return {
     kind: 'movement_corridor',
     rank: c.rank,
@@ -113,6 +136,11 @@ function corridorProperties(c: Corridor, totalRoutes: number, evidence: string) 
     no_go_fraction: round(c.noGoFraction, 2),
     cell_count: c.cells.length,
     estimated_data: c.usedEstimatedData,
+    // Water crossing (docs §34): a corridor with ANY water-affected cells
+    // may route through a fordable stretch or hug a bank — a GIS user
+    // planning a physical route through it should know before scouting.
+    crosses_water: waterCellCount > 0,
+    water_cell_count: waterCellCount,
   };
 }
 
@@ -163,6 +191,7 @@ function placementProperties(
 export function toMobilityGeoJSON(input: ExportMobilityInput): string {
   const totalRoutes = input.corridorField?.routes.length ?? 0;
   const corridorEvidence = input.corridorField?.evidence ?? 'optimiser-routes';
+  const cellsByKey = new Map(input.cells.map(c => [c.key, c]));
   const features: any[] = [
     // Mission-level metadata as a geometry-less Feature (valid per RFC 7946
     // §3.2) rather than a nonstandard top-level property — every consumer of
@@ -173,7 +202,7 @@ export function toMobilityGeoJSON(input: ExportMobilityInput): string {
   for (const c of input.corridorField?.corridors ?? []) {
     features.push({
       type: 'Feature',
-      properties: corridorProperties(c, totalRoutes, corridorEvidence),
+      properties: corridorProperties(c, totalRoutes, corridorEvidence, cellsByKey),
       geometry: { type: 'MultiPolygon', coordinates: c.cells.map(cell => [ringCoords(cell.polygon)]) },
     });
   }
@@ -197,7 +226,6 @@ export function toMobilityGeoJSON(input: ExportMobilityInput): string {
   }
 
   if (input.placements.length > 0) {
-    const cellsByKey = new Map(input.cells.map(c => [c.key, c]));
     const measuresById = new Map(input.measures.map(m => [m.id, m]));
     const ledgerByMeasureId = new Map((input.ledger ?? []).map(e => [e.measure.id, e]));
     for (const p of input.placements) {
@@ -223,12 +251,17 @@ const corridorStyleId = (rank: number): string => `corridor-${rank}`;
 export function toMobilityKML(input: ExportMobilityInput): string {
   const totalRoutes = input.corridorField?.routes.length ?? 0;
   const corridorEvidence = input.corridorField?.evidence ?? 'optimiser-routes';
+  const cellsByKey = new Map(input.cells.map(c => [c.key, c]));
   const mission = missionProperties(input);
 
   const missionDescription = `<![CDATA[
     <h3>${xmlEscape(mission.name)}</h3>
     <p>Mover: <b>${xmlEscape(mission.mover_profile)}</b> (${xmlEscape(mission.mover_profile_confidence)} confidence)${mission.night_mode ? ' · Night' : ''}</p>
     ${mission.estimated_data_present ? '<p><b>⚠️ ESTIMATED DATA:</b> parts of this appreciation used non-authoritative fallback data. Verify on the ground.</p>' : ''}
+    ${!mission.hydrology_available ? '<p><b>⚠️ NO HYDROLOGY DATA:</b> no waterway/water-body data was available for this area — the water-crossing gate had nothing to check against.</p>'
+      : mission.water_affected_cell_count > 0
+        ? `<p>Hydrology: ${mission.water_affected_cell_count} cell(s) carry a water signal (${mission.water_body_cell_count} standing water body) — routes account for this as a hard block where fording capability is insufficient.</p>`
+        : ''}
     <p><b>⚠️ Rapid appreciation, not a tasking.</b> ${xmlEscape(DISCLAIMER_LONG)}</p>
     <p><small>${xmlEscape(provenanceStamp())}</small></p>
   ]]>`;
@@ -241,7 +274,7 @@ export function toMobilityKML(input: ExportMobilityInput): string {
     </Style>`).join('');
 
   const corridorPlacemarks = corridors.map(c => {
-    const p = corridorProperties(c, totalRoutes, corridorEvidence);
+    const p = corridorProperties(c, totalRoutes, corridorEvidence, cellsByKey);
     const polys = c.cells
       .map(cell => `<Polygon><outerBoundaryIs><LinearRing><coordinates>${kmlCoords(cell.polygon)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`)
       .join('');
@@ -253,6 +286,7 @@ export function toMobilityKML(input: ExportMobilityInput): string {
           <p>Median ${p.median_travel_min} min · Bottleneck ~${p.bottleneck_width_m} m (${p.bottleneck_abreast} abreast, ${xmlEscape(String(p.frontage))})</p>
           <p>GO ${Math.round((p.go_fraction ?? 0) * 100)}% · SLOW-GO ${Math.round((p.slow_go_fraction ?? 0) * 100)}% · NO-GO ${Math.round((p.no_go_fraction ?? 0) * 100)}%</p>
           ${p.estimated_data ? '<p><b>⚠️ Estimated data present in this corridor.</b></p>' : ''}
+          ${p.crosses_water ? `<p><b>💧 Water crossing:</b> ${p.water_cell_count} cell(s) in this corridor carry a water signal.</p>` : ''}
         ]]></description>
         <MultiGeometry>${polys}</MultiGeometry>
       </Placemark>`;
@@ -281,7 +315,6 @@ export function toMobilityKML(input: ExportMobilityInput): string {
       </Placemark>`).join('')
     : '';
 
-  const cellsByKey = new Map(input.cells.map(c => [c.key, c]));
   const measuresById = new Map(input.measures.map(m => [m.id, m]));
   const ledgerByMeasureId = new Map((input.ledger ?? []).map(e => [e.measure.id, e]));
   const placementPlacemarks = input.placements.map(p => {

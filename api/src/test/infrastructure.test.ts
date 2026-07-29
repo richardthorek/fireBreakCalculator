@@ -139,6 +139,55 @@ async function run() {
   check('relation trail carries the outer member\'s full geometry (lon→lng mapped)',
     relationResult.trails[0]?.coords.length === 4 && relationResult.trails[0]?.coords[0].lng === 149.0);
 
+  // --- Full multipolygon reassembly (docs §35 addendum, 2026-07-28) — MUST
+  // match the webapp's identical `waterRelationTopology.test.ts` behaviour. ---
+  _clearInfrastructureCache();
+  const sw = { lat: -35.00, lon: 149.00 };
+  const se = { lat: -35.00, lon: 149.02 };
+  const ne = { lat: -34.98, lon: 149.02 };
+  const nw = { lat: -34.98, lon: 149.00 };
+  const islandSw = { lat: -34.991, lon: 149.008 };
+  const islandSe = { lat: -34.991, lon: 149.012 };
+  const islandNe = { lat: -34.989, lon: 149.012 };
+  const islandNw = { lat: -34.989, lon: 149.008 };
+  const islandRing = [islandSw, islandSe, islandNe, islandNw, islandSw];
+  setFetch(async () => okJson({
+    elements: [{
+      type: 'relation',
+      tags: { natural: 'water', name: 'Split-Ring Lake With Island' },
+      members: [
+        { type: 'way', role: 'outer', geometry: [sw, se] },
+        { type: 'way', role: 'outer', geometry: [se, ne] },
+        { type: 'way', role: 'outer', geometry: [ne, nw, sw] },
+        { type: 'way', role: 'inner', geometry: islandRing },
+      ],
+    }],
+  }));
+  const stitchedResult = await fetchCorridorInfrastructure(-35.1, 148.9, -34.8, 149.2, 'water' as any);
+  check('a three-fragment outer ring stitches into exactly ONE water trail',
+    stitchedResult.trails.length === 1, `got ${stitchedResult.trails.length}`);
+  check('the stitched ring is genuinely closed (first point === last point)', (() => {
+    const c = stitchedResult.trails[0]?.coords ?? [];
+    return c.length >= 4 && c[0].lat === c[c.length - 1].lat && c[0].lng === c[c.length - 1].lng;
+  })());
+  check('the closed inner member is attached as a hole on the stitched outer trail',
+    (stitchedResult.trails[0] as any)?.holes?.length === 1, `got ${JSON.stringify((stitchedResult.trails[0] as any)?.holes)}`);
+
+  // A genuinely unstitchable fragment (no matching endpoint anywhere) must
+  // still surface as a plain edge feature, not crash and not fabricate a
+  // false closure.
+  _clearInfrastructureCache();
+  setFetch(async () => okJson({
+    elements: [{
+      type: 'relation',
+      tags: { natural: 'water', name: 'Broken Relation' },
+      members: [{ type: 'way', role: 'outer', geometry: [{ lat: -35.2, lon: 149.3 }, { lat: -35.19, lon: 149.31 }] }],
+    }],
+  }));
+  const brokenResult = await fetchCorridorInfrastructure(-35.3, 149.2, -35.1, 149.4, 'water' as any);
+  check('an unstitchable fragment still surfaces as ONE edge-only trail, no crash',
+    brokenResult.trails.length === 1 && (brokenResult.trails[0] as any).holes === undefined);
+
   setFetch(origFetch as any);
   if (failures > 0) {
     console.error(`\n${failures} infrastructure check(s) failed`);
