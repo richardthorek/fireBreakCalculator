@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — existing-trail reuse, computed by the fire-break optimizer's own pathfinding but silently discarded before costing, is now surfaced to the user; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — `api-register.md`/`component-register.md`, the two "MUST update" machine-readable catalogs, corrected against the live codebase after both were found stale; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -79,6 +79,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 41 | Full OSM water-relation topology — multipolygon reassembly | Owner's second confidence/accuracy pick alongside step 40. Step 31's scope cut was framed as "safe either direction", but reading `distanceToNearestWater`'s actual code found a sharper gap: an unclosed fragment (exactly what one piece of a multi-member outer ring usually is) was skipped entirely by the interior point-in-polygon test, so a point deep in a large multi-fragment lake could go UNDETECTED as water — a real under-block risk for a hard-block gate, not just the documented "island over-blocks" direction. `stitchRings` (new, kept in lock-step between webapp and API) reassembles same-role way fragments into closed rings by endpoint-matching; `inner` fragments become real holes assigned to whichever stitched outer ring actually contains them. `distanceToNearestWater`/`roadGraph.ts`'s `isInAnyWaterBody` both now correctly treat a point on a real island as dry ground, not water | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
 | 42 | Hydrology attributes in GIS export / AI briefing | Water-gate fields have been computed by the hard-block hydrology gate since Pass 6, but never reached the exported GeoJSON/KML attributes or the AI briefing payload — a user reading either had no way to see WHY a route avoided or crossed water. `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is now the single predicate the run's own assessment log, the GIS export, and the AI briefing payload all share. GIS export: mission-level water counts plus PER-CORRIDOR `crosses_water`/`water_cell_count` scoped to each corridor's own cells (proven distinct from the grid-wide total). AI briefing: `hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` added as required payload fields (kept in lock-step, webapp+API), with a template caution when data is unavailable or a plain-language summary when water is found — silent when data was available and genuinely found none. Also corrected a stale roadmap item found along the way: "Vegetation NVIS-first uplift" (both stated criteria were already shipped in PR #178, 2026-07-16 — only `NVIS_INTEGRATION.md`'s checklist and this table weren't updated) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
 | 43 | Existing-trail reuse: computed then silently discarded before costing, now surfaced | Found while checking a second stale roadmap item ("Road class modelling") against the live code. Real defect, not a doc issue this time: `routeOptimizer.ts` already computes which parts of a route follow a mapped trail and uses it to PREFER trail-following routes during pathfinding (`×0.35` fuel discount) — but that fact never reached `RouteSegment[]`, the exact shape POSTed to `/api/analysis/calculate`, the sole authoritative cost engine. A route reusing a real formed track — including the app's own auto-optimized suggestion — was costed identically to virgin bush, with the AdvisorPanel's own "existing trail used" stat left disconnected from the $/hours shown next to it. Fixed the same way NAFI fire history was handled: `vegetationAnalysis.ts` now also fetches the reusable-trail set once per line and flags each segment (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`, a real merge boundary) — surfaced in `AnalysisPanel.tsx` with an explicit note that the estimate does NOT already discount for it, since (unlike the optimizer's own uncited `×0.35`) there is no sourced existing-track-vs-virgin clearing-rate figure to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Infrastructure-aware cost surface" |
+| 44 | `api-register.md`/`component-register.md` corrected against the live codebase | An audit of every "MUST match" webapp/api duplicated-logic pair (a bug class with two prior confirmed hits this session) came back clean — but checking the two doc registers themselves against the live code turned up real staleness in both, despite each doc's own "MUST update" policy and a same-day "Last Updated" date. `api-register.md`: the whole `/api/assistant/smeacs` endpoint was undocumented, and `MobilityAssistantPayload`'s documented shape was missing the 3 hydrology fields (step 42) plus the entire probabilistic-movement optional block (step 12) — both live and required/validated in `api/src/types/mobilityAssistant.ts`. `component-register.md`: `EquipmentResults`/`GuidancePanel` were documented but no longer exist in the codebase; ~10 live, in-use components were entirely absent, most strikingly `MobilityPanel.tsx` itself — the main Terrain Mobility screen, shipped and iterated on since step 10 — plus `CounterMobilityPanel`, `DataConfidenceBadge`, `RoadSpeedOverridePanel`, `TacticalCoordinateReadout`, `AssessmentLog`, `MapEmptyState`, `DistributionBar`, `HelpContent`, `LiveFeedsControl`; `ConfirmDialog` was listed as "📋 Planned" though the file already exists (built, WCAG-complete, just never wired into the app — corrected to say so precisely rather than either extreme) | [api-register.md](docs/api-register.md), [component-register.md](docs/component-register.md) |
 
 ### Next up
 
@@ -118,6 +119,57 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — `api-register.md`/`component-register.md` corrected against
+  the live codebase (step 44)**: owner: "move into the next priority
+  roadmap item," continuing the same investigation-first pattern that found
+  the last few real defects. This round's investigation came back clean —
+  spawned an audit of every place the codebase comments as needing to stay
+  "in lock-step" between `webapp` and `api` (a bug class with two confirmed
+  prior hits this session: the multi-fragment water topology gap and an
+  earlier Overpass query drift). Checked Overpass query constants,
+  ring-stitching logic, vegetation tile constants, both AI assistant payload
+  validators, provenance strings, and the equipment catalogue — all
+  genuinely in sync. No fix needed there.
+
+  Turned the same "compare the doc's claim against the live code" lens on
+  the two doc registers themselves, since CLAUDE.md names them as
+  "machine-readable catalogs; update when endpoints/components change" and
+  both carry an explicit same-day "Last Updated" stamp that turned out not
+  to be earned. `api-register.md`: `/api/assistant/smeacs`
+  (`assistantSmeacsBriefing.ts`, live since the SMEACS briefing pack
+  shipped) was entirely undocumented; the `MobilityAssistantPayload`
+  TypeScript block was missing the 3 hydrology fields this session's own
+  step 42 added as REQUIRED, and the whole probabilistic-movement optional
+  block from step 12 (`corridorEvidence`/`movement`/`restrictions`/
+  `restrictionEffect`). Added the endpoint row, `SmeacsBriefing` type, the
+  `AssistantPayload` SMEACS optional fields, and both missing
+  `MobilityAssistantPayload` blocks — copied field-for-field from the
+  actual validator (`api/src/types/mobilityAssistant.ts`), not
+  re-summarised from memory.
+
+  `component-register.md` was in worse shape: `EquipmentResults` and
+  `GuidancePanel` are documented rows for components that no longer exist
+  anywhere in `webapp/src` — confirmed by grep, not just a missing file.
+  More seriously, `MobilityPanel.tsx` — the actual Terrain Mobility screen,
+  the single most-worked-on UI surface across this session's steps 10
+  through 43 — was never in the register at all, alongside 9 other real,
+  imported, live components (`CounterMobilityPanel`, `DataConfidenceBadge`,
+  `RoadSpeedOverridePanel`, `TacticalCoordinateReadout`, `AssessmentLog`,
+  `MapEmptyState`, `DistributionBar`, `HelpContent`, `LiveFeedsControl`).
+  Added a new "Terrain Mobility Components" table for them, verified each
+  one's actual import site first (not assumed from the filename) so the
+  "Key Dependencies" column is real. Along the way, confirmed
+  `ConfirmDialog.tsx`, `ConfigPanelComponents.tsx`, `ConfigTest.tsx`, and
+  `VegetationOverridePanel.tsx` are built but imported nowhere — left out
+  of the live tables rather than added, since documenting orphaned code as
+  active architecture would just be a different kind of inaccurate;
+  `ConfirmDialog`'s "📋 Planned" row was corrected to say "built, not wired
+  in" rather than leave the stronger, also-wrong claim that it doesn't
+  exist yet. No `webapp`/`api` runtime code changed this pass — pure
+  documentation-accuracy correction, but a live one: an agent (or a person)
+  trusting either register at face value this morning would have missed a
+  real endpoint and the app's flagship Terrain Mobility panel entirely.
 
 - **2026-07-28 — Hydrology attributes in GIS export / AI briefing (step
   42)**: owner: "on to the next priority, again focus on functional
