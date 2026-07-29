@@ -5104,5 +5104,63 @@ just turn the whole gate off). Full existing suite green in both packages
 
 ---
 
+## 46. Hydrology attributes in GIS export / AI briefing (2026-07-28)
+
+Owner: "on to the next priority, again focus on functional improvements and
+quality — don't add 'nice to haves'." The water-gate fields (§34) have been
+computed by the hard-block hydrology gate since Pass 6 — `inWaterBody`,
+`nearestWaterwayKind`, `waterFrequency`, `hydrologyAvailable` — but never
+reached the exported GeoJSON/KML attributes or the AI briefing payload. A
+user reading either had no way to see WHY a route avoided (or crossed)
+water, even though the system had already worked it out — the exact same
+"real, computed data, invisible outside the live map" gap step 44 closed for
+the road route, applied here to hydrology.
+
+**Single shared predicate, not three independently-tuned copies**:
+`carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is the
+literal water-signal query the run's own assessment log already computed
+inline (`inWaterBody || nearestWaterwayKind !== null || waterFrequency >=
+0.15`), extracted so the log, the GIS export, and the AI briefing payload all
+call the SAME function — none of them can quietly drift onto a different
+threshold.
+
+**GIS export** (`mobilityGisExport.ts`): `ExportMobilityInput` gained
+`hydrologyAvailable`; `missionProperties()` reports `hydrology_available` +
+mission-wide `water_affected_cell_count`/`water_body_cell_count`.
+`corridorProperties()` now takes a `cellsByKey` map (hoisted once per export
+call, previously only built inside the placement-export branch) so each
+CORRIDOR feature can report `crosses_water`/`water_cell_count` scoped to
+**its own cells only** — proven by a test with a dry corridor and a wet
+corridor in the same export where the wet corridor's count is neither zero
+nor the grid-wide total. KML mission/corridor descriptions gained matching
+plain-language notes.
+
+**AI briefing** (`mobilityAssistantApi.ts` + `api/src/types/mobilityAssistant.ts`
++ `mobilityBriefingTemplate.ts`, kept in lock-step): payload gained
+`hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` as
+REQUIRED fields (not optional — these are computed on every run, same
+treatment as `estimatedData`, unlike the movement/restriction blocks which
+are optional because they arrived after other clients existed).
+`flattenPayloadNumbers` (aiGrounding.ts) already walks the payload
+generically, so the new counts are automatically available for the model to
+cite without any grounding-layer change. Template briefing gains a caution
+line when hydrology data was unavailable, or a plain-language water-signal
+summary when real water was found — deliberately silent when data WAS
+available and genuinely found none, so a clean AOI's briefing doesn't gain
+noise.
+
+**Tests**: 14 new checks split across `mobilityHydrologyExport.test.ts`
+(webapp, 6 — mission-level counts, per-corridor scoping proven with a
+dry/wet corridor pair, KML mission and per-corridor notes), 3 more in
+`mobilityHydrologyBriefing.test.ts` (webapp — `buildMobilityAssistantPayload`
+computes the fields correctly, including a genuine below-threshold
+`waterFrequency` cell correctly NOT counted), plus 5 in the API's
+`mobilityAssistant.test.ts` (validator rejects a payload missing either new
+required field; template narrates the no-data caution, the water-found
+summary, and stays silent on a clean AOI). Full existing suite green in both
+packages; `tsc`/build clean in both.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

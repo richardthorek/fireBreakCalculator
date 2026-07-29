@@ -58,6 +58,16 @@ import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
 } from './corridorField';
 
+/** A cell carries a real water signal — in a standing body, near a mapped
+ *  watercourse, or a high DEA WOfS wet-frequency (docs §34). The single
+ *  source of truth for "does this cell count as hydrology-affected" — the
+ *  run's own assessment log, the GIS export (`mobilityGisExport.ts`) and the
+ *  AI briefing payload (`mobilityAssistantApi.ts`) all call this SAME
+ *  function rather than each tuning their own threshold, so none of them can
+ *  quietly disagree about what counts. */
+export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
+  c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
+
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
   bands: IsochroneBand[];
@@ -493,9 +503,7 @@ export async function runMobilityAppreciation(
   if (!grid.hydrologyAvailable) {
     onLog?.('NO WATERWAY/WATER-BODY DATA FOR THIS AREA — HYDROLOGY GATE INACTIVE');
   } else {
-    const waterCellCount = grid.cells.filter(
-      c => c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15)
-    ).length;
+    const waterCellCount = grid.cells.filter(carriesWaterSignal).length;
     if (waterCellCount > 0) {
       const bodyCount = grid.cells.filter(c => c.inWaterBody).length;
       onLog?.(

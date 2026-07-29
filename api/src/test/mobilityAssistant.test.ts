@@ -36,6 +36,9 @@ const basePayload: MobilityAssistantPayload = {
   noGoCount: 15,
   slowGoCount: 40,
   estimatedData: false,
+  hydrologyAvailable: true,
+  waterAffectedCellCount: 0,
+  waterBodyCellCount: 0,
   unconstrained: false,
   coveragePercent: 22,
   topCorridors: [
@@ -85,6 +88,16 @@ async function main() {
 
   await test('rejects a placement missing egressSafe', () => {
     const bad = { ...basePayload, placements: [{ measureId: 'x', measureLabel: 'X', delayImposedMin: 1, bypassDelayMin: 1 }] };
+    assert.strictEqual(isMobilityAssistantPayload(bad), false);
+  });
+
+  await test('rejects a payload missing hydrologyAvailable (docs §34 export/briefing uplift)', () => {
+    const { hydrologyAvailable, ...rest } = basePayload as any;
+    assert.strictEqual(isMobilityAssistantPayload(rest), false);
+  });
+
+  await test('rejects a payload with a non-finite waterAffectedCellCount', () => {
+    const bad = { ...basePayload, waterAffectedCellCount: NaN };
     assert.strictEqual(isMobilityAssistantPayload(bad), false);
   });
 
@@ -145,6 +158,27 @@ async function main() {
   await test('carries the estimated-data caution when flagged', () => {
     const text = buildTemplateMobilityBriefing({ ...basePayload, estimatedData: true });
     assert.ok(text.toLowerCase().includes('estimated'));
+  });
+
+  await test('warns when no hydrology data was available for the AOI (docs §34 export/briefing uplift)', () => {
+    const text = buildTemplateMobilityBriefing({ ...basePayload, hydrologyAvailable: false });
+    assert.ok(text.toLowerCase().includes('no waterway/water-body data'));
+  });
+
+  await test('reports the water-affected cell count when hydrology data found real water', () => {
+    const text = buildTemplateMobilityBriefing({
+      ...basePayload, hydrologyAvailable: true, waterAffectedCellCount: 12, waterBodyCellCount: 4,
+    });
+    assert.ok(text.includes('12 cell(s) carry a water signal'), text);
+    assert.ok(text.includes('4 standing water body'), text);
+  });
+
+  await test('says nothing about hydrology when data was available and genuinely found no water (no noise)', () => {
+    const text = buildTemplateMobilityBriefing({
+      ...basePayload, hydrologyAvailable: true, waterAffectedCellCount: 0, waterBodyCellCount: 0,
+    });
+    assert.ok(!text.toLowerCase().includes('hydrology'));
+    assert.ok(!text.toLowerCase().includes('water signal'));
   });
 
   await test('never fabricates a corridor when none was formed', () => {

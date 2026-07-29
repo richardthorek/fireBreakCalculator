@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 28, 2026 — full OSM water-relation topology (multi-fragment ring stitching + real island holes) closes a genuine under-detection gap in the hydrology hard-block gate; see Recent Updates for the dated history.
+**Last Updated**: July 28, 2026 — hydrology water-gate fields (already computed since Pass 6) now reach the GIS export and AI briefing, closing a real visibility gap; see Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -77,6 +77,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 39 | Fuse road-graph routes into movement simulation / min-cut — genuinely mixed hex+road-graph adjacency, CLOSED | Owner: "finish the bigger slice of work so the road usage is fully complete." Ensemble: a mover's recorded position stays a hex cell (no downstream rendering/clustering code needed to change), but its CANDIDATE SET now includes real road-graph "next landing" options — a bounded walk of the road graph's own exact edges (real distance, real class speed) until it reaches a road node whose nearest onTrail hex genuinely differs from the mover's own, so a long straight road is no longer hex-quantized and a real junction offers its actual branches. Safety-motivated scope cut, structural not a flag: mixed-mode is wired ONLY into the unrestricted baseline (`restrictionPlanner.ts` never receives a road graph), so a recommended block can never be silently bypassed by the shortcut. Min-cut: a SEPARATE `computeRoadNetworkMinCut`, reusing the identical max-flow machinery over the road graph's own nodes/edges directly — targets a real road segment, often narrower than a hex, alongside (not replacing) the existing hex-based cut. Not done this pass: new map layers/GIS export/briefing text for the road-network-exact cut — computed, logged, and carried on the result type, not yet visualised | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
 | 40 | Road-route decoupling — the instant road-network preview | Owner, picking the next priority explicitly for confidence/accuracy AND visual impact over "nice to have" controls. The box-free vehicle road route never actually depended on the hex-grid retry loop, only on the road-network fetch — but ran after the whole grid/search pipeline settled purely because of where the code sat, so a real result that could appear in seconds instead waited tens of seconds. `findEarlyVehicleRoadRoutePreview` (new) fetches independently, using the EXACT same first-attempt bounds the grid pipeline's own attempt 0 computes, so the existing bbox cache collapses the two into one real network round trip, not a duplicate. New `onRoadRoute` callback wired into `App.tsx` — the map shows the real road route seconds in, always superseded outright by the authoritative result the instant it lands (never a stale preview surviving the real answer) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
 | 41 | Full OSM water-relation topology — multipolygon reassembly | Owner's second confidence/accuracy pick alongside step 40. Step 31's scope cut was framed as "safe either direction", but reading `distanceToNearestWater`'s actual code found a sharper gap: an unclosed fragment (exactly what one piece of a multi-member outer ring usually is) was skipped entirely by the interior point-in-polygon test, so a point deep in a large multi-fragment lake could go UNDETECTED as water — a real under-block risk for a hard-block gate, not just the documented "island over-blocks" direction. `stitchRings` (new, kept in lock-step between webapp and API) reassembles same-role way fragments into closed rings by endpoint-matching; `inner` fragments become real holes assigned to whichever stitched outer ring actually contains them. `distanceToNearestWater`/`roadGraph.ts`'s `isInAnyWaterBody` both now correctly treat a point on a real island as dry ground, not water | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
+| 42 | Hydrology attributes in GIS export / AI briefing | Water-gate fields have been computed by the hard-block hydrology gate since Pass 6, but never reached the exported GeoJSON/KML attributes or the AI briefing payload — a user reading either had no way to see WHY a route avoided or crossed water. `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is now the single predicate the run's own assessment log, the GIS export, and the AI briefing payload all share. GIS export: mission-level water counts plus PER-CORRIDOR `crosses_water`/`water_cell_count` scoped to each corridor's own cells (proven distinct from the grid-wide total). AI briefing: `hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` added as required payload fields (kept in lock-step, webapp+API), with a template caution when data is unavailable or a plain-language summary when water is found — silent when data was available and genuinely found none. Also corrected a stale roadmap item found along the way: "Vegetation NVIS-first uplift" (both stated criteria were already shipped in PR #178, 2026-07-16 — only `NVIS_INTEGRATION.md`'s checklist and this table weren't updated) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
 
 ### Next up
 
@@ -87,8 +88,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
-| Hydrology attributes in GIS export / AI briefing | Water-gate fields already computed (§34); not yet carried into export attributes or the briefing payload | S | Pass 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
-| Vegetation NVIS-first uplift | Explicit `NoData` handling; flag cleared/modified segments distinctly | S | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
@@ -119,6 +118,52 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-07-28 — Hydrology attributes in GIS export / AI briefing (step
+  42)**: owner: "on to the next priority, again focus on functional
+  improvements and quality — don't add 'nice to haves'." CLAUDE.md's own
+  "next step" pointer named "Vegetation NVIS-first uplift" — investigated
+  first, and found it stale: both stated acceptance criteria (explicit
+  `NoData` handling, flagging modified/low-fidelity segments) were already
+  fully shipped in PR #178 (2026-07-16), just never checked off in
+  `NVIS_INTEGRATION.md` or removed from this roadmap. Corrected both docs
+  (no code change needed there) and moved to the next real, unshipped item:
+  the water-gate fields computed by the hydrology hard-block gate since Pass
+  6 were never carried into the GIS export or the AI briefing — a user
+  reading either had no way to see WHY a route avoided or crossed water,
+  even though the system had already worked it out.
+
+  `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) lifts
+  the exact water-signal query the run's own assessment log already computed
+  inline into a shared function — the log, the GIS export, and the AI
+  briefing payload now all call the SAME predicate, so none of the three can
+  quietly drift onto a different threshold.
+
+  GIS export (`mobilityGisExport.ts`): mission-level `hydrology_available` +
+  `water_affected_cell_count`/`water_body_cell_count`; each CORRIDOR feature
+  gained `crosses_water`/`water_cell_count` scoped to ONLY its own cells
+  (`corridorProperties()` now takes a hoisted `cellsByKey` map) — proven with
+  a dry/wet corridor pair where the wet corridor's count is neither zero nor
+  the grid-wide total. KML mission/corridor descriptions gained matching
+  plain-language notes.
+
+  AI briefing (`mobilityAssistantApi.ts` + `api/src/types/mobilityAssistant.ts`
+  + `mobilityBriefingTemplate.ts`, kept in lock-step): payload gained the same
+  three fields as REQUIRED (matching `estimatedData`'s always-computed
+  treatment, not the optional movement/restriction blocks that arrived after
+  other clients existed). `aiGrounding.ts`'s `flattenPayloadNumbers` already
+  walks the payload generically, so the new counts needed no grounding-layer
+  change to be citable. Template narrates a caution when hydrology data was
+  unavailable, or a summary when real water was found — silent when data WAS
+  available and genuinely found none, so a clean AOI's briefing stays clean.
+
+  14 new tests: `mobilityHydrologyExport.test.ts` (webapp, 6),
+  `mobilityHydrologyBriefing.test.ts` (webapp, 3 — including a genuine
+  below-threshold `waterFrequency` cell correctly NOT counted), 5 more in the
+  API's `mobilityAssistant.test.ts` (validator + template), plus the 2 doc
+  corrections above. Full existing suite green in both packages; `tsc`/build
+  clean in both. Full detail:
+  [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46.
 
 - **2026-07-28 — Full OSM water-relation topology: multipolygon reassembly
   (step 41)**: owner's second confidence/accuracy pick alongside step 40.

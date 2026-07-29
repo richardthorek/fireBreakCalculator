@@ -139,6 +139,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       profile: result.profile,
       nightMode,
       usedEstimatedData: result.usedEstimatedData,
+      hydrologyAvailable: result.hydrologyAvailable,
       corridorField: result.corridorField,
       chokepoints: result.chokepoints,
       barrier: result.barrier,

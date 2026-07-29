@@ -112,6 +112,16 @@ export function buildTemplateMobilityBriefing(payload: MobilityAssistantPayload)
     lines.push('Caution: part of this appreciation uses estimated/fallback data — verify conditions on the ground.');
   }
 
+  if (!payload.hydrologyAvailable) {
+    lines.push('Caution: no waterway/water-body data was available for this area — the water-crossing gate had nothing to check against.');
+  } else if (payload.waterAffectedCellCount > 0) {
+    lines.push(
+      `Hydrology: ${payload.waterAffectedCellCount} cell(s) carry a water signal` +
+      (payload.waterBodyCellCount > 0 ? ` (${payload.waterBodyCellCount} standing water body)` : '') +
+      ' — routes account for this as a hard block where fording capability is insufficient.'
+    );
+  }
+
   // The behaviour model's own caveat, stated wherever its numbers are used.
   if (payload.movement || payload.corridorEvidence === 'simulated-movers') {
     lines.push(
