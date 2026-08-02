@@ -190,10 +190,10 @@ function classifyCellTerrain(
   // so hex-averaged raw DEM slope is a worse estimate of driveability than
   // trusting the mapped road exists. Without this, a highway along a Lake
   // George shoreline shelf and a paved road descending a steep ridge both
-  // painted NO-GO end to end — the exact narrow, location-specific passable
-  // gap this overlay exists to show.
+  // painted SEVERELY RESTRICTED end to end — the exact narrow,
+  // location-specific passable gap this overlay exists to show.
   if (!cell.onTrail && (steepestAbsDeg > profile.maxClimbDeg || cell.crossSlopeDeg > profile.maxSideSlopeDeg)) {
-    return { trafficability: 'NO-GO', estimated: true };
+    return { trafficability: 'severely-restricted', estimated: true };
   }
 
   const struct = estimateStructureFromVegetation(cell.vegetation);
@@ -205,24 +205,24 @@ function classifyCellTerrain(
       if (!canOverride && struct.gapWidthEstimateM < profile.widthM) vegBlocked = true;
     }
   }
-  if (vegBlocked) return { trafficability: 'NO-GO', estimated: true };
+  if (vegBlocked) return { trafficability: 'severely-restricted', estimated: true };
 
   // Hydrology (docs §34) — same fording gate `edgeMobilityCost` applies to a
   // directed edge, applied here to the cell's own ground so the terrain-only
-  // GO/SLOW-GO/NO-GO overlay agrees with what the search would actually do
+  // mobility-class overlay agrees with what the search would actually do
   // arriving into this cell. Skipped on a mapped trail, matching the
   // vegetation exemption above (a road crossing implies a bridge/ford).
   let ford: ReturnType<typeof estimateFordingRequirement> = null;
   if (!cell.onTrail) ford = estimateFordingRequirement(toMobilitySample(cell));
   if (ford && (profile.fordingDepthM === undefined || ford.assumedDepthM > profile.fordingDepthM)) {
-    return { trafficability: 'NO-GO', estimated: true };
+    return { trafficability: 'severely-restricted', estimated: true };
   }
 
   const climbRatio = steepestAbsDeg / profile.maxClimbDeg;
   const sideRatio = profile.maxSideSlopeDeg > 0 ? cell.crossSlopeDeg / profile.maxSideSlopeDeg : 0;
   const heavyVeg = (cell.vegetation === 'heavyforest' || cell.vegetation === 'mediumscrub') && !cell.onTrail;
-  if (climbRatio > 0.85 || sideRatio > 0.85 || heavyVeg || ford) return { trafficability: 'SLOW-GO', estimated: true };
-  return { trafficability: 'GO', estimated: cell.vegEstimated };
+  if (climbRatio > 0.85 || sideRatio > 0.85 || heavyVeg || ford) return { trafficability: 'restricted', estimated: true };
+  return { trafficability: 'unrestricted', estimated: cell.vegEstimated };
 }
 
 // ---------------------------------------------------------------------------

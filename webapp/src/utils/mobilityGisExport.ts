@@ -90,6 +90,12 @@ function missionProperties(input: ExportMobilityInput) {
   return {
     kind: 'terrain_mobility_appreciation',
     name: input.name || 'Terrain mobility appreciation',
+    // schema_version 2 (OCOKA 1, docs/ROUTE_INTELLIGENCE.md §47): mobility-class
+    // fields below are dual-emitted — both the current MCOO vocabulary and the
+    // legacy `go_fraction`/`slow_go_fraction`/`no_go_fraction`/`ease_class`
+    // values, for one release, since a saved external symbology may key off
+    // the attribute names. See docs/ROUTE_INTELLIGENCE.md §29 addendum / §47.6.
+    schema_version: 2,
     ...provenanceProperties(),
     mover_profile: input.profile.label,
     mover_profile_confidence: input.profile.confidence,
@@ -112,6 +118,10 @@ function corridorProperties(
   return {
     kind: 'movement_corridor',
     rank: c.rank,
+    // mobility_class is the current field (OCOKA 1, docs/ROUTE_INTELLIGENCE.md
+    // §47); ease_class kept alongside it for one release — same value, legacy
+    // key, since a saved external symbology may key off the attribute name.
+    mobility_class: c.easeClass,
     ease_class: c.easeClass,
     // What the counts below are counts OF. Since 2026-07-27 corridors are
     // normally derived from a simulated movement ensemble, so `route_count` is
@@ -131,9 +141,14 @@ function corridorProperties(
     bottleneck_width_m: round(c.bottleneckWidthM),
     bottleneck_abreast: c.bottleneckAbreast,
     frontage: c.frontage,
-    go_fraction: round(c.goFraction, 2),
-    slow_go_fraction: round(c.slowGoFraction, 2),
-    no_go_fraction: round(c.noGoFraction, 2),
+    // Current field names; the three go_/slow_go_/no_go_ keys below are the
+    // same values under the superseded names, kept for one release.
+    unrestricted_fraction: round(c.unrestrictedFraction, 2),
+    restricted_fraction: round(c.restrictedFraction, 2),
+    severely_restricted_fraction: round(c.severelyRestrictedFraction, 2),
+    go_fraction: round(c.unrestrictedFraction, 2),
+    slow_go_fraction: round(c.restrictedFraction, 2),
+    no_go_fraction: round(c.severelyRestrictedFraction, 2),
     cell_count: c.cells.length,
     estimated_data: c.usedEstimatedData,
     // Water crossing (docs §34): a corridor with ANY water-affected cells

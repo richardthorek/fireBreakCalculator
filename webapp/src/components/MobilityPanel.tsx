@@ -322,8 +322,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
           <div className="mobility-result-stats tac-mono">
             <div>{result.cellCount} CELLS SAMPLED</div>
             <div>{result.reachableCount} REACHABLE</div>
-            <div className="mobility-stat-nogo">{result.noGoCount} NO-GO</div>
-            <div className="mobility-stat-slowgo">{result.slowGoCount} SLOW-GO</div>
+            <div className="mobility-stat-nogo">{result.severelyRestrictedCount} SEVERELY RESTRICTED</div>
+            <div className="mobility-stat-slowgo">{result.restrictedCount} RESTRICTED</div>
           </div>
           {result.usedEstimatedData && (
             <DataConfidenceBadge tier="estimated" label="ONE OR MORE TIER 0 SAMPLES" />
@@ -336,7 +336,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
               className={displayMode === 'trafficability' ? 'active' : ''}
               onClick={() => onDisplayModeChange('trafficability')}
             >
-              GO / SLOW-GO / NO-GO
+              UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED
             </button>
             <button
               className={displayMode === 'isochrone' ? 'active' : ''}
@@ -565,7 +565,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
                 <div>MEDIAN {(c.medianTravelSeconds / 60).toFixed(0)} MIN · BEST {(c.fastestTravelSeconds / 60).toFixed(0)} MIN</div>
                 <div>BOTTLENECK ~{c.bottleneckWidthM.toFixed(0)} M</div>
                 <div>{c.bottleneckAbreast} ABREAST · {c.frontage.replace('-', ' ').toUpperCase()}</div>
-                <div>{Math.round(c.goFraction * 100)}% GO · {Math.round(c.slowGoFraction * 100)}% SLOW</div>
+                <div>{Math.round(c.unrestrictedFraction * 100)}% UNRESTRICTED · {Math.round(c.restrictedFraction * 100)}% RESTRICTED</div>
                 <div>{Math.round(c.riskScore * 100)}% RISK · {Math.round(c.waterCrossingFraction * 100)}% WATER</div>
                 <div>{c.cells.length} CELLS</div>
               </div>

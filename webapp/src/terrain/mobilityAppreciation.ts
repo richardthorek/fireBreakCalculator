@@ -86,8 +86,14 @@ export interface MobilityAppreciationResult {
   roadWays: InfrastructureTrail[];
   cellCount: number;
   reachableCount: number;
-  noGoCount: number;
-  slowGoCount: number;
+  /** Renamed from `noGoCount`/`slowGoCount` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md
+   *  §47) to the current MCOO mobility-class vocabulary. `mobilityTelemetry.ts`'s
+   *  WIRE field names stay `noGoCount`/`slowGoCount` deliberately — that's an
+   *  existing analytics time series in Table Storage, and renaming it there
+   *  would split the series; the mapping happens explicitly at the telemetry
+   *  recording boundary instead. */
+  severelyRestrictedCount: number;
+  restrictedCount: number;
   /** The single cheapest origin→objective path this run found — what the
    *  unit-simulation animation follows (docs "Terrain Mobility &
    *  Counter-Mobility": null only if no objective cell was reachable). */
@@ -493,8 +499,8 @@ export async function runMobilityAppreciation(
 
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
-  const noGoCount = results.filter(r => r.trafficability === 'NO-GO').length;
-  const slowGoCount = results.filter(r => r.trafficability === 'SLOW-GO').length;
+  const severelyRestrictedCount = results.filter(r => r.trafficability === 'severely-restricted').length;
+  const restrictedCount = results.filter(r => r.trafficability === 'restricted').length;
 
   const fastestBand = bands.find(b => b.cells.length > 0);
   if (fastestBand) {
@@ -535,7 +541,7 @@ export async function runMobilityAppreciation(
     waterFeatures: grid.waterFeatures,
     roadWays: grid.roadWays,
     cellCount: grid.cells.length,
-    reachableCount, noGoCount, slowGoCount,
+    reachableCount, severelyRestrictedCount, restrictedCount,
     path, roadRoute, usedExpandedSearch,
     searchAttempts: attemptsUsed,
     fidelity: grid.fidelity,
@@ -700,7 +706,7 @@ export async function runMobilityAppreciation(
       if (riskiest && corridorField.mostRiskyCorridorId !== corridorField.mostLikelyCorridorId) {
         onLog?.(
           `MOST LIKELY: CORRIDOR ${corridorField.corridors[0]?.rank ?? 1} · MOST RISKY: CORRIDOR ${riskiest.rank} ` +
-          `(${Math.round(riskiest.riskScore * 100)}% RISK — ${Math.round((riskiest.slowGoFraction + riskiest.noGoFraction) * 100)}% SLOW/NO-GO, ` +
+          `(${Math.round(riskiest.riskScore * 100)}% RISK — ${Math.round((riskiest.restrictedFraction + riskiest.severelyRestrictedFraction) * 100)}% RESTRICTED/SEVERELY RESTRICTED, ` +
           `${Math.round(riskiest.waterCrossingFraction * 100)}% WATER SIGNAL, PINCH RATIO ${riskiest.pinchRatio.toFixed(2)})`
         );
       } else if (riskiest) {
@@ -787,7 +793,7 @@ export async function runMobilityAppreciation(
     }
   }
 
-  onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${noGoCount} NO-GO · ${slowGoCount} SLOW-GO`);
+  onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${severelyRestrictedCount} SEVERELY RESTRICTED · ${restrictedCount} RESTRICTED`);
   onProgress(1);
   onStage?.({ key: 'done', label: 'Appreciation complete', fraction: 1 });
 
@@ -802,8 +808,8 @@ export async function runMobilityAppreciation(
     roadWays: grid.roadWays,
     cellCount: grid.cells.length,
     reachableCount,
-    noGoCount,
-    slowGoCount,
+    severelyRestrictedCount,
+    restrictedCount,
     path,
     roadRoute,
     usedExpandedSearch,

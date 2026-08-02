@@ -2424,6 +2424,17 @@ verified in this sandbox (no Mapbox token, no GIS desktop tooling here) —
 **confirm on the live preview / a real GIS client** before relying on the
 exported files operationally.
 
+**Addendum (2026-08-02, OCOKA 1, §47).** The `GO`/`SLOW-GO`/`NO-GO` fractions
+this section describes are superseded by the current MCOO vocabulary
+(`unrestricted`/`restricted`/`severely-restricted`) — `corridorProperties()`
+now dual-emits both the current field names (`mobility_class`,
+`unrestricted_fraction`, `restricted_fraction`, `severely_restricted_fraction`)
+and the legacy ones (`ease_class`, `go_fraction`, `slow_go_fraction`,
+`no_go_fraction`) for one release, since a saved external symbology may key off
+the attribute name. `missionProperties()` gained `schema_version: 2`. This
+section's own text above is left as the original as-built record; see §47.6
+for the full migration and its contract risks.
+
 ## 30. AI assistant narrative for Terrain Mobility results (2026-07-27)
 
 Closes the "assistant narrative through the grounding gate" backlog item: a
@@ -4192,7 +4203,11 @@ states its real hex count and size.
 anchor-sharing within one area, erase/repaint ordering, a far-south paint
 doesn't degrade, `singleDabArea`'s unit-sim replan caller still works), 9 in
 `hexRingSpiral.test.ts` (ring cell counts match the standard 6k formula,
-spiral truncates to an exact count, determinism). All run via `npx tsx`.
+spiral truncates to an exact count, determinism). Run via `npm test` in
+`webapp/` (OCOKA 1, docs §47 — `scripts/runTests.mjs` runs every
+`webapp/tests/*.test.ts` under `tsx` and is now a CI gate; previously these
+ran by hand only). A live-network file (`nvis-fidelity.test.ts`) is excluded
+from the default run — see that script's own comment.
 
 `paintedOverlapFraction`/`isPaintedAreaMember` (`mobilityGrid.ts`) are
 exported for testability, but `mobilityGrid.ts` itself transitively imports

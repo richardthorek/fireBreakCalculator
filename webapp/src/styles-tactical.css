@@ -578,7 +578,7 @@
   border-radius: 999px;
   white-space: nowrap;
 }
-.corridor-ease--open { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
+.corridor-ease--unrestricted { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
 .corridor-ease--restricted { background: rgba(246, 166, 9, 0.18); color: var(--tac-slowgo); }
 .corridor-ease--severely-restricted { background: rgba(216, 35, 42, 0.18); color: var(--tac-nogo); }
 

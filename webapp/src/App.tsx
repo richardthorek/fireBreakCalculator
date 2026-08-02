@@ -36,6 +36,7 @@ import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
 import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
 import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
 import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, originObjectiveDistanceM } from './terrain/mobilityGrid';
+import { MobilityClass } from './terrain/mobilityClass';
 import { recordMobilityRunTelemetry, MobilityStageTimestamp } from './terrain/mobilityTelemetry';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
@@ -503,7 +504,7 @@ const App: React.FC = () => {
    *  replaced by the full result — so the map fills in mid-run instead of
    *  staying blank until everything is done. */
   const [mobilityPreviewCells, setMobilityPreviewCells] = useState<
-    { polygon: { lat: number; lng: number }[]; trafficability: 'GO' | 'SLOW-GO' | 'NO-GO'; timeSeconds: number; bandIndex: number }[] | null
+    { polygon: { lat: number; lng: number }[]; trafficability: MobilityClass; timeSeconds: number; bandIndex: number }[] | null
   >(null);
   /** The box-free vehicle road route, painted the moment it resolves — well
    *  before the full grid/search pipeline settles (docs §38's stated

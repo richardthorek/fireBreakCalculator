@@ -21,6 +21,7 @@
  */
 
 import React, { useState } from 'react';
+import { SEVERELY_RESTRICTED_MEANING } from '../terrain/mobilityClass';
 
 export interface MobilityLegendProps {
   /** Which layers are currently drawn — the key shows only these. */
@@ -114,14 +115,15 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                 </ul>
               ) : (
                 <ul>
-                  <Swatch color="#1E9E62">GO — passable at normal pace</Swatch>
-                  <Swatch color="#F6A609">SLOW-GO — passable, near a limit or through heavy vegetation</Swatch>
-                  <Swatch color="#D8232A">NO-GO — slope, side-slope or vegetation blocks this profile</Swatch>
+                  <Swatch color="#1E9E62">Unrestricted — passable at normal pace</Swatch>
+                  <Swatch color="#F6A609">Restricted — passable, near a limit or through heavy vegetation</Swatch>
+                  <Swatch color="#D8232A">Severely restricted — slope, side-slope or vegetation blocks this profile</Swatch>
                 </ul>
               )}
               <p className="mobility-legend-note">
                 A property of the ground for the selected profile. Tier 0 data: vegetation
                 structure is estimated from its class, not measured per cell.
+                {present.displayMode !== 'isochrone' && <> {SEVERELY_RESTRICTED_MEANING}</>}
               </p>
             </section>
           )}

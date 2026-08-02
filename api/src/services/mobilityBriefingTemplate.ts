@@ -17,7 +17,7 @@ export function buildTemplateMobilityBriefing(payload: MobilityAssistantPayload)
   const nightPart = payload.nightMode ? ', night/limited visibility' : '';
   lines.push(
     `Situation: ${payload.moverProfileLabel} (${payload.moverProfileConfidence} confidence${nightPart}). ` +
-    `${payload.reachableCount}/${payload.cellCount} cells reachable — ${payload.noGoCount} NO-GO, ${payload.slowGoCount} SLOW-GO.`
+    `${payload.reachableCount}/${payload.cellCount} cells reachable — ${payload.severelyRestrictedCount} severely restricted, ${payload.restrictedCount} restricted.`
   );
 
   // Unrestricted movement leads, when the simulation ran: "how do they move if
@@ -52,7 +52,7 @@ export function buildTemplateMobilityBriefing(payload: MobilityAssistantPayload)
       lines.push(
         `Corridors: primary corridor carries ${top.routeCount}/${top.routeTotal} ${evidenceWord} (${top.easeClass}), ` +
         `median ${top.medianTravelMin.toFixed(0)} min, bottleneck ~${top.bottleneckWidthM.toFixed(0)} m ` +
-        `(${top.bottleneckAbreast} abreast, ${top.frontage}), ${Math.round(top.goFractionPct)}% GO ground.`
+        `(${top.bottleneckAbreast} abreast, ${top.frontage}), ${Math.round(top.unrestrictedFractionPct)}% unrestricted ground.`
       );
     } else {
       lines.push('Corridors: none could be formed for this profile — objective may be unreachable.');
