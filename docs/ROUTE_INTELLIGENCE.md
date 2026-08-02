@@ -502,7 +502,7 @@ already solve the upstream-quota half, which is what makes the rest tractable.
 | M2 | Corridor & chokepoint analytics — route-preference surface, k-dissimilar routes, betweenness, GO/SLOW-GO/NO-GO overlay + export | Pure compute on M1; no new data sources |
 | M3 | **Trafficability & vegetation structure** — the fidelity problem. Splits into M3a–M3f; see **§10.7** | The real unknown, and the analytical core. NVIS cannot answer trafficability (§10.1); the biggest free wins are time-since-fire, fractional cover and surface-water frequency, *not* computer vision (§10.3c) |
 | M4 | Counter-mobility planner — measure catalogue, breach/delay matrix, min-cut siting, delay ledger, bypass rule, egress-safety gate | **Gated on a sourced delay basis** (§5) — without it, output is fabricated |
-| M5 | Intent & observation — **split at §47**: **M5a** OAKOC/IPOE framing + mobility-class vocabulary migration · **M5b** `viewshed.ts` + Observation and fields of fire · **M5c** key terrain · **M5d** cover & concealment · **M5e** exposure-weighted cost blend, named scenarios, consensus corridors, sensor/OP siting | Tier-2 framing must ship with M5e. **M5e is deferred** — it changes `edgeMobilityCost`'s inputs, and therefore corridors → min-cut → restrictions → delay ledger → every exported number, so it must not ride along with a presentation restructure. M5a–M5d are roadmap rows OAKOC 1/3/4/6/7 |
+| M5 | Intent & observation — **split at §47**: **M5a** OCOKA/IPB framing + mobility-class vocabulary migration · **M5b** `viewshed.ts` + Observation and fields of fire · **M5c** key terrain · **M5d** cover & concealment · **M5e** exposure-weighted cost blend, named scenarios, consensus corridors, sensor/OP siting | Tier-2 framing must ship with M5e. **M5e is deferred** — it changes `edgeMobilityCost`'s inputs, and therefore corridors → min-cut → restrictions → delay ledger → every exported number, so it must not ride along with a presentation restructure. M5a–M5d are roadmap rows OCOKA 1/3/4/6/7 |
 
 Two hard dependencies to settle before M4 is worth starting: a citable or
 explicitly user-entered basis for breach/delay values, and the CPU/scale work in
@@ -5386,25 +5386,44 @@ packages; `tsc`/build clean in both.
 
 ---
 
-## 47. OAKOC / IPOE restructure + backend offload (2026-08-02, design)
+## 47. OCOKA / IPB restructure + backend offload (2026-08-02, design)
 
 Owner direction, two parts: (a) reframe Terrain Mobility's analysis and presentation
 around the military terrain framework the mode had partly implemented by accident, and
 (b) move the compute to a parallel backend holding a first-paint / update latency
-contract. Roadmap rows: `master_plan.md` "Next up" → OAKOC 1–9. **Fire-break mode is out
+contract. Roadmap rows: `master_plan.md` "Next up" → OCOKA 1–9. **Fire-break mode is out
 of scope** and keeps its SMEACS/LACES fire-service framing.
 
-### 47.0 Terminology — the correction this work starts from
+### 47.0 Terminology — corrected same day (audience, not vintage)
 
-The direction arrived using **OCOKA**, which is the superseded form (FM 34-130, 1994).
-Current doctrine, and what this product will use:
+The direction arrived using **OCOKA**. Initial research (US Army ATP 2-01.3) concluded
+this was superseded by the reordered **OAKOC**, with the parent process renamed IPB →
+IPOE — and the doc briefly stated that. That was wrong for this product: it checked only
+US doctrine and never confirmed what the ADF — `PITCH_TERRAIN_DENIAL.md`'s actual named
+audience (NORFORCE, RFSU, 1CER, Pilbara Regiment) — currently teaches. Corroborated
+across multiple searches against The Cove (the Australian Army's own
+professional-military-education platform): **the Australian Army currently uses OCOKA
+and IPB**, in the ordering below. This is two different armies' current terminology, not
+an old-vs-new supersession, and this product follows the ADF's, since that is its
+audience:
 
-| Superseded | Current |
-|---|---|
-| OCOKA | **OAKOC** — Observation and fields of fire · Avenues of approach · Key terrain · Obstacles · Cover and concealment. (USMC retains KOCOA.) |
-| IPB — Intelligence Preparation of the *Battlefield* | **IPOE** — …of the *Operational Environment* (ATP 2-01.3 Change 2, Jan 2024; Change 3, May 2025) |
-| GO / SLOW-GO / NO-GO | **UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED** (the MCOO mobility classes) |
-| METT-TC | METT-TC **(I)** (FM 3-0, Oct 2022) |
+| Term | ADF current (this product uses) | US Army current (for reference — not used here) |
+|---|---|---|
+| Five factors | **OCOKA** — Observation and fields of fire · Cover and concealment · Obstacles · Key terrain · Avenues of approach | OAKOC — same five factors, reordered (USMC retains KOCOA) |
+| Parent process | **IPB** — Intelligence Preparation of the *Battlespace* | IPOE — …of the *Operational Environment* (ATP 2-01.3 Change 2, Jan 2024; Change 3, May 2025) |
+| Mobility classes (MCOO) | GO / SLOW-GO / NO-GO — **unverified against ADF-specific doctrine**; see the residual-uncertainty note below | UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED |
+| METT-TC | METT-TC | METT-TC **(I)** (FM 3-0, Oct 2022) |
+
+**Residual uncertainty, stated plainly.** This is corroborated via search-snippet
+summaries of one source family, not a document read in full —
+`cove.army.gov.au` returned HTTP 503 on every direct fetch attempted, and no specific
+current LWP-G/LWD publication was located confirming OCOKA/IPB as still doctrinally
+*mandated* rather than merely commonly taught. A firmer primary source or SME review is
+still worth doing before this goes in front of a serving audience, per
+`PITCH_TERRAIN_DENIAL.md`'s own closing note. The MCOO mobility-class vocabulary
+(UNRESTRICTED/RESTRICTED/SEVERELY RESTRICTED) was sourced the same US-doctrine way as the
+original, incorrect OAKOC/IPOE call and has **not yet been separately checked** against
+ADF terminology — treat it as provisional pending the same check, not as confirmed.
 
 This engine was carrying **two vintages simultaneously** — `mobilityCost.ts` on
 `GO/SLOW-GO/NO-GO`, `corridorField.ts` on `open/restricted/severely-restricted`. §47a
@@ -5437,7 +5456,7 @@ Definitions the implementation is held to:
 | Cover & concealment | Not built | `dataLayers/structureTable.ts` + fractional cover + dead ground |
 
 The two genuine gaps are **§9's existing M5**, not new scope. M5 is therefore split:
-**M5a** OAKOC framing + vocabulary · **M5b** viewshed/observation · **M5c** key terrain ·
+**M5a** OCOKA framing + vocabulary · **M5b** viewshed/observation · **M5c** key terrain ·
 **M5d** cover/concealment · **M5e** named scenarios + consensus corridors (**deferred**).
 
 ### 47.2 Honesty constraints specific to the new factors

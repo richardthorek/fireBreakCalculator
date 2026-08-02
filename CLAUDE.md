@@ -12,7 +12,7 @@ slope and vegetation (fuel) along the line. It must work in the field with poor
 or no reception, and it must **never present fabricated data as real analysis**.
 
 The "poor or no reception" rule holds for **fire-break mode**. **Terrain Mobility**
-mode is the stated exception from the OAKOC programme onward: its analysis runs on
+mode is the stated exception from the OCOKA programme onward: its analysis runs on
 the backend and needs connectivity to produce a *new* result, though previously
 completed analyses stay readable offline. That was an explicit owner decision, not
 drift — see `master_plan.md` Vision principle 4.
@@ -60,11 +60,18 @@ drift — see `master_plan.md` Vision principle 4.
 - **Estimates:** per-segment production model lives in the API and is the sole
   accurate engine; the frontend delegates to it. See `CALCULATION_REVIEW.md`.
 - **Terrain Mobility — active programme.** The mode is being restructured around
-  **OAKOC** (Observation and fields of fire, Avenues of approach, Key terrain,
-  Obstacles, Cover and concealment) within **IPOE**, and its compute moved to a
+  **OCOKA** (Observation and fields of fire, Cover and concealment, Obstacles,
+  Key terrain, Avenues of approach) within **IPB**, and its compute moved to a
   parallel Azure backend. Two rules that matter when touching this area:
-  - **Use the current doctrinal vocabulary.** OAKOC, not OCOKA. IPOE, not IPB.
-    UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED, not GO / SLOW-GO / NO-GO.
+  - **Use the Australian Army's current vocabulary — this product's audience,
+    not the US Army's.** OCOKA, not the reordered OAKOC. IPB (Intelligence
+    Preparation of the Battlespace), not the US-renamed IPOE. The US Army's
+    terms are current *for the US Army* (ATP 2-01.3) but are the wrong choice
+    here — see the 2026-08-02 correction in `master_plan.md` Recent Updates.
+    UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED, not GO / SLOW-GO / NO-GO,
+    for the MCOO mobility classes — **unverified against ADF-specific
+    doctrine**, carried over from the same US-sourced research; treat as
+    provisional until checked the same way OCOKA/IPB was.
     Import the union from `terrain/mobilityClass.ts`; do not redeclare it.
   - **Do not overclaim the new factors.** Elevation is a bare-earth DEM, so every
     sight line is systematically optimistic; *fields of fire* is computed only for
