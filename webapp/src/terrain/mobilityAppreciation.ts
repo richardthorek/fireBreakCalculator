@@ -30,19 +30,18 @@
  * the ensemble produced anything.
  */
 
-import {
-  buildMobilityGrid, MobilityGridResult, originObjectiveDistanceM, frontierTouchedEdges, growBoundsTowardFrontier,
-  MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM,
-} from './mobilityGrid';
+import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
+import { carriesWaterSignal } from './accumulatedCost';
+import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
-import { runMobilitySearchInWorker, runMovementEnsembleInWorker } from './mobilityWorkerClient';
+import { runMovementEnsembleInWorker } from './mobilityWorkerClient';
 import { MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID, DEFAULT_MOVEMENT_SIM_SEED } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
 import {
   MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES,
-  MobilityGridCell, assembleMobilityResults,
+  MobilityGridCell,
 } from './accumulatedCost';
 import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
@@ -58,15 +57,11 @@ import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
 } from './corridorField';
 
-/** A cell carries a real water signal — in a standing body, near a mapped
- *  watercourse, or a high DEA WOfS wet-frequency (docs §34). The single
- *  source of truth for "does this cell count as hydrology-affected" — the
- *  run's own assessment log, the GIS export (`mobilityGisExport.ts`) and the
- *  AI briefing payload (`mobilityAssistantApi.ts`) all call this SAME
- *  function rather than each tuning their own threshold, so none of them can
- *  quietly disagree about what counts. */
-export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
-  c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
+/** Moved to `accumulatedCost.ts` (see its own doc comment on why — corridor
+ *  risk scoring needed it without a circular import) — re-exported here so
+ *  every existing caller (`mobilityGisExport.ts`, `mobilityAssistantApi.ts`)
+ *  keeps working from the same import path. */
+export { carriesWaterSignal };
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -106,12 +101,13 @@ export interface MobilityAppreciationResult {
    *  `path` above can still legitimately be null in that case while this
    *  isn't. */
   roadRoute: RoadRouteSearchResult | null;
-  /** docs §35 — true when the hex-grid search needed more than one attempt
-   *  (a wider `boundsPadFactor` retry) to find a route, or to conclude there
-   *  genuinely isn't one. False means the very first, smallest-padding
-   *  attempt already settled it. */
+  /** docs §35 — true when the hex-grid search needed more than one lazy
+   *  tile-materialisation round (`mobilityLazyGrid.ts`) to find a route, or
+   *  to conclude there genuinely isn't one. False means the initial tile
+   *  footprint already settled it — the common case, and the one that costs
+   *  exactly what a single fixed-box search always did. */
   usedExpandedSearch: boolean;
-  /** How many `boundsPadFactor` attempts this run actually made (1..6). */
+  /** How many tile-materialisation rounds this run actually used. */
   searchAttempts: number;
   /** Analysis depth this run used (docs §35) — surfaced so the panel can
    *  show the current setting and a "re-run at finer resolution" control. */
@@ -247,10 +243,11 @@ export interface MobilityAppreciationOptions {
    * collapses the two into one real network round trip, not a duplicate.
    * A PREVIEW, not a replacement: `MobilityAppreciationResult.roadRoute` (via
    * `onPartialResult`/the final return) remains the authoritative figure,
-   * computed from the grid's ACTUAL final bounds — on the rare attempt that
-   * needed a targeted-retry widened box, this preview and the authoritative
-   * route can differ; the authoritative one always supersedes it. Vehicle
-   * profiles only, and only when a road route was actually found.
+   * computed from the grid's ACTUAL final extent — on the rare run that
+   * needed extra lazy-grid tile-growth rounds beyond the initial footprint,
+   * this preview and the authoritative route can differ; the authoritative
+   * one always supersedes it. Vehicle profiles only, and only when a road
+   * route was actually found.
    */
   onRoadRoute?: (route: RoadRouteSearchResult) => void;
   /** User-edited road-class speeds (docs §35 config UI). Set into this
@@ -264,10 +261,16 @@ export interface MobilityAppreciationOptions {
   /** Analysis depth (docs §35, owner: "let the user select a scale of
    *  something like 'quick' to 'fine'"). Defaults to 'standard' — matches
    *  the original fixed cell budget exactly for a typical short-range run.
-   *  Governs `buildMobilityGrid`'s cell budget on every attempt (initial AND
-   *  targeted retries); does not change the retry count/growth behaviour
-   *  itself. */
+   *  Governs the lazy grid's initial footprint AND per-round cell/tile
+   *  ceilings (`mobilityLazyGrid.ts`); does not change the tile-growth
+   *  behaviour itself. */
   fidelity?: MobilityFidelity;
+  /** docs §35 design point 2 — the α multiplier on the best-found cost C*
+   *  that bounds how far the lazy grid grows while still looking for a
+   *  second/third avenue (`mobilityLazyGrid.ts`). Design default 2.0,
+   *  "user-adjustable" per the owner's own framing — this is the plumbing
+   *  for that control; no UI is wired to it yet. */
+  corridorBudgetAlpha?: number;
 }
 
 export async function runMobilityAppreciation(
@@ -284,6 +287,7 @@ export async function runMobilityAppreciation(
     planRestrictions = true,
     roadSpeedOverrides,
     fidelity = DEFAULT_MOBILITY_FIDELITY,
+    corridorBudgetAlpha,
   } = options;
   // Progress across this run is assembled from several sources that don't
   // know about each other — a retry's own sampling pass, the worker's search
@@ -322,34 +326,16 @@ export async function runMobilityAppreciation(
   onLog?.('LAYING OUT SURVEY GRID OVER AREA OF INTEREST…');
   onStage?.({ key: 'grid', label: 'Laying out survey grid', fraction: 0 });
 
-  // docs §35 — the Lake George defect, and its full fix (2026-07-27,
-  // confirmed live against the real Lake George: a first, uniform-only-pad
-  // fix still fell short). Owner, after watching that: "I think we need
-  // both, a large uniform box covering the origin and destination and then
-  // the ability to extend out when we hit edges. We need enough padding so
-  // the algorithm can identify the best routes and thus the handful of
-  // possible corridors for movement." Two things compose:
-  //
-  //  1. INITIAL PASS — a generous uniform box, sized off the REAL distance
-  //     between origin and objective (`computePaddedBounds`), not either
-  //     axis's own incidental span (the earlier bug: a due-east crossing has
-  //     almost no north–south span of its own, so padding stayed near-zero
-  //     regardless of multiplier). Generous on purpose, per the owner's own
-  //     "enough padding to identify a HANDFUL of corridors" requirement, not
-  //     just the single cheapest thread through.
-  //  2. TARGETED RETRY — if that still finds no route, `frontierTouchedEdges`
-  //     reads back WHICH side of the box the reachable frontier actually hit
-  //     (genuinely stopped by running out of box, not by terrain), and
-  //     `growBoundsTowardFrontier` extends specifically that side for the
-  //     next attempt — owner: "if it still hits the edge then it loads a new
-  //     [area] from the point of where it hit. Repeat until we get there."
-  //     An edge the frontier never reached gains nothing from being pushed
-  //     further out, so retries stay targeted instead of an ever-larger
-  //     uniform square burning resolution in directions that were never
-  //     going to help.
+  // docs §35 — the Lake George defect's full fix: lazy tile materialisation
+  // under the search's own frontier (`mobilityLazyGrid.ts`), superseding the
+  // earlier "rebuild the whole grid at a bigger guessed pad factor" retry
+  // this function used to run here. `INITIAL_PAD_FACTOR` MUST match the
+  // lazy module's own identical constant — both size the SAME initial
+  // footprint from the SAME `computePaddedBounds` math, which is what lets
+  // `findEarlyVehicleRoadRoutePreview` below (a genuinely separate, earlier
+  // fetch) share one real network round trip with it via
+  // `infrastructureService.ts`'s bbox cache instead of paying for two.
   const INITIAL_PAD_FACTOR = 0.3;
-  const MAX_ATTEMPTS = 6;
-  const spanM = originObjectiveDistanceM(origin, objective) ?? 1000;
 
   // Road-route decoupling (docs §38's stated remainder, closed 2026-07-28):
   // fire the box-free vehicle road route EARLY, independent of the hex-grid
@@ -372,128 +358,67 @@ export async function runMobilityAppreciation(
       .catch(() => { /* best-effort preview only — the authoritative roadRoute below never depends on this */ });
   }
 
-  let grid: MobilityGridResult | null = null;
-  let results: MobilityCellResult[] = [];
-  let path: SimPathNode[] | null = null;
-  let attemptsUsed = 0;
-  let noEdgeTouchedStreak = 0; // consecutive attempts genuinely terrain-blocked, not box-limited
-
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    attemptsUsed = i + 1;
-    let samplingAnnounced = false;
-
-    const buildOptions: Parameters<typeof buildMobilityGrid>[2] = { signal, fidelity };
-    if (grid) {
-      // Targeted growth from the PREVIOUS attempt's own box + where its
-      // frontier actually got to — not a fresh symmetric box.
-      const edges = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
-      buildOptions.explicitBounds = growBoundsTowardFrontier(
-        { boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, edges, spanM * 0.3
-      );
-    } else {
-      buildOptions.boundsPadFactor = INITIAL_PAD_FACTOR;
-      // Profile-scaled detour floor (docs §35 addendum, 2026-07-28 — owner:
-      // a 1-2 km hill crossing never considered an equally short detour 1-2
-      // km north/south, because the proportional pad above is a fraction of
-      // a SHORT direct span and so stays short itself). Only binds on the
-      // first attempt — retries already grow from the real search frontier.
-      buildOptions.minDetourPadM = minDetourPadM(profile);
-    }
-    // Sampling owns the first 40% of the run's progress bar; the search
-    // that follows now reports its OWN real progress (§35 addendum,
-    // 2026-07-27 — see `runAccumulatedCostSearch`'s `onProgress`) into the
-    // next 15%, rather than the two of them sharing one silent jump the way
-    // they used to. The `onProgress` wrapper above is monotonic, so a RETRY's
-    // sampling replaying this same 0..0.40 mapping from its own zero cannot
-    // visibly rewind the bar — it just holds at the prior high-water mark
-    // until this attempt's real progress catches back up past it.
-    buildOptions.onProgress = f => {
-      onProgress((f / 0.7) * 0.40);
-      // buildMobilityGrid's own 0.05 mark is where hex layout ends and the
-      // elevation/vegetation/trail sampling begins — the long part.
-      if (f > 0.05 && !samplingAnnounced) {
+  // Lazy tile materialisation under the search's own A* frontier (docs §35,
+  // `mobilityLazyGrid.ts`) — grows the grid organically, one ring of tiles at
+  // a time, resuming the SAME search rather than rebuilding everything from
+  // scratch at a bigger guessed box. One round (the common case) costs
+  // exactly what the old fixed-box first attempt did; only a genuinely
+  // Lake-George-shaped run pays for more, and only for the new ground.
+  let samplingAnnounced = false;
+  const lazy = await runLazyMobilitySearch(origin, objective, {
+    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha,
+    onProgress: f => {
+      onProgress(f * 0.55);
+      if (f > 0.02 && !samplingAnnounced) {
         samplingAnnounced = true;
-        onStage?.({
-          key: 'sampling',
-          label: i === 0 ? 'Sampling ground — elevation, vegetation, trails' : `Widening the search (attempt ${attemptsUsed}) — resampling`,
-          fraction: (f / 0.7) * 0.40,
-        });
+        onStage?.({ key: 'sampling', label: 'Sampling ground — elevation, vegetation, trails', fraction: f * 0.55 });
       }
-    };
-
-    const attemptGrid = await buildMobilityGrid(origin, objective, buildOptions);
-    if (signal?.aborted) return null;
-    if (!attemptGrid) {
-      // Degenerate span (near-identical origin/objective points) — no amount
-      // of padding fixes this, so there is nothing to gain from retrying.
-      if (i === 0) onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
-      return null;
-    }
-    grid = attemptGrid;
-
-    if (i === 0) {
-      onLog?.(
-        `SAMPLING ${grid.cells.length} CELLS (${fidelity.toUpperCase()} FIDELITY, TARGET ${grid.targetCellCount}) · ` +
-        `ORIGIN SEED SET ${grid.originKeys.length} CELLS`
-      );
-    } else {
-      // docs §35 — the targeted-retry response to the Lake George defect: a
-      // search that found no route tries again, extended specifically
-      // toward whichever edge its own frontier actually reached, rather
-      // than concluding "no route" from a box that was never allowed to
-      // look far enough. Logged plainly so this is visible, not silent.
-      onLog?.(
-        `NO ROUTE AT THE PREVIOUS EXTENT — WIDENING THE SEARCH TOWARD WHERE IT WAS STOPPED ` +
-        `(ATTEMPT ${attemptsUsed}/${MAX_ATTEMPTS}, ${grid.cells.length} CELLS)`
-      );
-    }
-
-    // Paint the surveyed ground NOW, before this attempt's search runs — the
-    // same assembly the final render uses, with an empty reachability map.
-    // On a retry this visibly redraws the WIDER area being surveyed.
-    if (onPreviewCells) {
-      onPreviewCells(assembleMobilityResults(grid.cells, grid.hexSize, grid.proj, new Map(), profile));
-    }
-
-    onProgress(0.40);
-    onStage?.({
-      key: 'search',
-      label: i === 0 ? 'Running multi-source search across the grid' : `Re-running search at wider extent (attempt ${attemptsUsed})`,
-      fraction: 0.40,
-    });
-    if (i === 0) onLog?.(`RUNNING MULTI-SOURCE SEARCH — ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}…`);
-
-    // Real, incremental progress through the Dijkstra field build (§35
-    // addendum, 2026-07-27) — this call previously reported NOTHING while it
-    // ran, the single largest silent stretch in the whole run (owner: "the
-    // 'progress' indicator stopped well before the result loaded in with a
-    // long 'nothing' time"). `settledFraction` is how much of the grid has
-    // actually been reached so far, not decorative motion.
-    const outcome = await runMobilitySearchInWorker(
-      grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
-      roadSpeedOverrides,
-      settledFraction => onProgress(0.40 + settledFraction * 0.15)
-    );
-    if (signal?.aborted) return null;
-    results = outcome.results;
-    path = outcome.path;
-
-    if (path) break; // found it — stop expanding, this is the decisive attempt
-
-    // Two consecutive attempts where the frontier never even reached an
-    // edge (blocked by terrain everywhere it could reach, not by running
-    // out of box) is real evidence of a genuine enclosure — stop early
-    // rather than spending the remaining attempts on growth that has
-    // already shown it isn't the limiting factor.
-    const edgesThisAttempt = frontierTouchedEdges({ boundsSw: grid.boundsSw, boundsNe: grid.boundsNe }, results);
-    const touchedAny = edgesThisAttempt.north || edgesThisAttempt.south || edgesThisAttempt.east || edgesThisAttempt.west;
-    noEdgeTouchedStreak = touchedAny ? 0 : noEdgeTouchedStreak + 1;
-    if (noEdgeTouchedStreak >= 2) break;
+    },
+    onLog,
+    onRoundStart: (round, materializedSoFar) => {
+      if (round === 1) {
+        onStage?.({ key: 'sampling', label: 'Sampling ground — elevation, vegetation, trails', fraction: 0 });
+      } else {
+        onLog?.(`WIDENING THE SEARCH — MATERIALISING MORE GROUND TOWARD THE REACHABLE FRONTIER (ROUND ${round}, ${materializedSoFar} CELLS SO FAR)`);
+        onStage?.({ key: 'search', label: `Widening the search (round ${round})`, fraction: highWaterProgress });
+      }
+    },
+    onPreviewCells,
+  });
+  if (signal?.aborted) return null;
+  if (!lazy) {
+    onLog?.('AOI TOO SMALL OR DEGENERATE — ABORTED');
+    return null;
   }
-  if (!grid) return null; // unreachable (the loop above always assigns or returns), keeps TS satisfied
+  const { grid, results, path, roundsUsed, hitCeiling, costStarSeconds, corridorCountAtStop } = lazy;
   onProgress(0.55);
 
-  const usedExpandedSearch = attemptsUsed > 1;
+  onLog?.(
+    `SAMPLED ${grid.cells.length} CELLS (${fidelity.toUpperCase()} FIDELITY, TARGET ${grid.targetCellCount}) · ` +
+    `ORIGIN SEED SET ${grid.originKeys.length} CELLS · SEARCHED ${profile.label.toUpperCase()}${nightMode ? ' · NIGHT' : ''}` +
+    (roundsUsed > 1 ? ` · ${roundsUsed} TILE-GROWTH ROUNDS` : '')
+  );
+  if (!path && hitCeiling) {
+    onLog?.('SEARCH CEILING REACHED WHILE WIDENING — STOPPING GROWTH HERE, SEE RESULT BELOW');
+  }
+  // docs §35 remainder — the α·C*/corridor-count stop rule's own honesty
+  // line: says plainly whether the search found its target 2–5 avenues, hit
+  // the travel-time budget first, or hit the hard ceiling first — the same
+  // "there is no way" vs "I wasn't allowed to look far enough" distinction
+  // §35's original Lake George fix established, now applied to CORRIDOR
+  // count rather than just route existence.
+  if (path && costStarSeconds !== null) {
+    if (corridorCountAtStop >= 2) {
+      onLog?.(`${corridorCountAtStop} DISTINCT AVENUE(S) CONFIRMED WITHIN THE α×C* TRAVEL-TIME BUDGET (C* = ${(costStarSeconds / 60).toFixed(0)} MIN)`);
+    } else if (hitCeiling) {
+      onLog?.(`ONLY ${corridorCountAtStop} AVENUE FOUND BEFORE THE SEARCH CEILING — MAY BE MORE, NOT YET RULED OUT`);
+    } else {
+      onLog?.(`ONLY ${corridorCountAtStop} AVENUE FOUND — THE α×C* BUDGET (${(costStarSeconds / 60).toFixed(0)} MIN × α) GENUINELY RAN OUT OF NEW GROUND, NOT A CEILING ARTEFACT`);
+    }
+  }
+
+  const usedExpandedSearch = roundsUsed > 1;
+  const attemptsUsed = roundsUsed;
   if (grid.usedEstimatedData) onLog?.('CAUTION — ONE OR MORE SAMPLES ARE ESTIMATED/FALLBACK DATA (TIER 0)');
   if (!grid.infrastructureAvailable) onLog?.('TRAIL DATA UNAVAILABLE FOR THIS AREA — ROUTING ON TERRAIN + FUEL ONLY');
   // Hydrology (docs §34) — a real, computed count, not a claim: this is what
@@ -579,13 +504,18 @@ export async function runMobilityAppreciation(
     const etaMin = path[path.length - 1].cumulativeSeconds / 60;
     onLog?.(
       `ROUTE FOUND — ${path.length} WAYPOINTS · ETA ${etaMin.toFixed(0)} MIN` +
-      (usedExpandedSearch ? ` (NEEDED ${attemptsUsed} ATTEMPTS, FINAL PADDING ${grid.boundsPadFactor}×)` : '')
+      (usedExpandedSearch ? ` (NEEDED ${attemptsUsed} TILE-GROWTH ROUNDS, ${grid.cells.length} CELLS)` : '')
+    );
+  } else if (hitCeiling) {
+    onLog?.(
+      `NO ROUTE FOUND — STOPPED AFTER ${attemptsUsed} ROUND(S) AT THE SEARCH CEILING ` +
+      `(${grid.cells.length} CELLS) — THE FRONTIER WAS STILL FINDING NEW GROUND TO EXPLORE, NOT YET PROVEN UNREACHABLE`
     );
   } else {
     onLog?.(
-      `NO ROUTE FOUND AFTER ${attemptsUsed} ATTEMPT(S), UP TO ${grid.boundsPadFactor}× PADDING ` +
-      `(${grid.cells.length} CELLS AT WIDEST) — OBJECTIVE GENUINELY UNREACHABLE FOR THIS PROFILE AT THIS SEARCH CEILING, ` +
-      `NOT A BOX ARTEFACT AT THIS POINT`
+      `NO ROUTE FOUND AFTER ${attemptsUsed} ROUND(S) ` +
+      `(${grid.cells.length} CELLS) — THE REACHABLE FRONTIER RAN OUT OF NEW GROUND TO GROW INTO, ` +
+      `OBJECTIVE GENUINELY UNREACHABLE FOR THIS PROFILE, NOT A BOX ARTEFACT`
     );
   }
 
@@ -757,9 +687,33 @@ export async function runMobilityAppreciation(
           'THIS GROUND DOES NOT CANALISE MOVEMENT: THERE ARE NO REAL CHOKEPOINTS TO DENY.'
         );
       }
-      for (const c of corridorField.corridors.slice(0, 4)) {
+      // docs §35 remainder (owner: "we should be seeing a 'most likely' and
+      // 'most risky' type of option to inform our planning") — MOST LIKELY
+      // is simply rank 1 (already the busiest corridor); MOST RISKY is
+      // whichever corridor's own computed `riskScore` is highest (terrain
+      // hazard + water crossings + how hard it pinches — see
+      // `Corridor.riskScore`'s own doc comment for the exact formula). The
+      // two commonly point at DIFFERENT corridors — the busiest is usually
+      // busiest BECAUSE it's easiest — and that divergence is the actual
+      // planning value here, not a coincidence to smooth over.
+      const riskiest = corridorField.corridors.find(c => c.id === corridorField!.mostRiskyCorridorId);
+      if (riskiest && corridorField.mostRiskyCorridorId !== corridorField.mostLikelyCorridorId) {
         onLog?.(
-          `CORRIDOR ${c.rank} — ${Math.round(c.shareOfRoutes * 100)}% OF ${evidenceLabel} · ${c.easeClass.toUpperCase()} · ` +
+          `MOST LIKELY: CORRIDOR ${corridorField.corridors[0]?.rank ?? 1} · MOST RISKY: CORRIDOR ${riskiest.rank} ` +
+          `(${Math.round(riskiest.riskScore * 100)}% RISK — ${Math.round((riskiest.slowGoFraction + riskiest.noGoFraction) * 100)}% SLOW/NO-GO, ` +
+          `${Math.round(riskiest.waterCrossingFraction * 100)}% WATER SIGNAL, PINCH RATIO ${riskiest.pinchRatio.toFixed(2)})`
+        );
+      } else if (riskiest) {
+        onLog?.(`ONLY ONE CORRIDOR FOUND — IT IS BOTH THE MOST LIKELY AND THE ONLY OPTION TO PLAN AROUND`);
+      }
+      for (const c of corridorField.corridors.slice(0, 4)) {
+        const picks = [
+          c.id === corridorField.mostLikelyCorridorId ? 'MOST LIKELY' : null,
+          c.id === corridorField.mostRiskyCorridorId ? 'MOST RISKY' : null,
+        ].filter((p): p is string => p !== null);
+        onLog?.(
+          `CORRIDOR ${c.rank}${picks.length > 0 ? ` [${picks.join(' + ')}]` : ''} — ` +
+          `${Math.round(c.shareOfRoutes * 100)}% OF ${evidenceLabel} · ${c.easeClass.toUpperCase()} · ` +
           `BOTTLENECK ~${c.bottleneckWidthM.toFixed(0)} M (${c.bottleneckAbreast} ABREAST) · ` +
           `MEDIAN ${(c.medianTravelSeconds / 60).toFixed(0)} MIN`
         );

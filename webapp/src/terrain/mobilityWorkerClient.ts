@@ -9,7 +9,7 @@
  * without the caller subscribing to the worker itself.
  */
 
-import { MobilityCellResult, MobilityGridCell } from './accumulatedCost';
+import { AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell } from './accumulatedCost';
 import { LocalProjection } from '../utils/hexGrid';
 import {
   MobilityWorkerRequest, MobilityWorkerResponse, SimPathNode,
@@ -47,6 +47,11 @@ function ensureWorker(): Worker {
 export interface MobilitySearchOutcome {
   results: MobilityCellResult[];
   path: SimPathNode[] | null;
+  /** The full accumulated search state — pass straight back in as
+   *  `resumeFrom` on the next call over a grown cell set to CONTINUE this
+   *  search rather than restart it (docs §35, `mobilityLazyGrid.ts`). Every
+   *  existing call site that only needs one decisive call simply ignores it. */
+  reach: AccumulatedCostSearchResult;
 }
 
 export function runMobilitySearchInWorker(
@@ -61,15 +66,18 @@ export function runMobilitySearchInWorker(
   /** Real, incremental progress through the Dijkstra field build (§35
    *  addendum, 2026-07-27) — the fraction of the grid settled so far, NOT a
    *  placeholder. Previously this call reported nothing at all while it ran. */
-  onProgress?: (fraction: number) => void
+  onProgress?: (fraction: number) => void,
+  /** Resume a previous call's search rather than reseeding from
+   *  `originKeys` — see `MobilitySearchOutcome.reach`'s doc comment. */
+  resumeFrom?: AccumulatedCostSearchResult
 ): Promise<MobilitySearchOutcome> {
   const w = ensureWorker();
   const requestId = nextRequestId++;
   return new Promise(resolve => {
     pending.set(requestId, {
       resolve: response => {
-        if (response.kind !== 'search') { resolve({ results: [], path: null }); return; }
-        resolve({ results: response.results, path: response.path });
+        if (response.kind !== 'search') { resolve({ results: [], path: null, reach: { best: new Map(), prev: new Map() } }); return; }
+        resolve({ results: response.results, path: response.path, reach: response.reach });
       },
       onProgress: (fraction, phase) => {
         if (phase === 'search') onProgress?.(fraction);
@@ -77,7 +85,7 @@ export function runMobilitySearchInWorker(
     });
     const request: MobilityWorkerRequest = {
       kind: 'search', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
-      roadSpeedOverrides,
+      roadSpeedOverrides, resumeFrom,
     };
     w.postMessage(request);
   });

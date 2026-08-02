@@ -3123,8 +3123,21 @@ was reviewed and found correctly connected — no further gaps found.
 
 ## 35. The bounding box is the bug — lazy grid, cost budget, corridor-count stop (design, 2026-07-27)
 
-**Status: DESIGN ONLY. Not built.** Recorded here before implementation per
-CLAUDE.md's roadmap-first rule.
+**Status (2026-07-29): points 1, 2, 3, 5 and 6 of "the design" below — lazy
+grid materialisation, the α·C* cost budget, the corridor-count stop rule,
+tile-ring data fetch, and honest failure — are BUILT** (steps 45+46,
+`mobilityLazyGrid.ts` + `accumulatedCost.ts`'s `resumeFrom` +
+`corridorField.ts`'s `riskScore`/`mostLikelyCorridorId`/
+`mostRiskyCorridorId`; see "Shipped: lazy grid materialisation" and "Shipped:
+α·C* budget + corridor-count stop + risk picks" immediately after the design
+below for what actually landed and how it differs from the design as
+originally specified). **Only point 4 — the two-pass coarse/fine resolution
+split — remains DESIGN ONLY** (deferred, not scheduled; the shipped single-
+pass approach already keeps hex size uniform for the whole run, which is
+what point 4 was protecting against). The design as originally written is
+left below UNCHANGED as the historical reference; do not edit it to match
+what shipped — the shipped addenda after it are where implementation
+reality lives.
 
 ### The field report
 
@@ -3313,6 +3326,207 @@ but real at very fine resolution over very large areas.
 
 - **Mixed-size cells in one graph** — superseded by the two-pass approach
   above.
+
+---
+
+### Shipped: lazy grid materialisation + resumable search (2026-07-29, step 45)
+
+Builds points 1 ("delete the box"), 5 ("eager coarse tiles, lazy fine
+cells") and 6 ("honest failure") of the design above. Deliberately does
+**not** attempt points 2–4 (the `α·C*` ellipse, the corridor-count stop
+rule, the two-pass coarse/fine split) — those still govern how the search
+decides WHEN it has enough; this pass only changed HOW the grid it searches
+gets assembled.
+
+**What actually shipped, and one deliberate simplification from the design
+as written:**
+
+- **Tiles, not per-cell materialisation.** The design's point 1 frames this
+  as per-CELL lazy materialisation under an A* frontier; point 5 separately
+  notes cell-by-cell awaiting would "wreck" the worker's synchronous search
+  and proposes coarse-tile batching as the resolution. What's built goes
+  straight to tile batching as the ONLY unit of materialisation — a tile
+  (~10×10 hexes) is fetched, sampled and added to the grid as one atomic
+  batch, never a single cell at a time. This is a simplification of the
+  design's two-tier framing (per-cell frontier reasoning, tile-batched I/O
+  underneath it), not an addition to it: the frontier check that decides
+  WHICH tiles to fetch next still runs per-cell (`mobilityLazyGrid.ts` scans
+  every reachable cell's hex neighbours each round), so resolution at the
+  frontier is exactly as fine as the design calls for — only the atomic unit
+  of "fetch this next" is a tile rather than a cell, which is what point 5
+  already required regardless.
+- **Resumable Dijkstra, not restart-with-a-bigger-box.** The mechanism that
+  makes tile-by-tile growth affordable — `accumulatedCost.ts`'s new
+  `resumeFrom` option — isn't named explicitly in the original design text,
+  but is exactly what "materialise a hex only when the A* frontier reaches
+  it... the explored region grows organically" requires in practice: without
+  it, every tile added would force a full grid rebuild + full Dijkstra
+  restart, which is functionally the OLD `boundsPadFactor` retry this step
+  replaces, just with smaller box-growth increments. `resumeFrom` seeds a
+  fresh search's heap from a prior partial result's already-settled `best`/
+  `prev` maps — correct because Dijkstra with non-negative edges never
+  revises a settled distance once popped, so this is equivalent to having
+  run one longer, uninterrupted search all along.
+- **Fixed hex size for the whole run**, chosen once from an initial footprint
+  sized by the SAME `computePaddedBounds` math the old first attempt used —
+  this is what keeps `demDerivatives.ts`, `corridorField.ts`, chokepoints and
+  min-cut completely untouched: they still receive one ordinary, uniform-hex,
+  finished `MobilityGridCell[]`, exactly as before. A typical short-range run
+  (the common case) uses the identical hex count/resolution it always did.
+- **Growth stop condition is a cell/tile ceiling, not a cost budget.** This is
+  the honest gap versus the full design: point 6 ("honest failure") is built
+  — a hard ceiling produces a stated "stopped at the search ceiling, not yet
+  proven unreachable" outcome, distinguished in the log/result from a genuine
+  terrain enclosure ("the reachable frontier ran out of new ground to grow
+  into") — but the ceiling itself is `computeCellBudget`'s existing
+  fidelity-tier `hardCeiling` × a fixed multiplier, not the self-sizing
+  `α·C*` travel-time ellipse point 2 specifies. That remains the "Slice B
+  remainder" item in `master_plan.md`.
+- **crossSlopeDeg caveat** (honestly documented, not solved): a cell's local
+  plane-fit slope is computed from whichever neighbours are materialised at
+  the moment ITS round runs and is never retroactively recomputed once the
+  cell is settled — a cell settled at a transient tile edge keeps that
+  round's value even if a later round completes its neighbourhood. This is
+  the same "incomplete-neighbourhood edge effect" the old fixed-box approach
+  already had for its outer ring (a real, pre-existing, accepted
+  characteristic of a locally-fit derivative on a finite sample), now
+  transient rather than permanent. `crossSlopeDeg` was already documented
+  elsewhere as a conservative upper-bound proxy, not a precise per-edge
+  figure — this doesn't change what any caller may assume about it.
+
+**Files:** `webapp/src/terrain/mobilityLazyGrid.ts` (new — the tile
+partition + materialisation loop), `accumulatedCost.ts` (`resumeFrom` on
+`runAccumulatedCostSearch`), `mobilityGrid.ts` (`sampleCellsForHexes`/
+`applyCrossSlope` extracted from `buildMobilityGrid`, behaviour-preserving —
+`buildMobilityGrid` itself, and its other callers `unitSimulation.ts`/
+`roadRouteSearch.ts`, are unchanged), `mobilityWorker.ts`/
+`mobilityWorkerClient.ts` (`resumeFrom`/`reach` threaded across the worker
+boundary — `Map`s structured-clone natively, same precedent as `RoadGraph`),
+`mobilityAppreciation.ts` (the `MAX_ATTEMPTS`/`boundsPadFactor` retry loop
+replaced by one call into `runLazyMobilitySearch`).
+
+**Tests:** `resumableSearch.test.ts` (resumed search matches a from-scratch
+search over the identical final cell set exactly; never revises an
+already-settled distance; a synthetic barrier-with-a-gap grid proven
+reachable only once a resumed round materialises the gap's tile, not on the
+narrower first round) and `lazyTilePartition.test.ts` (the tile partition
+never double-materialises or drops a hex) — both at the engine level, no
+network, matching this suite's own established precedent for exactly the
+same reason `buildMobilityGrid` itself was never given a full-pipeline test
+(the orchestration is network-coupled). Full existing Terrain Mobility test
+suite (32 files) still green.
+
+---
+
+### Shipped: α·C* budget + corridor-count stop + risk picks (2026-07-29, step 46)
+
+Closes design points 2 and 3, on top of step 45's lazy loop. Owner:
+*"proceed with the Slice B remainder item... ensure every analysis result
+has 2-5 corridors surfaced... we should be seeing a 'most likely' and 'most
+risky' type of option to inform our planning."* The third ask (risk
+labelling) is genuinely new relative to the original §35 design text, not a
+gap in it — added here as a natural extension once corridor count became a
+real, computed loop signal rather than an afterthought.
+
+**Two-phase growth, exactly as designed:**
+- **Phase 1 (unconstrained).** `mobilityLazyGrid.ts` grows with no cost
+  limit — only the existing cell/tile/round ceilings — until the objective
+  is reached at all. The cheapest confirmed cost at that point is `C*`
+  (`costStarSeconds` on the result), the design's own notation.
+- **Phase 2 (budgeted).** Once `C*` is known, the frontier-tile computation
+  that already decided which tiles to fetch next is filtered to cells whose
+  arrival time is `≤ α·C*` — a cell beyond that budget doesn't get to pull
+  in new tiles. This is deliberately NOT a literal geometric ellipse drawn
+  separately: the design calls the budget "self-sizing," and an isochrone
+  boundary (arrival time, following however the terrain actually bends) is
+  a MORE self-sizing shape than a mathematical ellipse would be — real
+  detours rarely trace an ellipse. `α` defaults to 2.0 and is threaded as an
+  option (`LazyMobilitySearchOptions.alpha` →
+  `MobilityAppreciationOptions.corridorBudgetAlpha`) matching the design's
+  "user-adjustable" call, though no UI control is wired to it yet.
+
+**Corridor count is the PRIMARY stop rule, exactly as the design orders it**
+(cost budget and cell/tile ceiling are the safety bounds BEHIND it, not the
+main rule): once a route exists, `estimateDistinctCorridorCount` derives up
+to 5 dissimilar routes (`corridorAnalysis.ts#findKDissimilarPaths`, capped
+at the target so deriving more than needed wastes a search with no decision
+value) and clusters them with the IDENTICAL avenue-similarity test the final
+presentation pass uses (`corridorField.ts#clusterRoutes`, now exported for
+this reuse — deliberately not a second, possibly-disagreeing
+approximation). Growth continues (budget/ceiling permitting) while fewer
+than 2 distinct avenues are confirmed; stops once 2 are found, capped at 5
+regardless of remaining budget. A genuinely single-avenue AOI still gets an
+honest 1-corridor result once the α·C* budget or ceiling is real — this is
+not a fabrication requirement, it's a "look properly before concluding
+there's only one way" requirement.
+
+**Cost note, stated plainly:** unlike step 45 (which added zero cost to the
+common single-round case), this DOES add real cost to every run — at least
+one `estimateDistinctCorridorCount` call (≤5 searches) once a route is
+found, since checking for a second avenue is now unconditional rather than
+"stop the instant ANY route exists." This is a deliberate, accepted
+trade-off for the explicit "ensure every analysis has 2-5 corridors"
+requirement, not a regression of step 45's own "a normal run pays nothing
+extra" property for the tile-growth mechanism itself — the added cost is a
+handful of cheap searches, not more network fetching or grid rebuilding.
+
+**"Most likely" / "most risky":**
+- `CorridorField.mostLikelyCorridorId` — simply the rank-1 corridor's own
+  id. No new computation: `rank` was already "carries the most weighted
+  movement," this just names that corridor explicitly rather than leaving
+  the reader to infer it from sort order.
+- `CorridorField.mostRiskyCorridorId` — the corridor with the highest new
+  `Corridor.riskScore` (0..1), independent of rank (the busiest corridor is
+  very often ALSO the easiest — that's usually why it's busiest — so the
+  two ids commonly point at different corridors; that divergence is the
+  actual planning value of showing both, not noise to resolve). Formula,
+  stated plainly rather than left implicit — the identical honesty framing
+  `easeClass`'s own thresholds already carry ("this product's own
+  engineering choice... deliberately NOT presented as a doctrinal
+  classification"):
+
+  ```
+  riskScore = 0.4 × (slowGoFraction + noGoFraction)   — terrain hazard
+            + 0.3 × waterCrossingFraction              — fording exposure
+            + 0.3 × (1 − pinchRatio)                   — single-point-of-failure throat
+  ```
+
+  Every input is a real, already-computed per-corridor fraction — no new
+  data source. `pinchRatio` and `waterCrossingFraction` are new PER-corridor
+  fields (`CorridorField.pinchRatio` only ever tracked the busiest
+  corridor's own throat, not every corridor's). `waterCrossingFraction`
+  reuses `carriesWaterSignal` — moved from `mobilityAppreciation.ts` to
+  `accumulatedCost.ts` (re-exported from its old location for every existing
+  caller) specifically so `corridorField.ts`, a module
+  `mobilityAppreciation.ts` itself imports, could call it without a
+  circular import.
+
+**Surfaced, not just computed:** the assessment log states which corridor
+is which and why (e.g. `MOST LIKELY: CORRIDOR 1 · MOST RISKY: CORRIDOR 2
+(38% RISK — 40% SLOW/NO-GO, 25% WATER SIGNAL, PINCH RATIO 0.42)`);
+`MobilityPanel.tsx`'s corridor cards gained `[MOST LIKELY]`/`[MOST RISKY]`
+pill badges (`.corridor-pick--likely`/`.corridor-pick--risky` in
+`styles-tactical.css`, styled to match the existing `.corridor-ease` pattern)
+plus a risk/water figure line.
+
+**Files:** `mobilityLazyGrid.ts` (two-phase growth, `estimateDistinctCorridorCount`,
+`alpha`/`costStarSeconds`/`corridorCountAtStop`), `corridorField.ts`
+(`riskScore`/`pinchRatio`/`waterCrossingFraction` per corridor,
+`mostLikelyCorridorId`/`mostRiskyCorridorId` on the field, `clusterRoutes`
+exported), `accumulatedCost.ts` (`carriesWaterSignal` relocated),
+`mobilityAppreciation.ts` (re-export + new log lines + `corridorBudgetAlpha`
+option), `MobilityPanel.tsx`/`styles-tactical.css` (badges).
+
+**Tests:** `corridorRiskAndCount.test.ts` (9 checks) — reuses
+`corridorClustering.test.ts`'s proven two-gap barrier fixture, makes ONLY
+the south gap a real mapped-stream ford (passable but hazardous for a
+profile with fording capability), and proves `riskScore`/
+`mostRiskyCorridorId` correctly identify the hazardous avenue specifically
+— not just confirming a number moved, confirming it moved for the RIGHT
+corridor — plus `clusterRoutes` cluster-count checks (two real gaps → two
+clusters; one sealed → one cluster, the exact building block
+`estimateDistinctCorridorCount` depends on). Full existing suite (34 files)
+still green.
 
 ---
 

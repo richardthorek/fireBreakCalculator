@@ -80,6 +80,9 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 42 | Hydrology attributes in GIS export / AI briefing | Water-gate fields have been computed by the hard-block hydrology gate since Pass 6, but never reached the exported GeoJSON/KML attributes or the AI briefing payload — a user reading either had no way to see WHY a route avoided or crossed water. `carriesWaterSignal` (new, exported from `mobilityAppreciation.ts`) is now the single predicate the run's own assessment log, the GIS export, and the AI briefing payload all share. GIS export: mission-level water counts plus PER-CORRIDOR `crosses_water`/`water_cell_count` scoped to each corridor's own cells (proven distinct from the grid-wide total). AI briefing: `hydrologyAvailable`/`waterAffectedCellCount`/`waterBodyCellCount` added as required payload fields (kept in lock-step, webapp+API), with a template caution when data is unavailable or a plain-language summary when water is found — silent when data was available and genuinely found none. Also corrected a stale roadmap item found along the way: "Vegetation NVIS-first uplift" (both stated criteria were already shipped in PR #178, 2026-07-16 — only `NVIS_INTEGRATION.md`'s checklist and this table weren't updated) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
 | 43 | Existing-trail reuse: computed then silently discarded before costing, now surfaced | Found while checking a second stale roadmap item ("Road class modelling") against the live code. Real defect, not a doc issue this time: `routeOptimizer.ts` already computes which parts of a route follow a mapped trail and uses it to PREFER trail-following routes during pathfinding (`×0.35` fuel discount) — but that fact never reached `RouteSegment[]`, the exact shape POSTed to `/api/analysis/calculate`, the sole authoritative cost engine. A route reusing a real formed track — including the app's own auto-optimized suggestion — was costed identically to virgin bush, with the AdvisorPanel's own "existing trail used" stat left disconnected from the $/hours shown next to it. Fixed the same way NAFI fire history was handled: `vegetationAnalysis.ts` now also fetches the reusable-trail set once per line and flags each segment (`VegetationSegment.onExistingTrail` → `RouteSegment.onExistingTrail`, a real merge boundary) — surfaced in `AnalysisPanel.tsx` with an explicit note that the estimate does NOT already discount for it, since (unlike the optimizer's own uncited `×0.35`) there is no sourced existing-track-vs-virgin clearing-rate figure to apply | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Infrastructure-aware cost surface" |
 | 44 | `api-register.md`/`component-register.md` corrected against the live codebase | An audit of every "MUST match" webapp/api duplicated-logic pair (a bug class with two prior confirmed hits this session) came back clean — but checking the two doc registers themselves against the live code turned up real staleness in both, despite each doc's own "MUST update" policy and a same-day "Last Updated" date. `api-register.md`: the whole `/api/assistant/smeacs` endpoint was undocumented, and `MobilityAssistantPayload`'s documented shape was missing the 3 hydrology fields (step 42) plus the entire probabilistic-movement optional block (step 12) — both live and required/validated in `api/src/types/mobilityAssistant.ts`. `component-register.md`: `EquipmentResults`/`GuidancePanel` were documented but no longer exist in the codebase; ~10 live, in-use components were entirely absent, most strikingly `MobilityPanel.tsx` itself — the main Terrain Mobility screen, shipped and iterated on since step 10 — plus `CounterMobilityPanel`, `DataConfidenceBadge`, `RoadSpeedOverridePanel`, `TacticalCoordinateReadout`, `AssessmentLog`, `MapEmptyState`, `DistributionBar`, `HelpContent`, `LiveFeedsControl`; `ConfirmDialog` was listed as "📋 Planned" though the file already exists (built, WCAG-complete, just never wired into the app — corrected to say so precisely rather than either extreme) | [api-register.md](docs/api-register.md), [component-register.md](docs/component-register.md) |
+| 45 | Slice B — lazy grid materialisation + resumable search (the architectural half, remainder closed by step 46) | §35's "the design" points 1 ("delete the box") and 5 ("eager coarse tiles, lazy fine cells"), deliberately deferred at step 24 as a "genuine rearchitecture" too risky to rush. Replaces `mobilityAppreciation.ts`'s escalating-`boundsPadFactor` retry (which rebuilt the ENTIRE grid from scratch — re-sampling every cell, re-running Dijkstra from zero — at a bigger guessed box each time it found no route) with `mobilityLazyGrid.ts`: hex size and the local projection are fixed ONCE from an initial footprint, tiles (~10×10 hexes, one batched fetch each) materialise only when the reachable frontier actually runs off the edge of what's fetched so far, and `accumulatedCost.ts`'s `runAccumulatedCostSearch` gained a `resumeFrom` option so a grown cell set CONTINUES the prior search (seeding the heap from its already-settled `best`/`prev`) instead of restarting Dijkstra from the origin AOI at cost 0. A normal run (initial footprint already contains a route) costs exactly what the old fixed-box first attempt did; only a genuinely Lake-George-shaped run pays for more, and only for the newly-materialised ground. Zero downstream risk to `demDerivatives.ts`/`corridorField.ts`/chokepoints/min-cut — every one of them still receives one ordinary, uniform-hex, FINISHED `MobilityGridCell[]` once the loop concludes; only the process of assembling it changed. `buildMobilityGrid`'s sampling logic was extracted into `sampleCellsForHexes`/`applyCrossSlope` (used by both the unchanged single-shot callers — `unitSimulation.ts`, `buildMobilityGrid` itself — and the new per-tile loop) rather than duplicated. Honestly documented open caveat: a cell's `crossSlopeDeg` is recomputed from whichever neighbours are materialised when its OWN round runs, so a cell settled at a transient tile edge keeps that round's value even if a later round completes its neighbourhood — the same "incomplete edge neighbourhood" effect the old fixed-box approach already had for its outer ring, now transient rather than final; `crossSlopeDeg` was already documented as a conservative upper-bound proxy, not a precise figure. Not attempted this step (closed by step 46): the `α·C*` cost-budget ellipse and the "2–5 corridors" stop rule — the lazy loop then stopped on a cell/tile ceiling (a safety bound) rather than a considered travel-time budget | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 46 | Slice B remainder — `α·C*` cost-budget + 2–5 corridor stop rule, and "most likely"/"most risky" corridor picks | Owner: "proceed with the Slice B remainder item... ensure every analysis result has 2-5 corridors surfaced... we should be seeing a 'most likely' and 'most risky' type of option to inform our planning." Two-phase growth in `mobilityLazyGrid.ts`: Phase 1 grows unconstrained until a route exists at all (`costStarSeconds`, C* in the design's own notation); Phase 2 restricts further tile growth to frontier cells within `α·C*` travel-time of the origin (α defaults to 2.0, threaded as an option though no UI slider is wired yet) — a genuine isochrone-shaped budget that falls straight out of filtering the existing frontier computation, not separate geometry. The PRIMARY stop rule (design's own framing) is corridor count: once a route exists, a cheap interim check (`findKDissimilarPaths` capped at 5 + `corridorField.ts`'s own `clusterRoutes` avenue-similarity test, now exported for reuse) counts genuinely distinct avenues; growth continues within budget until 2 are confirmed, capped at 5, with the α·C*/ceiling safety bounds still behind it for genuinely single-avenue terrain. "Most likely"/"most risky": `CorridorField.mostLikelyCorridorId` is simply rank 1 (already the busiest); `mostRiskyCorridorId` is driven by a new per-corridor `riskScore` — a documented composite (`0.4×(slowGoFraction+noGoFraction) + 0.3×waterCrossingFraction + 0.3×(1−pinchRatio)`, weights stated as engineering judgement exactly like `easeClass`'s own thresholds) built entirely from real, already-computed per-corridor fractions, no new source. `carriesWaterSignal` moved from `mobilityAppreciation.ts` to `accumulatedCost.ts` (re-exported for backward compat) so `corridorField.ts` could use it without a circular import. Surfaced in the assessment log (which corridor is which, and why) and as MOST LIKELY/MOST RISKY badges + a risk/water figure line on each corridor card in `MobilityPanel.tsx`. Verified: `npm run build` clean; new `corridorRiskAndCount.test.ts` (9 checks — a synthetic two-gap grid where only the south gap fords a mapped stream proves `riskScore`/`mostRiskyCorridorId` correctly point at the hazardous avenue, not just the busy one, plus `clusterRoutes` count-matching checks); full existing suite (34 files) still green, same one pre-existing unrelated `nvis-fidelity.test.ts` failure | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 47 | Mobile UI — quick mover-class selector + coordinate readout repositioned | Owner: "the coordinates panel isn't super useful and shouldn't be the 'top' of the control bar. Consider a four icon/button selector for quick and broad vehicle/movement classes instead of having to scroll down to the dropdown and then scroll the list. Buttons could be foot, 4x4 (car), medium and heavy for example. Then it's an easy few taps to get started." Four icon buttons (Foot / 4×4 / Medium / Heavy) placed at the top of `MobilityPanel.tsx` via Lucide icons, each wired to an existing catalogued profile — no new profile added (just a fast path into the full dropdown below). `TacticalCoordinateReadout` moved from the panel's most-prominent top slot to just above the AREAS OF INTEREST section, where cursor coordinates are contextually relevant during origin/objective painting. CSS for `.mobility-quick-profile-row` / `.mobility-quick-profile-btn` (4-column grid, dark ghost buttons with cyan active state) added to `styles-tactical.css`. Build and typecheck clean | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 (UI surface) |
 
 ### Next up
 
@@ -87,7 +90,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
-| Slice B — the full lazy-grid architecture (lazy materialisation, tile-ring streaming, cost-budget ellipse, corridor-count stop) | The Lake George DEFECT itself is now fixed both ways (step 22 for vehicles, step 23's expand-and-retry for off-road/foot) — this item is the remaining ARCHITECTURAL upgrade §35 also designs: true per-cell lazy materialisation under an A* frontier (not the whole-box-then-retry step 23 shipped), async tile-ring data fetch, a proper `α·C*` cost-budget ellipse (self-sizing, not four fixed factors), and stopping on 2–5 distinct corridors rather than route/no-route. Deliberately not attempted in one pass — it touches 5+ interacting modules, several of which currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut) | L | Steps 22+23 (✅, defect fixed) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
@@ -101,11 +103,6 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Agency hand-off | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike | L | — | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 |
 
 #### Next up — outcome, changes required, difficulty
-
-- **Slice B — full lazy-grid architecture** (Difficulty: L)
-  - Outcome: large/awkward AOIs resolve smoothly instead of hitting an all-or-nothing box — stays fast even at continental scale.
-  - Changes: replace whole-box-then-retry with true per-cell lazy materialisation under an A* frontier · async tile-ring data fetch so DEM/vegetation/OSM data streams in as the frontier grows · self-sizing `α·C*` cost-budget ellipse (replacing 4 fixed padding factors) + a "2–5 distinct corridors found" stop rule instead of route/no-route.
-  - Note: touches 5+ modules that currently assume a complete, finished cell array (`demDerivatives.ts`'s plane fit, `corridorField.ts`, chokepoints, min-cut).
 
 - **Road-speed user-override confidence into GIS export + AI briefing** (Difficulty: S)
   - Outcome: an edited road-speed table shows up in exported GIS attributes and the AI briefing text, not just the live panel.
@@ -202,6 +199,139 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-08-02 — Mobile UI: quick mover-class selector + coordinate readout
+  repositioned (step 47)**: owner: "the coordinates panel isn't super useful
+  and shouldn't be the 'top' of the control bar. Consider a four icon/button
+  selector for quick and broad vehicle/movement classes instead of having to
+  scroll down to the dropdown." Four buttons (Foot / 4×4 / Medium / Heavy) now
+  sit at the top of MobilityPanel.tsx, each wiring to an existing catalogued
+  profile — no new profile added, just a fast path. `TacticalCoordinateReadout`
+  moved to just above the AREAS OF INTEREST section where cursor coordinates are
+  contextually relevant (painting origin/objective). CSS added for
+  `.mobility-quick-profile-row` / `.mobility-quick-profile-btn` in
+  `styles-tactical.css`. Build and typecheck clean. PR #200.
+
+- **2026-07-29 — Slice B remainder (step 46): α·C* cost-budget + 2-5
+  corridor stop rule, "most likely"/"most risky" corridor picks**: owner,
+  immediately following step 45: "proceed with the Slice B remainder
+  item... ensure every analysis result has 2-5 corridors surfaced...
+  we should be seeing a 'most likely' and 'most risky' type of option to
+  inform our planning." Closes the two design points step 45 deliberately
+  left open.
+
+  `mobilityLazyGrid.ts` now runs in two phases, matching §35's own design
+  exactly: Phase 1 grows unconstrained until a route exists at all
+  (`costStarSeconds`, C* in the design's notation); Phase 2 restricts
+  further tile growth to frontier cells within `α·C*` travel-time of the
+  origin (α defaults to 2.0) — the self-sizing cost-budget "ellipse" falls
+  straight out of filtering the existing frontier-tile computation by
+  arrival time, not a literal geometric shape drawn separately. The PRIMARY
+  stop rule, per the design's own priority, is corridor count, not the
+  budget: once a route exists, a cheap interim check derives up to 5
+  dissimilar routes (`findKDissimilarPaths`) and clusters them by the SAME
+  avenue-similarity test the final presentation uses (`corridorField.ts`'s
+  `clusterRoutes`, now exported for this reuse) — growth continues within
+  budget until 2 distinct avenues are confirmed, capped at 5 regardless
+  (diminishing returns for a commander reading the panel, not diminishing
+  accuracy — the separate, larger final `buildCorridorField` pass can still
+  find more). The α·C*/cell/tile ceilings remain the safety bounds BEHIND
+  corridor count, exactly as designed — genuinely single-avenue terrain
+  still gets an honest 1-corridor result once the budget is real.
+
+  "Most likely" is simply rank 1 (already the busiest corridor by
+  construction — no new computation needed, just a named pointer,
+  `CorridorField.mostLikelyCorridorId`). "Most risky"
+  (`mostRiskyCorridorId`) is new: each `Corridor` now carries a `riskScore`
+  (0..1), a DOCUMENTED composite of real, already-computed per-corridor
+  fractions — `0.4×(slowGoFraction+noGoFraction) + 0.3×waterCrossingFraction
+  + 0.3×(1−pinchRatio)` — with the weights stated plainly as this product's
+  own engineering judgement, the identical honesty framing `easeClass`'s
+  thresholds already carry. `pinchRatio` and `waterCrossingFraction` are new
+  PER-corridor fields too (the field-level `CorridorField.pinchRatio` only
+  ever tracked the busiest corridor). `carriesWaterSignal` — the single
+  hydrology predicate the assessment log/GIS export/AI briefing already
+  shared — moved from `mobilityAppreciation.ts` to `accumulatedCost.ts` (re-
+  exported for every existing import site) so `corridorField.ts`, a module
+  `mobilityAppreciation.ts` itself imports, could reuse it without a
+  circular import.
+
+  Surfaced, not just computed: the assessment log now states which corridor
+  is which and why (risk breakdown: hazard fraction, water-crossing
+  fraction, pinch ratio); `MobilityPanel.tsx`'s corridor cards gained MOST
+  LIKELY / MOST RISKY pill badges plus a risk/water figure line, styled to
+  match the existing ease-class badge pattern.
+
+  Verified: `npm run build` (webapp, strict TS) clean; new
+  `corridorRiskAndCount.test.ts` (9 checks) — a synthetic two-gap grid where
+  ONLY the south gap fords a real mapped stream (`au-light-4wd`, fording
+  capability 0.7 m > the stream's assumed 0.4 m, so it's hazardous but
+  passable, not a hard block) proves `riskScore`/`mostRiskyCorridorId`
+  correctly identify the hazardous avenue specifically, not just the
+  busiest one, plus `clusterRoutes` cluster-count checks (two real gaps →
+  two clusters; one sealed → one cluster). Full existing suite (34 test
+  files) still green, same one pre-existing unrelated `nvis-fidelity.test.ts`
+  failure noted since step 23.
+
+- **2026-07-29 — Slice B (step 45): lazy grid materialisation + resumable
+  search shipped**: the architectural half of §35's Slice B design, carried
+  forward from step 24's "deliberately not attempted in one pass — a rushed
+  version risked shipping something that looked like Slice B but subtly
+  broke an invariant" decision. `mobilityAppreciation.ts`'s
+  escalating-`boundsPadFactor` retry (rebuild the WHOLE grid from scratch —
+  re-sample every cell, re-run Dijkstra from zero — at a bigger guessed box
+  whenever a search found no route) is replaced by `mobilityLazyGrid.ts`:
+  hex size and the local projection are fixed once from an initial
+  footprint (identical sizing math to the old first attempt, so a typical
+  short-range run is unchanged), tiles (~10×10 hexes, one batched
+  elevation/vegetation/road/water fetch each) materialise only when the
+  reachable frontier actually runs off the edge of what's fetched so far,
+  and `accumulatedCost.ts#runAccumulatedCostSearch` gained a `resumeFrom`
+  option so a grown cell set CONTINUES the prior search (seeding the heap
+  from its already-settled `best`/`prev` — correct because Dijkstra with
+  non-negative edges never revises a settled distance) instead of
+  restarting from the origin AOI at cost 0. A normal run costs exactly what
+  the old fixed-box first attempt did; only a genuinely Lake-George-shaped
+  run pays for more, and only for the newly-materialised ground.
+
+  What made this safe to attempt: the lazy loop still hands
+  `demDerivatives.ts`, `corridorField.ts`, chokepoints and min-cut one
+  ordinary, uniform-hex, FINISHED `MobilityGridCell[]` once it concludes —
+  none of them needed to change, because only the PROCESS of assembling
+  that array changed, not its shape. `buildMobilityGrid`'s sampling block
+  was extracted into `sampleCellsForHexes`/`applyCrossSlope` (pure
+  refactor, behaviour-preserving) so both the unchanged single-shot callers
+  (`unitSimulation.ts`, `buildMobilityGrid` itself) and the new per-tile
+  loop share one sampling implementation rather than two copies that could
+  drift.
+
+  Honestly documented, not engineered away: a cell's `crossSlopeDeg` is
+  recomputed from whichever neighbours are materialised when ITS round
+  runs, so a cell settled at a transient tile edge keeps that round's value
+  even if a later round completes its neighbourhood — the same
+  "incomplete-neighbourhood edge effect" the old fixed-box approach already
+  had for its outer ring, now transient rather than permanent;
+  `crossSlopeDeg` was already documented as a conservative upper-bound
+  proxy, not a precise per-edge figure, so this doesn't change what callers
+  may assume about it.
+
+  Not attempted this pass (moved to the narrower "Slice B remainder" Next-up
+  item): the `α·C*` cost-budget ellipse and the "2–5 distinct corridors"
+  stop rule — the lazy loop currently stops growing on a cell/tile ceiling
+  (a safety bound) rather than a considered travel-time budget.
+
+  Verified: `npm run build` (webapp, strict TS) clean; two new engine-level
+  test files (`resumableSearch.test.ts` — proves a resumed search matches a
+  from-scratch search over the same final cell set exactly, never revises
+  an already-settled distance, and a synthetic Lake-George-style barrier
+  proven reachable only after a resumed tile-ring growth, not on the
+  narrower first round; `lazyTilePartition.test.ts` — proves the tile
+  partition never double-materialises or drops a hex); full existing
+  Terrain Mobility test suite still green (32 files), including the
+  `expandingSearchLakeGeorge`/`frontierEdgeGrowth`/`paddedBoundsLakeGeorge`
+  suite this change's own predecessor shipped — same one pre-existing,
+  unrelated `nvis-fidelity.test.ts` failure noted at step 23 remains,
+  untouched.
 
 - **2026-07-29 — Every "Next up"/"Blocked" roadmap row expanded with
   outcome, required changes, and difficulty**: owner asked for each open

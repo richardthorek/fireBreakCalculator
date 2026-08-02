@@ -50,6 +50,7 @@
 import { LatLng } from '../utils/chainage';
 import {
   MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions, toMobilitySample,
+  carriesWaterSignal,
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors } from '../utils/hexGrid';
@@ -158,6 +159,42 @@ export interface Corridor {
   slowGoFraction: number;
   noGoFraction: number;
   easeClass: CorridorEaseClass;
+  /** This corridor's OWN narrowest iso-arrival-time cross-section ÷ its
+   *  widest (docs §35 remainder — the field-level `CorridorField.pinchRatio`
+   *  only ever covered the busiest corridor; siting/risk questions need every
+   *  corridor's own throat, not just corridor 1's). Low = a real single
+   *  point of failure somewhere along it; near 1 = uniformly wide, never
+   *  pinches. Feeds `riskScore` below. */
+  pinchRatio: number;
+  /** Fraction of this corridor's own cells carrying a real water signal
+   *  (`carriesWaterSignal` — standing water, a mapped watercourse within
+   *  snap distance, or high DEA WOfS wet-frequency; docs §34). A genuine,
+   *  already-sampled per-cell fact, aggregated here rather than computed
+   *  fresh — feeds `riskScore` below. */
+  waterCrossingFraction: number;
+  /**
+   * Composite hazard/vulnerability score, 0..1 — the basis for
+   * `CorridorField.mostRiskyCorridorId` (docs §35 remainder, owner: "we
+   * should be seeing a 'most likely' and 'most risky' type of option to
+   * inform our planning"). Built ENTIRELY from real, already-computed
+   * per-corridor fractions — no new source, no invented signal:
+   *
+   *   riskScore = 0.4 × (slowGoFraction + noGoFraction)   — terrain hazard
+   *             + 0.3 × waterCrossingFraction              — fording exposure
+   *             + 0.3 × (1 − pinchRatio)                   — single-point-of-failure throat
+   *
+   * The WEIGHTS are this product's own engineering judgement over its own
+   * computed mix — the identical honesty framing `easeClass`'s thresholds
+   * already carry ("doctrinal-flavoured wording, but... deliberately NOT
+   * presented as a doctrinal classification"), stated here rather than
+   * implied. `noGoFraction` counting toward hazard (rather than being
+   * excluded as "already avoided") is deliberate: a corridor with real
+   * NO-GO cells along its band is one whose passable line has less lateral
+   * room to route around a newly-found obstacle than a corridor that is
+   * GO throughout, which is itself a real vulnerability. Not a probability,
+   * not validated against any incident data — a relative, WITHIN-THIS-RUN
+   * ranking signal only, exactly like `easeClass`. */
+  riskScore: number;
   /** True when ANY cell in this corridor carries estimated/fallback sample
    *  data — surfaced per corridor so a caveat lands on the specific corridor
    *  it applies to, not just once for the whole run. */
@@ -229,6 +266,22 @@ export interface CorridorField {
    */
   unconstrained: boolean;
   options: Required<CorridorFieldOptions>;
+  /** The rank-1 corridor's own id — carries the most (weighted) movement,
+   *  i.e. where movement is MOST LIKELY to actually happen (docs §35
+   *  remainder). Null only when `corridors` is empty (can't happen given
+   *  `buildCorridorField` returns null in that case instead, but kept
+   *  optional-safe rather than a non-null assertion). Equal to
+   *  `mostRiskyCorridorId` when only one corridor exists — both labels are
+   *  honestly the same ground when there is only one way through. */
+  mostLikelyCorridorId: string | null;
+  /** The corridor with the highest `riskScore` — the avenue MOST WORTH
+   *  planning around (worse terrain, more water crossings, or a real
+   *  single-point-of-failure throat), not necessarily the one movement is
+   *  most likely to use. Deliberately independent of `rank`: the busiest
+   *  corridor is very often also the easiest (that is usually WHY it is
+   *  busiest), so the two ids commonly point at different corridors — that
+   *  divergence is the whole value of showing both. */
+  mostRiskyCorridorId: string | null;
 }
 
 /**
@@ -414,7 +467,12 @@ function sampleRoutePoint(route: DissimilarRoute, fraction: number): LatLng {
  * bounded" cost discipline `buildCorridorField`'s own note already applies
  * to k.
  */
-function clusterRoutes(routes: DissimilarRoute[], hexWidthM: number): number[][] {
+/** Exported so `mobilityLazyGrid.ts` can reuse the SAME avenue-clustering
+ *  test to decide whether the search has found ENOUGH distinct corridors yet
+ *  (docs §35 design point 3: "stop on corridor count, not path count") —
+ *  the identical similarity test the final presentation build uses, not a
+ *  second, possibly-disagreeing approximation. */
+export function clusterRoutes(routes: DissimilarRoute[], hexWidthM: number): number[][] {
   const n = routes.length;
   const thresholdM = hexWidthM * ROUTE_CLUSTER_DISTANCE_HEX_MULTIPLIER;
   const samples = routes.map(r => ROUTE_CLUSTER_SAMPLE_FRACTIONS.map(f => sampleRoutePoint(r, f)));
@@ -627,6 +685,17 @@ export function buildCorridorField(
   // computed per-cluster.
   const routedCellCount = new Set(clusterRaw.flatMap(c => [...c.rawRouteCount.keys()])).size;
 
+  // "Most likely" is simply rank 1 — already the corridor carrying the most
+  // weighted movement, by construction of the sort above. "Most risky" is
+  // whichever corridor's OWN `riskScore` is highest, independent of rank —
+  // see `Corridor.riskScore`'s own doc comment for the formula and why it is
+  // deliberately not the same signal as "busiest".
+  const mostLikelyCorridorId = built[0]?.id ?? null;
+  const mostRiskyCorridorId = built.reduce(
+    (best, c) => (best === null || c.riskScore > best.riskScore ? c : best),
+    null as Corridor | null
+  )?.id ?? null;
+
   return {
     corridors: built,
     evidence,
@@ -639,6 +708,8 @@ export function buildCorridorField(
     unconstrained:
       coverageFraction >= UNCONSTRAINED_COVERAGE_THRESHOLD && pinchRatio > UNCONSTRAINED_PINCH_RATIO,
     options: opts,
+    mostLikelyCorridorId,
+    mostRiskyCorridorId,
   };
 }
 
@@ -766,6 +837,21 @@ function buildCorridor(
   const frontage: CorridorFrontage =
     bottleneckAbreast >= 3 ? 'multi-lane' : bottleneckAbreast === 2 ? 'two-abreast' : 'single-file';
 
+  // docs §35 remainder — this corridor's OWN pinch ratio (not the field-level
+  // one, which only ever tracked the busiest corridor) and water-crossing
+  // exposure, both real aggregates over cells already in hand. Feed
+  // `riskScore` below — see that field's own doc comment for the formula.
+  const pinchRatio = widestCells > 0 ? bottleneckCells / widestCells : 1;
+  const waterCrossingFraction = comp.filter(k => {
+    const cell = byKey.get(k);
+    return cell ? carriesWaterSignal(cell) : false;
+  }).length / n;
+  const riskScore = Math.max(0, Math.min(1,
+    0.4 * (slowGoFraction + noGoFraction) +
+    0.3 * waterCrossingFraction +
+    0.3 * (1 - pinchRatio)
+  ));
+
   return {
     id,
     rank: 0, // assigned by the caller after sorting
@@ -784,6 +870,9 @@ function buildCorridor(
     slowGoFraction,
     noGoFraction,
     easeClass,
+    pinchRatio,
+    waterCrossingFraction,
+    riskScore,
     usedEstimatedData: comp.some(k => byKey.get(k)?.vegEstimated ?? false),
     representativeRoute: usingRoutes.length > 0
       ? usingRoutes.reduce((best, r) => (r.totalSeconds < best.totalSeconds ? r : best))

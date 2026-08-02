@@ -97,6 +97,21 @@ export interface MobilityGridCell {
   waterFrequency: number | null;
 }
 
+/** A cell carries a real water signal — in a standing body, near a mapped
+ *  watercourse, or a high DEA WOfS wet-frequency (docs §34). The single
+ *  source of truth for "does this cell count as hydrology-affected" — the
+ *  run's own assessment log, the GIS export (`mobilityGisExport.ts`), the AI
+ *  briefing payload (`mobilityAssistantApi.ts`) and per-corridor risk scoring
+ *  (`corridorField.ts`) all call this SAME function rather than each tuning
+ *  their own threshold, so none of them can quietly disagree about what
+ *  counts. Lives here (not `mobilityAppreciation.ts`, which originally
+ *  defined it) so `corridorField.ts` — a lower-level module
+ *  `mobilityAppreciation.ts` itself imports — can use it without a circular
+ *  import; re-exported from `mobilityAppreciation.ts` for every existing
+ *  caller's import path. */
+export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
+  c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
+
 /**
  * Project a grid cell down to the `MobilitySample` shape `edgeMobilityCost`
  * consumes — ONE place that lists every field the cost function reads off a
@@ -297,6 +312,25 @@ export interface AccumulatedCostSearchOptions {
    *  per relaxed cell, so calling it unconditionally here is not the cost
    *  problem. */
   onProgress?: (settledFraction: number) => void;
+  /**
+   * Resume a previous search rather than reseeding fresh from `originKeys` —
+   * the lazy tile-ring growth loop (docs §35 "the design", point 1: "delete
+   * the box"). `mobilityLazyGrid.ts` materialises new tiles when the
+   * reachable frontier runs off the edge of what's currently fetched, then
+   * calls this again over the GROWN cell set; without `resumeFrom` that would
+   * have to restart Dijkstra from scratch, discarding every already-settled
+   * distance. Passing the previous call's own result back in here instead
+   * seeds `best`/`prev` from it and pushes every already-settled cell onto
+   * the heap at its recorded cost — correct because Dijkstra with
+   * non-negative edges never needs to revise a settled distance once a cell
+   * is popped, so priming from a prior settlement is equivalent to having
+   * relaxed through those cells "for real" in one longer run. Already-settled
+   * cells immediately re-fail the `candidateTime < existing.timeSeconds`
+   * check on relaxation (no-op); the only real work is relaxing into
+   * genuinely NEW cells the grown set just added. `originKeys` is ignored
+   * when this is supplied.
+   */
+  resumeFrom?: AccumulatedCostSearchResult;
 }
 
 export function runAccumulatedCostSearch(
@@ -306,7 +340,7 @@ export function runAccumulatedCostSearch(
   nightMode: boolean,
   options: AccumulatedCostSearchOptions = {}
 ): AccumulatedCostSearchResult {
-  const { edgePenalties, onProgress } = options;
+  const { edgePenalties, onProgress, resumeFrom } = options;
   const byKey = new Map<string, MobilityGridCell>();
   for (const c of cells) byKey.set(c.key, c);
   const totalCells = Math.max(1, cells.length);
@@ -314,10 +348,18 @@ export function runAccumulatedCostSearch(
   const best = new Map<string, { timeSeconds: number; estimated: boolean }>();
   const prev = new Map<string, string>();
   const heap = new MinHeap();
-  for (const key of originKeys) {
-    if (!byKey.has(key)) continue;
-    best.set(key, { timeSeconds: 0, estimated: false });
-    heap.push(key, 0);
+  if (resumeFrom) {
+    for (const [key, v] of resumeFrom.best) best.set(key, v);
+    for (const [key, p] of resumeFrom.prev) prev.set(key, p);
+    for (const [key, v] of best) {
+      if (byKey.has(key)) heap.push(key, v.timeSeconds);
+    }
+  } else {
+    for (const key of originKeys) {
+      if (!byKey.has(key)) continue;
+      best.set(key, { timeSeconds: 0, estimated: false });
+      heap.push(key, 0);
+    }
   }
 
   while (heap.size > 0) {
