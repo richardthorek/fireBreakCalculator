@@ -11,6 +11,12 @@ cost, and resources** to build it — segment by segment, accounting for the act
 slope and vegetation (fuel) along the line. It must work in the field with poor
 or no reception, and it must **never present fabricated data as real analysis**.
 
+The "poor or no reception" rule holds for **fire-break mode**. **Terrain Mobility**
+mode is the stated exception from the OAKOC programme onward: its analysis runs on
+the backend and needs connectivity to produce a *new* result, though previously
+completed analyses stay readable offline. That was an explicit owner decision, not
+drift — see `master_plan.md` Vision principle 4.
+
 ## Where the truth lives (read before doing anything)
 
 1. **`master_plan.md`** — the single source of truth for vision, current state,
@@ -50,10 +56,23 @@ or no reception, and it must **never present fabricated data as real analysis**.
 
 - **Vegetation:** NVIS national is the confirmed spine; NSW SVTM is a high-fidelity
   overlay. Per-state expansion is **frozen** (deferred future overlays are recorded
-  in `NVIS_INTEGRATION.md`). The "NVIS-first uplift" (explicit `NoData` handling,
-  flag cleared/modified segments) is done — both shipped in PR #178, 2026-07-16.
+  in `NVIS_INTEGRATION.md`).
 - **Estimates:** per-segment production model lives in the API and is the sole
   accurate engine; the frontend delegates to it. See `CALCULATION_REVIEW.md`.
+- **Terrain Mobility — active programme.** The mode is being restructured around
+  **OAKOC** (Observation and fields of fire, Avenues of approach, Key terrain,
+  Obstacles, Cover and concealment) within **IPOE**, and its compute moved to a
+  parallel Azure backend. Two rules that matter when touching this area:
+  - **Use the current doctrinal vocabulary.** OAKOC, not OCOKA. IPOE, not IPB.
+    UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED, not GO / SLOW-GO / NO-GO.
+    Import the union from `terrain/mobilityClass.ts`; do not redeclare it.
+  - **Do not overclaim the new factors.** Elevation is a bare-earth DEM, so every
+    sight line is systematically optimistic; *fields of fire* is computed only for
+    user-stated ranges; *cover* (protection from fire) is **not computed at all**
+    and ships `coverAssessed: false` as a machine-readable property. `not-assessed`
+    is a first-class state and is not the same claim as "found nothing".
+  - Scope is **mobility mode only** — fire-break mode keeps its SMEACS/LACES
+    fire-service framing and must not be reframed.
 - For anything else, the roadmap in `master_plan.md` is authoritative.
 
 ## How to work here

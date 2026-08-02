@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: July 29, 2026 — every "Next up" and "Blocked" roadmap row now carries an outcome, required changes, and difficulty; see Recent Updates for the dated history.
+**Last Updated**: August 2, 2026 — the owner-directed **OAKOC programme** (stages 1–9) is added at the top of "Next up"; the two mobility-offload rows it supersedes are struck through in place. See Recent Updates for the dated history.
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -21,7 +21,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 1. **Deterministic core.** All numbers come from the calculation engine and published models. The AI layer narrates and cites; it never computes ([docs/AI_ASSISTANT.md](docs/AI_ASSISTANT.md)).
 2. **Data honesty.** Estimated/fallback data is always flagged, end to end — including in exports. A missing value is shown as missing, never defaulted silently.
 3. **Don't rebuild what exists.** AFDRS/BOM own fire danger; Spark/Phoenix own spread prediction. We display official products and integrate.
-4. Field-ready: offline-capable, touch-first, low data.
+4. Field-ready: touch-first, low data, and offline-capable — **with one stated exception**. From the OAKOC programme onward, Terrain Mobility mode runs its analysis on the backend and therefore **requires connectivity to produce a new result**; previously completed analyses stay readable offline. Fire-break mode is unchanged and remains fully offline-capable. This was an explicit owner decision (2026-08-02), traded for parallel compute and the warm-run latency contract — recorded here rather than left as a claim the code no longer honours.
 
 ## Current state
 
@@ -29,6 +29,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 - **Vegetation:** NVIS national spine + NSW SVTM overlay; state expansion frozen ([docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)).
 - **Route intelligence:** corridor pathfinding, chainage-addressed segment detail, elevation profile, rule-based Plan Assistant, tabbed analysis UI — shipped in PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163) ([docs/ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md)). Infrastructure trail lookup (OSM/Overpass) is now multi-endpoint resilient after a live-tested rate-limiting bug was found and fixed 2026-07-12.
 - **Live context:** national hotspots + fire/burn-area boundaries, plus incident/warning overlays for 5 of 8 states, are live on the map ([docs/GIS_INTEROP.md](docs/GIS_INTEROP.md) §4). AFDRS official fire-danger rating is **blocked on access** (BOM Registered User program), not effort — see the assessment in that doc.
+- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OAKOC/IPOE** with its compute moved to a parallel Azure backend — see the OAKOC programme at the top of "Next up". The mode had already implemented two of the five doctrinal factors (Obstacles, Avenues of approach) without naming them.
 
 ## The Plan
 
@@ -88,21 +89,82 @@ One line each — history and rationale live in the linked as-built doc and in R
 
 Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Size is rough shirt-sizing (S/M/L), not a time estimate. "Depends on" names a real prerequisite, not just a related area. **Exception: a defect that produces a confidently-wrong answer jumps the queue regardless of size** — see the first row.
 
+**Owner-directed programme (2026-08-02), takes priority over the general queue below.** Terrain Mobility mode is being restructured around **OAKOC** — the current doctrinal *military aspects of terrain* (Observation and fields of fire, Avenues of approach, Key terrain, Obstacles, Cover and concealment) within **IPOE** (*Intelligence Preparation of the Operational Environment*, ATP 2-01.3 Change 2, Jan 2024) — and its compute moved to a parallel Azure backend with a warm-run latency contract. The mode already implements Obstacles and Avenues without naming them; this finishes the set. Fire-break mode is out of scope and does not change. Stages are ordered and each is independently shippable.
+
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
+| **OAKOC 1 — mobility-class vocabulary migration** | The engine currently carries two doctrinal generations at once: `mobilityCost.ts` classifies edges `GO/SLOW-GO/NO-GO` (FM 34-130, 1994) while `corridorField.ts` classifies corridors `open/restricted/severely-restricted` (current MCOO). Collapse both onto one `MobilityClass` union via a new `terrain/mobilityClass.ts`. No behaviour change | S/M | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §4 |
+| **OAKOC 2 — extract `shared/@firebreak/terrain` workspace package** | Prerequisite for any server-side execution. §38's "just call the existing modules" is optimistic — they live in a different package with a different tsconfig. Extract rather than copy; copying would make the algorithm itself a drift surface | M | OAKOC 1 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| **OAKOC 3 — five-factor framing over existing products** | New `terrain/oakoc.ts` + `OakocPanel.tsx`. Avenues and Obstacles populated by re-presenting products that already exist; names the existing-vs-reinforcing obstacle split the code already computes; gives `roadNetworkBarrier` its first map layer and export feature. No new computation | M | OAKOC 1 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8, §47 |
+| **OAKOC 4 — key terrain** | The one missing factor that is nearly free: candidates from chokepoints + hex/road min-cut, scored by re-running the corridor field with each denied and measuring the delta via the existing `compareCorridorFields`. Makes `PITCH_TERRAIN_DENIAL.md`'s existing "key terrain" claim true | M | OAKOC 3 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
+| **OAKOC 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OAKOC 2 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| **OAKOC 6 — `viewshed.ts` + Observation & fields of fire** | R3 line-of-sight over the hex grid (one elevation per hex centre, no raster in hand). Observers via a third paint role. Fields of fire computed **only** for user-stated ranges — never inferred | M/L | OAKOC 3 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8 |
+| **OAKOC 7 — cover & concealment** | Concealment from vegetation structure + dead ground. **Cover is not computed** — a bare-earth DEM cannot see a rock, bund or building — and `coverAssessed: false` ships as a machine-readable property in export and payload, not just UI prose | S/M | OAKOC 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
+| **OAKOC 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OAKOC 5, 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| **OAKOC 9 — Container Apps Job tier (still gated)** | Unchanged gate: build only on tier-2 evidence of a real tail of oversized runs. Same protocol as OAKOC 5, so it becomes a compute swap rather than new plumbing | L | tier-2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
-| Function-hosted (tier 2) mobility search | Same `webapp/src/terrain/*` search/corridor modules, run server-side (API is already Node/TS) instead of the client Worker — removes device-performance variance for runs too big for a comfortable client experience but well inside a Function's timeout. Gate: enough telemetry (step 32) to confirm which run phase actually dominates on slow devices | M | telemetry (step 32, collecting) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| On-demand Container Apps Job (tier 3) — large/complex runs only | Scale-to-zero container job for the genuine outliers beyond a Function's timeout/memory ceiling, plus a resumable chunked result-delivery protocol for interrupted field connectivity. Gate: evidence from tier 2 that a real tail of runs needs it — not built speculatively | L | tier 2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| ~~Function-hosted (tier 2) mobility search~~ | **Superseded — now OAKOC 2 + 5 above.** The telemetry gate (step 32) was for deciding *when to switch*, not *whether to build*; owner direction on 2026-08-02 superseded the build gate. Telemetry is still the right evidence for the routing threshold, so tier 2 ships with an explicit user choice plus a conservative automatic threshold that telemetry tunes later | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| ~~On-demand Container Apps Job (tier 3)~~ | **Superseded — now OAKOC 9 above.** Scope and gate are unchanged (still built only on tier-2 evidence of a real tail); it moves into the programme so it shares OAKOC 5's protocol instead of defining its own | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | Vector RAG via Azure AI Search | Keyword KB works; RAG needs an Azure AI Search resource provisioned | M | Azure AI Search resource | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
 | Restriction siting at a surveyed point | Currently hex-cell resolution, not a specific point — an architecture change to the placement model | L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | Field hardening | Offline-first PWA (cached tiles + analyses), WCAG 2.1 AA completion | L | — | [NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md) |
 | Agency hand-off | ArcGIS Online hosted-feature-layer push (OAuth PKCE); Avenza geospatial-PDF spike | L | — | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §2, §3 |
 
 #### Next up — outcome, changes required, difficulty
+
+##### OAKOC programme
+
+- **OAKOC 1 — mobility-class vocabulary migration** (Difficulty: S/M)
+  - Outcome: one mobility vocabulary instead of two, in the current doctrinal form, so nothing the product shows or exports reads as twenty-year-old terminology to a serving audience.
+  - Changes: new `terrain/mobilityClass.ts` (canonical union, labels, `fromLegacy()`) · `TrafficabilityClass` and `CorridorEaseClass` both collapse onto it · `goFraction`/`slowGoFraction`/`noGoFraction` renamed · map paint expressions, CSS modifiers, legend and panel labels · GIS export **dual-emits** old and new keys for one release with `schema_version: 2` · assistant validator accepts either vocabulary.
+  - Note: three things must NOT be renamed — `mobilityTelemetry.ts`'s wire field names (an analytics time series the tier-routing threshold depends on; renaming splits it), and the `--tac-go`/`--tac-slowgo`/`--tac-nogo` CSS colour tokens (tokens, not vocabulary). Saved plans carry no risk: mobility results are never persisted.
+  - Honesty catch worth shipping with it: `NO-GO` is a **hard gate** in this engine, but *severely restricted* doctrinally does not mean impassable. The rename must carry an explicit "impassable for THIS mover profile in this model" qualification or the model reads weaker than it is.
+
+- **OAKOC 2 — extract `shared/@firebreak/terrain`** (Difficulty: M)
+  - Outcome: the same terrain code runs on the client and the server, so a server-side result cannot silently diverge from a client-side one.
+  - Changes: move `terrain/*`, the sampling utils, `config/classification` into a workspace package · break the two type-only `ConfidenceTier` imports · make the seeded mover ensemble chunk-invariant (`hash(seed, moverIndex)`).
+  - Note: the ensemble seeding fix **changes today's numbers once**. Flag it as a deliberate one-time change, never silent drift. `mapboxTrails.ts` stays client-only (it reads a live GL map) — a real capability difference to record, not hide.
+
+- **OAKOC 3 — five-factor framing** (Difficulty: M)
+  - Outcome: the analysis reads as a recognised terrain appreciation product — five named factors, each with its own findings, confidence and caveats — instead of a list of bespoke analytics.
+  - Changes: `terrain/oakoc.ts` (assembly only, computes almost nothing) · new `OakocPanel.tsx` extracted rather than growing `MobilityPanel.tsx` further · `roadNetworkBarrier` gets its first map layer and export feature after being computed-and-discarded on every vehicle run · `Corridor.bottleneckCellKeys` added.
+  - Note: `'not-assessed'` is a first-class state. A factor with no observers is *not assessed*, which is a different claim from "nothing found" — conflating them is the fabrication this repo exists to prevent.
+
+- **OAKOC 4 — key terrain** (Difficulty: M)
+  - Outcome: the tool names the ground whose denial actually changes the picture, and shows the delta that earned the label plus the cost of bypassing it.
+  - Changes: `terrain/keyTerrain.ts` · candidates from chokepoints + hex min-cut + road min-cut + corridor bottlenecks · each scored by a real re-run compared with `compareCorridorFields` · new worker request kind (must not run on the main thread — that reproduces step 41's page-hang exactly).
+  - Note: doctrine defines key terrain relative to a *mission*, and this tool has no mission. Ship that caveat. Decisive terrain is computed as a predicate but presented as a **candidate** requiring confirmation — the commander designates it, not the map.
+
+- **OAKOC 5 — backend protocol + tier-2 execution** (Difficulty: L)
+  - Outcome: analysis runs on the server with results streaming back progressively, and a dropped connection resumes instead of recomputing.
+  - Changes: SWA Free→Standard + a Flex Consumption Function App behind `deployMobilityBackend bool = false` · Durable orchestration · append-only artefact blobs with a 24-hour lifecycle rule · job-scoped read-only SAS · `MobilityJobRequest` becomes the **third** must-match webapp/api pair · Table-Storage-backed rate limiting for the job endpoint (`rateLimit.ts`'s in-memory buckets under-enforce on a scaled-out plan).
+  - Note: export and the AI briefing are **blocked while a run is provisional**, and the briefing block is enforced server-side, not just in the UI.
+
+- **OAKOC 6 — viewshed + Observation & fields of fire** (Difficulty: M/L)
+  - Outcome: the plan says what ground is observed, from where, and what sits in dead ground — and suggests where an observation post would actually see the corridor.
+  - Changes: `terrain/viewshed.ts` (front-to-back R3 over the hex grid, written as a pure partitionable function from day one) · `hexLine()` added to `hexGrid.ts` · third paint role for observers · a `SCREENING_HEIGHT_M` table in `structureTable.ts` with per-row confidence · curvature + refraction.
+  - Note: elevation is a **bare-earth DEM**, so sight lines are systematically optimistic — the error that leaves an approach unwatched. The screened (more pessimistic) surface is the default; bare-earth is a toggle; both export.
+
+- **OAKOC 7 — cover & concealment** (Difficulty: S/M)
+  - Outcome: concealment is reported honestly and cover is explicitly *not* claimed.
+  - Changes: concealment index from vegetation structure + dead ground · defilade only relative to specified positions · `coverAssessed: false` as a machine-readable property in the GIS export, the assistant payload and the briefing.
+  - Note: cover and concealment are doctrinally different things and must never be blended into one score.
+
+- **OAKOC 8 — backend fan-out** (Difficulty: M)
+  - Outcome: large runs get materially faster without changing any number they produce.
+  - Changes: fan out tile sampling (Overpass capped at 2–3 concurrent — it rate-limits, and this repo has already fought that), viewshed by observer, ensemble by chunk, key-terrain by candidate · pass a blob URI to activities, never the cell array.
+  - Note: the multi-source Dijkstra and the k-dissimilar route loop are **sequential by construction** and are deliberately not parallelised. The restriction planner is the long pole; only the ensemble inside each evaluation parallelises.
+
+- **OAKOC 9 — Container Apps Job tier** (Difficulty: L, gated)
+  - Outcome: genuine outlier runs complete instead of timing out.
+  - Changes: same artefact layout and status document as OAKOC 5, so this is a compute swap.
+  - Note: gate unchanged — built only on tier-2 evidence, not speculatively.
+
+##### General queue
 
 - **Road-speed user-override confidence into GIS export + AI briefing** (Difficulty: S)
   - Outcome: an edited road-speed table shows up in exported GIS attributes and the AI briefing text, not just the live panel.
@@ -126,15 +188,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
   - Changes: align vegetation/data confidence display — fire-break's numeric "% confidence" badge vs Terrain Mobility's tiered `DataConfidenceBadge` (measured/published/estimated/generic-fallback) — pick one shared vocabulary · extend Terrain mode's mobile floating-overlay control pattern (§21) to fire-break mode's own panel/controls.
   - Note: genuinely fuzzy scope — the only existing documentation is this one roadmap line, no detailed design yet.
 
-- **Function-hosted (tier 2) mobility search** (Difficulty: M)
-  - Outcome: a user on an underpowered device gets the same Terrain Mobility search run server-side instead of stalling their browser.
-  - Changes: port the existing `webapp/src/terrain/*` search/corridor modules into an Azure Function entry point (API is already Node/TS, no rewrite) · decide the client/server split trigger (cell-count threshold, device hint, or explicit user choice).
-  - Note: gated on telemetry (step 32, still collecting) confirming which run phase actually dominates on slow devices.
+- **Function-hosted (tier 2) mobility search** — superseded, see **OAKOC 2 + 5**. One correction worth carrying forward: the old note claimed "no rewrite" because the API is already Node/TS. That was optimistic — `webapp/src/terrain/*` lives in a different package with a different tsconfig, so a shared workspace package has to be extracted first (OAKOC 2). Copying instead would make the algorithm itself a fourth must-match drift surface.
 
-- **On-demand Container Apps Job (tier 3)** (Difficulty: L)
-  - Outcome: genuine outlier runs (very large AOIs) complete reliably instead of timing out, even over a flaky field connection.
-  - Changes: scale-to-zero Container Apps Job for runs beyond a Function's timeout/memory ceiling · resumable, chunked result-delivery protocol tolerant of interrupted connectivity.
-  - Note: explicitly not to be built speculatively — gated on tier 2 telemetry showing a real tail of oversized runs.
+- **On-demand Container Apps Job (tier 3)** — superseded, see **OAKOC 9**. Gate unchanged.
 
 - **Vector RAG via Azure AI Search** (Difficulty: M)
   - Outcome: AI assistant doctrine citations get measurably more relevant once retrieval is semantic instead of keyword-overlap, and the corpus can grow past what keyword scoring handles well.
@@ -199,6 +255,35 @@ Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined
 Gates: `npm run build` (webapp, strict TS), `npm run test:unit` (api) — both in CI.
 
 ## Recent Updates
+
+- **2026-08-02 — OAKOC programme added to the roadmap (stages 1–9), plus a
+  doctrinal terminology correction**: owner asked how the mode's "inadvertently
+  implemented" military terrain framework could be used to redefine analysis and
+  presentation, and separately directed the compute onto a parallel backend with
+  a ~10 s first-paint / ~10 s update contract. Research finding worth recording:
+  the acronym the work started from, **OCOKA**, is the superseded form (FM 34-130,
+  1994). Current doctrine is **OAKOC**, and the parent process was renamed from
+  IPB to **IPOE** in ATP 2-01.3 Change 2 (Jan 2024, Change 3 May 2025); the MCOO
+  mobility classes are UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED. The
+  codebase was found carrying **both vintages at once** — `mobilityCost.ts` on
+  `GO/SLOW-GO/NO-GO`, `corridorField.ts` on `open/restricted/severely-restricted`
+  — which stage 1 fixes. Audit against the five factors: **Obstacles** and
+  **Avenues of approach** are largely built and simply unnamed; **Key terrain**
+  is ~90% computable from existing chokepoint/min-cut/`compareCorridorFields`
+  machinery; **Observation** and **Cover & concealment** are the genuine gaps and
+  correspond to ROUTE_INTELLIGENCE §9's existing M5. Two owner decisions recorded
+  with their consequences: **scale-to-zero** (so the latency contract is a
+  warm-run contract and a cold run must show a "starting up" state), and
+  **backend-only execution** (retiring the client Worker path, which removes the
+  mode's offline capability — Vision principle 4 amended accordingly rather than
+  left claiming a property the code will not have). Blocking infra finding: the
+  API runs on **SWA Free with managed functions**, which are HTTP-trigger-only
+  and cannot run Durable Functions, and every request through `/api` is capped at
+  45 s regardless of backend — so the contract needs SWA Standard plus a separate
+  Flex Consumption Function App, behind a `deployMobilityBackend` flag. Scope
+  deliberately excludes fire-break mode, which keeps its SMEACS/LACES fire-service
+  framing. Deferred with reasons: named scenarios, consensus corridors, per-cell
+  DEA fractional-cover sampling, doctrinal echelon labels.
 
 - **2026-08-02 — Mobile UI: quick mover-class selector + coordinate readout
   repositioned (step 47)**: owner: "the coordinates panel isn't super useful
