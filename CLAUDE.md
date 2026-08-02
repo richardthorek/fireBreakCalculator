@@ -21,8 +21,9 @@ drift — see `master_plan.md` Vision principle 4.
 
 1. **`master_plan.md`** — the single source of truth for vision, current state,
    decisions, and the forward roadmap. **Read it before starting; update it after
-   finishing** (dated entry in Recent Updates, link the PR/issue, flip roadmap
-   items 📋 → ✅).
+   finishing** (dated entry in Recent Updates, link the PR/issue, move the row
+   from "Next up" to "Shipped"). It's kept deliberately short — history beyond
+   its rolling Recent Updates window lives in `git log` and the as-built docs.
 2. **A small set of as-built docs** in `docs/` for areas with real depth. The
    ones that matter:
    - [`docs/NVIS_INTEGRATION.md`](docs/NVIS_INTEGRATION.md) — vegetation/fuel data
@@ -84,16 +85,17 @@ drift — see `master_plan.md` Vision principle 4.
 
 ## How to work here
 
-- **Stack:** React 18 + Vite + TypeScript (`/webapp`); Azure Functions + Node 22
-  + TypeScript (`/api`); Azure Table Storage; Mapbox GL JS; Azure Static Web Apps.
-- **Before a PR:** `npm run lint`, `npm test`, and `npm run build` must pass in the
-  package you touched. TypeScript strict; avoid `any` without justification.
+- **Stack:** React 18 + Vite + TS (`/webapp`) · Azure Functions + Node 22 + TS
+  (`/api`) · Azure Table Storage · Mapbox GL JS · Azure Static Web Apps.
+  Package-specific build/test commands and gotchas: `webapp/CLAUDE.md`,
+  `api/CLAUDE.md` — read the one for the package you're touching.
 - **Branches:** work off `main` via a feature branch; no direct commits to `main`.
 - **Data honesty:** any estimated/fallback/mock value must stay flagged
   (`estimated`, `usedFallbackData`, `usedMockElevation`) so the UI can warn — this
   is a safety property, not a nicety.
 - **Secrets:** none in code; use environment variables. External data (NVIS, NSW
   vegetation) is public but requires attribution.
+- TypeScript strict throughout; avoid `any` without justification.
 
 ## Guardrails
 
