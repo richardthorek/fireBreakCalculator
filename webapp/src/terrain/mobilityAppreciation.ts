@@ -36,7 +36,7 @@ import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
-import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker } from './mobilityWorkerClient';
+import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker } from './mobilityWorkerClient';
 import { MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID, DEFAULT_MOVEMENT_SIM_SEED } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
 import {
@@ -53,6 +53,7 @@ import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
 import { KeyTerrainResult, generateKeyTerrainCandidates } from './keyTerrain';
+import { ObservationResult, buildObservationResult } from './viewshed';
 import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
 import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
@@ -63,6 +64,14 @@ import {
  *  every existing caller (`mobilityGisExport.ts`, `mobilityAssistantApi.ts`)
  *  keeps working from the same import path. */
 export { carriesWaterSignal };
+
+/** Hard cap on painted observer hexes actually traced (OCOKA 6) — each is a
+ *  full grid-wide viewshed (`viewshed.ts`'s own header: MUST run in the
+ *  worker, CPU-bound). A user painting a long ridge line of dabs must not
+ *  turn into dozens of full re-traces in a single run; matches the same
+ *  "protect the run from an unbounded input" discipline
+ *  `keyTerrain.ts`'s `MAX_CANDIDATES_EVALUATED` already uses. */
+const MAX_OBSERVERS_EVALUATED = 8;
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -169,6 +178,16 @@ export interface MobilityAppreciationResult {
    *  existed but nominated zero candidates (an honest, if unlikely, empty
    *  field). See `terrain/keyTerrain.ts`. */
   keyTerrain: KeyTerrainResult | null;
+  /** OCOKA 6 (docs/ROUTE_INTELLIGENCE.md §47/§8) — real line-of-sight from
+   *  every painted OBSERVER hex, screened (vegetation-canopy-aware) and
+   *  bare-earth surfaces both computed. Null whenever no observer was
+   *  painted for this run (the ordinary case — Observation is optional,
+   *  additional analysis, not gated on path the way Obstacles/Avenues/Key
+   *  terrain are) — see `oakoc.ts`'s `OcokaObservationFactor` for how this
+   *  becomes the real Observation and fields of fire factor.
+   *  `fieldsOfFireAssessed` stays `false` regardless: fields of fire needs a
+   *  user-stated effective range, which this stage does not yet collect. */
+  observation: ObservationResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
    *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
@@ -190,7 +209,7 @@ export interface MobilityAppreciationResult {
  *  reports, so a bar and a label can be driven from one clock without drifting
  *  apart. */
 export interface MobilityStage {
-  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'keyTerrain' | 'done';
+  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'keyTerrain' | 'observation' | 'done';
   label: string;
   fraction: number;
 }
@@ -285,6 +304,13 @@ export interface MobilityAppreciationOptions {
    *  "user-adjustable" per the owner's own framing — this is the plumbing
    *  for that control; no UI is wired to it yet. */
   corridorBudgetAlpha?: number;
+  /** Painted OBSERVER area (OCOKA 6, docs/ROUTE_INTELLIGENCE.md §47/§8) —
+   *  optional. Each painted hex becomes its own candidate observation post;
+   *  see `viewshed.ts` for what gets computed from it and `oakoc.ts` for how
+   *  it becomes the real Observation and fields of fire factor. Absent or
+   *  empty is the ordinary case (most runs paint no observer at all), not an
+   *  error — Observation simply stays 'not-assessed' for that run. */
+  observerPaint?: PaintedArea;
 }
 
 export async function runMobilityAppreciation(
@@ -302,6 +328,7 @@ export async function runMobilityAppreciation(
     roadSpeedOverrides,
     fidelity = DEFAULT_MOBILITY_FIDELITY,
     corridorBudgetAlpha,
+    observerPaint,
   } = options;
   // Progress across this run is assembled from several sources that don't
   // know about each other — a retry's own sampling pass, the worker's search
@@ -380,7 +407,7 @@ export async function runMobilityAppreciation(
   // Lake-George-shaped run pays for more, and only for the new ground.
   let samplingAnnounced = false;
   const lazy = await runLazyMobilitySearch(origin, objective, {
-    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha,
+    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha, observerPaint,
     onProgress: f => {
       onProgress(f * 0.55);
       if (f > 0.02 && !samplingAnnounced) {
@@ -563,6 +590,7 @@ export async function runMobilityAppreciation(
     chokepoints: [],
     barrier: null,
     roadNetworkBarrier: null,
+    observation: null,
     keyTerrain: null,
     cells: grid.cells,
     originKeys: grid.originKeys,
@@ -584,6 +612,7 @@ export async function runMobilityAppreciation(
   let restrictionPlan: RestrictionPlan | null = null;
   let restrictedCorridorField: CorridorField | null = null;
   let keyTerrain: KeyTerrainResult | null = null;
+  let observation: ObservationResult | null = null;
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
@@ -832,6 +861,33 @@ export async function runMobilityAppreciation(
     }
   }
 
+  // Observation and fields of fire (OCOKA 6, docs/ROUTE_INTELLIGENCE.md
+  // §47/§8) — deliberately OUTSIDE the `if (path)` block above: unlike
+  // Obstacles/Avenues/Key terrain, viewshed is a standalone geometric
+  // computation over the sampled grid and never depended on origin
+  // reaching objective at all. Gated only on whether the user painted an
+  // observer — the ordinary case is nobody did, and that is simply
+  // "nothing to compute", not a failure (see `ObservationResult`'s own
+  // null-when-no-observer convention downstream in `oakoc.ts`).
+  if (grid.observerKeys.length > 0) {
+    // Hard cap, same "protect the run from an unbounded input" discipline
+    // `keyTerrain.ts`'s MAX_CANDIDATES_EVALUATED already uses — each
+    // observer is a full grid-wide trace (viewshed.ts's own header), so a
+    // user painting a long ridge line of dabs must not turn into dozens of
+    // full re-traces in one run.
+    const observerKeys = grid.observerKeys.slice(0, MAX_OBSERVERS_EVALUATED);
+    onStage?.({ key: 'observation', label: `Tracing line of sight from ${observerKeys.length} observer(s)`, fraction: 0.99 });
+    onLog?.(`TRACING LINE OF SIGHT FROM ${observerKeys.length} OBSERVER(S)…`);
+    const observers = await runViewshedInWorker(grid.cells, grid.hexSize, observerKeys);
+    if (signal?.aborted) return null;
+    observation = buildObservationResult(observers, optimiserCorridorField);
+    if (observation.corridorCoverageFraction !== null) {
+      onLog?.(`OBSERVATION — ${Math.round(observation.corridorCoverageFraction * 100)}% OF THE HEADLINE CORRIDOR(S) SEEN BY AT LEAST ONE OBSERVER`);
+    } else {
+      onLog?.(`OBSERVATION — ${observation.screenedUnionKeys.size} CELL(S) SEEN BY AT LEAST ONE OBSERVER`);
+    }
+  }
+
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${severelyRestrictedCount} SEVERELY RESTRICTED · ${restrictedCount} RESTRICTED`);
   onProgress(1);
   onStage?.({ key: 'done', label: 'Appreciation complete', fraction: 1 });
@@ -865,6 +921,7 @@ export async function runMobilityAppreciation(
     barrier,
     roadNetworkBarrier,
     keyTerrain,
+    observation,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,

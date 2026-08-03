@@ -39,13 +39,21 @@
  *     same as every other factor here. See `OcokaKeyTerrainFactor` below for
  *     the two-reason-for-null subtlety this factor carries that
  *     Obstacles/Avenues don't.
- *   - **Observation & fields of fire, Cover & concealment** are the remaining
- *     genuine gaps (§47.1) — OCOKA 6/7 respectively. They ship here as
- *     explicit `'not-assessed'` placeholders, not omitted, so a reader of the
- *     five-factor product sees all five factors named even where two are
- *     honestly empty. `fieldsOfFireAssessed`/`coverAssessed` are the exact
- *     machine-readable properties §47.2 requires once those factors exist —
- *     shipped `false` now costs nothing and means OCOKA 6/7 have nothing left
+ *   - **Observation** (OCOKA 6, docs §47.1) is now real: `terrain/viewshed.ts`
+ *     traces real line-of-sight from every painted observer hex. Its
+ *     `state` gate is deliberately DIFFERENT from every other factor here —
+ *     not `result.path`, but simply whether an observer was painted at all
+ *     (viewshed never depended on origin reaching objective). Fields of fire
+ *     — a weapon/sensor-range-bound relevance question layered on top of raw
+ *     visibility — remains the one genuine gap within this factor:
+ *     `fieldsOfFireAssessed` stays `false` until a future stage collects a
+ *     user-stated effective range.
+ *   - **Cover & concealment** is the remaining genuine gap (§47.1) — OCOKA 7.
+ *     It ships here as an explicit `'not-assessed'` placeholder, not omitted,
+ *     so a reader of the five-factor product sees all five factors named
+ *     even where one is honestly empty. `coverAssessed` is the exact
+ *     machine-readable property §47.2 requires once that factor exists —
+ *     shipped `false` now costs nothing and means OCOKA 7 has nothing left
  *     to retrofit into export/briefing payloads later.
  *
  * `'not-assessed'` IS A FIRST-CLASS STATE, distinct from "assessed, found
@@ -61,6 +69,9 @@
  * `path` non-null — for key terrain specifically, a path existed but the
  * chokepoint/min-cut/corridor-bottleneck machinery nominated zero candidates
  * to score, a genuinely rare but honest case over very open terrain).
+ * Observation is the one factor that does NOT use this gate — see
+ * `OcokaObservationFactor`'s own doc comment for why its `state` is keyed on
+ * whether an observer was painted, not on `path`.
  */
 
 import { MobilityAppreciationResult } from './mobilityAppreciation';
@@ -69,6 +80,7 @@ import { MinCutResult, RoadMinCutResult } from './minCutBarrier';
 import { RestrictionPlan } from './restrictionPlanner';
 import { ChokepointCell } from './corridorAnalysis';
 import { KeyTerrainResult } from './keyTerrain';
+import { ObservationResult } from './viewshed';
 
 export type OcokaAssessmentState = 'assessed' | 'not-assessed';
 
@@ -134,11 +146,28 @@ export interface OcokaKeyTerrainFactor {
   result: KeyTerrainResult | null;
 }
 
-/** OCOKA 6 (docs §47.1/§47.2) — needs `viewshed.ts`, not yet built.
- *  `fieldsOfFireAssessed` is the exact machine-readable flag §47.2 requires
- *  once ranges are user-stated; always `false` until OCOKA 6 ships. */
+/**
+ * OCOKA 6 (docs §47.1/§47.2) — real line-of-sight from painted observers
+ * (`terrain/viewshed.ts`). UNLIKE Obstacles/Avenues/Key terrain, this
+ * factor's `state` gate is NOT `result.path` — a viewshed never depended on
+ * origin reaching objective, it is a standalone geometric trace from
+ * whichever hexes were painted as observers. `state === 'not-assessed'`
+ * here means "no observer was painted this run" — the ordinary case, since
+ * Observation is optional additional analysis most runs don't add — never
+ * "objective unreachable". `result` is only ever null when `state` is
+ * `'not-assessed'`: no two-reason-for-null subtlety the way Key terrain has
+ * (`OcokaKeyTerrainFactor`'s own comment), because viewshed has no separate
+ * worker-wiring staging gap left to close.
+ *
+ * `fieldsOfFireAssessed` stays permanently `false` regardless of `state`:
+ * fields of fire is a real, narrower, weapon/sensor-range-bound question
+ * (`viewshed.ts`'s own header, point 2) this stage does not yet collect a
+ * user-stated range for — a genuine remaining gap, tracked separately from
+ * whether Observation itself ran this run.
+ */
 export interface OcokaObservationFactor {
-  state: 'not-assessed';
+  state: OcokaAssessmentState;
+  result: ObservationResult | null;
   fieldsOfFireAssessed: false;
   note: string;
 }
@@ -199,11 +228,16 @@ export function buildOcokaAppreciation(result: MobilityAppreciationResult): Ocok
       result: result.keyTerrain,
     },
     observationAndFieldsOfFire: {
-      state: 'not-assessed',
+      state: result.observation !== null ? 'assessed' : 'not-assessed',
+      result: result.observation,
       fieldsOfFireAssessed: false,
-      note: 'Observation and fields of fire are not yet built (OCOKA 6) — needs a line-of-sight ' +
-        'model over the sampled grid. Fields of fire will only ever be computed for a ' +
-        'user-stated effective range; a weapon or sensor is never inferred.',
+      note: result.observation !== null
+        ? 'Fields of fire are not yet computed: that needs a user-stated effective range, which ' +
+          'this stage does not yet collect. A weapon or sensor is never inferred.'
+        : 'No observer was painted for this run — Observation is optional additional analysis, ' +
+          'not gated on the origin/objective search. Paint an observer hex to see real line of ' +
+          'sight from it. Fields of fire will only ever be computed for a user-stated effective ' +
+          'range even once painted; a weapon or sensor is never inferred.',
     },
     coverAndConcealment: {
       state: 'not-assessed',

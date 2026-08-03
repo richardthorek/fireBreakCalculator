@@ -39,15 +39,26 @@
  * reproduces the exact fabrication this repo's data-honesty rule exists to
  * prevent.
  *
- * Observation / Cover & concealment are a DIFFERENT kind of not-assessed:
- * not a property of this particular run but of the build (OCOKA 6/7 are not
- * built yet, full stop, for every run). Those two get a visually distinct
- * treatment — a dashed "NOT YET ASSESSED" card — so a reader never mistakes
- * "this feature doesn't exist yet" for either "checked, found nothing" or
- * "this run's objective was unreachable". The badge deliberately does not
- * reuse `DataConfidenceBadge`'s measured/published/estimated/generic-fallback
+ * Cover & concealment is a DIFFERENT kind of not-assessed: not a property of
+ * this particular run but of the build (OCOKA 7 is not built yet, full stop,
+ * for every run). It gets a visually distinct treatment — a dashed
+ * "NOT YET ASSESSED" card — so a reader never mistakes "this feature
+ * doesn't exist yet" for "checked, found nothing" or "this run's objective
+ * was unreachable". The badge deliberately does not reuse
+ * `DataConfidenceBadge`'s measured/published/estimated/generic-fallback
  * tiers: not-assessed isn't a fifth, lower confidence tier, it is "no
  * analysis ran", a different claim entirely.
+ *
+ * Observation (OCOKA 6) used to be in that same "not built" category but is
+ * now real (`terrain/viewshed.ts`) — it renders through its own
+ * `mobility-caveat`-styled branch below instead, on a gate keyed on whether
+ * an observer was painted THIS run (`OcokaObservationFactor`'s own doc
+ * comment in `oakoc.ts`), not on the build existing. The one thing that
+ * NEVER goes away, real result or not: the bare-earth-DEM-optimism caveat
+ * (`viewshed.ts`'s own header, point 1) — a screened viewshed is still
+ * built from one elevation sample per hex centre, so every sight line stays
+ * systematically optimistic regardless of how real the rest of the
+ * computation is.
  */
 
 import React, { useMemo } from 'react';
@@ -186,10 +197,42 @@ export const OakocPanel: React.FC<OakocPanelProps> = ({ result }) => {
     <div className="tac-panel mobility-panel">
       <div className="tac-label">OCOKA — FIVE-FACTOR TERRAIN APPRECIATION</div>
 
-      {/* --- O: Observation and fields of fire (OCOKA 6, always not-assessed) --- */}
+      {/* --- O: Observation and fields of fire (OCOKA 6) --- */}
       <div className="tac-panel mobility-section">
         <div className="tac-label">O — Observation and fields of fire</div>
-        <NotAssessedCard note={oakoc.observationAndFieldsOfFire.note} />
+        {oakoc.observationAndFieldsOfFire.state === 'not-assessed' ? (
+          <div className="mobility-caveat tac-mono">
+            NO OBSERVER PAINTED — OBSERVATION IS OPTIONAL, ADDITIONAL ANALYSIS
+          </div>
+        ) : (
+          <div className="mobility-result-stats tac-mono">
+            <div>{oakoc.observationAndFieldsOfFire.result!.observers.length} OBSERVER(S)</div>
+            <div>{oakoc.observationAndFieldsOfFire.result!.screenedUnionKeys.size} CELL(S) SEEN (SCREENED)</div>
+            <div>{oakoc.observationAndFieldsOfFire.result!.bareEarthUnionKeys.size} CELL(S) SEEN (BARE EARTH)</div>
+            {oakoc.observationAndFieldsOfFire.result!.corridorCoverageFraction !== null && (
+              <div>
+                {Math.round(oakoc.observationAndFieldsOfFire.result!.corridorCoverageFraction! * 100)}% OF THE
+                HEADLINE CORRIDOR(S) SEEN BY AT LEAST ONE OBSERVER
+              </div>
+            )}
+          </div>
+        )}
+        {/* fieldsOfFireAssessed stays false regardless of state — a separate,
+         *  real remaining gap (see oakoc.ts's own comment), so this reads the
+         *  computed note rather than assuming "assessed" means fields of fire
+         *  are covered too. */}
+        <p className="tac-hint">{oakoc.observationAndFieldsOfFire.note}</p>
+        {/* Bare-earth-DEM optimism caveat — ALWAYS shown, real result or not,
+         *  same "'not-assessed' must never look like more confidence than
+         *  the assessed case actually earned, and the assessed case must
+         *  never look more confident than it actually is either" discipline.
+         *  Screened already accounts for vegetation canopy; it does not, and
+         *  cannot, account for buildings, walls or other structures. */}
+        <p className="tac-hint">
+          Elevation here is a bare-earth DEM, one sample per hex centre — every sight line is
+          systematically optimistic (root CLAUDE.md). The screened surface already accounts for
+          vegetation canopy; it does not account for buildings, walls or other structures.
+        </p>
       </div>
 
       {/* --- C: Cover and concealment (OCOKA 7, always not-assessed) --- */}

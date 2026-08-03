@@ -5,10 +5,12 @@
  * and Avenues of approach, keyed off `result.path` (the exact condition
  * `mobilityAppreciation.ts` gates its own corridor/chokepoint/min-cut block
  * on) — that Key terrain (OCOKA 4) rides the SAME gate as Obstacles/Avenues
- * (unlike Observation/Cover & concealment, which stay permanently
- * `'not-assessed'` — OCOKA 6/7 aren't built yet) — and that Key terrain's
- * `result === null` under `state === 'assessed'` reads as its own distinct,
- * honest outcome, never conflated with the not-assessed gate above it.
+ * (unlike Cover & concealment, which stays permanently `'not-assessed'` —
+ * OCOKA 7 isn't built yet, and unlike Observation (OCOKA 6), which uses ITS
+ * OWN independent gate keyed on `result.observation`, not `path`) — and that
+ * Key terrain's `result === null` under `state === 'assessed'` reads as its
+ * own distinct, honest outcome, never conflated with the not-assessed gate
+ * above it.
  *
  * Plain node:assert. Run: npx tsx webapp/tests/oakocAssembly.test.ts
  */
@@ -65,6 +67,7 @@ function baseResult(overrides: Partial<MobilityAppreciationResult>): MobilityApp
     barrier: null,
     roadNetworkBarrier: null,
     keyTerrain: null,
+    observation: null,
     cells: [],
     originKeys: [],
     objectiveKeys: [],
@@ -121,15 +124,34 @@ test('re-presents existing products without altering them', () => {
   assert.strictEqual(oakoc.obstacles.reinforcing.plan, restrictionPlan);
 });
 
-test('Observation / Cover & concealment are always not-assessed regardless of path, with their honesty flags', () => {
+test('Cover & concealment is always not-assessed regardless of path (OCOKA 7 not built), with its honesty flag', () => {
   const reachable = buildOcokaAppreciation(baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }));
   const unreachable = buildOcokaAppreciation(baseResult({ path: null }));
   for (const oakoc of [reachable, unreachable]) {
-    assert.strictEqual(oakoc.observationAndFieldsOfFire.state, 'not-assessed');
-    assert.strictEqual(oakoc.observationAndFieldsOfFire.fieldsOfFireAssessed, false);
     assert.strictEqual(oakoc.coverAndConcealment.state, 'not-assessed');
     assert.strictEqual(oakoc.coverAndConcealment.coverAssessed, false);
   }
+});
+
+test('Observation uses its OWN gate (result.observation), independent of path — not-assessed either way when no observer was painted', () => {
+  const reachableNoObserver = buildOcokaAppreciation(baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }));
+  const unreachableNoObserver = buildOcokaAppreciation(baseResult({ path: null }));
+  for (const oakoc of [reachableNoObserver, unreachableNoObserver]) {
+    assert.strictEqual(oakoc.observationAndFieldsOfFire.state, 'not-assessed');
+    assert.strictEqual(oakoc.observationAndFieldsOfFire.result, null);
+    assert.strictEqual(oakoc.observationAndFieldsOfFire.fieldsOfFireAssessed, false);
+  }
+});
+
+test('Observation is assessed with an unreachable objective, as long as an observer was painted — proves the gate is independent of path', () => {
+  const observation = {
+    observers: [], screenedUnionKeys: new Set<string>(), bareEarthUnionKeys: new Set<string>(),
+    corridorCoverageFraction: null,
+  };
+  const oakoc = buildOcokaAppreciation(baseResult({ path: null, observation }));
+  assert.strictEqual(oakoc.observationAndFieldsOfFire.state, 'assessed');
+  assert.strictEqual(oakoc.observationAndFieldsOfFire.result, observation);
+  assert.strictEqual(oakoc.observationAndFieldsOfFire.fieldsOfFireAssessed, false);
 });
 
 test('Key terrain re-presents a real KeyTerrainResult verbatim, under the assessed state', () => {

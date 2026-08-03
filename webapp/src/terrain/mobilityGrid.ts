@@ -143,6 +143,13 @@ export interface MobilityGridResult {
   /** Cell keys whose centre falls inside the painted objective area — the
    *  target set `extractPath` picks the cheapest-reached cell from. */
   objectiveKeys: string[];
+  /** Cell keys whose centre falls inside the painted OBSERVER area (OCOKA 6,
+   *  docs/ROUTE_INTELLIGENCE.md §47/§8) — one per painted hex, each treated
+   *  as its own individual observation post for `viewshed.ts`. Unlike
+   *  `originKeys`/`objectiveKeys`, EMPTY IS A LEGITIMATE STATE with no
+   *  nearest-cell fallback: no observer painted is simply "no observers this
+   *  run", not an error a fallback needs to paper over. */
+  observerKeys: string[];
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
   /** True when EITHER hydrology source (OSM waterway/water-body geometry, DEA
@@ -736,6 +743,13 @@ export async function buildMobilityGrid(
     signal?: AbortSignal;
     onProgress?: (fraction: number) => void;
     boundsPadFactor?: number;
+    /** Painted OBSERVER area (OCOKA 6) — optional, and does NOT affect
+     *  bounds/cell-budget/hex-size the way origin/objective do (an observer
+     *  can sit anywhere already inside the box those two determine; it never
+     *  grows the search area). Resolved the SAME real area-overlap way as
+     *  origin/objective, not a coarser point-snap, so a multi-hex brush dab
+     *  becomes one candidate observation post per hex it covers. */
+    observerPaint?: PaintedArea;
     /** Bypasses `computePaddedBounds` entirely when supplied — the targeted-
      *  retry path (`mobilityAppreciation.ts`'s `growBoundsTowardFrontier`):
      *  grow the box specifically toward whichever edge the reachable
@@ -754,7 +768,7 @@ export async function buildMobilityGrid(
 ): Promise<MobilityGridResult | null> {
   const {
     signal, onProgress, boundsPadFactor = 0.2, explicitBounds, fidelity = DEFAULT_MOBILITY_FIDELITY,
-    minDetourPadM: detourPadM = 0,
+    minDetourPadM: detourPadM = 0, observerPaint,
   } = options;
 
   const originBounds = paintedAreaBounds(origin);
@@ -839,6 +853,13 @@ export async function buildMobilityGrid(
   const objectiveGeom = resolvePaintedAreaGeometry(objective);
   const originKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], originGeom)).map(c => c.key);
   const objectiveKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], objectiveGeom)).map(c => c.key);
+  // No nearest-cell fallback here (unlike origin/objective) — an empty
+  // observerPaint, or none at all, is the ordinary "no observers this run"
+  // case, not a degenerate seed set that needs papering over.
+  const observerGeom = observerPaint ? resolvePaintedAreaGeometry(observerPaint) : null;
+  const observerKeys = observerGeom
+    ? cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], observerGeom)).map(c => c.key)
+    : [];
 
   onProgress?.(0.7);
 
@@ -854,6 +875,7 @@ export async function buildMobilityGrid(
       : [nearestCellKey(cells, { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 })],
     objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys
       : [nearestCellKey(cells, { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 })],
+    observerKeys,
     usedEstimatedData,
     infrastructureAvailable,
     hydrologyAvailable,
