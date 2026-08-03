@@ -78,14 +78,11 @@
  * whether an observer was painted, not on `path`.
  */
 
+import {
+  CorridorField, MinCutResult, RoadMinCutResult, RestrictionPlan, ChokepointCell, KeyTerrainResult,
+  ObservationResult, ConcealmentResult,
+} from '@firebreak/terrain';
 import { MobilityAppreciationResult } from './mobilityAppreciation';
-import { CorridorField } from './corridorField';
-import { MinCutResult, RoadMinCutResult } from './minCutBarrier';
-import { RestrictionPlan } from './restrictionPlanner';
-import { ChokepointCell } from './corridorAnalysis';
-import { KeyTerrainResult } from './keyTerrain';
-import { ObservationResult } from './viewshed';
-import { ConcealmentResult } from './concealment';
 
 export type OcokaAssessmentState = 'assessed' | 'not-assessed';
 

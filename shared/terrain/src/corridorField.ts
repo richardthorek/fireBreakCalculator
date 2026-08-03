@@ -47,16 +47,16 @@
  * delay-ledger's per-measure seconds.
  */
 
-import { LatLng } from '../utils/chainage';
+import { LatLng } from './chainage';
 import {
   MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions, toMobilitySample,
   carriesWaterSignal,
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors } from '../utils/hexGrid';
+import { LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors } from './hexGrid';
 import { DissimilarRoute, findKDissimilarPaths } from './corridorAnalysis';
 import { edgeMobilityCost, TrafficabilityClass } from './mobilityCost';
-import { calculateDistance } from '../utils/slopeCalculation';
+import { calculateDistance } from './geo';
 import { MobilityClass } from './mobilityClass';
 
 /** How many distinct routes to derive before forming corridors. A handful of

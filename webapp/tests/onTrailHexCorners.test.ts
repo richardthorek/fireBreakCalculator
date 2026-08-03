@@ -14,10 +14,10 @@
  * Plain node:assert. Run: npx tsx webapp/tests/onTrailHexCorners.test.ts
  */
 import * as assert from 'node:assert';
-import { hexCorners, makeProjection, toLatLng, LocalPoint } from '../src/utils/hexGrid';
+import { hexCorners, makeProjection, toLatLng, LocalPoint } from '@firebreak/terrain';
 import { sampleOnTrail } from '../src/terrain/mobilityGrid';
 import { InfrastructureTrail } from '../src/utils/infrastructureService';
-import { LatLng } from '../src/utils/chainage';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

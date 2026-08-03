@@ -26,7 +26,7 @@
  */
 
 import { logger } from './logger';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import { tilesCovering, tileBounds, tileUrl, legendUrl, NVIS_TILE_DEG, MAX_NVIS_TILES } from './vegetationTiles';
 
 const NVIS_MVG_URL =

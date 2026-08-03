@@ -29,8 +29,8 @@
  * doubles as the on-map "scanning" visualization.
  */
 
-import { VegetationType } from '../config/classification';
-import { LatLng } from './chainage';
+import { VegetationType } from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 import { calculateDistance, calculateSlope, sampleElevationsBatch } from './slopeCalculation';
 import { fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureTrail } from './infrastructureService';
 import { fetchStateVegetation, fetchStateVegetationArea, resolveFromCachedAreas, AreaVegetationBounds } from './stateVegetationRouter';
@@ -39,7 +39,7 @@ import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateCorridorHexes, polylineLengthLocal, LocalProjection,
   LocalPoint, AxialCoord, distanceToPolylineLocal,
-} from './hexGrid';
+} from '@firebreak/terrain';
 import { logger } from './logger';
 
 export type { LatLng };

@@ -32,7 +32,7 @@
  */
 
 import { MobilityGridCell } from './accumulatedCost';
-import { AxialCoord, axialToLocal, hexKey, hexLine } from '../utils/hexGrid';
+import { AxialCoord, axialToLocal, hexKey, hexLine } from './hexGrid';
 import { lookupScreeningHeight } from './dataLayers/structureTable';
 import { CorridorField } from './corridorField';
 

@@ -16,9 +16,9 @@
  */
 import * as assert from 'node:assert';
 import { findVehicleRoadRoute } from '../src/terrain/roadRouteSearch';
-import { singleDabArea } from '../src/terrain/paintedArea';
+import { singleDabArea } from '@firebreak/terrain';
 import { InfrastructureTrail } from '../src/utils/infrastructureService';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
+import { MOVER_PROFILES } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

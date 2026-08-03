@@ -17,7 +17,7 @@
  * must not blur), a closed ring has neither — every vertex participates
  * equally, cyclically, so the whole boundary rounds off uniformly.
  */
-import { LatLng } from './chainage';
+import { LatLng } from '@firebreak/terrain';
 
 /**
  * Smooth one closed ring (GeoJSON convention: first and last coordinates

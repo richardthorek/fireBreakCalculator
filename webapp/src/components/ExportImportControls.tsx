@@ -21,7 +21,7 @@ import {
 } from '../utils/gisExport';
 import { toGPX, downloadFile } from '../utils/planSharing';
 import { parseGisFile, validateImportSize, ImportedFeatures } from '../utils/gisImport';
-import { LatLng } from '../utils/chainage';
+import { LatLng } from '@firebreak/terrain';
 import { logger } from '../utils/logger';
 
 interface ExportImportControlsProps {

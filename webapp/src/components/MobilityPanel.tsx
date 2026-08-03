@@ -15,9 +15,9 @@
 
 import React, { useMemo } from 'react';
 import { Footprints, Car, Truck, Tractor } from 'lucide-react';
-import { MOVER_PROFILES, MoverProfile, MoverFamily } from '../terrain/moverProfiles';
+import { MOVER_PROFILES, MoverProfile, MoverFamily } from '@firebreak/terrain';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
-import { PaintedArea, BrushSize } from '../terrain/paintedArea';
+import { PaintedArea, BrushSize } from '@firebreak/terrain';
 import { TacticalCoordinateReadout } from './TacticalCoordinateReadout';
 import { AssessmentLog } from './AssessmentLog';
 import { DataConfidenceBadge, ConfidenceTier } from './DataConfidenceBadge';
@@ -25,11 +25,11 @@ import { MobilityExportControls } from './MobilityExportControls';
 import { ExportMobilityInput } from '../utils/mobilityGisExport';
 import { MobilityAssistantCard } from './MobilityAssistantCard';
 import { buildMobilityAssistantPayload } from '../utils/mobilityAssistantApi';
-import { COUNTER_MEASURES } from '../terrain/counterMeasures';
-import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
-import { BEHAVIOUR_SPREADS, MovementEnsembleResult } from '../terrain/movementSimulation';
-import { CorridorField } from '../terrain/corridorField';
-import { RoadSpeedOverrides } from '../terrain/roadSpeedModel';
+import { COUNTER_MEASURES } from '@firebreak/terrain';
+import { CounterMeasurePlacement, DelayLedgerEntry } from '@firebreak/terrain';
+import { BEHAVIOUR_SPREADS, MovementEnsembleResult } from '@firebreak/terrain';
+import { CorridorField } from '@firebreak/terrain';
+import { RoadSpeedOverrides } from '@firebreak/terrain';
 import { RoadSpeedOverridePanel } from './RoadSpeedOverridePanel';
 import { MobilityFidelity } from '../terrain/mobilityGrid';
 

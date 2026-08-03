@@ -11,7 +11,7 @@
  * Plain node:assert. Run: npx tsx webapp/tests/lazyTilePartition.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint } from '../src/utils/hexGrid';
+import { generateBoxHexes, hexKey, LocalPoint } from '@firebreak/terrain';
 import { tileIndexOfLocal, tilesCoveringBox, hexesForTile, tileKeyOf } from '../src/terrain/mobilityLazyGrid';
 
 let passed = 0;

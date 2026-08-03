@@ -10,10 +10,10 @@
  * Plain node:assert. Run: npx tsx webapp/tests/concealment.test.ts
  */
 import * as assert from 'node:assert';
-import { buildConcealmentResult } from '../src/terrain/concealment';
-import { ObservationResult } from '../src/terrain/viewshed';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { VegetationType } from '../src/config/classification';
+import { buildConcealmentResult } from '@firebreak/terrain';
+import { ObservationResult } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { VegetationType } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

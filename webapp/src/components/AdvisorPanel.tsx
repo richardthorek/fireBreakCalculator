@@ -12,7 +12,7 @@ import React from 'react';
 import { AlertTriangle, AlertOctagon, Lightbulb, Info, Crosshair, Route, Check, X, LoaderCircle } from 'lucide-react';
 import { PlanAssessment, PlanInsight } from '../utils/planInsights';
 import { OptimizedRouteResult } from '../utils/routeOptimizer';
-import { formatChainage } from '../utils/chainage';
+import { formatChainage } from '@firebreak/terrain';
 
 export type OptimizerStatus = 'idle' | 'running' | 'done' | 'error';
 

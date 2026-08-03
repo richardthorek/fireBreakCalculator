@@ -59,22 +59,12 @@
 
 import {
   runAccumulatedCostSearch, assembleMobilityResults, extractPath, MobilityGridCell, AccumulatedCostSearchResult,
-} from './accumulatedCost';
-import { LocalProjection } from '../utils/hexGrid';
-import { getMoverProfile } from './moverProfiles';
-import { simulateMovementEnsemble, MovementEnsembleResult } from './movementSimulation';
-import { planRestrictions, RestrictionPlan } from './restrictionPlanner';
-import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
-import { RoadGraph } from './roadGraph';
-import { CorridorField } from './corridorField';
-import { scoreKeyTerrainCandidates, buildKeyTerrainResult, KeyTerrainCandidate, KeyTerrainResult } from './keyTerrain';
-import { computeViewshedForObserver, ObserverViewshed, ViewshedOptions } from './viewshed';
-
-export interface SimPathNode {
-  lat: number;
-  lng: number;
-  cumulativeSeconds: number;
-}
+  LocalProjection, getMoverProfile, simulateMovementEnsemble, MovementEnsembleResult, planRestrictions,
+  RestrictionPlan, setRoadSpeedOverrides, RoadSpeedOverrides, RoadGraph, CorridorField, scoreKeyTerrainCandidates,
+  buildKeyTerrainResult, KeyTerrainCandidate, KeyTerrainResult, computeViewshedForObserver, ObserverViewshed,
+  ViewshedOptions, SimPathNode,
+} from '@firebreak/terrain';
+export type { SimPathNode };
 
 export interface MobilitySearchRequest {
   kind?: 'search';

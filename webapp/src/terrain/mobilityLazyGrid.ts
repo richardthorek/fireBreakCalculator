@@ -40,27 +40,19 @@
  * assume about it.
  */
 
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
 import {
-  makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, hexCorners, hexNeighbors, axialToLocal,
-  generateBoxHexes, LocalProjection, LocalPoint, AxialCoord,
-} from '../utils/hexGrid';
+  LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, hexCorners, hexNeighbors,
+  axialToLocal, generateBoxHexes, LocalProjection, LocalPoint, AxialCoord, PaintedArea, paintedAreaBounds,
+  resolvePaintedAreaGeometry, MobilityGridCell, MobilityCellResult, AccumulatedCostSearchResult,
+  assembleMobilityResults, getMoverProfile, MoverProfile, RoadSpeedOverrides, findKDissimilarPaths, clusterRoutes,
+} from '@firebreak/terrain';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './paintedArea';
 import {
   computePaddedBounds, computeCellBudget, sampleCellsForHexes, applyCrossSlope, isPaintedAreaMember, nearestCellKey,
   minDetourPadM, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, MobilityGridResult,
 } from './mobilityGrid';
-import {
-  MobilityGridCell, MobilityCellResult, AccumulatedCostSearchResult, assembleMobilityResults,
-} from './accumulatedCost';
-import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
-import { RoadSpeedOverrides } from './roadSpeedModel';
-import { findKDissimilarPaths } from './corridorAnalysis';
-import { clusterRoutes } from './corridorField';
 
 /** Hexes per tile side — a tile is a batch of roughly `TILE_HEX_SPAN²` hexes,
  *  fetched with ONE round of area-batched network calls (docs §35 point 5:

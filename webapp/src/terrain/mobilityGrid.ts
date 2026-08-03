@@ -25,23 +25,18 @@ import type { Polygon, MultiPolygon, Feature } from 'geojson';
 import { intersect } from '@turf/intersect';
 import { area as turfArea } from '@turf/area';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
 import {
-  makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
-  LocalProjection, LocalPoint, AxialCoord,
-} from '../utils/hexGrid';
+  LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
+  LocalProjection, LocalPoint, AxialCoord, MobilityGridCell, nearestCellKey, PaintedArea, paintedAreaBounds,
+  resolvePaintedAreaGeometry, computeDemDerivatives, RoadWayTags, MoverProfile,
+} from '@firebreak/terrain';
+export { nearestCellKey };
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import {
   fetchCorridorMobilityRoads, fetchCorridorWaterways, distanceToNearestTrail, distanceToNearestWater,
   InfrastructureTrail,
 } from '../utils/infrastructureService';
-import { MobilityGridCell } from './accumulatedCost';
-import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './paintedArea';
-import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
-import { RoadWayTags } from './roadSpeedModel';
-import { MoverProfile } from './moverProfiles';
 
 // Historical fixed values (2026-07-26, "think about a larger area"), now the
 // 'standard' fidelity tier's baseline at CELL_BUDGET_REFERENCE_DISTANCE_M —
@@ -240,18 +235,6 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
  *  whatever `generateBoxHexes` happened to emit first/last — typically a
  *  corner of the bounding box, nowhere near where the user actually
  *  painted. Squared distance only (comparison, not a real length). */
-export function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
-  let bestKey = cells[0].key;
-  let bestD = Infinity;
-  for (const c of cells) {
-    const dLat = c.center.lat - point.lat;
-    const dLng = c.center.lng - point.lng;
-    const d = dLat * dLat + dLng * dLng;
-    if (d < bestD) { bestD = d; bestKey = c.key; }
-  }
-  return bestKey;
-}
-
 /**
  * Build and sample a hex grid covering `origin`, `objective` (padded so the
  * search has room either side to route around obstacles) and everything

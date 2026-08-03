@@ -8,12 +8,12 @@
  * Plain node:assert. Run: npx tsx webapp/tests/viewshed.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { VegetationType } from '../src/config/classification';
-import { computeViewshedForObserver, buildObservationResult, DEFAULT_MAX_RANGE_M } from '../src/terrain/viewshed';
-import { CorridorField, CorridorCell } from '../src/terrain/corridorField';
-import { LatLng } from '../src/utils/chainage';
+import { generateBoxHexes, hexKey, LocalPoint } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { VegetationType } from '@firebreak/terrain';
+import { computeViewshedForObserver, buildObservationResult, DEFAULT_MAX_RANGE_M } from '@firebreak/terrain';
+import { CorridorField, CorridorCell } from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

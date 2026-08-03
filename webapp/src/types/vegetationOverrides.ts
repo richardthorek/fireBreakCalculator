@@ -9,7 +9,7 @@
  * Segment-level overrides take precedence over route-level overrides.
  */
 
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 
 /**
  * Vegetation override for a specific segment of the route.

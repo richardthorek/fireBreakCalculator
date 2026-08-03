@@ -27,12 +27,12 @@
  * Plain node:assert. Run: npx tsx webapp/tests/corridorRiskAndCount.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
-import { buildCorridorField, clusterRoutes, Corridor, CorridorCell } from '../src/terrain/corridorField';
-import { findKDissimilarPaths } from '../src/terrain/corridorAnalysis';
-import { LatLng } from '../src/utils/chainage';
+import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
+import { buildCorridorField, clusterRoutes, Corridor, CorridorCell } from '@firebreak/terrain';
+import { findKDissimilarPaths } from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

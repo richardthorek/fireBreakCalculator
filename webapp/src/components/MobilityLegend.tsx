@@ -21,7 +21,7 @@
  */
 
 import React, { useState } from 'react';
-import { SEVERELY_RESTRICTED_MEANING } from '../terrain/mobilityClass';
+import { SEVERELY_RESTRICTED_MEANING } from '@firebreak/terrain';
 
 export interface MobilityLegendProps {
   /** Which layers are currently drawn — the key shows only these. */

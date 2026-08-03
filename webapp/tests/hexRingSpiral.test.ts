@@ -3,7 +3,7 @@
  * Plain node:assert. Run: npx tsx webapp/tests/hexRingSpiral.test.ts
  */
 import * as assert from 'node:assert';
-import { hexRing, hexSpiral, hexKey, AxialCoord } from '../src/utils/hexGrid';
+import { hexRing, hexSpiral, hexKey, AxialCoord } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

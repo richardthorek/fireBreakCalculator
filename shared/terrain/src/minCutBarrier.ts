@@ -45,12 +45,12 @@
  * a citable basis.
  */
 
-import { LatLng } from '../utils/chainage';
-import { hexKey, hexNeighbors } from '../utils/hexGrid';
+import { LatLng } from './chainage';
+import { hexKey, hexNeighbors } from './hexGrid';
 import { MobilityGridCell, toMobilitySample } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { edgeMobilityCost } from './mobilityCost';
-import { calculateDistance } from '../utils/slopeCalculation';
+import { calculateDistance } from './geo';
 import { RoadGraph } from './roadGraph';
 import { edgeTravelTime } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';

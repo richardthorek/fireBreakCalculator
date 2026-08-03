@@ -67,6 +67,17 @@ jobs:
           npm ci
           npm run test:unit
 
+      - name: Shared terrain package — standalone type-check
+        # @firebreak/terrain (OCOKA 2, docs/ROUTE_INTELLIGENCE.md §38) is
+        # consumed by webapp via a TS path alias, not an npm dependency (see
+        # shared/terrain/README.md), so its own build below never gates the
+        # webapp step that follows — this just catches a file in the package
+        # accidentally importing something browser/network-coupled.
+        working-directory: ./shared/terrain
+        run: |
+          npm install
+          npm run build
+
       - name: Webapp — install, unit tests, build
         working-directory: ./webapp
         env:

@@ -11,4 +11,10 @@ in the root `CLAUDE.md` — read that first.
 - **Terrain Mobility mode** (`src/terrain/*`, `src/components/Mobility*.tsx`,
   `src/components/CounterMobilityPanel.tsx`): see the root `CLAUDE.md`'s OCOKA
   rules — they apply here. One webapp-specific detail: import `MobilityClass`
-  from `terrain/mobilityClass.ts`; do not redeclare the union.
+  from `@firebreak/terrain`; do not redeclare the union.
+- **`shared/terrain` (`@firebreak/terrain`, OCOKA 2):** most pure terrain/
+  mobility algorithm modules now live in `shared/terrain/src`, not
+  `webapp/src/terrain` — consumed via a TS path alias (`tsconfig.json`
+  paths + `vite.config.ts` resolve.alias), not an npm dependency. See
+  `shared/terrain/README.md` before moving a file into or out of it, and
+  `docs/ROUTE_INTELLIGENCE.md` §38.1 for the full move/stay rationale.

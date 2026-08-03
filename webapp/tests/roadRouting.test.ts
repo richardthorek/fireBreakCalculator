@@ -3,9 +3,9 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadRouting.test.ts
  */
 import * as assert from 'node:assert';
-import { buildRoadGraph, RoadWay } from '../src/terrain/roadGraph';
-import { findRoadRoute, findKDissimilarRoadRoutes, edgeTravelTime } from '../src/terrain/roadRouting';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
+import { buildRoadGraph, RoadWay } from '@firebreak/terrain';
+import { findRoadRoute, findKDissimilarRoadRoutes, edgeTravelTime } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

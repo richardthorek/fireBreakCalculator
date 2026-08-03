@@ -23,12 +23,12 @@
  * Plain node:assert. Run: npx tsx webapp/tests/corridorClustering.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
-import { makeProjection } from '../src/utils/hexGrid';
-import { buildCorridorField } from '../src/terrain/corridorField';
-import { LatLng } from '../src/utils/chainage';
+import { generateBoxHexes, hexKey, LocalPoint } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
+import { makeProjection } from '@firebreak/terrain';
+import { buildCorridorField } from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

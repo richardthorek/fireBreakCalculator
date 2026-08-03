@@ -12,7 +12,7 @@ import { Crosshair } from 'lucide-react';
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName } from '../utils/formatters';
-import { formatChainage } from '../utils/chainage';
+import { formatChainage } from '@firebreak/terrain';
 import { buildJoinedSegments } from '../utils/segmentJoin';
 
 interface SegmentBreakdownProps {

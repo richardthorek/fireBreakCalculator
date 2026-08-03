@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — performance regression in the onTrail corner-sampling fix resolved, step 55 (live report). See Recent Updates for the dated history, including OCOKA 6/7 (steps 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — OCOKA 2 shipped, step 56: `shared/@firebreak/terrain` extracted so the same terrain/mobility algorithm code can run client- and (from OCOKA 5) server-side. See Recent Updates for the dated history, including OCOKA 6/7 (steps 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -42,10 +42,10 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | Item | Scope | Size | Depends on | Detail |
 |------|-------|------|------------|--------|
 | ~~OCOKA 1 — mobility-class vocabulary migration~~ | **Shipped — step 48.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
-| **OCOKA 2 — extract `shared/@firebreak/terrain` workspace package** | Prerequisite for any server-side execution. §38's "just call the existing modules" is optimistic — they live in a different package with a different tsconfig. Extract rather than copy; copying would make the algorithm itself a drift surface | M | OCOKA 1 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| ~~OCOKA 2 — extract `shared/@firebreak/terrain` workspace package~~ | **Shipped — step 56.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | ~~OCOKA 3 — five-factor framing over existing products~~ | **Shipped — step 49.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 | ~~OCOKA 4 — key terrain~~ | **Shipped — step 50.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
-| **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | ~~OCOKA 6 — `viewshed.ts` + Observation & fields of fire~~ | **Shipped — step 52.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.9 |
 | ~~OCOKA 7 — cover & concealment~~ | **Shipped — step 53.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.10 |
 | **OCOKA 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OCOKA 5, 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
@@ -68,10 +68,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 - ~~**OCOKA 1**~~ — **Shipped, step 48.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.
 
-- **OCOKA 2 — extract `shared/@firebreak/terrain`** (Difficulty: M)
-  - Outcome: the same terrain code runs on the client and the server, so a server-side result cannot silently diverge from a client-side one.
-  - Changes: move `terrain/*`, the sampling utils, `config/classification` into a workspace package · break the two type-only `ConfidenceTier` imports · make the seeded mover ensemble chunk-invariant (`hash(seed, moverIndex)`).
-  - Note: the ensemble seeding fix **changes today's numbers once**. Flag it as a deliberate one-time change, never silent drift. `mapboxTrails.ts` stays client-only (it reads a live GL map) — a real capability difference to record, not hide.
+- ~~**OCOKA 2**~~ — **Shipped, step 56.** See Shipped table + `ROUTE_INTELLIGENCE.md` §38.
 
 - ~~**OCOKA 3**~~ — **Shipped, step 49.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.7.
 
@@ -243,6 +240,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 53 (OCOKA 7) | Cover & concealment split, never blended — `terrain/concealment.ts` derives dead ground from OCOKA 6's own visibility union and vegetation-structure concealment from the same screening-height table; cover stays permanently, honestly not computed | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.10 |
 | 54 | Road-speed user-override confidence carried into GIS export attributes and the AI briefing payload/template, mirroring the existing hydrology pattern | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
+| 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 
 ## Recent Updates
 
@@ -251,6 +249,50 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — OCOKA 2 shipped (step 56): `shared/@firebreak/terrain`
+  extracted.** Prerequisite for OCOKA 5's server-side execution — the same
+  algorithm code now has one home instead of risking a client/server fork.
+  Moved (not copied) 22 pure-compute modules — `accumulatedCost.ts`,
+  `concealment.ts`, `corridorAnalysis.ts`, `corridorField.ts`,
+  `counterMeasures.ts`, `delayLedger.ts`, `keyTerrain.ts`,
+  `minCutBarrier.ts`, `mobilityClass.ts`, `mobilityCost.ts`,
+  `movementSimulation.ts`, `moverProfiles.ts`, `paintedArea.ts`,
+  `restrictionPlanner.ts`, `roadGraph.ts`, `roadRouting.ts`,
+  `roadSpeedModel.ts`, `viewshed.ts`, `dataLayers/demDerivatives.ts`,
+  `dataLayers/structureTable.ts`, plus `utils/chainage.ts`,
+  `utils/hexGrid.ts` and `config/classification.ts` (the "sampling
+  utils"/shared vocabulary both modes' code touches) — into
+  `shared/terrain/src`. Everything genuinely network-fetching or
+  browser-API-coupled stayed in `webapp/src/terrain` (`mobilityGrid.ts`,
+  `mobilityLazyGrid.ts`, `mobilityAppreciation.ts`, `mobilityWorker.ts`,
+  `mobilityWorkerClient.ts`, `mobilityTelemetry.ts`, `roadRouteSearch.ts`,
+  `unitSimulation.ts`) — plus `oakoc.ts`, a deliberate recorded exception:
+  it only assembles the OCOKA view-model from an already-computed
+  `MobilityAppreciationResult` for `OakocPanel.tsx`, never something a
+  server independently computes. **Deviation from the original plan, made
+  for safety:** no root npm workspace. Azure SWA's
+  `Azure/static-web-apps-deploy@v1` runs an independent Oryx remote build
+  scoped to `app_location`/`api_location` with no workspace awareness — a
+  workspace install would risk silently breaking the live deploy. Instead
+  `@firebreak/terrain` is a TS path alias (`webapp/tsconfig.json` paths +
+  `vite.config.ts` resolve.alias) straight to the package's source; see
+  `shared/terrain/README.md`. Two small pre-existing snags surfaced and were
+  fixed in the move, not introduced by it: `SimPathNode` (was in
+  `mobilityWorker.ts`) and `nearestCellKey` (was in `mobilityGrid.ts`) both
+  had pure-module callers that would've had to import from a
+  browser-coupled file, so both relocated to `accumulatedCost.ts` with the
+  originals re-exporting for their own webapp callers; `ConfidenceTier`
+  relocated out of `components/DataConfidenceBadge.tsx` (a `.tsx` file) into
+  a plain type module, which re-exports it back for webapp use. Also
+  shipped the roadmap's other OCOKA 2 requirement: the mover ensemble's
+  seeded RNG was one `mulberry32(seed)` instance shared across the whole
+  mover loop, so mover N's draws depended on how many draws movers 0..N-1
+  had already consumed — inherently un-chunkable ahead of OCOKA 8's fan-out.
+  Now each mover gets its own stream from `hash(seed, moverIndex)`
+  (splitmix32-style avalanche) — **a flagged, deliberate one-time change to
+  today's ensemble numbers**, not silent drift. Full detail:
+  `ROUTE_INTELLIGENCE.md` §38. Gates green: `npm test` (38/38 files),
+  `npm run build`, api `npm run test:unit`.
 - **2026-08-03 — Fixed a performance regression in step 51's own fix (step
   55, live report: "stuck at 20% on any reasonable sized run; very small
   areas still work").** Step 51's centre+corners `onTrail` fix was correct
@@ -388,20 +430,10 @@ history beyond this window: `git log`.
   uncertainty stated in `ROUTE_INTELLIGENCE.md` §47.0 — corroborated via
   search snippets, not a primary doctrine publication; SME review still
   worth doing before external use.
-- **2026-08-02 — OCOKA programme added to the roadmap (stages 1–9).** Owner
-  asked how the mode's accidentally-implemented military terrain framework
-  could reframe its analysis/presentation, plus a parallel-backend directive
-  with a ~10 s first-paint / ~10 s update latency contract. Audit: Obstacles
-  and Avenues of approach are largely built and unnamed; Key terrain is ~90%
-  computable from existing chokepoint/min-cut machinery; Observation and
-  Cover & concealment are the genuine gaps (ROUTE_INTELLIGENCE §9's M5).
-  Owner decisions: scale-to-zero (contract is warm-run only) and
-  backend-only execution (retires the offline Worker path — Vision
-  principle 4 amended). Blocking infra finding: SWA Free/managed functions
-  can't run Durable Functions and `/api` caps every request at 45 s — needs
-  SWA Standard + a separate Flex Consumption Function App behind a
-  `deployMobilityBackend` flag. Full detail: `ROUTE_INTELLIGENCE.md` §47.
-*(Full history for steps 0–47 — 2026-07-10 through 2026-08-02 — is in the
+*(Full history for steps 0–47 — 2026-07-10 through 2026-08-02, including the
+OCOKA programme's own kickoff (stages 1–9 scoped, owner decisions on
+scale-to-zero and backend-only execution, the SWA Standard + Flex
+Consumption Function App infra finding) — is in the
 Shipped table above, each linked as-built doc's own dated section, and
 `git log`. Pruned from this file 2026-08-03 to keep it agent-scannable; see
 [docs/README.md](docs/README.md) if you need the narrative.)*

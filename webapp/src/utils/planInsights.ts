@@ -9,7 +9,7 @@
  */
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { formatChainageRange } from './chainage';
+import { formatChainageRange } from '@firebreak/terrain';
 
 export type InsightSeverity = 'critical' | 'warning' | 'advice' | 'info';
 

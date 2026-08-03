@@ -15,7 +15,7 @@
 import * as assert from 'node:assert';
 import { smoothFreeVertices, refinePath, resamplePath } from '../src/utils/pathRefinement';
 import { InfrastructureTrail } from '../src/utils/infrastructureService';
-import { LatLng } from '../src/utils/chainage';
+import { LatLng } from '@firebreak/terrain';
 import { calculateDistance } from '../src/utils/slopeCalculation';
 
 let passed = 0;

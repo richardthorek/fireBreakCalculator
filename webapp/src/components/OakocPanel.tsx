@@ -64,8 +64,8 @@
 import React, { useMemo } from 'react';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
 import { buildOcokaAppreciation } from '../terrain/oakoc';
-import { CorridorField, Corridor } from '../terrain/corridorField';
-import { KeyTerrainCandidateSource, ScoredKeyTerrainCandidate } from '../terrain/keyTerrain';
+import { CorridorField, Corridor } from '@firebreak/terrain';
+import { KeyTerrainCandidateSource, ScoredKeyTerrainCandidate } from '@firebreak/terrain';
 
 export interface OakocPanelProps {
   result: MobilityAppreciationResult | null;

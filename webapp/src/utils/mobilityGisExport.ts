@@ -38,17 +38,17 @@
  * module's QGIS/FireMapper/Google Earth consumers.
  */
 
-import { CorridorField, Corridor } from '../terrain/corridorField';
-import { ChokepointCell } from '../terrain/corridorAnalysis';
-import { MinCutResult, RoadMinCutResult } from '../terrain/minCutBarrier';
-import { MoverProfile } from '../terrain/moverProfiles';
-import { MobilityGridCell } from '../terrain/accumulatedCost';
-import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
-import { CounterMeasure } from '../terrain/counterMeasures';
+import { CorridorField, Corridor } from '@firebreak/terrain';
+import { ChokepointCell } from '@firebreak/terrain';
+import { MinCutResult, RoadMinCutResult } from '@firebreak/terrain';
+import { MoverProfile } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { CounterMeasurePlacement, DelayLedgerEntry } from '@firebreak/terrain';
+import { CounterMeasure } from '@firebreak/terrain';
 import { carriesWaterSignal } from '../terrain/mobilityAppreciation';
-import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '../terrain/roadSpeedModel';
+import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '@firebreak/terrain';
 import { provenanceProperties, provenanceStamp, DISCLAIMER_LONG } from '../config/provenance';
-import { LatLng } from '../utils/chainage';
+import { LatLng } from '@firebreak/terrain';
 import { xmlEscape, kmlColor, kmlCoords } from './gisExport';
 
 export interface ExportMobilityInput {

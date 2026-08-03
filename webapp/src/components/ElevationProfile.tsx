@@ -9,10 +9,10 @@
 
 import React, { useMemo, useRef, useState, useCallback } from 'react';
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { classifySlope } from '../config/classification';
+import { classifySlope } from '@firebreak/terrain';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName } from '../utils/formatters';
-import { formatChainage } from '../utils/chainage';
+import { formatChainage } from '@firebreak/terrain';
 
 interface ElevationProfileProps {
   trackAnalysis: TrackAnalysis;

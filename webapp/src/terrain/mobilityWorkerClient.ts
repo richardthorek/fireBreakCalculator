@@ -9,18 +9,14 @@
  * without the caller subscribing to the worker itself.
  */
 
-import { AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell } from './accumulatedCost';
-import { LocalProjection } from '../utils/hexGrid';
+import {
+  AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell, LocalProjection, MovementEnsembleResult,
+  RestrictionPlan, RoadSpeedOverrides, RoadGraph, CorridorField, KeyTerrainCandidate, KeyTerrainResult,
+  ObserverViewshed, ViewshedOptions,
+} from '@firebreak/terrain';
 import {
   MobilityWorkerRequest, MobilityWorkerResponse, SimPathNode,
 } from './mobilityWorker';
-import { MovementEnsembleResult } from './movementSimulation';
-import { RestrictionPlan } from './restrictionPlanner';
-import { RoadSpeedOverrides } from './roadSpeedModel';
-import { RoadGraph } from './roadGraph';
-import { CorridorField } from './corridorField';
-import { KeyTerrainCandidate, KeyTerrainResult } from './keyTerrain';
-import { ObserverViewshed, ViewshedOptions } from './viewshed';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;

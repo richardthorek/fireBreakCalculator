@@ -4746,6 +4746,105 @@ at — premature before that data exists.
 | T2 | Same-algorithm Function-hosted tier for oversized-for-client, under-Function-timeout runs | Enough telemetry rows to confirm which phase actually dominates on slow devices, so T2 targets the right phase rather than moving the whole pipeline speculatively |
 | T3 | On-demand Container Apps Job tier + resumable chunked delivery | Evidence from T2 that a real (not hypothetical) tail of runs exceeds a Function's timeout/memory ceiling |
 
+### 38.1 OCOKA 2 shipped (2026-08-03): `shared/@firebreak/terrain` extracted
+
+Prerequisite for OCOKA 5's server-side execution. This section's own §38 design
+above assumed "the API can just call the existing modules" — optimistic: they
+lived in `webapp/src/terrain`, a different package with a different
+`tsconfig.json`, so a shared package had to be extracted first, or the
+algorithm itself becomes a fourth must-match drift surface alongside the
+GIS-export/AI-briefing/`MobilityJobRequest` pairs this doc already tracks.
+
+**What moved (extracted, not copied) into `shared/terrain/src/`:** every
+module that is a pure function over already-sampled data, no network I/O, no
+browser API — `accumulatedCost.ts`, `concealment.ts`, `corridorAnalysis.ts`,
+`corridorField.ts`, `counterMeasures.ts`, `delayLedger.ts`, `keyTerrain.ts`,
+`minCutBarrier.ts`, `mobilityClass.ts`, `mobilityCost.ts`,
+`movementSimulation.ts`, `moverProfiles.ts`, `paintedArea.ts`,
+`restrictionPlanner.ts`, `roadGraph.ts`, `roadRouting.ts`,
+`roadSpeedModel.ts`, `viewshed.ts`, `dataLayers/demDerivatives.ts`,
+`dataLayers/structureTable.ts` — plus the "sampling utils" and shared
+vocabulary both modes touch: `utils/chainage.ts`, `utils/hexGrid.ts`,
+`config/classification.ts`, and a new `geo.ts` holding just the pure
+`calculateDistance`/`calculateSlope` extracted out of
+`utils/slopeCalculation.ts` (which keeps its own network/Mapbox-token-coupled
+code and now imports the pure pair back).
+
+**What stayed in `webapp/src/terrain`, and why — every one a real capability
+difference to record, not hide, same principle as `mapboxTrails.ts` staying
+client-only for reading a live GL map:**
+- `mobilityGrid.ts`, `mobilityLazyGrid.ts` — orchestrate live network
+  sampling (elevation, vegetation, trails, water).
+- `mobilityAppreciation.ts` — the top-level orchestrator; calls the above
+  plus the Worker client.
+- `mobilityWorker.ts` / `mobilityWorkerClient.ts` — Web Worker `self` API /
+  Vite's `new Worker(new URL(...), {type:'module'})` asset-URL syntax.
+- `mobilityTelemetry.ts` — fire-and-forget network telemetry (§38 above).
+- `roadRouteSearch.ts` — fetches live road/waterway data.
+- `unitSimulation.ts` — depends on two of the above.
+- `oakoc.ts` — a deliberate exception in the OTHER direction: it only
+  assembles the OCOKA five-factor view model for `OakocPanel.tsx` from an
+  already-computed `MobilityAppreciationResult`. It never computes anything a
+  server would independently need to compute, so forcing that large
+  orchestrator type to move too would have bought nothing.
+
+**How webapp consumes it — deliberately not an npm workspace.** The original
+plan called for a root `package.json` with npm workspaces. Investigating the
+actual deploy path changed that: Azure Static Web Apps deploys via
+`Azure/static-web-apps-deploy@v1`, which runs an independent Oryx remote
+build scoped to `app_location: 'webapp'` / `api_location: 'api'` — it has no
+notion of a workspace root and would not know to install or build a sibling
+`shared/` package first. A workspace-hoisted `node_modules` risked silently
+breaking that live production deploy with no local repro. Instead,
+`@firebreak/terrain` is a TypeScript path alias: `webapp/tsconfig.json`'s
+`compilerOptions.paths` and `webapp/vite.config.ts`'s `resolve.alias` both
+point the specifier straight at `shared/terrain/src/index.ts`. Vite bundles
+it like any other local module; there is nothing to install, so there is
+nothing for the remote build to miss. `shared/terrain/package.json` still
+exists (name, its own `tsconfig.json`, a `build` script) so CI can
+type-check the package standalone — catching an accidental
+network/browser-coupled import before it reaches webapp's own build — but
+nothing consumes that build's output. See `shared/terrain/README.md` for the
+full rationale; when OCOKA 5 wires the API to this package, prefer the same
+path-alias (or a TS project reference) pattern unless Azure Functions
+deployment is separately re-verified to tolerate a workspace install.
+
+**Two small pre-existing snags, found and fixed in the move (not introduced
+by it):**
+- `SimPathNode` lived in `mobilityWorker.ts` (stays client-side), but
+  `corridorAnalysis.ts` and `mobilityAppreciation.ts` (one moving, one
+  staying) both needed it purely as a data shape with no Worker dependency.
+  Relocated to `accumulatedCost.ts`; `mobilityWorker.ts` re-exports it for
+  its own webapp callers.
+- `nearestCellKey` lived in `mobilityGrid.ts` (stays client-side, since it
+  orchestrates live sampling), but `keyTerrain.ts` (moving) needed it as pure
+  geometry over an already-built cell array. Same fix: relocated to
+  `accumulatedCost.ts`, re-exported from `mobilityGrid.ts`.
+- `ConfidenceTier` was declared in `components/DataConfidenceBadge.tsx` — a
+  React component file — and imported as a type-only dependency by
+  `counterMeasures.ts` and `dataLayers/structureTable.ts`, both now moving.
+  Relocated the type alone to `shared/terrain/src/confidenceTier.ts`;
+  `DataConfidenceBadge.tsx` re-exports it for its own webapp callers.
+
+**Ensemble seeding made chunk-invariant.** The OCOKA 2 spec's other
+requirement: `movementSimulation.ts`'s mover ensemble used ONE
+`mulberry32(seed)` PRNG instance shared across every mover in the loop, so
+mover N's random draws depended on exactly how many draws movers 0..N-1 had
+already consumed — correct, but inherently un-chunkable (OCOKA 8's fan-out
+needs to run mover batches independently, in any order, on any worker). Each
+mover now gets its own stream from `hashSeedForMover(seed, moverIndex)` (a
+small splitmix32-style avalanche), instantiated inside the mover loop instead
+of once outside it. **This changes today's ensemble numbers once** — same
+seed, same AOI, a different draw sequence per mover — a flagged, deliberate
+one-time change, never silent drift; no test in the suite asserted an exact
+draw sequence, so nothing needed updating to match.
+
+**Verification:** `shared/terrain`'s own standalone `tsc --noEmit` is clean
+(new CI step, `.github/workflows/deploy.yml`); webapp `npm test` (38/38
+files) and `npm run build` both green against the alias; api
+`npm run test:unit` green and unaffected (api does not consume this package
+yet — that begins at OCOKA 5).
+
 ---
 
 ## 39. Small-AOI detour padding — profile-scaled, not just proportional (2026-07-28)

@@ -20,11 +20,11 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadGraphEnsembleMinCutFusion.test.ts
  */
 import * as assert from 'node:assert';
-import { hexKey, AxialCoord, axialToLocal, makeProjection, toLatLng } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { simulateMovementEnsemble } from '../src/terrain/movementSimulation';
-import { computeMinCutBarrier } from '../src/terrain/minCutBarrier';
-import { getMoverProfile } from '../src/terrain/moverProfiles';
+import { hexKey, AxialCoord, axialToLocal, makeProjection, toLatLng } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { simulateMovementEnsemble } from '@firebreak/terrain';
+import { computeMinCutBarrier } from '@firebreak/terrain';
+import { getMoverProfile } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

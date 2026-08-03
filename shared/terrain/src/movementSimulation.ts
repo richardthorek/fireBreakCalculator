@@ -111,8 +111,8 @@
  * ---------------------------------------------------------------------------
  */
 
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
+import { LatLng } from './chainage';
+import { calculateDistance } from './geo';
 import {
   MobilityGridCell, runCostToGoSearch, toMobilitySample,
 } from './accumulatedCost';
@@ -120,7 +120,7 @@ import { MoverProfile } from './moverProfiles';
 import { edgeMobilityCost, irmischerClarkeSpeedKmh, toblerSpeedKmh } from './mobilityCost';
 import {
   LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbors,
-} from '../utils/hexGrid';
+} from './hexGrid';
 import { RoadGraph, nearestNode } from './roadGraph';
 import { edgeTravelTime } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';
@@ -291,6 +291,27 @@ export function mulberry32(seed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * Combine the ensemble seed with a mover's index into that mover's own PRNG
+ * seed (splitmix32-style avalanche). OCOKA 2 (docs/ROUTE_INTELLIGENCE.md §38):
+ * the ensemble previously shared ONE `mulberry32(seed)` instance across every
+ * mover, so mover N's random draws depended on exactly how many draws movers
+ * 0..N-1 had already consumed — correct today, but inherently un-chunkable
+ * (OCOKA 8's fan-out needs to run mover batches independently, in any order,
+ * on any worker). Giving each mover its own stream from `hash(seed, index)`
+ * makes a mover's trajectory depend only on its own index, never on
+ * simulation order. Deliberately changes today's ensemble numbers ONCE (same
+ * seed, same AOI, different draw sequence per mover) — a flagged, one-time
+ * change, not silent drift.
+ */
+function hashSeedForMover(seed: number, moverIndex: number): number {
+  let h = (seed ^ Math.imul(moverIndex + 1, 0x9e3779b9)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 
 export const DEFAULT_MOVEMENT_SIM_SEED = 20260727;
@@ -787,7 +808,6 @@ export function simulateMovementEnsemble(
   // terminates. ~6× the grid's own diameter in cells.
   const maxSteps = Math.max(60, Math.round(6 * Math.sqrt(cells.length)));
 
-  const rng = mulberry32(seed);
   const transitCounts = new Map<string, number>();
   const edgeTransit = new Map<string, number>();
   const arrivalTimes: number[] = [];
@@ -801,6 +821,10 @@ export function simulateMovementEnsemble(
   const trajectoryStride = Math.max(1, Math.floor(moverCount / Math.max(1, keepTrajectories)));
 
   for (let m = 0; m < moverCount; m++) {
+    // Per-mover stream (see hashSeedForMover's doc comment) — every draw for
+    // mover `m`, from its opening behaviour roll through every step-choice
+    // tie-break, comes from this instance alone.
+    const rng = mulberry32(hashSeedForMover(seed, m));
     const behaviour: MoverBehaviour = {
       decisionTemperatureSeconds:
         spread.temperatureSecondsMin + rng() * (spread.temperatureSecondsMax - spread.temperatureSecondsMin),

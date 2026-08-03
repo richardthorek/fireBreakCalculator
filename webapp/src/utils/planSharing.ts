@@ -9,7 +9,7 @@
  *   - printed as a briefing sheet.
  */
 
-import { VegetationType, VEGETATION_TYPES } from '../config/classification';
+import { VegetationType, VEGETATION_TYPES } from '@firebreak/terrain';
 import { DISCLAIMER_LONG, provenanceStamp, COORDINATE_REFERENCE_SYSTEM } from './../config/provenance';
 
 /** Escape a string for safe insertion as HTML text/attribute content. */
