@@ -33,8 +33,8 @@ const basePayload: MobilityAssistantPayload = {
   nightMode: false,
   cellCount: 400,
   reachableCount: 380,
-  noGoCount: 15,
-  slowGoCount: 40,
+  severelyRestrictedCount: 15,
+  restrictedCount: 40,
   estimatedData: false,
   hydrologyAvailable: true,
   waterAffectedCellCount: 0,
@@ -51,7 +51,7 @@ const basePayload: MobilityAssistantPayload = {
       bottleneckWidthM: 30,
       bottleneckAbreast: 1,
       frontage: 'single-file',
-      goFractionPct: 55,
+      unrestrictedFractionPct: 55,
     },
   ],
   chokepointCount: 6,
@@ -74,6 +74,29 @@ async function main() {
 
   await test('accepts a fully-formed payload', () => {
     assert.strictEqual(isMobilityAssistantPayload(basePayload), true);
+  });
+
+  await test('accepts a cached client still sending pre-OCOKA-1 field names (docs §47)', () => {
+    // Simulates a stale SPA build posting to a fresh API — the realistic skew
+    // for this must-match pair, per docs/ROUTE_INTELLIGENCE.md §47.6. Raw,
+    // untyped (as any) since a real legacy client wouldn't type-check against
+    // today's interface at all.
+    const { severelyRestrictedCount, restrictedCount, topCorridors, ...rest } = basePayload as any;
+    const legacy = {
+      ...rest,
+      noGoCount: severelyRestrictedCount,
+      slowGoCount: restrictedCount,
+      topCorridors: topCorridors.map((c: any) => {
+        const { unrestrictedFractionPct, ...cRest } = c;
+        return { ...cRest, goFractionPct: unrestrictedFractionPct };
+      }),
+    };
+    assert.strictEqual(isMobilityAssistantPayload(legacy), true);
+    // The normaliser mutates in place — the canonical field must be usable
+    // afterward by everything downstream (the briefing template included).
+    assert.strictEqual((legacy as any).severelyRestrictedCount, 15);
+    assert.strictEqual((legacy as any).restrictedCount, 40);
+    assert.strictEqual((legacy as any).topCorridors[0].unrestrictedFractionPct, 55);
   });
 
   await test('rejects a payload missing a required field', () => {

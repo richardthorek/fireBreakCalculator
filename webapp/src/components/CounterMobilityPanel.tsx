@@ -326,7 +326,7 @@ export const CounterMobilityPanel: React.FC<CounterMobilityPanelProps> = ({
                 <div>
                   BOTTLENECK ~{e.bottleneckWidthBeforeM.toFixed(0)} → ~{e.bottleneckWidthAfterM.toFixed(0)} M
                 </div>
-                <div>{e.easeBefore.toUpperCase()} → {(e.easeAfter ?? 'GONE').toUpperCase()}</div>
+                <div>{e.easeBefore.toUpperCase()} → {(e.easeAfter ?? 'COLLAPSED').toUpperCase()}</div>
               </div>
             </div>
           ))}

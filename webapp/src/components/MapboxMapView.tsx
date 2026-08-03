@@ -16,6 +16,7 @@ import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
 import { smoothPolygonGeometry } from '../utils/polygonSmoothing';
+import { MobilityClass } from '../terrain/mobilityClass';
 import {
   metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
   BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
@@ -208,13 +209,14 @@ interface MapboxMapViewProps {
   /** Result cells from the last terrain appreciation run. */
   mobilityHeatmap?: {
     polygon: { lat: number; lng: number }[];
-    trafficability: 'GO' | 'SLOW-GO' | 'NO-GO';
+    trafficability: MobilityClass;
     timeSeconds: number;
     bandIndex: number;
   }[] | null;
-  /** 'trafficability' colours by GO/SLOW-GO/NO-GO (a terrain property,
-   *  independent of reachability); 'isochrone' colours by arrival-time band
-   *  (a reachability property from the origin AOI). */
+  /** 'trafficability' colours by mobility class — unrestricted/restricted/
+   *  severely restricted (a terrain property, independent of reachability);
+   *  'isochrone' colours by arrival-time band (a reachability property from
+   *  the origin AOI). */
   mobilityDisplayMode?: 'trafficability' | 'isochrone';
   /** Live cursor position, for the tactical coordinate readout. */
   onCursorMove?: (point: { lat: number; lng: number } | null) => void;
@@ -1788,9 +1790,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         } else {
           map.setPaintProperty('mobility-heatmap', 'fill-color', [
             'match', ['get', 'trafficability'],
-            'GO', '#1E9E62',
-            'SLOW-GO', '#F6A609',
-            'NO-GO', '#D8232A',
+            'unrestricted', '#1E9E62',
+            'restricted', '#F6A609',
+            'severely-restricted', '#D8232A',
             '#55607A',
           ]);
           registerOverlayOpacity('mobility-heatmap', 'fill-opacity', 0.5);

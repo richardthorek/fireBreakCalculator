@@ -57,6 +57,7 @@ import { LocalProjection, axialToLocal, hexCorners, toLatLng, hexKey, hexNeighbo
 import { DissimilarRoute, findKDissimilarPaths } from './corridorAnalysis';
 import { edgeMobilityCost, TrafficabilityClass } from './mobilityCost';
 import { calculateDistance } from '../utils/slopeCalculation';
+import { MobilityClass } from './mobilityClass';
 
 /** How many distinct routes to derive before forming corridors. A handful of
  *  routes gives lines; a dozen-plus gives a band with a real shape. Each
@@ -105,7 +106,14 @@ export interface CorridorCell {
   routeCount: number;
 }
 
-export type CorridorEaseClass = 'open' | 'restricted' | 'severely-restricted';
+/**
+ * Kept as a re-export for existing callers — the canonical definition now
+ * lives in `mobilityClass.ts` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md §47),
+ * collapsing this module's `'open'`/… corridor vocabulary and
+ * `mobilityCost.ts`'s edge vocabulary onto one union. `'open'` becomes
+ * `'unrestricted'`.
+ */
+export type CorridorEaseClass = MobilityClass;
 
 /**
  * "Avenues of approach sized by echelon" (roadmap Pass 2, docs §15.2) —
@@ -155,9 +163,9 @@ export interface Corridor {
   bottleneckAbreast: number;
   frontage: CorridorFrontage;
   /** Real fractions over the corridor's own cells. */
-  goFraction: number;
-  slowGoFraction: number;
-  noGoFraction: number;
+  unrestrictedFraction: number;
+  restrictedFraction: number;
+  severelyRestrictedFraction: number;
   easeClass: CorridorEaseClass;
   /** This corridor's OWN narrowest iso-arrival-time cross-section ÷ its
    *  widest (docs §35 remainder — the field-level `CorridorField.pinchRatio`
@@ -179,21 +187,21 @@ export interface Corridor {
    * inform our planning"). Built ENTIRELY from real, already-computed
    * per-corridor fractions — no new source, no invented signal:
    *
-   *   riskScore = 0.4 × (slowGoFraction + noGoFraction)   — terrain hazard
-   *             + 0.3 × waterCrossingFraction              — fording exposure
-   *             + 0.3 × (1 − pinchRatio)                   — single-point-of-failure throat
+   *   riskScore = 0.4 × (restrictedFraction + severelyRestrictedFraction)   — terrain hazard
+   *             + 0.3 × waterCrossingFraction                                — fording exposure
+   *             + 0.3 × (1 − pinchRatio)                                     — single-point-of-failure throat
    *
    * The WEIGHTS are this product's own engineering judgement over its own
    * computed mix — the identical honesty framing `easeClass`'s thresholds
    * already carry ("doctrinal-flavoured wording, but... deliberately NOT
    * presented as a doctrinal classification"), stated here rather than
-   * implied. `noGoFraction` counting toward hazard (rather than being
-   * excluded as "already avoided") is deliberate: a corridor with real
-   * NO-GO cells along its band is one whose passable line has less lateral
-   * room to route around a newly-found obstacle than a corridor that is
-   * GO throughout, which is itself a real vulnerability. Not a probability,
-   * not validated against any incident data — a relative, WITHIN-THIS-RUN
-   * ranking signal only, exactly like `easeClass`. */
+   * implied. `severelyRestrictedFraction` counting toward hazard (rather than
+   * being excluded as "already avoided") is deliberate: a corridor with real
+   * severely-restricted cells along its band is one whose passable line has
+   * less lateral room to route around a newly-found obstacle than a corridor
+   * that is unrestricted throughout, which is itself a real vulnerability.
+   * Not a probability, not validated against any incident data — a relative,
+   * WITHIN-THIS-RUN ranking signal only, exactly like `easeClass`. */
   riskScore: number;
   /** True when ANY cell in this corridor carries estimated/fallback sample
    *  data — surfaced per corridor so a caveat lands on the specific corridor
@@ -327,11 +335,12 @@ function computeCellFacts(
 
   // Per-cell trafficability from the profile's OWN worst outbound edge — the
   // same edgeMobilityCost the search uses, so a cell can never be coloured
-  // GO here while the search treats every way out of it as NO-GO.
+  // unrestricted here while the search treats every way out of it as
+  // severely restricted.
   const byKey = new Map(cells.map(c => [c.key, c]));
   const trafficability = new Map<string, TrafficabilityClass>();
   for (const cell of cells) {
-    let worst: TrafficabilityClass = 'NO-GO';
+    let worst: TrafficabilityClass = 'severely-restricted';
     let anyPassable = false;
     for (const nHex of hexNeighbors(cell.hex)) {
       const n = byKey.get(hexKey(nHex));
@@ -344,10 +353,10 @@ function computeCellFacts(
         dist,
         { nightMode, crossSlopeDeg: cell.crossSlopeDeg }
       );
-      if (r.trafficability === 'GO') { worst = 'GO'; anyPassable = true; break; }
-      if (r.trafficability === 'SLOW-GO') { worst = 'SLOW-GO'; anyPassable = true; }
+      if (r.trafficability === 'unrestricted') { worst = 'unrestricted'; anyPassable = true; break; }
+      if (r.trafficability === 'restricted') { worst = 'restricted'; anyPassable = true; }
     }
-    trafficability.set(cell.key, anyPassable ? worst : 'NO-GO');
+    trafficability.set(cell.key, anyPassable ? worst : 'severely-restricted');
   }
   return { arrivalSeconds, trafficability };
 }
@@ -820,17 +829,17 @@ function buildCorridor(
     }
   }
 
-  const classes = comp.map(k => facts.trafficability.get(k) ?? 'NO-GO');
+  const classes = comp.map(k => facts.trafficability.get(k) ?? 'severely-restricted');
   const n = Math.max(1, classes.length);
-  const goFraction = classes.filter(c => c === 'GO').length / n;
-  const slowGoFraction = classes.filter(c => c === 'SLOW-GO').length / n;
-  const noGoFraction = classes.filter(c => c === 'NO-GO').length / n;
+  const unrestrictedFraction = classes.filter(c => c === 'unrestricted').length / n;
+  const restrictedFraction = classes.filter(c => c === 'restricted').length / n;
+  const severelyRestrictedFraction = classes.filter(c => c === 'severely-restricted').length / n;
 
   // Doctrinal-flavoured wording, but the thresholds are this product's own
-  // engineering choice over its own computed GO/SLOW-GO mix — deliberately
+  // engineering choice over its own computed mobility-class mix — deliberately
   // NOT presented as a doctrinal classification of the terrain itself.
   const easeClass: CorridorEaseClass =
-    goFraction >= 0.6 ? 'open' : goFraction >= 0.25 ? 'restricted' : 'severely-restricted';
+    unrestrictedFraction >= 0.6 ? 'unrestricted' : unrestrictedFraction >= 0.25 ? 'restricted' : 'severely-restricted';
 
   const bottleneckWidthM = bottleneckCells * hexWidthM;
   const bottleneckAbreast = profile.widthM > 0 ? Math.floor(bottleneckWidthM / profile.widthM) : 0;
@@ -847,7 +856,7 @@ function buildCorridor(
     return cell ? carriesWaterSignal(cell) : false;
   }).length / n;
   const riskScore = Math.max(0, Math.min(1,
-    0.4 * (slowGoFraction + noGoFraction) +
+    0.4 * (restrictedFraction + severelyRestrictedFraction) +
     0.3 * waterCrossingFraction +
     0.3 * (1 - pinchRatio)
   ));
@@ -866,9 +875,9 @@ function buildCorridor(
     widestWidthM: widestCells * hexWidthM,
     bottleneckAbreast,
     frontage,
-    goFraction,
-    slowGoFraction,
-    noGoFraction,
+    unrestrictedFraction,
+    restrictedFraction,
+    severelyRestrictedFraction,
     easeClass,
     pinchRatio,
     waterCrossingFraction,

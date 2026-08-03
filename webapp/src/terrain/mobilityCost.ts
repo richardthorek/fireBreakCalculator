@@ -25,6 +25,7 @@ import { VegetationType } from '../config/classification';
 import { MoverProfile } from './moverProfiles';
 import { lookupStructure } from './dataLayers/structureTable';
 import { RoadWayTags, roadClassCeiling } from './roadSpeedModel';
+import { MobilityClass } from './mobilityClass';
 
 // ---------------------------------------------------------------------------
 // Directional slope
@@ -197,7 +198,13 @@ export function vehicleGradeSpeedFactor(absSlopeDeg: number, limitDeg: number): 
 // Edge classification and cost
 // ---------------------------------------------------------------------------
 
-export type TrafficabilityClass = 'GO' | 'SLOW-GO' | 'NO-GO';
+/**
+ * Kept as a re-export for callers that imported it from here — the canonical
+ * definition now lives in `mobilityClass.ts` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md
+ * §47), collapsing this module's edge vocabulary and corridorField.ts's
+ * corridor vocabulary onto one union.
+ */
+export type TrafficabilityClass = MobilityClass;
 
 export interface MobilitySample {
   lat: number;
@@ -248,12 +255,12 @@ export interface EdgeMobilityResult {
   dataTier: 0;
 }
 
-const SLOW_GO_MARGIN = 0.85; // within 85% of a hard limit reads as SLOW-GO, not GO
+const RESTRICTED_MARGIN = 0.85; // within 85% of a hard limit reads as RESTRICTED, not UNRESTRICTED
 
 /**
  * Classify and cost a single directed edge for a given mover profile. This is
  * the injectable replacement for routeOptimizer.ts's fixed `edgeCost` — every
- * caller (isochrone field, corridor search, GO/SLOW-GO/NO-GO overlay) goes
+ * caller (isochrone field, corridor search, mobility-class overlay) goes
  * through this one function so profile-switching recolours consistently.
  */
 export function edgeMobilityCost(
@@ -267,7 +274,7 @@ export function edgeMobilityCost(
   const estimatedBase = from.vegEstimated || to.vegEstimated;
 
   if (distM <= 0) {
-    return { timeSeconds: 0, distM: 0, slopeDeg: 0, crossSlopeDeg, speedKmh: 0, trafficability: 'GO', estimated: estimatedBase, dataTier: 0 };
+    return { timeSeconds: 0, distM: 0, slopeDeg: 0, crossSlopeDeg, speedKmh: 0, trafficability: 'unrestricted', estimated: estimatedBase, dataTier: 0 };
   }
 
   const slopeDeg = signedSlopeDegrees(from.elevation, to.elevation, distM);
@@ -300,14 +307,14 @@ export function edgeMobilityCost(
     if (absSlope > profile.maxClimbDeg) {
       return {
         timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-        trafficability: 'NO-GO', blockedReason: `climb ${absSlope.toFixed(1)}° exceeds ${profile.label} limit (${profile.maxClimbDeg}°)`,
+        trafficability: 'severely-restricted', blockedReason: `climb ${absSlope.toFixed(1)}° exceeds ${profile.label} limit (${profile.maxClimbDeg}°)`,
         estimated: estimatedBase, dataTier: 0,
       };
     }
     if (crossSlopeDeg !== null && Math.abs(crossSlopeDeg) > profile.maxSideSlopeDeg) {
       return {
         timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-        trafficability: 'NO-GO', blockedReason: `side-slope ${Math.abs(crossSlopeDeg).toFixed(1)}° exceeds ${profile.label} limit (${profile.maxSideSlopeDeg}°)`,
+        trafficability: 'severely-restricted', blockedReason: `side-slope ${Math.abs(crossSlopeDeg).toFixed(1)}° exceeds ${profile.label} limit (${profile.maxSideSlopeDeg}°)`,
         estimated: estimatedBase, dataTier: 0,
       };
     }
@@ -328,7 +335,7 @@ export function edgeMobilityCost(
     if (capability === undefined || ford.assumedDepthM > capability) {
       return {
         timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-        trafficability: 'NO-GO',
+        trafficability: 'severely-restricted',
         blockedReason: capability === undefined
           ? `${profile.label} has no stated fording capability and this crossing is ${ford.source}`
           : `assumed water depth ~${ford.assumedDepthM.toFixed(1)} m exceeds ${profile.label} unprepared fording limit (${capability.toFixed(1)} m) — ${ford.source}`,
@@ -365,7 +372,7 @@ export function edgeMobilityCost(
   if (vegBlocked) {
     return {
       timeSeconds: Infinity, distM, slopeDeg, crossSlopeDeg, speedKmh: 0,
-      trafficability: 'NO-GO', blockedReason: vegReason,
+      trafficability: 'severely-restricted', blockedReason: vegReason,
       estimated: true, dataTier: 0,
     };
   }
@@ -423,7 +430,7 @@ export function edgeMobilityCost(
   }
   if (profile.loadPenaltyFactor) speedKmh *= profile.loadPenaltyFactor;
   if (nightMode) speedKmh *= profile.nightFactor;
-  if (ford) speedKmh *= FORDING_SPEED_FACTOR; // passable (didn't hit the NO-GO gate above), but a ford is always slower
+  if (ford) speedKmh *= FORDING_SPEED_FACTOR; // passable (didn't hit the severely-restricted gate above), but a ford is always slower
   speedKmh = Math.max(0.1, speedKmh);
 
   const timeSeconds = (distM / 1000 / speedKmh) * 3600;
@@ -433,12 +440,12 @@ export function edgeMobilityCost(
   const sideRatio = crossSlopeDeg !== null ? Math.abs(crossSlopeDeg) / profile.maxSideSlopeDeg : 0;
   const struct = estimateStructureFromVegetation(to.vegetation);
   const gapRatio = profile.kind === 'wheeled' ? profile.widthM / Math.max(0.1, struct.gapWidthEstimateM) : 0;
-  const nearLimit = climbRatio > SLOW_GO_MARGIN || sideRatio > SLOW_GO_MARGIN || gapRatio > SLOW_GO_MARGIN;
+  const nearLimit = climbRatio > RESTRICTED_MARGIN || sideRatio > RESTRICTED_MARGIN || gapRatio > RESTRICTED_MARGIN;
   const heavyVeg = (to.vegetation === 'heavyforest' || to.vegetation === 'mediumscrub') && !to.onTrail;
-  // A passable ford is always at least SLOW-GO — fording a real profile's
+  // A passable ford is always at least RESTRICTED — fording a real profile's
   // full unprepared limit is not the same experience as flat dry ground even
-  // when it isn't NO-GO.
-  const trafficability: TrafficabilityClass = nearLimit || heavyVeg || ford ? 'SLOW-GO' : 'GO';
+  // when it isn't SEVERELY RESTRICTED.
+  const trafficability: TrafficabilityClass = nearLimit || heavyVeg || ford ? 'restricted' : 'unrestricted';
 
   return {
     timeSeconds,
