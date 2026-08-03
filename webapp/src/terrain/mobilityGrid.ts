@@ -515,6 +515,55 @@ export interface SampledCells {
   roadWays: InfrastructureTrail[];
 }
 
+export interface OnTrailSample {
+  onTrail: boolean;
+  nearestTrailTags: RoadWayTags | null;
+}
+
+/**
+ * Is this hex "on trail", and if so which mapped feature's tags apply —
+ * tested at `samplePoints` (centre + six hex corners, not centre alone; see
+ * call site) against `trails` within `snapM`. Pulled out as its own pure
+ * function (2026-08-03) so this exact test is unit-testable without the
+ * network-fetching grid-building pipeline around it, and so `mobilityGrid.ts`
+ * has one place this logic lives rather than an inline block a future editor
+ * could drift from `waterDistanceM`'s equivalent multi-point scan just above
+ * its call site.
+ *
+ * MULTI-POINT, NOT CENTRE-ONLY — the fix itself, not incidental to it. A road
+ * can thread diagonally across a hex without ever passing within `snapM` of
+ * its centroid, especially once hex size grows past ~30 m on a wide-area
+ * run (this app's own hex size scales with AOI span — `computeCellBudget`).
+ * A centre-only test silently read that ground as off-trail and let the
+ * vegetation/slope hard gates in `mobilityCost.ts` block it at full
+ * severity — reported live: a road painted straight through an analysed
+ * area came out NO-GO/severely-restricted on both sides of a real, unbroken
+ * road, because most of the hexes it visibly crossed didn't have it within
+ * `snapM` of their own centre.
+ */
+export function sampleOnTrail(
+  samplePoints: LatLng[],
+  trails: InfrastructureTrail[],
+  snapM: number
+): OnTrailSample {
+  if (trails.length === 0) return { onTrail: false, nearestTrailTags: null };
+  let bestD = Infinity;
+  let nearestTrailTags: RoadWayTags | null = null;
+  outer:
+  for (const p of samplePoints) {
+    for (const feature of trails) {
+      const d = distanceToNearestTrail(p, [feature], snapM);
+      if (d < bestD) {
+        bestD = d;
+        nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
+      }
+      if (bestD <= 0) break outer; // nothing can beat 0
+    }
+  }
+  const onTrail = bestD <= snapM;
+  return { onTrail, nearestTrailTags: onTrail ? nearestTrailTags : null };
+}
+
 /**
  * Sample elevation/vegetation/road/water for exactly the given hexes and
  * assemble them into `MobilityGridCell`s — the batched-fetch core
@@ -621,24 +670,11 @@ export async function sampleCellsForHexes(
 
     // onTrail + the nearest trail's own tags in ONE scan (docs §35) — the
     // road-class speed model (roadSpeedModel.ts) needs surface/tracktype/
-    // smoothness, not just "is there a trail here", so this now finds the
-    // SAME nearest feature onTrail already needed rather than re-scanning
-    // `infra.trails` a second time for it.
-    let onTrail = false;
-    let nearestTrailTags: RoadWayTags | null = null;
-    if (infra.trails.length > 0) {
-      let bestD = Infinity;
-      for (const feature of infra.trails) {
-        const d = distanceToNearestTrail(center, [feature], TRAIL_SNAP_M);
-        if (d < bestD) {
-          bestD = d;
-          nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
-        }
-        if (bestD <= 0) break; // nothing can beat 0
-      }
-      onTrail = bestD <= TRAIL_SNAP_M;
-      if (!onTrail) nearestTrailTags = null;
-    }
+    // smoothness, not just "is there a trail here", so this uses the SAME
+    // nearest feature onTrail already needed rather than re-scanning
+    // `infra.trails` a second time for it. Centre + six hex corners, not
+    // centre alone — see `sampleOnTrail`'s own doc comment for why.
+    const { onTrail, nearestTrailTags } = sampleOnTrail([center, ...cornerPoints[i]], infra.trails, TRAIL_SNAP_M);
 
     return {
       key: hexKey(c.hex),
