@@ -67,6 +67,17 @@ jobs:
           npm ci
           npm run test:unit
 
+      - name: api-mobility — install, build, unit tests
+        # Tier-2 mobility backend (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3).
+        # Standalone package, not deployed by this workflow yet (gated behind
+        # deployMobilityBackend — see api-mobility/README.md's cutover note)
+        # — this step only verifies it keeps building/passing, same as the
+        # shared terrain type-check step below.
+        working-directory: ./api-mobility
+        run: |
+          npm install
+          npm run test:unit
+
       - name: Shared terrain package — standalone type-check
         # @firebreak/terrain (OCOKA 2, docs/ROUTE_INTELLIGENCE.md §38) is
         # consumed by webapp via a TS path alias, not an npm dependency (see
