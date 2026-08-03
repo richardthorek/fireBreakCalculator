@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 2, 2026 — reordered so intent and the active roadmap (Vision, Current state, Next up, Blocked) lead the file; the **Shipped** history table and **Recent Updates** log now sit at the bottom, after Architecture snapshot. Content unchanged — see Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — OCOKA 3 (five-factor framing) shipped, step 49. See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -29,7 +29,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 - **Vegetation:** NVIS national spine + NSW SVTM overlay; state expansion frozen ([docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)).
 - **Route intelligence:** corridor pathfinding, chainage-addressed segment detail, elevation profile, rule-based Plan Assistant, tabbed analysis UI — shipped in PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163) ([docs/ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md)). Infrastructure trail lookup (OSM/Overpass) is now multi-endpoint resilient after a live-tested rate-limiting bug was found and fixed 2026-07-12.
 - **Live context:** national hotspots + fire/burn-area boundaries, plus incident/warning overlays for 5 of 8 states, are live on the map ([docs/GIS_INTEROP.md](docs/GIS_INTEROP.md) §4). AFDRS official fire-danger rating is **blocked on access** (BOM Registered User program), not effort — see the assessment in that doc.
-- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode had already implemented two of the five doctrinal factors (Obstacles, Avenues of approach) without naming them.
+- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode now presents all five OCOKA factors by name (`OakocPanel.tsx`): Obstacles and Avenues of approach are real, assembled from existing products; Key terrain, Observation & fields of fire, and Cover & concealment ship as explicit `'not-assessed'` placeholders pending OCOKA 4/6/7.
 
 ## The Plan
 
@@ -43,10 +43,10 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 |------|-------|------|------------|--------|
 | ~~OCOKA 1 — mobility-class vocabulary migration~~ | **Shipped — step 48.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | **OCOKA 2 — extract `shared/@firebreak/terrain` workspace package** | Prerequisite for any server-side execution. §38's "just call the existing modules" is optimistic — they live in a different package with a different tsconfig. Extract rather than copy; copying would make the algorithm itself a drift surface | M | OCOKA 1 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| **OCOKA 3 — five-factor framing over existing products** | New `terrain/oakoc.ts` + `OakocPanel.tsx`. Avenues and Obstacles populated by re-presenting products that already exist; names the existing-vs-reinforcing obstacle split the code already computes; gives `roadNetworkBarrier` its first map layer and export feature. No new computation | M | OCOKA 1 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8, §47 |
-| **OCOKA 4 — key terrain** | The one missing factor that is nearly free: candidates from chokepoints + hex/road min-cut, scored by re-running the corridor field with each denied and measuring the delta via the existing `compareCorridorFields`. Makes `PITCH_TERRAIN_DENIAL.md`'s existing "key terrain" claim true | M | OCOKA 3 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
+| ~~OCOKA 3 — five-factor framing over existing products~~ | **Shipped — step 49.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
+| **OCOKA 4 — key terrain** | The one missing factor that is nearly free: candidates from chokepoints + hex/road min-cut, scored by re-running the corridor field with each denied and measuring the delta via the existing `compareCorridorFields`. Makes `PITCH_TERRAIN_DENIAL.md`'s existing "key terrain" claim true | M | OCOKA 3 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| **OCOKA 6 — `viewshed.ts` + Observation & fields of fire** | R3 line-of-sight over the hex grid (one elevation per hex centre, no raster in hand). Observers via a third paint role. Fields of fire computed **only** for user-stated ranges — never inferred | M/L | OCOKA 3 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8 |
+| **OCOKA 6 — `viewshed.ts` + Observation & fields of fire** | R3 line-of-sight over the hex grid (one elevation per hex centre, no raster in hand). Observers via a third paint role. Fields of fire computed **only** for user-stated ranges — never inferred | M/L | OCOKA 3 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8 |
 | **OCOKA 7 — cover & concealment** | Concealment from vegetation structure + dead ground. **Cover is not computed** — a bare-earth DEM cannot see a rock, bund or building — and `coverAssessed: false` ships as a machine-readable property in export and payload, not just UI prose | S/M | OCOKA 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | **OCOKA 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OCOKA 5, 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | **OCOKA 9 — Container Apps Job tier (still gated)** | Unchanged gate: build only on tier-2 evidence of a real tail of oversized runs. Same protocol as OCOKA 5, so it becomes a compute swap rather than new plumbing | L | tier-2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
@@ -73,10 +73,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
   - Changes: move `terrain/*`, the sampling utils, `config/classification` into a workspace package · break the two type-only `ConfidenceTier` imports · make the seeded mover ensemble chunk-invariant (`hash(seed, moverIndex)`).
   - Note: the ensemble seeding fix **changes today's numbers once**. Flag it as a deliberate one-time change, never silent drift. `mapboxTrails.ts` stays client-only (it reads a live GL map) — a real capability difference to record, not hide.
 
-- **OCOKA 3 — five-factor framing** (Difficulty: M)
-  - Outcome: the analysis reads as a recognised terrain appreciation product — five named factors, each with its own findings, confidence and caveats — instead of a list of bespoke analytics.
-  - Changes: `terrain/oakoc.ts` (assembly only, computes almost nothing) · new `OakocPanel.tsx` extracted rather than growing `MobilityPanel.tsx` further · `roadNetworkBarrier` gets its first map layer and export feature after being computed-and-discarded on every vehicle run · `Corridor.bottleneckCellKeys` added.
-  - Note: `'not-assessed'` is a first-class state. A factor with no observers is *not assessed*, which is a different claim from "nothing found" — conflating them is the fabrication this repo exists to prevent.
+- ~~**OCOKA 3**~~ — **Shipped, step 49.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.7.
 
 - **OCOKA 4 — key terrain** (Difficulty: M)
   - Outcome: the tool names the ground whose denial actually changes the picture, and shows the delta that earned the label plus the cost of bypassing it.
@@ -250,6 +247,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 46 | Slice B remainder — α·C* cost-budget, 2–5 corridor stop rule, "most likely"/"most risky" picks | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 47 | Mobile UI — quick mover-class selector + coordinate readout repositioned | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 48 (OCOKA 1) | Mobility-class vocabulary migration — one MCOO vocabulary instead of two; `webapp/tests/` wired into CI | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
+| 49 (OCOKA 3) | Five-factor OCOKA framing — `terrain/oakoc.ts` assembly + `OakocPanel.tsx`; `roadNetworkBarrier` gets its first map layer/legend/GIS export; `Corridor.bottleneckCellKeys` added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 
 ## Recent Updates
 
@@ -258,6 +256,23 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — OCOKA 3 shipped (step 49).** Five-factor OCOKA framing over
+  existing products, no new computation. New `terrain/oakoc.ts`
+  (`buildOcokaAppreciation`) names the existing-vs-reinforcing obstacle split
+  the code already computed (`barrier`/`roadNetworkBarrier` vs
+  `restrictionPlan`) and presents `corridorField` as Avenues of approach;
+  Key terrain/Observation/Cover & concealment ship as explicit
+  `'not-assessed'` placeholders (OCOKA 4/6/7), with `fieldsOfFireAssessed`/
+  `coverAssessed` machine-readable flags landed early. New `OakocPanel.tsx`
+  (third Terrain Mobility tab) renders it, visually distinguishing a real
+  per-run `'not-assessed'` (objective unreachable) from the three
+  permanently-not-yet-built factors. `roadNetworkBarrier` — computed on
+  every vehicle run and discarded since OCOKA 1 — gets its first map layer
+  (dashed purple, `MapboxMapView.tsx`), `MobilityLegend.tsx` entry, and
+  GeoJSON/KML export feature. `Corridor.bottleneckCellKeys` added for
+  OCOKA 4's future key-terrain scoring. Full detail:
+  `ROUTE_INTELLIGENCE.md` §47.7. Gates green: `npm test` (34/34 files, incl.
+  new `oakocAssembly.test.ts`), `npm run build`.
 - **2026-08-02 — OCOKA 1 shipped (step 48).** Mobility-class vocabulary
   migration — one MCOO vocabulary (`unrestricted`/`restricted`/
   `severely-restricted`) instead of two, via new `terrain/mobilityClass.ts`,
@@ -305,10 +320,8 @@ history beyond this window: `git log`.
   with tiles that materialise only when the reachable frontier runs off the
   fetched edge, and `resumeFrom` continues a prior Dijkstra search instead
   of restarting at cost 0.
-- **2026-07-29 — Every "Next up"/"Blocked" roadmap row expanded** with an
-  outcome/changes/difficulty bullet, closing a documentation-discipline gap.
 
-*(Full history for steps 0–44 — 2026-07-10 through 2026-07-28 — is in the
+*(Full history for steps 0–45 — 2026-07-10 through 2026-07-29 — is in the
 Shipped table above, each linked as-built doc's own dated section, and
-`git log`. Pruned from this file 2026-08-02 to keep it agent-scannable; see
+`git log`. Pruned from this file 2026-08-03 to keep it agent-scannable; see
 [docs/README.md](docs/README.md) if you need the narrative.)*

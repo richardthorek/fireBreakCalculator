@@ -219,6 +219,46 @@
   color: var(--tac-text-dim);
 }
 
+/* ---------- OakocPanel — "not yet assessed" factor cards (OCOKA 3/4/6/7) ----------
+ * Key terrain / observation / cover & concealment are always `'not-assessed'`
+ * right now (features not built yet, not a per-run finding) — see
+ * `terrain/oakoc.ts`'s header comment and `OakocPanel.tsx`'s own doc comment
+ * for why this MUST read as visually distinct from both an assessed factor
+ * and the separate `'not-assessed'` gate obstacles/avenues use for an
+ * unreachable objective. Dashed border + a badge that is deliberately NOT
+ * one of `.tac-badge`'s four confidence tiers (measured/published/estimated/
+ * generic-fallback) — this isn't a fifth, lower-trust tier, it's "no
+ * analysis ran at all", a different claim entirely. */
+.oakoc-notassessed {
+  border: 1px dashed var(--tac-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.oakoc-notassessed-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px dashed var(--tac-text-dim);
+  color: var(--tac-text-dim);
+  font-family: var(--tac-mono-font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.oakoc-notassessed p {
+  margin: 0;
+  font-size: 0.8em;
+  line-height: 1.5;
+  color: var(--tac-text-dim);
+}
+
 /* ---------- Terrain mode tab switcher (appreciation / counter-mobility) ---------- */
 .mobility-mode-tabs { display: flex; gap: 6px; padding: 8px 8px 0; flex-shrink: 0; }
 .mobility-mode-tabs button {

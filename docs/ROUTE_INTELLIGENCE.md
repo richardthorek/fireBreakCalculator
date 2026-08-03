@@ -5585,6 +5585,50 @@ run completes *and* every expected artefact kind is present.
 - **Dated as-built sections §§16–46 keep their original wording** as historical record;
   correcting them would falsify history. Only forward-looking sections are migrated.
 
+### 47.7 OCOKA 3 shipped (2026-08-03) — five-factor framing
+
+`terrain/oakoc.ts` + `OakocPanel.tsx`, per the §47.1 audit: assembly only, no new
+computation.
+
+- **Obstacles** — `buildOcokaAppreciation` names the existing-vs-reinforcing split the
+  code already computed. EXISTING (natural + cultural, i.e. derived from the terrain
+  itself) is `barrier` (hex min-cut) and `roadNetworkBarrier` (road-network-exact
+  min-cut), plus the chokepoint cells both are sited against. REINFORCING (deliberately
+  emplaced) is `restrictionPlan` — the already-computed recommended-measure set.
+  User-*placed* measures stay `CounterMobilityPanel.tsx`'s job; duplicating them here
+  would be a second, divergent obstacle list.
+- **Avenues of approach** — presented directly from `corridorField`/
+  `restrictedCorridorField`. The `AvenueOfApproach` grouping layer described in §47.0
+  (an avenue groups mutually supporting corridors) is **deliberately not built** —
+  grouping honestly needs a real adjacency/support test, which is new computation this
+  stage doesn't do. Each corridor is shown as its own avenue-equivalent band in the
+  meantime; `OakocPanel.tsx` states this scope boundary in the UI, not just here.
+- **`'not-assessed'` gate** — Obstacles/Avenues read `result.path` (null = the objective
+  was unreachable, so `mobilityAppreciation.ts` never ran the corridor/chokepoint/
+  min-cut block at all) as the assessed/not-assessed test. This is a different claim
+  from "ran, found nothing" (e.g. `barrier: null` with a real path — a genuine "no
+  separating cut needed" finding), and the two are rendered with deliberately different
+  UI treatment (`OakocPanel.tsx`'s own header comment) so a reader can never conflate
+  them.
+- **Key terrain / Observation & fields of fire / Cover & concealment** ship now as
+  explicit `'not-assessed'` placeholders (OCOKA 4/6/7 respectively) rather than being
+  omitted — `fieldsOfFireAssessed: false` and `coverAssessed: false` are the exact
+  machine-readable flags §47.2 requires once those factors exist, shipped early at zero
+  cost so OCOKA 6/7 have nothing left to retrofit into export/briefing payloads.
+- **`roadNetworkBarrier`'s first map layer + export feature** — was computed on every
+  vehicle run and discarded until now. `MapboxMapView.tsx` renders it as its own layer
+  (`mobility-road-barrier`, dashed purple `#7C3AED`, distinct from the hex cut's solid
+  red) with a `MobilityLegend.tsx` entry; `mobilityGisExport.ts` exports it to both
+  GeoJSON and KML (carrying the real OSM way name per segment where known — the hex
+  barrier has no equivalent since it cuts hex-cell edges, not named road geometry).
+- **`Corridor.bottleneckCellKeys` added** — names the exact cells in a corridor's own
+  narrowest iso-arrival-time slice (previously only counted), for OCOKA 4's future
+  key-terrain candidate scoring.
+- Not touched: `MobilityAssistantPayload`/GIS export attribute names for the AI
+  briefing — `roadNetworkBarrier` reaching the assistant payload is left for whichever
+  future stage actually narrates Obstacles, to avoid adding fields the briefing
+  template doesn't yet read.
+
 ---
 
 ## Update policy

@@ -40,6 +40,7 @@ import { MobilityClass } from './terrain/mobilityClass';
 import { recordMobilityRunTelemetry, MobilityStageTimestamp } from './terrain/mobilityTelemetry';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
+import { OakocPanel } from './components/OakocPanel';
 import { COUNTER_MEASURES } from './terrain/counterMeasures';
 import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
 import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from './terrain/corridorField';
@@ -528,7 +529,7 @@ const App: React.FC = () => {
   // Shares the appreciation run's own sampled grid/min-cut segments rather
   // than resampling — see mobilityAppreciation.ts's `cells`/`originKeys`/
   // `objectiveKeys` note.
-  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility'>('appreciation');
+  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility' | 'oakoc'>('appreciation');
   const [cmPendingSegmentIndex, setCmPendingSegmentIndex] = useState<number | null>(null);
   const [cmPlacements, setCmPlacements] = useState<CounterMeasurePlacement[]>([]);
   const [cmLedger, setCmLedger] = useState<DelayLedgerEntry[] | null>(null);
@@ -1468,6 +1469,7 @@ const App: React.FC = () => {
             onCorridorHighlight={setHighlightedCorridorId}
             chokepoints={mobilityResult?.chokepoints ?? null}
             barrierSegments={mobilityResult?.barrier?.segments ?? null}
+            roadBarrierSegments={mobilityResult?.roadNetworkBarrier?.segments ?? null}
             onRunAppreciation={handleRunMobilityAppreciation}
             onCancelAppreciation={handleCancelMobilityAppreciation}
             mobilityRunning={mobilityRunning}
@@ -1495,6 +1497,7 @@ const App: React.FC = () => {
                 transitField: !!transitCellsForMap && transitCellsForMap.length > 0,
                 chokepoints: (mobilityResult?.chokepoints.length ?? 0) > 0,
                 barrier: (mobilityResult?.barrier?.segments.length ?? 0) > 0,
+                roadBarrier: (mobilityResult?.roadNetworkBarrier?.segments.length ?? 0) > 0,
                 restrictions: (restrictionsForMap?.length ?? 0) > 0,
                 water: (waterFeaturesForMap?.length ?? 0) > 0,
                 unitPath: !!unitSimPath,
@@ -1526,6 +1529,12 @@ const App: React.FC = () => {
                 onClick={() => setMobilityActiveTab('counterMobility')}
               >
                 Counter-mobility planner
+              </button>
+              <button
+                className={mobilityActiveTab === 'oakoc' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('oakoc')}
+              >
+                OCOKA
               </button>
             </div>
             {mobilityActiveTab === 'appreciation' ? (
@@ -1573,7 +1582,7 @@ const App: React.FC = () => {
               simMode={simMode}
               onSimModeChange={setSimMode}
             />
-            ) : (
+            ) : mobilityActiveTab === 'counterMobility' ? (
               <CounterMobilityPanel
                 barrierSegments={mobilityResult?.barrier?.segments ?? []}
                 pendingSegmentIndex={cmPendingSegmentIndex}
@@ -1589,6 +1598,8 @@ const App: React.FC = () => {
                 corridorView={corridorView}
                 onCorridorViewChange={setCorridorView}
               />
+            ) : (
+              <OakocPanel result={mobilityResult} />
             )}
             </>
           ) : (
