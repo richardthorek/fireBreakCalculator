@@ -279,7 +279,8 @@ history beyond this window: `git log`.
   tier-2 has real usage evidence. Gates green: `api-mobility`'s own
   `npm test` (new package), webapp's `npm test` (38/38) + `npm run build`,
   `api`'s existing tests untouched (zero risk — nothing in the new package
-  is imported by `/api`).
+  is imported by `/api`). PR
+  [#207](https://github.com/richardthorek/fireBreakCalculator/pull/207).
 - **2026-08-03 — OCOKA 2 shipped (step 56): `shared/@firebreak/terrain`
   extracted.** Prerequisite for OCOKA 5's server-side execution — the same
   algorithm code now has one home instead of risking a client/server fork.
