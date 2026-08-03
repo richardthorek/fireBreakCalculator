@@ -4,6 +4,7 @@
   "description": "Terrain Mobility backend (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3) — Durable Functions job protocol on a separate Flex Consumption Function App. Standalone package (own build, own tests) until the deployMobilityBackend cutover merges it into /api — see README.md.",
   "private": true,
   "scripts": {
+    "prebuild": "npm --prefix ../shared/terrain install",
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf dist",
