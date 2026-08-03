@@ -36,6 +36,7 @@ export interface MobilityLegendProps {
     transitField: boolean;
     chokepoints: boolean;
     barrier: boolean;
+    roadBarrier: boolean;
     restrictions: boolean;
     water: boolean;
     unitPath: boolean;
@@ -186,7 +187,7 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             </section>
           )}
 
-          {(present.chokepoints || present.barrier || present.restrictions) && (
+          {(present.chokepoints || present.barrier || present.roadBarrier || present.restrictions) && (
             <section>
               <h4>Denial</h4>
               <ul>
@@ -198,6 +199,13 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                 {present.barrier && (
                   <Swatch color="#D8232A" kind="line">
                     Solid red line — the cheapest continuous cut that severs origin from objective.
+                  </Swatch>
+                )}
+                {present.roadBarrier && (
+                  <Swatch color="#7C3AED" kind="dash">
+                    Dashed purple line — road-network-exact min-cut: the cheapest set of real road
+                    segments that severs the route (a more precise vehicle-specific answer alongside
+                    the solid-red hex cut above).
                   </Swatch>
                 )}
                 {present.restrictions && (

@@ -154,6 +154,15 @@ export interface Corridor {
    *  resolution". */
   bottleneckCells: number;
   bottleneckWidthM: number;
+  /** The exact cell keys making up the corridor's own narrowest iso-arrival-
+   *  time slice — i.e. `bottleneckCells` cells, named rather than merely
+   *  counted. Added for OCOKA 4 (docs/ROUTE_INTELLIGENCE.md §47.1), which
+   *  needs to test "denial of this exact ground", not just its width. Falls
+   *  back to every cell in the corridor under the same condition
+   *  `bottleneckCells` itself falls back to `cells.length` (fewer than two
+   *  finite arrival times, or a zero-span bucket set) — the whole corridor
+   *  is the only honest "slice" available in that case. */
+  bottleneckCellKeys: string[];
   widestCells: number;
   widestWidthM: number;
   /** How many of THIS mover fit side by side through the bottleneck —
@@ -809,22 +818,27 @@ function buildCorridor(
     .filter((t): t is number => typeof t === 'number' && isFinite(t));
   let bottleneckCells = cells.length;
   let widestCells = cells.length;
+  let bottleneckCellKeys = comp;
   if (finiteArrivals.length > 1) {
     const lo = Math.min(...finiteArrivals);
     const hi = Math.max(...finiteArrivals);
     const span = hi - lo;
     if (span > 0) {
       const buckets = new Array(opts.widthSlices).fill(0);
+      const bucketKeys: string[][] = Array.from({ length: opts.widthSlices }, () => []);
       for (const k of comp) {
         const t = facts.arrivalSeconds.get(k);
         if (typeof t !== 'number' || !isFinite(t)) continue;
         const b = Math.min(opts.widthSlices - 1, Math.floor(((t - lo) / span) * opts.widthSlices));
         buckets[b]++;
+        bucketKeys[b].push(k);
       }
       const occupied = buckets.filter(b => b > 0);
       if (occupied.length > 0) {
         bottleneckCells = Math.min(...occupied);
         widestCells = Math.max(...occupied);
+        const narrowestIdx = buckets.findIndex(b => b === bottleneckCells);
+        if (narrowestIdx >= 0) bottleneckCellKeys = bucketKeys[narrowestIdx];
       }
     }
   }
@@ -871,6 +885,7 @@ function buildCorridor(
     fastestTravelSeconds,
     bottleneckCells,
     bottleneckWidthM,
+    bottleneckCellKeys,
     widestCells,
     widestWidthM: widestCells * hexWidthM,
     bottleneckAbreast,

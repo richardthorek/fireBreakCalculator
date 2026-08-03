@@ -166,6 +166,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       corridorField: result.corridorField,
       chokepoints: result.chokepoints,
       barrier: result.barrier,
+      roadNetworkBarrier: result.roadNetworkBarrier,
       cells: result.cells,
       placements: cmPlacements,
       measures: COUNTER_MEASURES,

@@ -14,6 +14,11 @@
  *    — a corridor is "movement will happen somewhere in this band").
  *  - Chokepoints → one Polygon Feature per top route-crossing hex cell.
  *  - Min-cut barrier → one LineString Feature per severing-cut segment.
+ *  - Road-network min-cut barrier → one LineString Feature per severing ROAD
+ *    segment (OCOKA 3, docs/ROUTE_INTELLIGENCE.md §47) — the road-network-exact
+ *    sibling of the hex min-cut above, resolution-matched to the real road
+ *    graph edge rather than a hex-cell boundary. Carries the OSM way name
+ *    where known, since this cut runs directly over named road geometry.
  *  - Counter-measure placements → one LineString Feature per placed edge (an
  *    obstacle is sited AT an edge between two cells — a line between their
  *    centers is what was actually computed, never an invented point along
@@ -35,7 +40,7 @@
 
 import { CorridorField, Corridor } from '../terrain/corridorField';
 import { ChokepointCell } from '../terrain/corridorAnalysis';
-import { MinCutResult } from '../terrain/minCutBarrier';
+import { MinCutResult, RoadMinCutResult } from '../terrain/minCutBarrier';
 import { MoverProfile } from '../terrain/moverProfiles';
 import { MobilityGridCell } from '../terrain/accumulatedCost';
 import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
@@ -60,6 +65,10 @@ export interface ExportMobilityInput {
   corridorField: CorridorField | null;
   chokepoints: ChokepointCell[];
   barrier: MinCutResult | null;
+  /** OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — the road-network-exact min-cut,
+   *  vehicle profiles only (see `computeRoadNetworkMinCut`). Null under the
+   *  same conditions `barrier` is: no separating cut for this profile/AOI. */
+  roadNetworkBarrier: RoadMinCutResult | null;
   /** The exact sampled grid, needed to resolve a counter-measure placement's
    *  edge (`segmentFromKey`/`segmentToKey`) back to real coordinates. */
   cells: MobilityGridCell[];
@@ -178,6 +187,21 @@ function barrierProperties(barrier: MinCutResult, segmentIndex: number) {
   };
 }
 
+function roadBarrierProperties(barrier: RoadMinCutResult, segmentIndex: number) {
+  const seg = barrier.segments[segmentIndex];
+  return {
+    kind: 'road_network_min_cut_segment',
+    segment: segmentIndex + 1,
+    segment_count: barrier.segments.length,
+    // Informational total for the WHOLE cut, repeated per segment so a GIS
+    // user filtering to one segment still sees the cut it belongs to.
+    cut_value_total: round(barrier.cutValue),
+    // Real OSM way name where known — the hex barrier has no equivalent
+    // since it cuts hex-cell edges, not named road geometry.
+    way_name: seg.wayName ?? null,
+  };
+}
+
 function placementProperties(
   p: CounterMeasurePlacement,
   measure: CounterMeasure | undefined,
@@ -235,6 +259,16 @@ export function toMobilityGeoJSON(input: ExportMobilityInput): string {
       features.push({
         type: 'Feature',
         properties: barrierProperties(input.barrier!, i),
+        geometry: { type: 'LineString', coordinates: ringCoords([seg.from, seg.to]) },
+      });
+    });
+  }
+
+  if (input.roadNetworkBarrier) {
+    input.roadNetworkBarrier.segments.forEach((seg, i) => {
+      features.push({
+        type: 'Feature',
+        properties: roadBarrierProperties(input.roadNetworkBarrier!, i),
         geometry: { type: 'LineString', coordinates: ringCoords([seg.from, seg.to]) },
       });
     });
@@ -330,6 +364,16 @@ export function toMobilityKML(input: ExportMobilityInput): string {
       </Placemark>`).join('')
     : '';
 
+  const roadBarrierPlacemarks = input.roadNetworkBarrier
+    ? input.roadNetworkBarrier.segments.map((seg, i) => `
+      <Placemark>
+        <name>Road-network min-cut segment ${i + 1}${seg.wayName ? ` — ${xmlEscape(seg.wayName)}` : ''}</name>
+        <Style><LineStyle><color>${kmlColor('#7C3AED')}</color><width>4</width></LineStyle></Style>
+        <description>${seg.wayName ? `${xmlEscape(seg.wayName)} · ` : ''}Cut value ${round(input.roadNetworkBarrier!.cutValue)} (unit/trail-weighted, not vehicle capacity)</description>
+        <LineString><tessellate>1</tessellate><coordinates>${kmlCoords([seg.from, seg.to])}</coordinates></LineString>
+      </Placemark>`).join('')
+    : '';
+
   const measuresById = new Map(input.measures.map(m => [m.id, m]));
   const ledgerByMeasureId = new Map((input.ledger ?? []).map(e => [e.measure.id, e]));
   const placementPlacemarks = input.placements.map(p => {
@@ -363,6 +407,7 @@ export function toMobilityKML(input: ExportMobilityInput): string {
     <Folder><name>Movement corridors</name>${corridorPlacemarks}</Folder>
     <Folder><name>Chokepoints</name>${chokepointPlacemarks}</Folder>
     <Folder><name>Min-cut barrier</name>${barrierPlacemarks}</Folder>
+    <Folder><name>Road-network min-cut barrier</name>${roadBarrierPlacemarks}</Folder>
     <Folder><name>Counter-measure placements</name>${placementPlacemarks}</Folder>
   </Document>
 </kml>`;

@@ -118,6 +118,7 @@ function baseInput(hydrologyAvailable: boolean): ExportMobilityInput {
     corridorField,
     chokepoints: [],
     barrier: null,
+    roadNetworkBarrier: null,
     cells: allCells,
     placements: [],
     measures: [],

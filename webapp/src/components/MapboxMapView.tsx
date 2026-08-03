@@ -235,6 +235,12 @@ interface MapboxMapViewProps {
   chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
   /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
   barrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
+  /** OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — the road-network-EXACT min-cut:
+   *  the cheapest set of REAL road segments (not hex-cell edges) that severs
+   *  the road network between the painted areas, for vehicle profiles. A
+   *  separate, more precise sibling to `barrierSegments` above, not a
+   *  replacement — see `computeRoadNetworkMinCut` in terrain/minCutBarrier.ts. */
+  roadBarrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
   /** Owner feedback (2026-07-26): primary Terrain-mode actions must be
    *  reachable as floating map buttons, not buried in a side panel the user
    *  has to scroll/expand to reach on mobile. */
@@ -336,6 +342,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   roadRoute = null,
   chokepoints = null,
   barrierSegments = null,
+  roadBarrierSegments = null,
   onRunAppreciation,
   onCancelAppreciation,
   mobilityRunning = false,
@@ -2513,6 +2520,50 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
     return () => { unregisterOverlayOpacity('mobility-barrier'); remove(); };
   }, [barrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — road-network-exact min-cut: the
+  // cheapest set of REAL road segments (not hex-cell edges) severing the road
+  // network between the painted areas. A separate layer from `mobility-barrier`
+  // above, not a restyle of it — dashed purple so it reads as the more precise,
+  // road-geometry-exact sibling rather than a duplicate of the hex cut.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-road-barrier')) map.removeLayer('mobility-road-barrier');
+        if (map.getSource('mobility-road-barrier')) map.removeSource('mobility-road-barrier');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!roadBarrierSegments || roadBarrierSegments.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: roadBarrierSegments.map(s => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates: [[s.from.lng, s.from.lat], [s.to.lng, s.to.lat]] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-road-barrier');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-road-barrier', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-road-barrier',
+          type: 'line',
+          source: 'mobility-road-barrier',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#7C3AED', 'line-width': 5, 'line-opacity': 0.85, 'line-dasharray': [2, 1.5] },
+        });
+        registerOverlayOpacity('mobility-road-barrier', 'line-opacity', 0.85);
+      } catch (e) {
+        logger.warn('Failed to render road-network barrier plan', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => { unregisterOverlayOpacity('mobility-road-barrier'); remove(); };
+  }, [roadBarrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
