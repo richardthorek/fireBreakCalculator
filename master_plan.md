@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 2, 2026 — the owner-directed **OCOKA programme** (stages 1–9) is added at the top of "Next up"; the two mobility-offload rows it supersedes are struck through in place. See Recent Updates for the dated history, including a same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 2, 2026 — reordered so intent and the active roadmap (Vision, Current state, Next up, Blocked) lead the file; the **Shipped** history table and **Recent Updates** log now sit at the bottom, after Architecture snapshot. Content unchanged — see Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -32,59 +32,6 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 - **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode had already implemented two of the five doctrinal factors (Obstacles, Avenues of approach) without naming them.
 
 ## The Plan
-
-### Shipped
-
-One line each — history and rationale live in the linked as-built doc and in Recent Updates below, not here.
-
-| # | Step | Scope | Detail |
-|---|------|-------|--------|
-| 0 | Route intelligence & analysis UI | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
-| 1 | Universal GIS export pack | GeoJSON/KML/KMZ/SHP export + file import | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 |
-| 2 | Infrastructure-aware optimizer (core) | Existing trails/roads as discounted edges, unanchored-end insights | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
-| 3 | National live context (core) | DEA Hotspots + Digital Atlas NRT boundaries; incident/warning overlay, 5/8 states | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 |
-| 4 | AI assistant (core) | Azure AI Foundry briefing + chat, hard grounding gate, keyword KB | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
-| 4b | Operator briefing pack (SMEACS) | PDF/text briefing, road-access entry point, plant safety doctrine chunks | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §5 |
-| 7 | Detailed-analysis experience uplift | Route-wide hex grid, streamed scan visualization, auto-run, area recon | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
-| 8 | Operational hardening | Disclaimers, reproducibility stamping, observability, rate limiting, upstream canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 |
-| 10 | Terrain mobility & counter-mobility, Passes 1–4 | Area→area movement planning per mover profile; approach corridors, chokepoints, counter-measures | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility" §10, §§16–28 |
-| 12 | Terrain Mobility Pass 5 — probabilistic movement as the engine | Ensemble of imperfectly-informed movers replaces the single optimal line; ranked recommended restrictions | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
-| 13 | Terrain-mode UI clarity pass | Brush cursor, paint-lag fix, run progress HUD, map key, corridor legibility | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §33 |
-| 14 | Terrain Mobility Pass 6 — hydrology | Waterways/water bodies as a real movement barrier (was silently mislabelled as easy ground) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
-| 15 | Fire-break: water as a natural break edge | Damp ground doesn't carry fire — water-crossing segments cost zero build time instead of being priced as clearable fuel | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
-| 16 | Fire-break: cross-slope (sidehill) safety gate, distinct from the along-line uphill limit | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) F2 |
-| 17 | Fire-break: NAFI fire history shown as context only — no sourced clearing-rate curve to apply it to cost | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
-| 18 | Slice A — road network graph + A* routing, box-free by construction | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 19 | Painting uses real hex cells (`hexRing`/`hexSpiral`), not zoom-relative circles | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
-| 20 | Paint↔analysis grid reconciliation via real geodesic area overlap, not centre-point test | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
-| 21 | Slice A — road-speed override UI + config plumbing across the Worker boundary | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 22 | Slice A.9 — road-network routing actually wired into the live app (was correct in isolation, never called) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 23 | ~~Slice B v1 — expand-and-retry~~ (superseded by step 24, base padding formula still broken) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 24 | Slice B — square distance-based search box + targeted frontier-edge growth (the real Lake George fix) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 25 | Distance-scaled cell budget + quick/standard/fine analysis-depth selector | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 26 | Fixed corridors always collapsing to 1 (route-clustering) + corridor/trafficability colour collision | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 27 | Fixed progress-bar dead zones; real partial results now reach the map early | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
-| 28 | Fixed road graph having zero water awareness (a vehicle route crossed Lake George) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
-| 29 | Corridor rendering consolidated to 1 refined route per corridor (was up to 24 raw polylines) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
-| 30 | Corridor band outline smoothed (Chaikin corner-cutting on the dissolved hex geometry) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
-| 31 | OSM water `relation`s (not just `way`s) now block movement — fixed live, ahead of queue order, for 1.0 demo risk | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
-| 32 | Cloud-offload scoping (3-tier model) + mobility run telemetry collection started | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| 33 | ~~Small-AOI detour padding, uncapped~~ (revised step 35 same day — caused the page-hang regression) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39/§41 |
-| 34 | Mapbox-tile road fallback widened to Terrain Mobility (fixes a real highway painting NO-GO) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
-| 35 | Fixed page-hang regression: detour floor capped, cell budget fixed, onTrail slope exemption added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
-| 36 | Road-graph route fused into chokepoint/corridor analysis (was display-only before) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
-| 37 | Corridor legibility pass — route line visibility + label/shape colour collision fixed | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
-| 38 | Road-graph fusion extended: ensemble tie-break bias + min-cut road-class-tiered capacity | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a |
-| 39 | Genuinely mixed hex+road-graph adjacency in the ensemble and a road-network-exact min-cut, CLOSED | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
-| 40 | Road-route decoupling — instant road-network preview, seconds instead of tens of seconds | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
-| 41 | Full OSM water-relation topology — multipolygon reassembly (fixed an under-block risk, not just the documented over-block one) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
-| 42 | Hydrology attributes surfaced in GIS export + AI briefing (were computed, never reached either) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
-| 43 | Existing-trail reuse now reaches the cost engine (was computed, silently discarded before costing) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
-| 44 | `api-register.md`/`component-register.md` corrected against the live codebase (both found stale) | [api-register.md](docs/api-register.md), [component-register.md](docs/component-register.md) |
-| 45 | Slice B — lazy grid materialisation + resumable search (architectural half; remainder closed by step 46) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 46 | Slice B remainder — α·C* cost-budget, 2–5 corridor stop rule, "most likely"/"most risky" picks | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 47 | Mobile UI — quick mover-class selector + coordinate readout repositioned | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
-| 48 (OCOKA 1) | Mobility-class vocabulary migration — one MCOO vocabulary instead of two; `webapp/tests/` wired into CI | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 
 ### Next up
 
@@ -250,6 +197,59 @@ Not next regardless of size — each needs something outside this codebase to re
 React 18 + Vite + TS (`/webapp`) · Azure Functions Node 22 (`/api`) · Azure Table Storage · Mapbox GL JS · Azure Static Web Apps, Bicep IaC (`/infra`, OIDC).
 Data flow: draw line → slope (~10 m) + vegetation (~200 m) sampling → joined chainage profile → `POST /api/analysis/calculate` → per-segment estimates + flags → UI/assistant/exports.
 Gates: `npm test` + `npm run build` (webapp, strict TS), `npm run test:unit` (api) — all in CI.
+
+## Shipped
+
+One line each — history and rationale live in the linked as-built doc and in Recent Updates below, not here.
+
+| # | Step | Scope | Detail |
+|---|------|-------|--------|
+| 0 | Route intelligence & analysis UI | Corridor optimizer, Plan Assistant, tabbed workspace | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 1 | Universal GIS export pack | GeoJSON/KML/KMZ/SHP export + file import | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §1, §4 |
+| 2 | Infrastructure-aware optimizer (core) | Existing trails/roads as discounted edges, unanchored-end insights | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 3 | National live context (core) | DEA Hotspots + Digital Atlas NRT boundaries; incident/warning overlay, 5/8 states | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §4 |
+| 4 | AI assistant (core) | Azure AI Foundry briefing + chat, hard grounding gate, keyword KB | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) |
+| 4b | Operator briefing pack (SMEACS) | PDF/text briefing, road-access entry point, plant safety doctrine chunks | [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §5 |
+| 7 | Detailed-analysis experience uplift | Route-wide hex grid, streamed scan visualization, auto-run, area recon | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) |
+| 8 | Operational hardening | Disclaimers, reproducibility stamping, observability, rate limiting, upstream canary | [GIS_INTEROP.md](docs/GIS_INTEROP.md) §6, [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §7 |
+| 10 | Terrain mobility & counter-mobility, Passes 1–4 | Area→area movement planning per mover profile; approach corridors, chokepoints, counter-measures | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Terrain Mobility" §10, §§16–28 |
+| 12 | Terrain Mobility Pass 5 — probabilistic movement as the engine | Ensemble of imperfectly-informed movers replaces the single optimal line; ranked recommended restrictions | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| 13 | Terrain-mode UI clarity pass | Brush cursor, paint-lag fix, run progress HUD, map key, corridor legibility | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §33 |
+| 14 | Terrain Mobility Pass 6 — hydrology | Waterways/water bodies as a real movement barrier (was silently mislabelled as easy ground) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34 |
+| 15 | Fire-break: water as a natural break edge | Damp ground doesn't carry fire — water-crossing segments cost zero build time instead of being priced as clearable fuel | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 16 | Fire-break: cross-slope (sidehill) safety gate, distinct from the along-line uphill limit | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) F2 |
+| 17 | Fire-break: NAFI fire history shown as context only — no sourced clearing-rate curve to apply it to cost | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 18 | Slice A — road network graph + A* routing, box-free by construction | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 19 | Painting uses real hex cells (`hexRing`/`hexSpiral`), not zoom-relative circles | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
+| 20 | Paint↔analysis grid reconciliation via real geodesic area overlap, not centre-point test | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §36 |
+| 21 | Slice A — road-speed override UI + config plumbing across the Worker boundary | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 22 | Slice A.9 — road-network routing actually wired into the live app (was correct in isolation, never called) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 23 | ~~Slice B v1 — expand-and-retry~~ (superseded by step 24, base padding formula still broken) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 24 | Slice B — square distance-based search box + targeted frontier-edge growth (the real Lake George fix) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 25 | Distance-scaled cell budget + quick/standard/fine analysis-depth selector | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 26 | Fixed corridors always collapsing to 1 (route-clustering) + corridor/trafficability colour collision | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 27 | Fixed progress-bar dead zones; real partial results now reach the map early | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
+| 28 | Fixed road graph having zero water awareness (a vehicle route crossed Lake George) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §37 |
+| 29 | Corridor rendering consolidated to 1 refined route per corridor (was up to 24 raw polylines) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
+| 30 | Corridor band outline smoothed (Chaikin corner-cutting on the dissolved hex geometry) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §28 |
+| 31 | OSM water `relation`s (not just `way`s) now block movement — fixed live, ahead of queue order, for 1.0 demo risk | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §34/§35 |
+| 32 | Cloud-offload scoping (3-tier model) + mobility run telemetry collection started | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| 33 | ~~Small-AOI detour padding, uncapped~~ (revised step 35 same day — caused the page-hang regression) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §39/§41 |
+| 34 | Mapbox-tile road fallback widened to Terrain Mobility (fixes a real highway painting NO-GO) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §40 |
+| 35 | Fixed page-hang regression: detour floor capped, cell budget fixed, onTrail slope exemption added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §41 |
+| 36 | Road-graph route fused into chokepoint/corridor analysis (was display-only before) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42 |
+| 37 | Corridor legibility pass — route line visibility + label/shape colour collision fixed | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §43 |
+| 38 | Road-graph fusion extended: ensemble tie-break bias + min-cut road-class-tiered capacity | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42a |
+| 39 | Genuinely mixed hex+road-graph adjacency in the ensemble and a road-network-exact min-cut, CLOSED | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §42b |
+| 40 | Road-route decoupling — instant road-network preview, seconds instead of tens of seconds | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §44 |
+| 41 | Full OSM water-relation topology — multipolygon reassembly (fixed an under-block risk, not just the documented over-block one) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §45 |
+| 42 | Hydrology attributes surfaced in GIS export + AI briefing (were computed, never reached either) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §46 |
+| 43 | Existing-trail reuse now reaches the cost engine (was computed, silently discarded before costing) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 44 | `api-register.md`/`component-register.md` corrected against the live codebase (both found stale) | [api-register.md](docs/api-register.md), [component-register.md](docs/component-register.md) |
+| 45 | Slice B — lazy grid materialisation + resumable search (architectural half; remainder closed by step 46) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 46 | Slice B remainder — α·C* cost-budget, 2–5 corridor stop rule, "most likely"/"most risky" picks | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 47 | Mobile UI — quick mover-class selector + coordinate readout repositioned | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 48 (OCOKA 1) | Mobility-class vocabulary migration — one MCOO vocabulary instead of two; `webapp/tests/` wired into CI | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 
 ## Recent Updates
 
