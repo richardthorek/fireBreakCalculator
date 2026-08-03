@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — OCOKA 3 (five-factor framing) shipped, step 49. See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — OCOKA 4 (key terrain) shipped, step 50. See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -29,7 +29,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 - **Vegetation:** NVIS national spine + NSW SVTM overlay; state expansion frozen ([docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)).
 - **Route intelligence:** corridor pathfinding, chainage-addressed segment detail, elevation profile, rule-based Plan Assistant, tabbed analysis UI — shipped in PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163) ([docs/ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md)). Infrastructure trail lookup (OSM/Overpass) is now multi-endpoint resilient after a live-tested rate-limiting bug was found and fixed 2026-07-12.
 - **Live context:** national hotspots + fire/burn-area boundaries, plus incident/warning overlays for 5 of 8 states, are live on the map ([docs/GIS_INTEROP.md](docs/GIS_INTEROP.md) §4). AFDRS official fire-danger rating is **blocked on access** (BOM Registered User program), not effort — see the assessment in that doc.
-- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode now presents all five OCOKA factors by name (`OakocPanel.tsx`): Obstacles and Avenues of approach are real, assembled from existing products; Key terrain, Observation & fields of fire, and Cover & concealment ship as explicit `'not-assessed'` placeholders pending OCOKA 4/6/7.
+- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode now presents all five OCOKA factors by name (`OakocPanel.tsx`): Obstacles, Avenues of approach and Key terrain are real, assembled from (or, for Key terrain, scored from) existing products; Observation & fields of fire and Cover & concealment ship as explicit `'not-assessed'` placeholders pending OCOKA 6/7.
 
 ## The Plan
 
@@ -44,7 +44,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | ~~OCOKA 1 — mobility-class vocabulary migration~~ | **Shipped — step 48.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | **OCOKA 2 — extract `shared/@firebreak/terrain` workspace package** | Prerequisite for any server-side execution. §38's "just call the existing modules" is optimistic — they live in a different package with a different tsconfig. Extract rather than copy; copying would make the algorithm itself a drift surface | M | OCOKA 1 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | ~~OCOKA 3 — five-factor framing over existing products~~ | **Shipped — step 49.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
-| **OCOKA 4 — key terrain** | The one missing factor that is nearly free: candidates from chokepoints + hex/road min-cut, scored by re-running the corridor field with each denied and measuring the delta via the existing `compareCorridorFields`. Makes `PITCH_TERRAIN_DENIAL.md`'s existing "key terrain" claim true | M | OCOKA 3 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
+| ~~OCOKA 4 — key terrain~~ | **Shipped — step 50.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
 | **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | **OCOKA 6 — `viewshed.ts` + Observation & fields of fire** | R3 line-of-sight over the hex grid (one elevation per hex centre, no raster in hand). Observers via a third paint role. Fields of fire computed **only** for user-stated ranges — never inferred | M/L | OCOKA 3 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8 |
 | **OCOKA 7 — cover & concealment** | Concealment from vegetation structure + dead ground. **Cover is not computed** — a bare-earth DEM cannot see a rock, bund or building — and `coverAssessed: false` ships as a machine-readable property in export and payload, not just UI prose | S/M | OCOKA 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
@@ -75,10 +75,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 - ~~**OCOKA 3**~~ — **Shipped, step 49.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.7.
 
-- **OCOKA 4 — key terrain** (Difficulty: M)
-  - Outcome: the tool names the ground whose denial actually changes the picture, and shows the delta that earned the label plus the cost of bypassing it.
-  - Changes: `terrain/keyTerrain.ts` · candidates from chokepoints + hex min-cut + road min-cut + corridor bottlenecks · each scored by a real re-run compared with `compareCorridorFields` · new worker request kind (must not run on the main thread — that reproduces step 41's page-hang exactly).
-  - Note: doctrine defines key terrain relative to a *mission*, and this tool has no mission. Ship that caveat. Decisive terrain is computed as a predicate but presented as a **candidate** requiring confirmation — the commander designates it, not the map.
+- ~~**OCOKA 4**~~ — **Shipped, step 50.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.8.
 
 - **OCOKA 5 — backend protocol + tier-2 execution** (Difficulty: L)
   - Outcome: analysis runs on the server with results streaming back progressively, and a dropped connection resumes instead of recomputing.
@@ -248,6 +245,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 47 | Mobile UI — quick mover-class selector + coordinate readout repositioned | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 48 (OCOKA 1) | Mobility-class vocabulary migration — one MCOO vocabulary instead of two; `webapp/tests/` wired into CI | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | 49 (OCOKA 3) | Five-factor OCOKA framing — `terrain/oakoc.ts` assembly + `OakocPanel.tsx`; `roadNetworkBarrier` gets its first map layer/legend/GIS export; `Corridor.bottleneckCellKeys` added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
+| 50 (OCOKA 4) | Key terrain — `terrain/keyTerrain.ts` nominates candidates from chokepoints/min-cut/corridor bottlenecks, scores each by a real worker-run re-search with it denied; `OakocPanel.tsx`'s Key terrain section now real, `decisiveCandidate` always framed as a candidate requiring confirmation | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
 
 ## Recent Updates
 
@@ -256,6 +254,35 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — OCOKA 4 shipped (step 50).** Key terrain — the one factor
+  §47.1's audit called "~90% computable from existing chokepoint/min-cut
+  machinery" is now real. New `terrain/keyTerrain.ts`:
+  `generateKeyTerrainCandidates` nominates candidate ground (cheap, main
+  thread) from chokepoints, the hex min-cut, the road-network min-cut and
+  each top corridor's own `bottleneckCellKeys`; `scoreKeyTerrainCandidates`
+  re-runs the search with each candidate denied and diffs the result against
+  `optimiserCorridorField` via the existing `compareCorridorFields` — always
+  the optimiser field, never the (possibly absent, possibly simulated-mover)
+  headline one, a stated methodology choice. Denial uses an `Infinity` edge
+  penalty, deliberately unlike every other (finite, "always breachable")
+  penalty in this mode — a finite multiplier can never make `decisiveCandidate`
+  mean anything, since Dijkstra will always find *some* route if one is
+  topologically possible; caught by `keyTerrain.test.ts` before it could ship
+  silently broken. Scoring runs in a new `mobilityWorker.ts` `'keyTerrain'`
+  request kind (must not run on the main thread — reproduces step 41's
+  page-hang otherwise). `mobilityAppreciation.ts` wires it in after
+  chokepoints/barrier/roadNetworkBarrier compute, skipping the worker call
+  entirely when zero candidates were nominated rather than round-tripping an
+  empty request. `OakocPanel.tsx`'s Key terrain section renders real scored
+  candidates with `KEY_TERRAIN_MISSION_CAVEAT` always shown and
+  `decisiveCandidate` always worded as "candidate, requires a commander's
+  confirmation" — never an assertion (doctrine reserves decisive terrain for
+  a commander's designation, never a map's). `OcokaKeyTerrainFactor.result`
+  can be `null` for two distinct honest reasons (objective unreachable vs. a
+  reachable run with zero candidates); the renderer disambiguates rather than
+  assuming one implies the other. Full detail: `ROUTE_INTELLIGENCE.md` §47.8.
+  Gates green: `npm test` (35/35 files, incl. new `keyTerrain.test.ts` and an
+  updated `oakocAssembly.test.ts`), `npm run build`.
 - **2026-08-03 — OCOKA 3 shipped (step 49).** Five-factor OCOKA framing over
   existing products, no new computation. New `terrain/oakoc.ts`
   (`buildOcokaAppreciation`) names the existing-vs-reinforcing obstacle split
@@ -315,11 +342,6 @@ history beyond this window: `git log`.
   per-corridor `riskScore` composite (documented weights, engineering
   judgement, not a probability). 9-check `corridorRiskAndCount.test.ts`
   added; full suite green.
-- **2026-07-29 — Slice B (step 45):** lazy grid materialisation + resumable
-  search — `mobilityLazyGrid.ts` replaces the old escalating-retry rebuild
-  with tiles that materialise only when the reachable frontier runs off the
-  fetched edge, and `resumeFrom` continues a prior Dijkstra search instead
-  of restarting at cost 0.
 
 *(Full history for steps 0–45 — 2026-07-10 through 2026-07-29 — is in the
 Shipped table above, each linked as-built doc's own dated section, and

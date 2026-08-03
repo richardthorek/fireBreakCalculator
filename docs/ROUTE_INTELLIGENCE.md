@@ -5629,6 +5629,72 @@ computation.
   future stage actually narrates Obstacles, to avoid adding fields the briefing
   template doesn't yet read.
 
+### 47.8 OCOKA 4 shipped (2026-08-03) — key terrain
+
+`terrain/keyTerrain.ts`, per the §47.1 audit's "~90% computable from existing
+chokepoint/min-cut machinery" claim — now real, no invented signal.
+
+- **Candidate nomination (`generateKeyTerrainCandidates`)** — cheap, main-thread, no
+  search runs. Pulls from four already-computed products: the top-6 chokepoints by pass
+  count, every hex min-cut segment, every road-network min-cut segment, and the
+  narrowest-slice `bottleneckCellKeys` of the top-3 ranked corridors (§47.7's
+  `Corridor.bottleneckCellKeys` addition, put to its intended use). Identical-ground
+  candidates are deduplicated, chokepoint provenance winning the tie since it carries
+  the richest real figure (an actual route-pass count).
+- **Scoring (`scoreKeyTerrainCandidates`) — MUST run in the worker.** Up to 10
+  candidates, each re-scored by a real re-run of `buildCorridorField` with that ground
+  denied (reduced to 6 routes per re-run, `restrictionPlanner.ts`'s identical
+  evaluation-vs-headline reduction), diffed against the baseline via the existing
+  `compareCorridorFields`. This is the same CPU-bound, no-network-I/O shape the
+  'movement' worker request already exists for; running it on the main thread
+  reproduces step 41's page-hang regression exactly. New `mobilityWorker.ts` /
+  `mobilityWorkerClient.ts` `'keyTerrain'` request/response kind, same
+  `requestId`-correlated promise pattern as 'search'/'movement'.
+- **Scored against the optimiser field, deliberately.** `optimiserCorridorField` (the
+  k-cheapest-routes field, always computed regardless of which one heads the UI) is the
+  baseline every candidate is diffed against — never the possibly-absent,
+  possibly-expensive-to-reproduce simulated-mover `corridorField`. A stated methodology
+  choice: "how much would denying this change the cheapest-route picture", not "...the
+  modelled-behaviour picture."
+- **`Infinity`, not a finite multiplier, for denial.** Every other `edgePenalties` user
+  in this mode (`counterMeasures.ts`) stays deliberately finite — "no entry here is
+  rated `block`", because a real physical obstacle in that catalogue is always
+  breachable given time. Key terrain asks a genuinely different, more absolute
+  question: "if this ground were fully controlled, what happens". A finite multiplier
+  can never make `decisiveCandidate` mean anything — Dijkstra with any finite edge cost
+  will always still find a route if one is topologically possible, however costly
+  (proven while writing `keyTerrain.test.ts`: even a 1e6 multiplier over the sole gap
+  in a hard-blocked water barrier still returned a route). `DENIAL_PENALTY_MULTIPLIER =
+  Infinity` is the same "excluded from the graph" treatment `travel.blocked` already
+  gets elsewhere (`minCutBarrier.ts`, `roadRouting.ts`), expressed through the penalty
+  map instead of a second mechanism.
+- **Decisive terrain stays a candidate, never an assertion.** Doctrine (ATP 2-01.3)
+  reserves decisive terrain for ground a commander *designates*, never derives from a
+  map. `decisiveCandidate: boolean` is a real computed predicate (`afterField === null`
+  — denying this candidate made the objective fully unreachable by every analysed
+  route) but is exposed, scored, and rendered (`OakocPanel.tsx`) only as a flag
+  requiring confirmation. `KEY_TERRAIN_MISSION_CAVEAT` — key terrain is doctrinally
+  relative to a mission this tool is not given, so it can only measure "how much does
+  denying this ground change the movement picture," a real but strictly narrower
+  question than "confers advantage" — is carried verbatim on every `KeyTerrainResult`
+  and always rendered, not summarised or dropped, whenever a real result is on screen.
+- **`mobilityAppreciation.ts` orchestration** — runs after chokepoints/barrier/
+  roadNetworkBarrier compute (same `if (path)` block), skips the worker call entirely
+  when candidate generation nominates zero candidates rather than round-tripping an
+  empty request. New `MobilityStage` key `'keyTerrain'` for progress UI.
+- **The two-reason-for-null distinction (`OcokaKeyTerrainFactor`, `oakoc.ts`)** — unique
+  among the five factors, `result` can be `null` for two different honest reasons:
+  `state === 'not-assessed'` (objective unreachable, same as Obstacles/Avenues) vs.
+  `state === 'assessed'` with `result === null` (a real, reachable run that genuinely
+  nominated zero candidates — open terrain with no chokepoint, min-cut or corridor
+  bottleneck worth naming). `OakocPanel.tsx` disambiguates explicitly rather than
+  assuming one implies the other; distinct wording for each ("OBJECTIVE UNREACHABLE" vs
+  "KEY TERRAIN SCORING NOT AVAILABLE FOR THIS RUN" — the latter now genuinely rare
+  rather than the OCOKA 3-era permanent placeholder it replaced).
+- Not touched: `MobilityAssistantPayload`/GIS export — key terrain candidates reaching
+  the AI briefing or GIS attributes is left for a future stage, same boundary OCOKA 3
+  drew around `roadNetworkBarrier`.
+
 ---
 
 ## Update policy

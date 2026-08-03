@@ -9,8 +9,8 @@
  * main thread, using the same caches as the fire-break optimizer — only the
  * already-sampled, serialisable cell array crosses into the worker.
  *
- * Two request kinds, discriminated on `kind` (absent = 'search', so any older
- * caller shape keeps working):
+ * Three request kinds, discriminated on `kind` (absent = 'search', so any
+ * older caller shape keeps working):
  *
  *  - 'search'   — the multi-source accumulated-cost field, plus the single
  *                 cheapest origin→objective path backtracked from the SAME
@@ -25,6 +25,20 @@
  *                 run instead of shipping cells across the boundary per
  *                 evaluation. Emits progress messages throughout, so the UI
  *                 can show the field building rather than freezing.
+ *  - 'keyTerrain' — key terrain candidate scoring (OCOKA 4,
+ *                 docs/ROUTE_INTELLIGENCE.md §47.1, keyTerrain.ts). Candidate
+ *                 GENERATION (`generateKeyTerrainCandidates`) is cheap — no
+ *                 search runs — and stays on the main thread per that
+ *                 module's own header comment; only the SCORING
+ *                 (`scoreKeyTerrainCandidates`, up to
+ *                 `MAX_CANDIDATES_EVALUATED × EVALUATION_ROUTE_COUNT` full
+ *                 route searches) comes here, for the exact same reason
+ *                 'movement' does: CPU-bound, no network I/O, and running it
+ *                 on the main thread reproduces the step-41 page-hang
+ *                 regression (see keyTerrain.ts's own header). No progress
+ *                 reporting for this kind — `scoreKeyTerrainCandidates` has
+ *                 no internal progress hook, so this just posts the final
+ *                 result once done.
  */
 
 import {
@@ -36,6 +50,8 @@ import { simulateMovementEnsemble, MovementEnsembleResult } from './movementSimu
 import { planRestrictions, RestrictionPlan } from './restrictionPlanner';
 import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
 import { RoadGraph } from './roadGraph';
+import { CorridorField } from './corridorField';
+import { scoreKeyTerrainCandidates, buildKeyTerrainResult, KeyTerrainCandidate, KeyTerrainResult } from './keyTerrain';
 
 export interface SimPathNode {
   lat: number;
@@ -106,7 +122,30 @@ export interface MobilityMovementRequest {
   roadGraph?: RoadGraph;
 }
 
-export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest;
+export interface MobilityKeyTerrainRequest {
+  kind: 'keyTerrain';
+  requestId: number;
+  cells: MobilityGridCell[];
+  originKeys: string[];
+  objectiveKeys: string[];
+  profileId: string;
+  nightMode: boolean;
+  hexSize: number;
+  proj: LocalProjection;
+  /** The optimiser (k-cheapest-routes) field this run already computed —
+   *  every candidate is scored against IT regardless of which field heads
+   *  the UI, per keyTerrain.ts's own header comment ("SCORED AGAINST THE
+   *  OPTIMISER FIELD, DELIBERATELY"). */
+  baselineField: CorridorField;
+  /** Nominated on the main thread by `generateKeyTerrainCandidates` — cheap,
+   *  no search runs — and forwarded here unchanged for scoring. */
+  candidates: KeyTerrainCandidate[];
+  /** Same as `MobilitySearchRequest.roadSpeedOverrides` — see that field's
+   *  doc comment. */
+  roadSpeedOverrides?: RoadSpeedOverrides;
+}
+
+export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest | MobilityKeyTerrainRequest;
 
 export interface MobilitySearchResponse {
   kind: 'search';
@@ -129,6 +168,15 @@ export interface MobilityMovementResponse {
   plan: RestrictionPlan | null;
 }
 
+export interface MobilityKeyTerrainResponse {
+  kind: 'keyTerrain';
+  requestId: number;
+  /** Null when the profile didn't resolve — same null-safety pattern as the
+   *  'movement'/'search' handlers above, not a signal about the candidates
+   *  themselves. */
+  result: KeyTerrainResult | null;
+}
+
 export interface MobilityProgressResponse {
   kind: 'progress';
   requestId: number;
@@ -146,6 +194,7 @@ export interface MobilityProgressResponse {
 export type MobilityWorkerResponse =
   | MobilitySearchResponse
   | MobilityMovementResponse
+  | MobilityKeyTerrainResponse
   | MobilityProgressResponse;
 
 const post = (message: MobilityWorkerResponse) => (self as unknown as Worker).postMessage(message);
@@ -204,6 +253,20 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
     }
 
     post({ kind: 'movement', requestId: req.requestId, ensemble, plan });
+    return;
+  }
+
+  if (req.kind === 'keyTerrain') {
+    if (!profile) {
+      post({ kind: 'keyTerrain', requestId: req.requestId, result: null });
+      return;
+    }
+    const scored = scoreKeyTerrainCandidates(
+      req.cells, req.originKeys, req.objectiveKeys, profile, req.nightMode, req.hexSize, req.proj,
+      req.baselineField, req.candidates
+    );
+    const result = buildKeyTerrainResult(req.candidates, scored);
+    post({ kind: 'keyTerrain', requestId: req.requestId, result });
     return;
   }
 

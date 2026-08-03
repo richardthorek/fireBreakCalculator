@@ -259,6 +259,39 @@
   color: var(--tac-text-dim);
 }
 
+/* ---------- Key terrain candidate cards (OCOKA 4, OakocPanel.tsx) ----------
+ * Same compact-card shape `.cm-measure-card` uses in CounterMobilityPanel —
+ * one card per scored candidate, a source badge, and a real numeric score. */
+.keyterrain-candidate {
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.keyterrain-candidate-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.keyterrain-candidate-score { color: var(--tac-accent); font-weight: 700; }
+.keyterrain-candidate-summary { font-size: 0.82em; color: var(--tac-text-dim); }
+/* Decisive-candidate callout — deliberately the same visual weight as
+ * `.corridor-unconstrained` but in the NOGO colour: this is the single
+ * highest-stakes claim this panel can surface. The colour is what earns a
+ * reader's attention; the copy inside is what keeps it a CANDIDATE requiring
+ * a commander's confirmation rather than an assertion — see `keyTerrain.ts`'s
+ * header and `OcokaKeyTerrainFactor`'s doc comment in `oakoc.ts`. Never
+ * change the class without re-checking the text it wraps still reads that way. */
+.keyterrain-decisive {
+  border: 1px solid var(--tac-nogo);
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: rgba(216, 35, 42, 0.08);
+  padding: 8px 10px;
+  font-size: 0.78em;
+  line-height: 1.5;
+  color: var(--tac-text);
+}
+.keyterrain-decisive strong { color: var(--tac-nogo); }
+
 /* ---------- Terrain mode tab switcher (appreciation / counter-mobility) ---------- */
 .mobility-mode-tabs { display: flex; gap: 6px; padding: 8px 8px 0; flex-shrink: 0; }
 .mobility-mode-tabs button {

@@ -18,26 +18,43 @@
  * THE ONE THING THIS FILE MUST NEVER GET WRONG: `'not-assessed'` vs
  * "assessed, found nothing" is not a stylistic choice, it is this repo's
  * core data-honesty rule (root CLAUDE.md "Data honesty"; `oakoc.ts`'s own
- * header comment). Obstacles/Avenues render their real `'not-assessed'`
- * gate (objective unreachable — no analysis ran at all) with the same
- * caveat styling this mode already uses elsewhere (`mobility-caveat`), which
- * reads as "this run genuinely has nothing to show here" — correct, because
- * it does. Key terrain / Observation / Cover & concealment are a DIFFERENT
- * kind of not-assessed: not a property of this particular run but of the
- * build (OCOKA 4/6/7 are not built yet, full stop, for every run). Those
- * three get a visually distinct treatment — a dashed "NOT YET ASSESSED" card
- * — so a reader never mistakes "this feature doesn't exist yet" for either
- * "checked, found nothing" or "this run's objective was unreachable". The
- * badge deliberately does not reuse `DataConfidenceBadge`'s
- * measured/published/estimated/generic-fallback tiers: not-assessed isn't a
- * fifth, lower confidence tier, it is "no analysis ran", a different claim
- * entirely.
+ * header comment). Obstacles/Avenues/Key terrain all render their real
+ * `'not-assessed'` gate (objective unreachable — no analysis ran at all)
+ * with the same caveat styling this mode already uses elsewhere
+ * (`mobility-caveat`), which reads as "this run genuinely has nothing to
+ * show here" — correct, because it does.
+ *
+ * Key terrain carries ONE MORE state beyond that, unique to it among the
+ * five factors (`OcokaKeyTerrainFactor`'s own doc comment in `oakoc.ts`):
+ * `state === 'assessed'` with `result === null` — a real run whose key
+ * terrain scoring hasn't landed yet because a separate, already-planned
+ * worker-wiring step hasn't shipped. That gets its own `mobility-caveat`
+ * line, worded as a genuine transitional limitation ("scoring not
+ * available"), never conflated with either the not-assessed gate above it or
+ * a real (possibly empty) candidate list below it. And within a real result,
+ * `decisiveCandidate` is a computed PREDICATE, never an assertion
+ * (`keyTerrain.ts`'s own header explains why at length) — its callout must
+ * always read as "candidate, requires a commander's confirmation", never as
+ * a flat claim that the ground IS decisive; getting this wording wrong
+ * reproduces the exact fabrication this repo's data-honesty rule exists to
+ * prevent.
+ *
+ * Observation / Cover & concealment are a DIFFERENT kind of not-assessed:
+ * not a property of this particular run but of the build (OCOKA 6/7 are not
+ * built yet, full stop, for every run). Those two get a visually distinct
+ * treatment — a dashed "NOT YET ASSESSED" card — so a reader never mistakes
+ * "this feature doesn't exist yet" for either "checked, found nothing" or
+ * "this run's objective was unreachable". The badge deliberately does not
+ * reuse `DataConfidenceBadge`'s measured/published/estimated/generic-fallback
+ * tiers: not-assessed isn't a fifth, lower confidence tier, it is "no
+ * analysis ran", a different claim entirely.
  */
 
 import React, { useMemo } from 'react';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
 import { buildOcokaAppreciation } from '../terrain/oakoc';
 import { CorridorField, Corridor } from '../terrain/corridorField';
+import { KeyTerrainCandidateSource, ScoredKeyTerrainCandidate } from '../terrain/keyTerrain';
 
 export interface OakocPanelProps {
   result: MobilityAppreciationResult | null;
@@ -80,14 +97,73 @@ const AvenueCorridorSummary: React.FC<{ corridors: Corridor[] }> = ({ corridors 
   </>
 );
 
-/** OCOKA 4/6/7's shared "not yet built" treatment — see this file's header
+/** OCOKA 6/7's shared "not yet built" treatment — see this file's header
  *  comment for why it must stay visually distinct from both an assessed
- *  factor and a 'not-assessed' obstacles/avenues gate. */
+ *  factor and a 'not-assessed' obstacles/avenues/key-terrain gate. (Key
+ *  terrain used this too until OCOKA 4 shipped a real computation — it now
+ *  renders through its own branch below instead.) */
 const NotAssessedCard: React.FC<{ note: string }> = ({ note }) => (
   <div className="oakoc-notassessed">
     <span className="oakoc-notassessed-badge">NOT YET ASSESSED</span>
     <p>{note}</p>
   </div>
+);
+
+/** Readable label for a `KeyTerrainCandidateSource` — the SAME "replace the
+ *  first hyphen, uppercase" convention `AvenueCorridorSummary` already uses
+ *  for `easeClass` below, which happens to read correctly for every value
+ *  here too: 'hex-min-cut' → 'HEX MIN-CUT' (the SECOND hyphen, inside
+ *  "min-cut", is deliberately left alone, matching how a person would
+ *  actually write it) rather than a bespoke lookup table for four strings. */
+function keyTerrainSourceLabel(source: KeyTerrainCandidateSource): string {
+  return source.replace('-', ' ').toUpperCase();
+}
+
+/** Plain-English one-liner over a candidate's real `CorridorComparison`
+ *  counts (`terrain/corridorField.ts`) — collapse and degrade are always
+ *  shown (`impactScoreOf`'s own comment in `keyTerrain.ts` explains why
+ *  those two carry the score); displacement is only shown when non-zero to
+ *  keep the common case terse. `effects`/`newCorridors` stay in the
+ *  underlying data for export — too granular for this compact line. */
+function keyTerrainComparisonSummary(comparison: ScoredKeyTerrainCandidate['comparison']): string {
+  const parts = [`${comparison.collapsedCount} COLLAPSED`, `${comparison.degradedCount} DEGRADED`];
+  if (comparison.displacedIntoCount > 0) parts.push(`${comparison.displacedIntoCount} DISPLACED-INTO`);
+  return parts.join(', ');
+}
+
+/** How many top-ranked candidates to show — a SUBSET, same "compact
+ *  summary, not a second full browser" discipline `AvenueCorridorSummary`
+ *  follows for corridors (there capped at 2; key terrain gets a slightly
+ *  wider window because rank alone, unlike corridor ease, doesn't tell a
+ *  reader which candidates are worth a second look). */
+const KEY_TERRAIN_DISPLAY_COUNT = 5;
+
+/** Top-ranked key terrain candidates (OCOKA 4). `decisiveCandidate` gets its
+ *  own always-worded callout — see this file's header and
+ *  `OcokaKeyTerrainFactor`'s doc comment in `oakoc.ts` for why that flag
+ *  must never be softened into an assertion that the ground IS decisive. */
+const KeyTerrainCandidateList: React.FC<{ candidates: ScoredKeyTerrainCandidate[] }> = ({ candidates }) => (
+  <>
+    {[...candidates]
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, KEY_TERRAIN_DISPLAY_COUNT)
+      .map(c => (
+        <div key={c.id} className="keyterrain-candidate">
+          <div className="keyterrain-candidate-head">
+            <span className="tac-mono">#{c.rank} — {keyTerrainSourceLabel(c.source)}</span>
+            <span className="keyterrain-candidate-score tac-mono">IMPACT {c.impactScore.toFixed(2)}</span>
+          </div>
+          <div className="keyterrain-candidate-summary tac-mono">{keyTerrainComparisonSummary(c.comparison)}</div>
+          {c.decisiveCandidate && (
+            <div className="keyterrain-decisive tac-mono">
+              <strong>CANDIDATE DECISIVE TERRAIN</strong> — denying this ground made every analysed
+              route impossible in this re-run. Requires a commander's confirmation against the
+              actual mission; not asserted by this tool.
+            </div>
+          )}
+        </div>
+      ))}
+  </>
 );
 
 export const OakocPanel: React.FC<OakocPanelProps> = ({ result }) => {
@@ -170,10 +246,39 @@ export const OakocPanel: React.FC<OakocPanelProps> = ({ result }) => {
         )}
       </div>
 
-      {/* --- K: Key terrain (OCOKA 4, always not-assessed) --- */}
+      {/* --- K: Key terrain (OCOKA 4) --- */}
       <div className="tac-panel mobility-section">
         <div className="tac-label">K — Key terrain</div>
-        <NotAssessedCard note={oakoc.keyTerrain.note} />
+        {oakoc.keyTerrain.state === 'not-assessed' ? (
+          <div className="mobility-caveat tac-mono">
+            OBJECTIVE UNREACHABLE — NO KEY TERRAIN ANALYSIS RAN
+          </div>
+        ) : oakoc.keyTerrain.result === null ? (
+          // 'assessed' but result is null: a real run, staging gap — see
+          // `OcokaKeyTerrainFactor`'s doc comment in oakoc.ts. Genuinely
+          // distinct from the not-assessed gate above, so worded as its own
+          // limitation, not reused text.
+          <div className="mobility-caveat tac-mono">
+            KEY TERRAIN SCORING NOT AVAILABLE FOR THIS RUN
+          </div>
+        ) : (
+          <>
+            <div className="mobility-result-stats tac-mono">
+              <div>{oakoc.keyTerrain.result.candidatesConsidered} CANDIDATE(S) CONSIDERED</div>
+              <div>{oakoc.keyTerrain.result.candidates.length} SCORED</div>
+            </div>
+            {oakoc.keyTerrain.result.candidates.length === 0 ? (
+              <div className="mobility-caveat tac-mono">NO KEY TERRAIN CANDIDATES SCORED FOR THIS RUN</div>
+            ) : (
+              <KeyTerrainCandidateList candidates={oakoc.keyTerrain.result.candidates} />
+            )}
+            {/* Mission caveat: always shown while a real result is on screen,
+             *  not only when a decisive candidate is present — see this
+             *  file's header and `KEY_TERRAIN_MISSION_CAVEAT` in
+             *  keyTerrain.ts for why it must never be summarised or dropped. */}
+            <p className="tac-hint">{oakoc.keyTerrain.result.missionCaveat}</p>
+          </>
+        )}
       </div>
 
       {/* --- A: Avenues of approach --- */}

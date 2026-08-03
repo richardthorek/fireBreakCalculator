@@ -4,9 +4,11 @@
  * one real decision it makes: the `assessed`/`not-assessed` gate on Obstacles
  * and Avenues of approach, keyed off `result.path` (the exact condition
  * `mobilityAppreciation.ts` gates its own corridor/chokepoint/min-cut block
- * on) — and that Key terrain / Observation / Cover & concealment are always
- * `'not-assessed'` with their machine-readable flags, since none of the three
- * is built yet.
+ * on) — that Key terrain (OCOKA 4) rides the SAME gate as Obstacles/Avenues
+ * (unlike Observation/Cover & concealment, which stay permanently
+ * `'not-assessed'` — OCOKA 6/7 aren't built yet) — and that Key terrain's
+ * `result === null` under `state === 'assessed'` reads as its own distinct,
+ * honest outcome, never conflated with the not-assessed gate above it.
  *
  * Plain node:assert. Run: npx tsx webapp/tests/oakocAssembly.test.ts
  */
@@ -62,6 +64,7 @@ function baseResult(overrides: Partial<MobilityAppreciationResult>): MobilityApp
     chokepoints: [],
     barrier: null,
     roadNetworkBarrier: null,
+    keyTerrain: null,
     cells: [],
     originKeys: [],
     objectiveKeys: [],
@@ -71,28 +74,34 @@ function baseResult(overrides: Partial<MobilityAppreciationResult>): MobilityApp
   } as MobilityAppreciationResult;
 }
 
-test('objective unreachable (no path) → Obstacles and Avenues are not-assessed', () => {
+test('objective unreachable (no path) → Obstacles, Avenues and Key terrain are all not-assessed', () => {
   const result = baseResult({ path: null });
   const oakoc = buildOcokaAppreciation(result);
   assert.strictEqual(oakoc.obstacles.state, 'not-assessed');
   assert.strictEqual(oakoc.avenuesOfApproach.state, 'not-assessed');
+  assert.strictEqual(oakoc.keyTerrain.state, 'not-assessed');
+  assert.strictEqual(oakoc.keyTerrain.result, null);
 });
 
-test('reachable objective, nothing to sever → assessed, not conflated with not-assessed', () => {
+test('reachable objective, nothing to sever/score → assessed, not conflated with not-assessed', () => {
   // A real, legitimate outcome: the search ran (path exists) but the min-cut
-  // found nothing worth severing (barrier null) — this must read as
-  // "assessed, nothing found", never "not assessed".
+  // found nothing worth severing (barrier null) and no key terrain candidates
+  // were nominated (keyTerrain null) — this must read as "assessed, nothing
+  // found", never "not assessed".
   const result = baseResult({
     path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }],
     barrier: null,
     roadNetworkBarrier: null,
     corridorField: null,
+    keyTerrain: null,
   });
   const oakoc = buildOcokaAppreciation(result);
   assert.strictEqual(oakoc.obstacles.state, 'assessed');
   assert.strictEqual(oakoc.obstacles.existing.barrier, null);
   assert.strictEqual(oakoc.avenuesOfApproach.state, 'assessed');
   assert.strictEqual(oakoc.avenuesOfApproach.unrestricted, null);
+  assert.strictEqual(oakoc.keyTerrain.state, 'assessed');
+  assert.strictEqual(oakoc.keyTerrain.result, null);
 });
 
 test('re-presents existing products without altering them', () => {
@@ -112,13 +121,29 @@ test('re-presents existing products without altering them', () => {
   assert.strictEqual(oakoc.obstacles.reinforcing.plan, restrictionPlan);
 });
 
-test('Key terrain / Observation / Cover & concealment are always not-assessed, with their honesty flags', () => {
-  const oakoc = buildOcokaAppreciation(baseResult({}));
-  assert.strictEqual(oakoc.keyTerrain.state, 'not-assessed');
-  assert.strictEqual(oakoc.observationAndFieldsOfFire.state, 'not-assessed');
-  assert.strictEqual(oakoc.observationAndFieldsOfFire.fieldsOfFireAssessed, false);
-  assert.strictEqual(oakoc.coverAndConcealment.state, 'not-assessed');
-  assert.strictEqual(oakoc.coverAndConcealment.coverAssessed, false);
+test('Observation / Cover & concealment are always not-assessed regardless of path, with their honesty flags', () => {
+  const reachable = buildOcokaAppreciation(baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }));
+  const unreachable = buildOcokaAppreciation(baseResult({ path: null }));
+  for (const oakoc of [reachable, unreachable]) {
+    assert.strictEqual(oakoc.observationAndFieldsOfFire.state, 'not-assessed');
+    assert.strictEqual(oakoc.observationAndFieldsOfFire.fieldsOfFireAssessed, false);
+    assert.strictEqual(oakoc.coverAndConcealment.state, 'not-assessed');
+    assert.strictEqual(oakoc.coverAndConcealment.coverAssessed, false);
+  }
+});
+
+test('Key terrain re-presents a real KeyTerrainResult verbatim, under the assessed state', () => {
+  const keyTerrain = {
+    candidates: [], candidatesConsidered: 3, evaluationRouteCount: 6,
+    missionCaveat: 'a fixed caveat string',
+  };
+  const result = baseResult({
+    path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }],
+    keyTerrain,
+  });
+  const oakoc = buildOcokaAppreciation(result);
+  assert.strictEqual(oakoc.keyTerrain.state, 'assessed');
+  assert.strictEqual(oakoc.keyTerrain.result, keyTerrain);
 });
 
 console.log(`\n${passed} assertion group(s) passed.`);

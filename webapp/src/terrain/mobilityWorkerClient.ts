@@ -18,6 +18,8 @@ import { MovementEnsembleResult } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
 import { RoadSpeedOverrides } from './roadSpeedModel';
 import { RoadGraph } from './roadGraph';
+import { CorridorField } from './corridorField';
+import { KeyTerrainCandidate, KeyTerrainResult } from './keyTerrain';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
@@ -153,6 +155,40 @@ export function runMovementEnsembleInWorker(
       roadSpeedOverrides: options.roadSpeedOverrides,
       preferredRouteKeys: options.preferredRouteKeys,
       roadGraph: options.roadGraph,
+    };
+    w.postMessage(request);
+  });
+}
+
+/** Score key terrain candidates (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1,
+ *  keyTerrain.ts) in the worker — `scoreKeyTerrainCandidates` is up to
+ *  `MAX_CANDIDATES_EVALUATED × EVALUATION_ROUTE_COUNT` full route searches,
+ *  the same CPU-bound shape `runMovementEnsembleInWorker` above exists to
+ *  keep off the main thread (see `keyTerrain.ts`'s own header and
+ *  `mobilityWorker.ts`'s 'keyTerrain' branch). Candidate GENERATION
+ *  (`generateKeyTerrainCandidates`) is cheap and stays on the main thread —
+ *  callers pass its already-nominated `candidates` in here unchanged. */
+export function runKeyTerrainScoringInWorker(
+  cells: MobilityGridCell[],
+  hexSize: number,
+  proj: LocalProjection,
+  originKeys: string[],
+  objectiveKeys: string[],
+  profileId: string,
+  nightMode: boolean,
+  baselineField: CorridorField,
+  candidates: KeyTerrainCandidate[],
+  roadSpeedOverrides?: RoadSpeedOverrides
+): Promise<KeyTerrainResult | null> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(response.kind === 'keyTerrain' ? response.result : null),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'keyTerrain', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      baselineField, candidates, roadSpeedOverrides,
     };
     w.postMessage(request);
   });

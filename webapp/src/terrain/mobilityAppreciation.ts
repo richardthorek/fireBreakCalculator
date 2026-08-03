@@ -36,7 +36,7 @@ import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import { LocalProjection } from '../utils/hexGrid';
 import { PaintedArea } from './paintedArea';
-import { runMovementEnsembleInWorker } from './mobilityWorkerClient';
+import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker } from './mobilityWorkerClient';
 import { MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID, DEFAULT_MOVEMENT_SIM_SEED } from './movementSimulation';
 import { RestrictionPlan } from './restrictionPlanner';
 import {
@@ -52,7 +52,7 @@ import {
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
-import { KeyTerrainResult } from './keyTerrain';
+import { KeyTerrainResult, generateKeyTerrainCandidates } from './keyTerrain';
 import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
 import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
@@ -165,8 +165,9 @@ export interface MobilityAppreciationResult {
   /** OCOKA 4 (docs/ROUTE_INTELLIGENCE.md §47.1) — candidates from chokepoints/
    *  min-cut/corridor-bottleneck ground, each scored by a real re-run with it
    *  denied. Null when no path existed to score against (matches every other
-   *  post-search product's null-on-unreachable convention) OR — today,
-   *  temporarily — while OCOKA 4's worker wiring lands; see `terrain/keyTerrain.ts`. */
+   *  post-search product's null-on-unreachable convention), or when a path
+   *  existed but nominated zero candidates (an honest, if unlikely, empty
+   *  field). See `terrain/keyTerrain.ts`. */
   keyTerrain: KeyTerrainResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
@@ -189,7 +190,7 @@ export interface MobilityAppreciationResult {
  *  reports, so a bar and a label can be driven from one clock without drifting
  *  apart. */
 export interface MobilityStage {
-  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'done';
+  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'keyTerrain' | 'done';
   label: string;
   fraction: number;
 }
@@ -582,6 +583,7 @@ export async function runMobilityAppreciation(
   let ensemble: MovementEnsembleResult | null = null;
   let restrictionPlan: RestrictionPlan | null = null;
   let restrictedCorridorField: CorridorField | null = null;
+  let keyTerrain: KeyTerrainResult | null = null;
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
@@ -799,6 +801,35 @@ export async function runMobilityAppreciation(
         }
       }
     }
+
+    // Key terrain (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1) — candidates
+    // nominated from the chokepoint/min-cut/corridor-bottleneck products just
+    // computed above, cheap on the main thread; scoring is the expensive part
+    // and runs in the worker (keyTerrain.ts's own header explains why both
+    // halves are split this way). Scored against `optimiserCorridorField`,
+    // deliberately, per that module's header — never the (possibly absent,
+    // possibly simulated-mover) `corridorField`.
+    if (optimiserCorridorField) {
+      const keyTerrainCandidates = generateKeyTerrainCandidates(
+        grid.cells, chokepoints, barrier, roadNetworkBarrier, optimiserCorridorField
+      );
+      if (keyTerrainCandidates.length > 0) {
+        onStage?.({ key: 'keyTerrain', label: 'Scoring key terrain candidates', fraction: 0.99 });
+        onLog?.(`SCORING ${keyTerrainCandidates.length} KEY TERRAIN CANDIDATE(S)…`);
+        keyTerrain = await runKeyTerrainScoringInWorker(
+          grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+          optimiserCorridorField, keyTerrainCandidates, roadSpeedOverrides
+        );
+        if (signal?.aborted) return null;
+        if (keyTerrain) {
+          const decisiveCount = keyTerrain.candidates.filter(c => c.decisiveCandidate).length;
+          onLog?.(
+            `KEY TERRAIN — ${keyTerrain.candidatesConsidered} CANDIDATE(S) CONSIDERED, ${keyTerrain.candidates.length} SCORED` +
+            (decisiveCount > 0 ? `, ${decisiveCount} CANDIDATE DECISIVE (REQUIRES CONFIRMATION)` : '')
+          );
+        }
+      }
+    }
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${severelyRestrictedCount} SEVERELY RESTRICTED · ${restrictedCount} RESTRICTED`);
@@ -833,7 +864,7 @@ export async function runMobilityAppreciation(
     chokepoints,
     barrier,
     roadNetworkBarrier,
-    keyTerrain: null, // OCOKA 4 worker wiring lands separately — see terrain/keyTerrain.ts
+    keyTerrain,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
