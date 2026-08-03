@@ -9,7 +9,7 @@
  * main thread, using the same caches as the fire-break optimizer — only the
  * already-sampled, serialisable cell array crosses into the worker.
  *
- * Three request kinds, discriminated on `kind` (absent = 'search', so any
+ * Four request kinds, discriminated on `kind` (absent = 'search', so any
  * older caller shape keeps working):
  *
  *  - 'search'   — the multi-source accumulated-cost field, plus the single
@@ -39,6 +39,22 @@
  *                 reporting for this kind — `scoreKeyTerrainCandidates` has
  *                 no internal progress hook, so this just posts the final
  *                 result once done.
+ *  - 'viewshed' — real per-observer line-of-sight tracing (OCOKA 6,
+ *                 docs/ROUTE_INTELLIGENCE.md §47/§8, viewshed.ts). Same
+ *                 CPU-bound, no-network-I/O shape as 'movement' and
+ *                 'keyTerrain' above — see viewshed.ts's own header comment
+ *                 (running this on the main thread reproduces the same
+ *                 step-41 page-hang regression). Unlike 'keyTerrain' there is
+ *                 no separate cheap "candidate generation" phase kept on the
+ *                 main thread first: painting an observer is just recording a
+ *                 hex key, so the whole computation — one full trace per
+ *                 painted observer — happens here. No progress reporting,
+ *                 same simplicity call 'keyTerrain' already made. Carries no
+ *                 `profileId` / `roadSpeedOverrides` / `proj` — viewshed is
+ *                 pure line-of-sight geometry over the sampled grid, with no
+ *                 cost/traversal model (`computeViewshedForObserver` never
+ *                 takes a `LocalProjection`, and there is nothing here for a
+ *                 road-speed override to apply to).
  */
 
 import {
@@ -52,6 +68,7 @@ import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
 import { RoadGraph } from './roadGraph';
 import { CorridorField } from './corridorField';
 import { scoreKeyTerrainCandidates, buildKeyTerrainResult, KeyTerrainCandidate, KeyTerrainResult } from './keyTerrain';
+import { computeViewshedForObserver, ObserverViewshed, ViewshedOptions } from './viewshed';
 
 export interface SimPathNode {
   lat: number;
@@ -145,7 +162,27 @@ export interface MobilityKeyTerrainRequest {
   roadSpeedOverrides?: RoadSpeedOverrides;
 }
 
-export type MobilityWorkerRequest = MobilitySearchRequest | MobilityMovementRequest | MobilityKeyTerrainRequest;
+export interface MobilityViewshedRequest {
+  kind: 'viewshed';
+  requestId: number;
+  cells: MobilityGridCell[];
+  hexSize: number;
+  /** Painted observer cell keys — one trace per key. A key not present in
+   *  `cells` resolves to nothing for that observer (see
+   *  `MobilityViewshedResponse.observers`'s own doc comment); it is not an
+   *  error, since `computeViewshedForObserver` itself treats an unknown key
+   *  as a null result rather than throwing. */
+  observerKeys: string[];
+  /** Same defaulting as `computeViewshedForObserver` itself — absent means
+   *  the module's own documented defaults (eye/target height, max range). */
+  options?: ViewshedOptions;
+}
+
+export type MobilityWorkerRequest =
+  | MobilitySearchRequest
+  | MobilityMovementRequest
+  | MobilityKeyTerrainRequest
+  | MobilityViewshedRequest;
 
 export interface MobilitySearchResponse {
   kind: 'search';
@@ -177,6 +214,17 @@ export interface MobilityKeyTerrainResponse {
   result: KeyTerrainResult | null;
 }
 
+export interface MobilityViewshedResponse {
+  kind: 'viewshed';
+  requestId: number;
+  /** One entry per `observerKeys` entry that resolved to a real cell in
+   *  `cells` — an unresolved key is silently dropped, not padded with a
+   *  null placeholder, matching `computeViewshedForObserver`'s own
+   *  null-on-unknown-key behaviour (there is no per-observer error to carry,
+   *  just a shorter list than requested). */
+  observers: ObserverViewshed[];
+}
+
 export interface MobilityProgressResponse {
   kind: 'progress';
   requestId: number;
@@ -195,12 +243,32 @@ export type MobilityWorkerResponse =
   | MobilitySearchResponse
   | MobilityMovementResponse
   | MobilityKeyTerrainResponse
+  | MobilityViewshedResponse
   | MobilityProgressResponse;
 
 const post = (message: MobilityWorkerResponse) => (self as unknown as Worker).postMessage(message);
 
 self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
   const req = e.data;
+
+  // Handled before the shared `roadSpeedOverrides`/`profileId` lines below
+  // rather than alongside 'movement'/'keyTerrain' further down: viewshed
+  // deliberately carries neither field (module header above; it has no
+  // cost/traversal model at all), so `MobilityViewshedRequest` doesn't
+  // declare them, and TS won't let a union-typed `req` read a property that
+  // one constituent lacks entirely — narrowing it away here first, with an
+  // early return, is what makes the two lines just below type-check
+  // unchanged for the remaining (all-profiled) request kinds.
+  if (req.kind === 'viewshed') {
+    const observers: ObserverViewshed[] = [];
+    for (const key of req.observerKeys) {
+      const observer = computeViewshedForObserver(key, req.cells, req.hexSize, req.options ?? {});
+      if (observer) observers.push(observer);
+    }
+    post({ kind: 'viewshed', requestId: req.requestId, observers });
+    return;
+  }
+
   // Set once per request, before any cost-model call this request will make
   // — see roadSpeedModel.ts's own doc comment on why this can't just be set
   // once from the main thread (the worker has no shared memory with it).
