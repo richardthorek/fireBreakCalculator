@@ -54,6 +54,7 @@ import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorA
 import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
 import { KeyTerrainResult, generateKeyTerrainCandidates } from './keyTerrain';
 import { ObservationResult, buildObservationResult } from './viewshed';
+import { ConcealmentResult, buildConcealmentResult } from './concealment';
 import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
 import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
@@ -188,6 +189,16 @@ export interface MobilityAppreciationResult {
    *  `fieldsOfFireAssessed` stays `false` regardless: fields of fire needs a
    *  user-stated effective range, which this stage does not yet collect. */
   observation: ObservationResult | null;
+  /** OCOKA 7 (docs/ROUTE_INTELLIGENCE.md §47) — concealment from dead ground
+   *  (relative to the SAME painted observers `observation` is keyed on) and
+   *  from vegetation structure. Null under the identical condition
+   *  `observation` is null (no observer painted — defilade only means
+   *  something relative to a specified position) — `terrain/concealment.ts`
+   *  is only ever called once `observation` already exists. Cover
+   *  (protection from fire) is NOT part of this field at all: it is not
+   *  computed, full stop, and `oakoc.ts`'s `coverAssessed: false` says so
+   *  independently of whatever this field holds. */
+  concealment: ConcealmentResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
    *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
@@ -591,6 +602,7 @@ export async function runMobilityAppreciation(
     barrier: null,
     roadNetworkBarrier: null,
     observation: null,
+    concealment: null,
     keyTerrain: null,
     cells: grid.cells,
     originKeys: grid.originKeys,
@@ -613,6 +625,7 @@ export async function runMobilityAppreciation(
   let restrictedCorridorField: CorridorField | null = null;
   let keyTerrain: KeyTerrainResult | null = null;
   let observation: ObservationResult | null = null;
+  let concealment: ConcealmentResult | null = null;
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
@@ -886,6 +899,17 @@ export async function runMobilityAppreciation(
     } else {
       onLog?.(`OBSERVATION — ${observation.screenedUnionKeys.size} CELL(S) SEEN BY AT LEAST ONE OBSERVER`);
     }
+
+    // Concealment (OCOKA 7, docs/ROUTE_INTELLIGENCE.md §47) — only ever
+    // computed once `observation` is real: defilade only means something
+    // relative to specified positions (the same painted observers), and
+    // dead ground is a set complement over `observation`'s own union, not a
+    // second trace (see `concealment.ts`'s own header).
+    concealment = buildConcealmentResult(grid.cells, observation);
+    onLog?.(
+      `CONCEALMENT — ${concealment.concealedKeys.size}/${concealment.cellsConsidered} CELL(S) CONCEALED FROM ` +
+      `EVERY PAINTED OBSERVER (${concealment.deadGroundKeys.size} DEAD GROUND, ${concealment.vegetationConcealedKeys.size} BY VEGETATION)`
+    );
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${severelyRestrictedCount} SEVERELY RESTRICTED · ${restrictedCount} RESTRICTED`);
@@ -922,6 +946,7 @@ export async function runMobilityAppreciation(
     roadNetworkBarrier,
     keyTerrain,
     observation,
+    concealment,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,

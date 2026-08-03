@@ -235,10 +235,34 @@ export const OakocPanel: React.FC<OakocPanelProps> = ({ result }) => {
         </p>
       </div>
 
-      {/* --- C: Cover and concealment (OCOKA 7, always not-assessed) --- */}
+      {/* --- C: Cover and concealment (OCOKA 7) — split, never blended:
+       *  Concealment is real, Cover stays permanently not computed. --- */}
       <div className="tac-panel mobility-section">
         <div className="tac-label">C — Cover and concealment</div>
-        <NotAssessedCard note={oakoc.coverAndConcealment.note} />
+
+        <div className="mobility-section">
+          <div className="tac-label">Concealment</div>
+          {oakoc.coverAndConcealment.concealmentState === 'not-assessed' ? (
+            <div className="mobility-caveat tac-mono">
+              NO OBSERVER PAINTED — CONCEALMENT IS RELATIVE TO A SPECIFIED POSITION
+            </div>
+          ) : (
+            <div className="mobility-result-stats tac-mono">
+              <div>
+                {oakoc.coverAndConcealment.concealmentResult!.concealedKeys.size}/
+                {oakoc.coverAndConcealment.concealmentResult!.cellsConsidered} CELL(S) CONCEALED
+              </div>
+              <div>{oakoc.coverAndConcealment.concealmentResult!.deadGroundKeys.size} DEAD GROUND</div>
+              <div>{oakoc.coverAndConcealment.concealmentResult!.vegetationConcealedKeys.size} BY VEGETATION</div>
+            </div>
+          )}
+          <p className="tac-hint">{oakoc.coverAndConcealment.concealmentNote}</p>
+        </div>
+
+        <div className="mobility-section">
+          <div className="tac-label">Cover</div>
+          <NotAssessedCard note={oakoc.coverAndConcealment.coverNote} />
+        </div>
       </div>
 
       {/* --- O: Obstacles --- */}

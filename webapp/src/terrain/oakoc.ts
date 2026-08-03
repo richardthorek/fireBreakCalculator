@@ -48,13 +48,17 @@
  *     visibility — remains the one genuine gap within this factor:
  *     `fieldsOfFireAssessed` stays `false` until a future stage collects a
  *     user-stated effective range.
- *   - **Cover & concealment** is the remaining genuine gap (§47.1) — OCOKA 7.
- *     It ships here as an explicit `'not-assessed'` placeholder, not omitted,
- *     so a reader of the five-factor product sees all five factors named
- *     even where one is honestly empty. `coverAssessed` is the exact
- *     machine-readable property §47.2 requires once that factor exists —
- *     shipped `false` now costs nothing and means OCOKA 7 has nothing left
- *     to retrofit into export/briefing payloads later.
+ *   - **Cover & concealment** (OCOKA 7, docs §47.1) SPLITS into a real half
+ *     and a permanent gap, never blended into one score. Concealment is now
+ *     real: `terrain/concealment.ts` derives dead ground as a set complement
+ *     over `Observation`'s own visibility union (relative to the SAME
+ *     painted observers — defilade only means something relative to a
+ *     specified position) plus vegetation-structure concealment from the
+ *     SCREENING_HEIGHT_M table OCOKA 6 already built. Cover (protection FROM
+ *     fire) remains the one genuine, permanent gap: `coverAssessed` is the
+ *     exact machine-readable property §47.2 requires, always `false` — not
+ *     because a run failed, but because a bare-earth DEM and a 4-class
+ *     vegetation taxonomy cannot see a rock, bund or building, full stop.
  *
  * `'not-assessed'` IS A FIRST-CLASS STATE, distinct from "assessed, found
  * nothing" (§47.1's closing note — conflating the two is the fabrication this
@@ -81,6 +85,7 @@ import { RestrictionPlan } from './restrictionPlanner';
 import { ChokepointCell } from './corridorAnalysis';
 import { KeyTerrainResult } from './keyTerrain';
 import { ObservationResult } from './viewshed';
+import { ConcealmentResult } from './concealment';
 
 export type OcokaAssessmentState = 'assessed' | 'not-assessed';
 
@@ -172,15 +177,32 @@ export interface OcokaObservationFactor {
   note: string;
 }
 
-/** OCOKA 7 (docs §47.1/§47.2) — cover (protection from fire) cannot be
- *  computed from a bare-earth DEM at all; concealment needs vegetation
- *  structure + dead ground, not yet built. `coverAssessed` is the exact
- *  machine-readable flag §47.2 requires to survive leaving the app; always
- *  `false` until OCOKA 7 ships. */
+/**
+ * OCOKA 7 (docs §47.1/§47.2) — cover and concealment are DOCTRINALLY
+ * DIFFERENT things and this factor never blends them into one score (root
+ * CLAUDE.md's OCOKA rules).
+ *
+ * `coverAssessed` — PERMANENTLY `false`, independent of everything else on
+ * this factor. Cover (protection FROM FIRE) cannot be computed from a
+ * bare-earth DEM or a 4-class vegetation taxonomy at all: neither can see a
+ * rock, a bund, or a building. This is a build limitation, not a per-run
+ * gate — unlike `concealmentState` below, there is no future input that
+ * flips this true without a new data source this stage does not have.
+ *
+ * `concealmentState`/`concealmentResult` — real (`terrain/concealment.ts`).
+ * SAME gate as Observation (`OcokaObservationFactor`'s own comment), NOT
+ * `result.path`: defilade only means something relative to specified
+ * positions (the painted observers), so concealment is only ever computed
+ * once at least one observer exists — `concealmentState === 'not-assessed'`
+ * means "no observer painted", not "objective unreachable", same honest
+ * distinction Observation already draws.
+ */
 export interface OcokaCoverConcealmentFactor {
-  state: 'not-assessed';
   coverAssessed: false;
-  note: string;
+  coverNote: string;
+  concealmentState: OcokaAssessmentState;
+  concealmentResult: ConcealmentResult | null;
+  concealmentNote: string;
 }
 
 export interface OcokaAppreciation {
@@ -240,10 +262,18 @@ export function buildOcokaAppreciation(result: MobilityAppreciationResult): Ocok
           'range even once painted; a weapon or sensor is never inferred.',
     },
     coverAndConcealment: {
-      state: 'not-assessed',
       coverAssessed: false,
-      note: 'Concealment is not yet built (OCOKA 7). Cover is not computed at all and will not ' +
-        'be: the elevation model is a bare-earth DEM, which cannot see a rock, bund or building.',
+      coverNote: 'Cover is not computed at all and will not be from this data: the elevation model ' +
+        'is a bare-earth DEM and the vegetation taxonomy is 4-class — neither can see a rock, bund ' +
+        'or building.',
+      concealmentState: result.observation !== null ? 'assessed' : 'not-assessed',
+      concealmentResult: result.concealment,
+      concealmentNote: result.observation !== null
+        ? 'Concealment from dead ground is relative to the SAME painted observers Observation ' +
+          'above used; concealment from vegetation structure is independent of any observer.'
+        : 'No observer was painted for this run — concealment (like Observation) is only ' +
+          'meaningful relative to a specified position. Paint an observer hex to see real dead ' +
+          'ground and vegetation concealment relative to it.',
     },
   };
 }

@@ -68,6 +68,7 @@ function baseResult(overrides: Partial<MobilityAppreciationResult>): MobilityApp
     roadNetworkBarrier: null,
     keyTerrain: null,
     observation: null,
+    concealment: null,
     cells: [],
     originKeys: [],
     objectiveKeys: [],
@@ -124,13 +125,38 @@ test('re-presents existing products without altering them', () => {
   assert.strictEqual(oakoc.obstacles.reinforcing.plan, restrictionPlan);
 });
 
-test('Cover & concealment is always not-assessed regardless of path (OCOKA 7 not built), with its honesty flag', () => {
-  const reachable = buildOcokaAppreciation(baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }));
-  const unreachable = buildOcokaAppreciation(baseResult({ path: null }));
-  for (const oakoc of [reachable, unreachable]) {
-    assert.strictEqual(oakoc.coverAndConcealment.state, 'not-assessed');
+test('Cover stays permanently not-computed regardless of path OR whether an observer was painted', () => {
+  const cases = [
+    baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }),
+    baseResult({ path: null }),
+    baseResult({
+      path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }],
+      observation: { observers: [], screenedUnionKeys: new Set(), bareEarthUnionKeys: new Set(), corridorCoverageFraction: null },
+      concealment: { deadGroundKeys: new Set(), vegetationConcealedKeys: new Set(), concealedKeys: new Set(), cellsConsidered: 0 },
+    }),
+  ];
+  for (const result of cases) {
+    const oakoc = buildOcokaAppreciation(result);
     assert.strictEqual(oakoc.coverAndConcealment.coverAssessed, false);
   }
+});
+
+test('Concealment uses the SAME gate as Observation (whether an observer was painted), independent of path', () => {
+  const noObserver = buildOcokaAppreciation(baseResult({ path: [{ lat: 0, lng: 0, cumulativeSeconds: 0 }] }));
+  assert.strictEqual(noObserver.coverAndConcealment.concealmentState, 'not-assessed');
+  assert.strictEqual(noObserver.coverAndConcealment.concealmentResult, null);
+
+  const concealment = {
+    deadGroundKeys: new Set(['a']), vegetationConcealedKeys: new Set<string>(),
+    concealedKeys: new Set(['a']), cellsConsidered: 3,
+  };
+  const withObserver = buildOcokaAppreciation(baseResult({
+    path: null,
+    observation: { observers: [], screenedUnionKeys: new Set(), bareEarthUnionKeys: new Set(), corridorCoverageFraction: null },
+    concealment,
+  }));
+  assert.strictEqual(withObserver.coverAndConcealment.concealmentState, 'assessed');
+  assert.strictEqual(withObserver.coverAndConcealment.concealmentResult, concealment);
 });
 
 test('Observation uses its OWN gate (result.observation), independent of path — not-assessed either way when no observer was painted', () => {
