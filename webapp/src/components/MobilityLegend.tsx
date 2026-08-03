@@ -28,6 +28,7 @@ export interface MobilityLegendProps {
   present: {
     originPaint: boolean;
     objectivePaint: boolean;
+    observePaint: boolean;
     cells: boolean;
     displayMode: 'trafficability' | 'isochrone';
     corridors: boolean;
@@ -95,12 +96,13 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             </span>
           </div>
 
-          {(present.originPaint || present.objectivePaint) && (
+          {(present.originPaint || present.objectivePaint || present.observePaint) && (
             <section>
               <h4>Your areas</h4>
               <ul>
                 {present.originPaint && <Swatch color="#38bdf8">Origin — where movement starts from</Swatch>}
                 {present.objectivePaint && <Swatch color="#F6A609">Objective — where it is heading</Swatch>}
+                {present.observePaint && <Swatch color="#EC4899">Observer — line-of-sight traced from here (OCOKA 6)</Swatch>}
               </ul>
             </section>
           )}

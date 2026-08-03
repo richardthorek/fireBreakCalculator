@@ -42,13 +42,16 @@ export interface MobilityPanelProps {
   onRoadSpeedOverridesChange: (overrides: RoadSpeedOverrides) => void;
   fidelity: MobilityFidelity;
   onFidelityChange: (f: MobilityFidelity) => void;
-  boxRole: 'origin' | 'objective' | null;
-  onBoxRoleChange: (role: 'origin' | 'objective' | null) => void;
+  boxRole: 'origin' | 'objective' | 'observe' | null;
+  onBoxRoleChange: (role: 'origin' | 'objective' | 'observe' | null) => void;
   originPaint: PaintedArea;
   objectivePaint: PaintedArea;
+  /** Painted OBSERVER area (OCOKA 6) — optional, real line-of-sight from
+   *  each painted hex (`viewshed.ts`). */
+  observePaint: PaintedArea;
   brushSize: BrushSize;
   onBrushSizeChange: (size: BrushSize) => void;
-  onClearPaint: (role?: 'origin' | 'objective') => void;
+  onClearPaint: (role?: 'origin' | 'objective' | 'observe') => void;
   running: boolean;
   logLines: string[];
   result: MobilityAppreciationResult | null;
@@ -140,7 +143,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   profileId, onProfileChange, nightMode, onNightModeChange,
   roadSpeedOverrides, onRoadSpeedOverridesChange,
   fidelity, onFidelityChange,
-  boxRole, onBoxRoleChange, originPaint, objectivePaint,
+  boxRole, onBoxRoleChange, originPaint, objectivePaint, observePaint,
   brushSize, onBrushSizeChange, onClearPaint,
   running, logLines, result,
   displayMode, onDisplayModeChange, cursor,
@@ -283,6 +286,12 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
         <div className="mobility-aoi-detail tac-mono">
           <span>Origin: {originPaint.length} stroke{originPaint.length === 1 ? '' : 's'} (paint + erase)</span>
           <span>Objective: {objectivePaint.length} stroke{objectivePaint.length === 1 ? '' : 's'} (paint + erase)</span>
+          {/* Observer (OCOKA 6) is optional additional analysis, unlike
+           *  origin/objective — only shown once at least one stroke exists,
+           *  so a run that never uses it stays visually unchanged. */}
+          {observePaint.length > 0 && (
+            <span>Observer: {observePaint.length} stroke{observePaint.length === 1 ? '' : 's'} (paint + erase)</span>
+          )}
         </div>
         {boxRole ? (
           <div className="tac-hint">
@@ -304,13 +313,16 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
             </button>
           ))}
         </div>
-        {(originPaint.length > 0 || objectivePaint.length > 0) && (
+        {(originPaint.length > 0 || objectivePaint.length > 0 || observePaint.length > 0) && (
           <div className="mobility-aoi-row">
             {originPaint.length > 0 && (
               <button className="mobility-clear-button tac-mono" onClick={() => onClearPaint('origin')}>Clear origin</button>
             )}
             {objectivePaint.length > 0 && (
               <button className="mobility-clear-button tac-mono" onClick={() => onClearPaint('objective')}>Clear objective</button>
+            )}
+            {observePaint.length > 0 && (
+              <button className="mobility-clear-button tac-mono" onClick={() => onClearPaint('observe')}>Clear observer</button>
             )}
           </div>
         )}

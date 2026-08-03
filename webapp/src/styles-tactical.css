@@ -574,6 +574,11 @@
   border-color: var(--tac-slowgo, #F6A609);
   color: var(--tac-slowgo, #F6A609);
 }
+.mobility-overlay-btn--observe.active,
+.mobility-overlay-btn--observe:hover {
+  border-color: #EC4899;
+  color: #EC4899;
+}
 .mobility-overlay-btn--run {
   background: var(--tac-accent, #38bdf8);
   color: #04212f;
@@ -774,6 +779,11 @@
   border-color: var(--tac-slowgo, #F6A609);
   background: rgba(246, 166, 9, 0.12);
   box-shadow: 0 0 0 1px rgba(47, 30, 4, 0.7) inset, 0 0 10px rgba(246, 166, 9, 0.35);
+}
+.paint-brush-cursor--observe {
+  border-color: #EC4899;
+  background: rgba(236, 72, 153, 0.12);
+  box-shadow: 0 0 0 1px rgba(47, 4, 27, 0.7) inset, 0 0 10px rgba(236, 72, 153, 0.35);
 }
 /* Erase reads as a hollow, dashed danger ring — it removes area, and must not
  * look like just another colour of paint. */
