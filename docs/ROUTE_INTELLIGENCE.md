@@ -5695,6 +5695,76 @@ chokepoint/min-cut machinery" claim — now real, no invented signal.
   the AI briefing or GIS attributes is left for a future stage, same boundary OCOKA 3
   drew around `roadNetworkBarrier`.
 
+### 47.9 OCOKA 6 shipped (2026-08-03) — real observation, third paint role
+
+`terrain/viewshed.ts`, per the §47.1 audit's own naming of Observation as one of the
+two genuine gaps — now real, not a permanent placeholder.
+
+- **Algorithm — a real per-target front-to-back trace, not a shared-horizon sweep.**
+  `computeViewshedForObserver` walks a new `hexLine()` (`hexGrid.ts`, standard
+  cube-coordinate line draw) from observer to every in-range target, tracking the
+  running max obstruction angle and comparing the target's own angle against it. This
+  is simpler and cheaper-to-verify than the amortised "R3"-family sweep some viewshed
+  literature uses — stated honestly rather than borrowed as a label for a variant that
+  isn't the literature's actual optimisation. Earth curvature + atmospheric refraction
+  (`k = 0.13`, the standard surveying combined coefficient) are applied to every
+  distant point, on top of the already-known bare-earth-DEM optimism — proven by
+  `viewshed.test.ts` to genuinely limit range over flat, open ground (not a no-op).
+- **Screened vs bare-earth, both always computed.** A new `SCREENING_HEIGHT_M` table
+  (`dataLayers/structureTable.ts`) gives each `VegetationType` a representative
+  canopy-screening height, derived from Specht (1970)/Muir (1977) NVIS structural
+  height-class bands (the primary DCCEEW PDF returned HTTP 503 from this sandbox, same
+  limitation already recorded against that host in this file's LIGHTSHRUB row — cited
+  via secondary confirmation instead). The screened (pessimistic) surface is the
+  headline; bare-earth (optimistic) is always computed alongside it, never the
+  default — §47.2's rule 1, restated in code.
+- **Third paint role, not a MapboxDraw role** — exactly the correction §8 already made
+  for this table: `mobilityBoxRole` gains `'observe'` alongside `'origin'`/
+  `'objective'`, a pink (`#EC4899`) fill/outline/brush-cursor distinct from every
+  existing swatch. Each painted hex becomes its own candidate observation post —
+  `MobilityGridResult.observerKeys`, resolved the SAME real area-overlap way
+  origin/objective already are (not a coarser point-snap). No nearest-cell fallback:
+  empty is the ordinary "no observers this run" state, not an error.
+- **Accuracy fix caught before shipping:** `mobilityLazyGrid.ts`'s observer resolution
+  only ever runs once, at round 1, and later rounds grow toward the search's own
+  reachable frontier — never toward a painted observer. An observer sited off to one
+  side of the direct route could silently never be materialised. Fixed by unioning the
+  observer paint's own bounds into the round-1 footprint unconditionally.
+- **`state` gate is its OWN, deliberately different from every other factor.**
+  `OcokaObservationFactor.state` is keyed on whether an observer was painted at all,
+  not `result.path` — a viewshed never depended on origin reaching objective, so it
+  runs (or doesn't) independent of whether the search found a route.
+  `fieldsOfFireAssessed` stays `false` regardless: fields of fire needs a user-stated
+  effective range, a real, separate, still-deferred gap (`DEFAULT_MAX_RANGE_M` is a
+  compute-bound cap, never a stated range).
+- Capped at `MAX_OBSERVERS_EVALUATED` (8) — each observer is a full grid-wide trace,
+  same "protect the run from an unbounded input" discipline `keyTerrain.ts`'s own cap
+  uses.
+
+### 47.10 OCOKA 7 shipped (2026-08-03) — concealment from dead ground + vegetation
+
+`terrain/concealment.ts` — the remaining letter, split into a real half and a
+permanent gap, never blended into one score (§47.1's own instruction).
+
+- **Concealment is now real, built almost entirely from OCOKA 6's own output.** Dead
+  ground (defilade) is a set complement over `ObservationResult.screenedUnionKeys` —
+  doctrine is explicit that defilade only means something relative to a specified
+  position, and the painted observers ARE that position, so no second trace is
+  needed. Vegetation-structure concealment reuses the SAME `SCREENING_HEIGHT_M` table
+  at Muir (1977)'s own "tall shrubland" threshold (>2 m) — a stand at or above it
+  reliably breaks a standing person's silhouette, independent of any observer.
+- **Cover stays permanently, honestly not computed.** `coverAssessed: false` is now
+  explicitly independent of concealment's own state (previously the whole factor was
+  one flat `'not-assessed'` placeholder) — neither a bare-earth DEM nor a 4-class
+  vegetation taxonomy can see a rock, bund or building, full stop. This is a build
+  limitation, not a per-run gate, unlike `concealmentState` below.
+- **Same gate as Observation, not `path`.** `concealmentState` is real/not-assessed on
+  the identical condition Observation uses (an observer was painted) — concealment is
+  only ever computed once `observation` already exists.
+- `OakocPanel.tsx`'s Cover and concealment section now shows real dead-ground/
+  vegetation/combined counts alongside the permanent "cover not computed" card, never
+  merged into one number.
+
 ---
 
 ## 48. Fixed: `onTrail` detection was centre-point-only (2026-08-03, live bug report)
@@ -5738,6 +5808,23 @@ centre or other corners; centre+corners (the fix) finds the identical road and r
 its tags correctly; a genuinely distant road is still correctly off-trail (false-positive
 control); no trails at all resolves cleanly, not a crash. Full suite green: `npm test`
 (37/37 files), `npm run build`.
+
+**Addendum (2026-08-03, same-day live report) — performance regression, fixed.** "Stuck
+at 20% on any reasonable sized run; very small areas still work" — the exact symptom of
+an O(size²)-ish blow-up confined to the sampling phase, where this scan runs. Root cause:
+the fix above called `distanceToNearestTrail` once per **(sample point × trail feature)
+pair** — 7× the original centre-only scan's already-existing per-feature loop, because it
+needed to know WHICH feature matched (for `nearestTrailTags`, which feeds the road-class
+speed model) at every one of the 7 points, not just the minimum distance. A small AOI has
+few enough cells/features that 7× is invisible; a "reasonable sized" one has enough of
+both that it becomes the dominant cost. Fixed without touching the correctness guarantee
+at all: `distanceToNearestTrail` already scans a WHOLE `trails` array internally in one
+call (the same pattern the water scan's own corner-point loop already uses, immediately
+above this function's call site) — `sampleOnTrail` now calls it that way ONCE PER POINT
+(7 cheap calls, whichever point achieves the true minimum wins) and only THEN runs the
+per-feature identification loop once, for that single winning point, to resolve
+`nearestTrailTags`. Same global minimum-distance-wins semantics, same test suite green
+(37/37 unchanged), without the 7× multiplier on the dominant cost.
 
 ---
 

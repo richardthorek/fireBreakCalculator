@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — onTrail hex-corner detection fix shipped, step 51 (live bug report). See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — performance regression in the onTrail corner-sampling fix resolved, step 55 (live report). See Recent Updates for the dated history, including OCOKA 6/7 (steps 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -29,7 +29,7 @@ A **mitigation copilot** for rural firefighters: draw a line, get grounded time/
 - **Vegetation:** NVIS national spine + NSW SVTM overlay; state expansion frozen ([docs/NVIS_INTEGRATION.md](docs/NVIS_INTEGRATION.md)).
 - **Route intelligence:** corridor pathfinding, chainage-addressed segment detail, elevation profile, rule-based Plan Assistant, tabbed analysis UI — shipped in PR [#163](https://github.com/richardthorek/fireBreakCalculator/pull/163) ([docs/ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md)). Infrastructure trail lookup (OSM/Overpass) is now multi-endpoint resilient after a live-tested rate-limiting bug was found and fixed 2026-07-12.
 - **Live context:** national hotspots + fire/burn-area boundaries, plus incident/warning overlays for 5 of 8 states, are live on the map ([docs/GIS_INTEROP.md](docs/GIS_INTEROP.md) §4). AFDRS official fire-danger rating is **blocked on access** (BOM Registered User program), not effort — see the assessment in that doc.
-- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode now presents all five OCOKA factors by name (`OakocPanel.tsx`): Obstacles, Avenues of approach and Key terrain are real, assembled from (or, for Key terrain, scored from) existing products; Observation & fields of fire and Cover & concealment ship as explicit `'not-assessed'` placeholders pending OCOKA 6/7.
+- **Terrain Mobility:** M1–M4 shipped (mobility core, corridors/chokepoints, trafficability uplift, counter-mobility planner). Being restructured around **OCOKA/IPB** — the terminology the Australian Army (this product's actual audience) currently teaches, per The Cove — with its compute moved to a parallel Azure backend. See the OCOKA programme at the top of "Next up". The mode now presents all five OCOKA factors by name (`OakocPanel.tsx`), and all five are real: Obstacles, Avenues of approach and Key terrain are assembled from (or, for Key terrain, scored from) existing products; Observation (`viewshed.ts`, a third "observe" paint role) and Concealment (`concealment.ts`, dead ground + vegetation structure) are now real too, both gated on whether an observer was painted rather than on the origin/objective search. Only Cover (protection from fire) remains a genuine, permanent, honestly-flagged gap — a bare-earth DEM cannot see a rock, bund or building.
 
 ## The Plan
 
@@ -46,11 +46,11 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | ~~OCOKA 3 — five-factor framing over existing products~~ | **Shipped — step 49.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 | ~~OCOKA 4 — key terrain~~ | **Shipped — step 50.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
 | **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| **OCOKA 6 — `viewshed.ts` + Observation & fields of fire** | R3 line-of-sight over the hex grid (one elevation per hex centre, no raster in hand). Observers via a third paint role. Fields of fire computed **only** for user-stated ranges — never inferred | M/L | OCOKA 3 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §8 |
-| **OCOKA 7 — cover & concealment** | Concealment from vegetation structure + dead ground. **Cover is not computed** — a bare-earth DEM cannot see a rock, bund or building — and `coverAssessed: false` ships as a machine-readable property in export and payload, not just UI prose | S/M | OCOKA 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
-| **OCOKA 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OCOKA 5, 6 | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| ~~OCOKA 6 — `viewshed.ts` + Observation & fields of fire~~ | **Shipped — step 52.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.9 |
+| ~~OCOKA 7 — cover & concealment~~ | **Shipped — step 53.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.10 |
+| **OCOKA 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OCOKA 5, 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | **OCOKA 9 — Container Apps Job tier (still gated)** | Unchanged gate: build only on tier-2 evidence of a real tail of oversized runs. Same protocol as OCOKA 5, so it becomes a compute swap rather than new plumbing | L | tier-2 evidence | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
-| Road-speed `user-override` confidence into GIS export + AI briefing | The override mechanism itself is shipped (step 21) and visibly flagged in the panel/run log; carrying the flag into export attributes and the briefing payload — matching how vegetation overrides are documented to behave — is the one piece not yet done | S | Slice A config UI (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| ~~Road-speed `user-override` confidence into GIS export + AI briefing~~ | **Shipped — step 54.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
@@ -82,15 +82,9 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
   - Changes: SWA Free→Standard + a Flex Consumption Function App behind `deployMobilityBackend bool = false` · Durable orchestration · append-only artefact blobs with a 24-hour lifecycle rule · job-scoped read-only SAS · `MobilityJobRequest` becomes the **third** must-match webapp/api pair · Table-Storage-backed rate limiting for the job endpoint (`rateLimit.ts`'s in-memory buckets under-enforce on a scaled-out plan).
   - Note: export and the AI briefing are **blocked while a run is provisional**, and the briefing block is enforced server-side, not just in the UI.
 
-- **OCOKA 6 — viewshed + Observation & fields of fire** (Difficulty: M/L)
-  - Outcome: the plan says what ground is observed, from where, and what sits in dead ground — and suggests where an observation post would actually see the corridor.
-  - Changes: `terrain/viewshed.ts` (front-to-back R3 over the hex grid, written as a pure partitionable function from day one) · `hexLine()` added to `hexGrid.ts` · third paint role for observers · a `SCREENING_HEIGHT_M` table in `structureTable.ts` with per-row confidence · curvature + refraction.
-  - Note: elevation is a **bare-earth DEM**, so sight lines are systematically optimistic — the error that leaves an approach unwatched. The screened (more pessimistic) surface is the default; bare-earth is a toggle; both export.
+- ~~**OCOKA 6**~~ — **Shipped, step 52.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.9.
 
-- **OCOKA 7 — cover & concealment** (Difficulty: S/M)
-  - Outcome: concealment is reported honestly and cover is explicitly *not* claimed.
-  - Changes: concealment index from vegetation structure + dead ground · defilade only relative to specified positions · `coverAssessed: false` as a machine-readable property in the GIS export, the assistant payload and the briefing.
-  - Note: cover and concealment are doctrinally different things and must never be blended into one score.
+- ~~**OCOKA 7**~~ — **Shipped, step 53.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.10.
 
 - **OCOKA 8 — backend fan-out** (Difficulty: M)
   - Outcome: large runs get materially faster without changing any number they produce.
@@ -104,9 +98,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 ##### General queue
 
-- **Road-speed user-override confidence into GIS export + AI briefing** (Difficulty: S)
-  - Outcome: an edited road-speed table shows up in exported GIS attributes and the AI briefing text, not just the live panel.
-  - Changes: add override/confidence fields to `mobilityGisExport.ts`'s GeoJSON/KML properties (mirrors step 42's hydrology pattern) · add the same fields to `MobilityAssistantPayload` (webapp+API, kept in lock-step) + validator · template narration line when overrides were used.
+- ~~**Road-speed user-override confidence into GIS export + AI briefing**~~ — **Shipped, step 54.** See Shipped table.
 
 - **End-user guide** (Difficulty: S)
   - Outcome: a first-time user or a crew member handed a tablet in the field has a real written walkthrough instead of learning the tool from the UI alone.
@@ -247,6 +239,10 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 49 (OCOKA 3) | Five-factor OCOKA framing — `terrain/oakoc.ts` assembly + `OakocPanel.tsx`; `roadNetworkBarrier` gets its first map layer/legend/GIS export; `Corridor.bottleneckCellKeys` added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 | 50 (OCOKA 4) | Key terrain — `terrain/keyTerrain.ts` nominates candidates from chokepoints/min-cut/corridor bottlenecks, scores each by a real worker-run re-search with it denied; `OakocPanel.tsx`'s Key terrain section now real, `decisiveCandidate` always framed as a candidate requiring confirmation | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
 | 51 | Fixed: `onTrail` detection was centre-point-only — a road threading across a hex without passing near its centroid read as off-trail and got hard-gated by vegetation/slope, painting a real, unbroken road NO-GO/severely-restricted (live bug report) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
+| 52 (OCOKA 6) | Observation & fields of fire — `terrain/viewshed.ts` real front-to-back line-of-sight (curvature + refraction, screened vs bare-earth), third "observe" paint role, `SCREENING_HEIGHT_M` table; `OcokaObservationFactor` gated on whether an observer was painted, not on `path` | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.9 |
+| 53 (OCOKA 7) | Cover & concealment split, never blended — `terrain/concealment.ts` derives dead ground from OCOKA 6's own visibility union and vegetation-structure concealment from the same screening-height table; cover stays permanently, honestly not computed | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.10 |
+| 54 | Road-speed user-override confidence carried into GIS export attributes and the AI briefing payload/template, mirroring the existing hydrology pattern | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
+| 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 
 ## Recent Updates
 
@@ -255,6 +251,55 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — Fixed a performance regression in step 51's own fix (step
+  55, live report: "stuck at 20% on any reasonable sized run; very small
+  areas still work").** Step 51's centre+corners `onTrail` fix was correct
+  but called `distanceToNearestTrail` once per (sample point × trail
+  feature) pair — 7× the original scan's cost, invisible on a small AOI's
+  few cells/features but dominant on a "reasonable sized" one. Fixed
+  without touching the correctness guarantee: `sampleOnTrail` now calls
+  `distanceToNearestTrail` with the WHOLE trails array once per point (7
+  cheap calls, same pattern the water scan's own corner loop already uses),
+  then resolves `nearestTrailTags` with a single per-feature pass only for
+  the one winning point. Same global minimum-distance-wins semantics, same
+  37/37 test suite green. Full detail: `ROUTE_INTELLIGENCE.md` §48
+  addendum.
+- **2026-08-03 — Road-speed user-override confidence into GIS export + AI
+  briefing (step 54).** The override mechanism itself has been shipped
+  since step 21, visibly flagged in the panel/run log — this carries that
+  same flag into export attributes (`road_speed_overrides_active`/
+  `road_speed_override_count`, GeoJSON/KML) and the assistant payload/
+  briefing template, mirroring how hydrology (step 42) already behaves.
+  New `countActiveRoadSpeedOverrides()` (`roadSpeedModel.ts`) is the single
+  source of truth both sides read, so GIS export and the briefing can't
+  drift into disagreeing. Webapp+API `MobilityAssistantPayload` kept in
+  lock-step per this repo's own must-match-pair rule.
+- **2026-08-03 — OCOKA 6 (step 52) and OCOKA 7 (step 53) shipped.**
+  Observation and Concealment are both real now — only Cover remains a
+  genuine, permanent gap. `terrain/viewshed.ts`: a real per-target
+  front-to-back line-of-sight trace (new `hexLine()` in `hexGrid.ts`),
+  Earth curvature + refraction applied on top of the already-known
+  bare-earth-DEM optimism, screened (vegetation-canopy-aware, via a new
+  `SCREENING_HEIGHT_M` table cited to Specht 1970/Muir 1977 NVIS structural
+  bands) and bare-earth surfaces both always computed. A third "observe"
+  paint role (pink, `#EC4899`) lets a user place observers — resolved to
+  cell keys the SAME real area-overlap way origin/objective already are.
+  Caught before shipping: `mobilityLazyGrid.ts`'s observer resolution only
+  ran once at round 1, so an observer sited off the direct route could
+  silently never be materialised — fixed by unioning the observer paint's
+  own bounds into the round-1 footprint. `terrain/concealment.ts` (OCOKA 7)
+  derives dead ground almost for free — a set complement over
+  Observation's own visibility union, since defilade only means something
+  relative to a specified position, which the painted observers already
+  are — plus vegetation-structure concealment from the same screening
+  table. `OcokaObservationFactor`/concealment's own `state` gate is
+  deliberately independent of `result.path`, unlike every other OCOKA
+  factor: viewshed never depended on origin reaching objective. Cover
+  (`coverAssessed: false`) stays permanently, honestly not computed — a
+  bare-earth DEM and a 4-class vegetation taxonomy cannot see a rock, bund
+  or building. Full detail: `ROUTE_INTELLIGENCE.md` §47.9/§47.10. Gates
+  green: `npm test` (38/38 files, incl. new `viewshed.test.ts` and
+  `concealment.test.ts`), `npm run build`.
 - **2026-08-03 — Fixed: `onTrail` detection was centre-point-only (step 51,
   live bug report).** A road painted straight through an analysed area came
   out NO-GO/severely-restricted on both sides of the real, unbroken road,
@@ -356,10 +401,7 @@ history beyond this window: `git log`.
   can't run Durable Functions and `/api` caps every request at 45 s — needs
   SWA Standard + a separate Flex Consumption Function App behind a
   `deployMobilityBackend` flag. Full detail: `ROUTE_INTELLIGENCE.md` §47.
-- **2026-08-02 — Mobile UI (step 47):** quick mover-class selector (Foot/
-  4×4/Medium/Heavy buttons) + `TacticalCoordinateReadout` relocated above
-  AREAS OF INTEREST. PR #200.
-*(Full history for steps 0–46 — 2026-07-10 through 2026-07-29 — is in the
+*(Full history for steps 0–47 — 2026-07-10 through 2026-08-02 — is in the
 Shipped table above, each linked as-built doc's own dated section, and
 `git log`. Pruned from this file 2026-08-03 to keep it agent-scannable; see
 [docs/README.md](docs/README.md) if you need the narrative.)*

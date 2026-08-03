@@ -547,6 +547,21 @@ export interface OnTrailSample {
  * area came out NO-GO/severely-restricted on both sides of a real, unbroken
  * road, because most of the hexes it visibly crossed didn't have it within
  * `snapM` of their own centre.
+ *
+ * PERFORMANCE (2026-08-03, live report — "stuck at 20% on any reasonable
+ * sized run"): the first version of this fix called `distanceToNearestTrail`
+ * once per (point × feature) PAIR — 7× the per-feature-loop cost the
+ * original centre-only scan already had, since it needed to know WHICH
+ * feature matched (for `nearestTrailTags`) at every one of the 7 points, not
+ * just the min distance. `distanceToNearestTrail` already scans a WHOLE
+ * `trails` array internally in one call (same as `distanceToNearestWater`'s
+ * own single combined-array call per point, just above this function's call
+ * site) — this version calls it that way ONCE PER POINT (7 cheap calls) to
+ * find the true minimum distance and WHICH POINT achieves it, then runs the
+ * per-feature identification loop only ONCE, for that single winning point,
+ * to resolve `nearestTrailTags`. Identical correctness (same global
+ * minimum-distance-wins semantics) without paying the per-feature cost at
+ * every point.
  */
 export function sampleOnTrail(
   samplePoints: LatLng[],
@@ -555,20 +570,31 @@ export function sampleOnTrail(
 ): OnTrailSample {
   if (trails.length === 0) return { onTrail: false, nearestTrailTags: null };
   let bestD = Infinity;
-  let nearestTrailTags: RoadWayTags | null = null;
-  outer:
+  let bestPoint: LatLng | null = null;
   for (const p of samplePoints) {
-    for (const feature of trails) {
-      const d = distanceToNearestTrail(p, [feature], snapM);
-      if (d < bestD) {
-        bestD = d;
-        nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
-      }
-      if (bestD <= 0) break outer; // nothing can beat 0
+    const d = distanceToNearestTrail(p, trails, snapM);
+    if (d < bestD) {
+      bestD = d;
+      bestPoint = p;
     }
+    if (bestD <= 0) break; // nothing can beat 0
   }
   const onTrail = bestD <= snapM;
-  return { onTrail, nearestTrailTags: onTrail ? nearestTrailTags : null };
+  if (!onTrail || !bestPoint) return { onTrail, nearestTrailTags: null };
+
+  // Resolve WHICH feature the winning point matched — only needed once, for
+  // tags, not for the distance test itself (already settled above).
+  let tagD = Infinity;
+  let nearestTrailTags: RoadWayTags | null = null;
+  for (const feature of trails) {
+    const d = distanceToNearestTrail(bestPoint, [feature], snapM);
+    if (d < tagD) {
+      tagD = d;
+      nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
+    }
+    if (tagD <= 0) break;
+  }
+  return { onTrail, nearestTrailTags };
 }
 
 /**
