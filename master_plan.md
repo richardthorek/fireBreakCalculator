@@ -291,8 +291,9 @@ history beyond this window: `git log`.
   Now each mover gets its own stream from `hash(seed, moverIndex)`
   (splitmix32-style avalanche) — **a flagged, deliberate one-time change to
   today's ensemble numbers**, not silent drift. Full detail:
-  `ROUTE_INTELLIGENCE.md` §38. Gates green: `npm test` (38/38 files),
-  `npm run build`, api `npm run test:unit`.
+  `ROUTE_INTELLIGENCE.md` §38.1. Gates green: `npm test` (38/38 files),
+  `npm run build`, api `npm run test:unit`. PR
+  [#206](https://github.com/richardthorek/fireBreakCalculator/pull/206).
 - **2026-08-03 — Fixed a performance regression in step 51's own fix (step
   55, live report: "stuck at 20% on any reasonable sized run; very small
   areas still work").** Step 51's centre+corners `onTrail` fix was correct
