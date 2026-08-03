@@ -19,7 +19,7 @@ import React, { useState } from 'react';
 import {
   HIGHWAY_SPEED_KMH, SURFACE_SPEED_CAP_KMH, TRACKTYPE_SPEED_CAP_KMH, SMOOTHNESS_SPEED_CAP_KMH,
   RoadSpeedOverrides,
-} from '../terrain/roadSpeedModel';
+} from '@firebreak/terrain';
 
 export interface RoadSpeedOverridePanelProps {
   overrides: RoadSpeedOverrides;

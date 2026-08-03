@@ -50,14 +50,13 @@
  * them directly, never a second implementation.
  */
 
-import { LatLng } from '../utils/chainage';
-import { MobilityGridCell } from './accumulatedCost';
+import { LatLng } from './chainage';
+import { MobilityGridCell, nearestCellKey } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { LocalProjection, hexNeighbors, hexKey } from '../utils/hexGrid';
+import { LocalProjection, hexNeighbors, hexKey } from './hexGrid';
 import { ChokepointCell } from './corridorAnalysis';
 import { MinCutResult } from './minCutBarrier';
 import { RoadMinCutResult } from './minCutBarrier';
-import { nearestCellKey } from './mobilityGrid';
 import {
   Corridor, CorridorField, buildCorridorField, compareCorridorFields, CorridorComparison,
 } from './corridorField';

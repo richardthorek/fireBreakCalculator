@@ -6,7 +6,7 @@
 // Coordinate type compatibility for both Leaflet and Mapbox GL JS
 type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
 
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchStateVegetation } from './stateVegetationRouter';

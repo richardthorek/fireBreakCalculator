@@ -66,8 +66,8 @@
  *    instruction that an honest "couldn't improve this" beats a padded guess.
  */
 
-import { VegetationType } from '../../config/classification';
-import { ConfidenceTier } from '../../components/DataConfidenceBadge';
+import { VegetationType } from '../classification';
+import { ConfidenceTier } from '../confidenceTier';
 
 export interface StructureEstimate {
   /** Representative stem diameter, mm. */

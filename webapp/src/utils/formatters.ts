@@ -2,7 +2,7 @@
  * Utilities for formatting and displaying vegetation and terrain types consistently across the application
  */
 
-import { VegetationType, TerrainLevel } from '../config/classification';
+import { VegetationType, TerrainLevel } from '@firebreak/terrain';
 
 /**
  * Get human-readable display name for vegetation type

@@ -7,7 +7,7 @@
  * chainage and geographic coordinates so every surface points at the same spot.
  */
 
-import { calculateDistance } from './slopeCalculation';
+import { calculateDistance } from './geo';
 
 export interface LatLng {
   lat: number;

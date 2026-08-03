@@ -8,12 +8,12 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadGraphMixedAdjacency.test.ts
  */
 import * as assert from 'node:assert';
-import { hexKey, AxialCoord } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { simulateMovementEnsemble } from '../src/terrain/movementSimulation';
-import { computeRoadNetworkMinCut } from '../src/terrain/minCutBarrier';
-import { getMoverProfile } from '../src/terrain/moverProfiles';
-import { RoadGraph, RoadEdge, RoadNode } from '../src/terrain/roadGraph';
+import { hexKey, AxialCoord } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { simulateMovementEnsemble } from '@firebreak/terrain';
+import { computeRoadNetworkMinCut } from '@firebreak/terrain';
+import { getMoverProfile } from '@firebreak/terrain';
+import { RoadGraph, RoadEdge, RoadNode } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

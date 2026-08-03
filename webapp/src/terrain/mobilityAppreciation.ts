@@ -30,35 +30,24 @@
  * the ensemble produced anything.
  */
 
+import {
+  carriesWaterSignal, LocalProjection, PaintedArea, MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID,
+  DEFAULT_MOVEMENT_SIM_SEED, RestrictionPlan, MobilityCellResult, IsochroneBand, buildIsochroneBands,
+  DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell, getMoverProfile, MoverProfile, setRoadSpeedOverrides,
+  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, computeMinCutBarrier, MinCutResult,
+  computeRoadNetworkMinCut, RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
+  buildObservationResult, ConcealmentResult, buildConcealmentResult, buildRoadGraph, nodesWithin, RoadGraph, RoadWay,
+  WaterBodyPolygon, buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
+} from '@firebreak/terrain';
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
-import { carriesWaterSignal } from './accumulatedCost';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { LocalProjection } from '../utils/hexGrid';
-import { PaintedArea } from './paintedArea';
 import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker } from './mobilityWorkerClient';
-import { MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID, DEFAULT_MOVEMENT_SIM_SEED } from './movementSimulation';
-import { RestrictionPlan } from './restrictionPlanner';
-import {
-  MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES,
-  MobilityGridCell,
-} from './accumulatedCost';
-import { getMoverProfile, MoverProfile } from './moverProfiles';
-import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
   findEarlyVehicleRoadRoutePreview,
 } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
-import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
-import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
-import { KeyTerrainResult, generateKeyTerrainCandidates } from './keyTerrain';
-import { ObservationResult, buildObservationResult } from './viewshed';
-import { ConcealmentResult, buildConcealmentResult } from './concealment';
-import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
-import {
-  buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
-} from './corridorField';
 
 /** Moved to `accumulatedCost.ts` (see its own doc comment on why — corridor
  *  risk scoring needed it without a circular import) — re-exported here so

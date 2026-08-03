@@ -16,11 +16,11 @@
  * Plain node:assert. Run: npx tsx webapp/tests/mobilityHydrologyExport.test.ts
  */
 import * as assert from 'node:assert';
-import { hexKey, AxialCoord } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { Corridor, CorridorField } from '../src/terrain/corridorField';
+import { hexKey, AxialCoord } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { Corridor, CorridorField } from '@firebreak/terrain';
 import { toMobilityGeoJSON, toMobilityKML, ExportMobilityInput } from '../src/utils/mobilityGisExport';
-import { getMoverProfile } from '../src/terrain/moverProfiles';
+import { getMoverProfile } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

@@ -23,10 +23,10 @@
  */
 
 import React from 'react';
-import { COUNTER_MEASURES, CounterMeasure, ObstacleEffect } from '../terrain/counterMeasures';
-import { BarrierSegment } from '../terrain/minCutBarrier';
-import { DelayLedgerEntry, CounterMeasurePlacement } from '../terrain/delayLedger';
-import { CorridorComparison } from '../terrain/corridorField';
+import { COUNTER_MEASURES, CounterMeasure, ObstacleEffect } from '@firebreak/terrain';
+import { BarrierSegment } from '@firebreak/terrain';
+import { DelayLedgerEntry, CounterMeasurePlacement } from '@firebreak/terrain';
+import { CorridorComparison } from '@firebreak/terrain';
 import { DataConfidenceBadge } from './DataConfidenceBadge';
 
 export interface CounterMobilityPanelProps {

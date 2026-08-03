@@ -12,7 +12,7 @@
  * but never silent: unreadable files produce a visible error, not an empty map.
  */
 
-import { LatLng } from './chainage';
+import { LatLng } from '@firebreak/terrain';
 import { parseXml, findAll, findFirst, childFirst } from './xmlScan';
 import { logger } from './logger';
 

@@ -1,5 +1,5 @@
 import { VegetationFormationMappingApi } from '../types/vegetationMappingApi';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import { listVegetationMappings } from './vegetationMappingApi';
 import { logger } from './logger';
 

@@ -30,7 +30,7 @@
  * needs the production-model integration this doc gates on a later pass.
  */
 
-import { ConfidenceTier } from '../components/DataConfidenceBadge';
+import { ConfidenceTier } from './confidenceTier';
 
 /** Doctrinal obstacle-effect taxonomy (FM 90-7 lineage, current
  *  ATP 3-90.8 / MCWP 3-17.5) — see docs §11.5. Closed four-value set. */

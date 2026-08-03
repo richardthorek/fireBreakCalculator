@@ -21,8 +21,8 @@ import * as assert from 'node:assert';
 import { findEarlyVehicleRoadRoutePreview } from '../src/terrain/roadRouteSearch';
 import { computePaddedBounds } from '../src/terrain/mobilityGrid';
 import { _clearInfrastructureCache } from '../src/utils/infrastructureService';
-import { singleDabArea, paintedAreaBounds } from '../src/terrain/paintedArea';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
+import { singleDabArea, paintedAreaBounds } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
 
 let passed = 0;
 async function test(name: string, fn: () => void | Promise<void>) {

@@ -11,7 +11,7 @@
 import { logger } from './logger';
 import { AustralianState, determineState, isInAustralia } from './stateDetection';
 import { StateVegetationResult, StateVegetationService } from './stateVegetationInterfaces';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 
 // Import existing services (NSW is implemented, others are placeholders for now)
 import { fetchNSWVegetation as fetchNSWRaw, fetchNSWVegetationArea, fetchNSWVegetationAreaTiled, pointInRings, NSWAreaFeature } from './nswVegetationService';

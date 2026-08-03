@@ -1,7 +1,7 @@
 /**
  * Types for vegetation formation mappings in the API
  */
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 
 export interface VegetationFormationMappingApi {
   id: string;

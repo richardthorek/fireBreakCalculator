@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { EquipmentApi, EquipmentCoreType, MachineryApi, AircraftApi, HandCrewApi } from '../types/equipmentApi';
 import { getVegetationTypeDisplayName, getVegetationTypeExample, getTerrainLevelDisplayName, getTerrainLevelExample } from '../utils/formatters';
-import { VegetationType, TerrainLevel } from '../config/classification';
+import { VegetationType, TerrainLevel } from '@firebreak/terrain';
 
 interface EquipmentConfigPanelProps {
   equipment: EquipmentApi[];

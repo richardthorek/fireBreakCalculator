@@ -1,0 +1,21 @@
+{
+  "name": "@firebreak/terrain",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pure-compute terrain/mobility algorithms shared between the webapp (client) and, from OCOKA 5 onward, the Azure Functions backend. No network I/O and no browser APIs live here — see README.md.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@turf/boolean-point-in-polygon": "^7.3.5",
+    "@turf/difference": "^7.3.5",
+    "@turf/helpers": "^7.3.5",
+    "@turf/union": "^7.3.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -16,11 +16,11 @@ import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
 import { smoothPolygonGeometry } from '../utils/polygonSmoothing';
-import { MobilityClass } from '../terrain/mobilityClass';
+import { MobilityClass } from '@firebreak/terrain';
 import {
   metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
   BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
-} from '../terrain/paintedArea';
+} from '@firebreak/terrain';
 import { union } from '@turf/union';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';

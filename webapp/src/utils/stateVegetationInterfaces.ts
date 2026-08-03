@@ -4,7 +4,7 @@
  * to provide consistent vegetation data to the analysis layer.
  */
 
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 
 /**
  * Result from a state vegetation service query.

@@ -4746,6 +4746,105 @@ at — premature before that data exists.
 | T2 | Same-algorithm Function-hosted tier for oversized-for-client, under-Function-timeout runs | Enough telemetry rows to confirm which phase actually dominates on slow devices, so T2 targets the right phase rather than moving the whole pipeline speculatively |
 | T3 | On-demand Container Apps Job tier + resumable chunked delivery | Evidence from T2 that a real (not hypothetical) tail of runs exceeds a Function's timeout/memory ceiling |
 
+### 38.1 OCOKA 2 shipped (2026-08-03): `shared/@firebreak/terrain` extracted
+
+Prerequisite for OCOKA 5's server-side execution. This section's own §38 design
+above assumed "the API can just call the existing modules" — optimistic: they
+lived in `webapp/src/terrain`, a different package with a different
+`tsconfig.json`, so a shared package had to be extracted first, or the
+algorithm itself becomes a fourth must-match drift surface alongside the
+GIS-export/AI-briefing/`MobilityJobRequest` pairs this doc already tracks.
+
+**What moved (extracted, not copied) into `shared/terrain/src/`:** every
+module that is a pure function over already-sampled data, no network I/O, no
+browser API — `accumulatedCost.ts`, `concealment.ts`, `corridorAnalysis.ts`,
+`corridorField.ts`, `counterMeasures.ts`, `delayLedger.ts`, `keyTerrain.ts`,
+`minCutBarrier.ts`, `mobilityClass.ts`, `mobilityCost.ts`,
+`movementSimulation.ts`, `moverProfiles.ts`, `paintedArea.ts`,
+`restrictionPlanner.ts`, `roadGraph.ts`, `roadRouting.ts`,
+`roadSpeedModel.ts`, `viewshed.ts`, `dataLayers/demDerivatives.ts`,
+`dataLayers/structureTable.ts` — plus the "sampling utils" and shared
+vocabulary both modes touch: `utils/chainage.ts`, `utils/hexGrid.ts`,
+`config/classification.ts`, and a new `geo.ts` holding just the pure
+`calculateDistance`/`calculateSlope` extracted out of
+`utils/slopeCalculation.ts` (which keeps its own network/Mapbox-token-coupled
+code and now imports the pure pair back).
+
+**What stayed in `webapp/src/terrain`, and why — every one a real capability
+difference to record, not hide, same principle as `mapboxTrails.ts` staying
+client-only for reading a live GL map:**
+- `mobilityGrid.ts`, `mobilityLazyGrid.ts` — orchestrate live network
+  sampling (elevation, vegetation, trails, water).
+- `mobilityAppreciation.ts` — the top-level orchestrator; calls the above
+  plus the Worker client.
+- `mobilityWorker.ts` / `mobilityWorkerClient.ts` — Web Worker `self` API /
+  Vite's `new Worker(new URL(...), {type:'module'})` asset-URL syntax.
+- `mobilityTelemetry.ts` — fire-and-forget network telemetry (§38 above).
+- `roadRouteSearch.ts` — fetches live road/waterway data.
+- `unitSimulation.ts` — depends on two of the above.
+- `oakoc.ts` — a deliberate exception in the OTHER direction: it only
+  assembles the OCOKA five-factor view model for `OakocPanel.tsx` from an
+  already-computed `MobilityAppreciationResult`. It never computes anything a
+  server would independently need to compute, so forcing that large
+  orchestrator type to move too would have bought nothing.
+
+**How webapp consumes it — deliberately not an npm workspace.** The original
+plan called for a root `package.json` with npm workspaces. Investigating the
+actual deploy path changed that: Azure Static Web Apps deploys via
+`Azure/static-web-apps-deploy@v1`, which runs an independent Oryx remote
+build scoped to `app_location: 'webapp'` / `api_location: 'api'` — it has no
+notion of a workspace root and would not know to install or build a sibling
+`shared/` package first. A workspace-hoisted `node_modules` risked silently
+breaking that live production deploy with no local repro. Instead,
+`@firebreak/terrain` is a TypeScript path alias: `webapp/tsconfig.json`'s
+`compilerOptions.paths` and `webapp/vite.config.ts`'s `resolve.alias` both
+point the specifier straight at `shared/terrain/src/index.ts`. Vite bundles
+it like any other local module; there is nothing to install, so there is
+nothing for the remote build to miss. `shared/terrain/package.json` still
+exists (name, its own `tsconfig.json`, a `build` script) so CI can
+type-check the package standalone — catching an accidental
+network/browser-coupled import before it reaches webapp's own build — but
+nothing consumes that build's output. See `shared/terrain/README.md` for the
+full rationale; when OCOKA 5 wires the API to this package, prefer the same
+path-alias (or a TS project reference) pattern unless Azure Functions
+deployment is separately re-verified to tolerate a workspace install.
+
+**Two small pre-existing snags, found and fixed in the move (not introduced
+by it):**
+- `SimPathNode` lived in `mobilityWorker.ts` (stays client-side), but
+  `corridorAnalysis.ts` and `mobilityAppreciation.ts` (one moving, one
+  staying) both needed it purely as a data shape with no Worker dependency.
+  Relocated to `accumulatedCost.ts`; `mobilityWorker.ts` re-exports it for
+  its own webapp callers.
+- `nearestCellKey` lived in `mobilityGrid.ts` (stays client-side, since it
+  orchestrates live sampling), but `keyTerrain.ts` (moving) needed it as pure
+  geometry over an already-built cell array. Same fix: relocated to
+  `accumulatedCost.ts`, re-exported from `mobilityGrid.ts`.
+- `ConfidenceTier` was declared in `components/DataConfidenceBadge.tsx` — a
+  React component file — and imported as a type-only dependency by
+  `counterMeasures.ts` and `dataLayers/structureTable.ts`, both now moving.
+  Relocated the type alone to `shared/terrain/src/confidenceTier.ts`;
+  `DataConfidenceBadge.tsx` re-exports it for its own webapp callers.
+
+**Ensemble seeding made chunk-invariant.** The OCOKA 2 spec's other
+requirement: `movementSimulation.ts`'s mover ensemble used ONE
+`mulberry32(seed)` PRNG instance shared across every mover in the loop, so
+mover N's random draws depended on exactly how many draws movers 0..N-1 had
+already consumed — correct, but inherently un-chunkable (OCOKA 8's fan-out
+needs to run mover batches independently, in any order, on any worker). Each
+mover now gets its own stream from `hashSeedForMover(seed, moverIndex)` (a
+small splitmix32-style avalanche), instantiated inside the mover loop instead
+of once outside it. **This changes today's ensemble numbers once** — same
+seed, same AOI, a different draw sequence per mover — a flagged, deliberate
+one-time change, never silent drift; no test in the suite asserted an exact
+draw sequence, so nothing needed updating to match.
+
+**Verification:** `shared/terrain`'s own standalone `tsc --noEmit` is clean
+(new CI step, `.github/workflows/deploy.yml`); webapp `npm test` (38/38
+files) and `npm run build` both green against the alias; api
+`npm run test:unit` green and unaffected (api does not consume this package
+yet — that begins at OCOKA 5).
+
 ---
 
 ## 39. Small-AOI detour padding — profile-scaled, not just proportional (2026-07-28)
@@ -5825,6 +5924,156 @@ above this function's call site) — `sampleOnTrail` now calls it that way ONCE 
 per-feature identification loop once, for that single winning point, to resolve
 `nearestTrailTags`. Same global minimum-distance-wins semantics, same test suite green
 (37/37 unchanged), without the 7× multiplier on the dominant cost.
+
+---
+
+## 49. OCOKA 5 shipped — tier-2 backend job protocol (2026-08-03)
+
+`api-mobility/` (new standalone package) + `webapp/src/terrain/mobilityJobClient.ts` +
+`webapp/src/utils/mobilityJobApi.ts` + `webapp/src/components/MobilityBackendJobPanel.tsx`
++ `infra/main.bicep` additions, all gated behind `deployMobilityBackend bool = false`
+(default, unchanged from §47.3's design). Per the roadmap's own framing — "Ships
+before parallelism deliberately: a wrong partial-result rule is a safety bug, a slow
+correct run is only slow" — this pass is scoped to getting the JOB PROTOCOL right
+(submit → Durable status polling carrying blob pointers → client reads artefacts
+direct from Blob with a per-artefact SAS), sequentially, no fan-out. Fan-out is
+OCOKA 8, built once tier-2 has real usage evidence.
+
+### Why a separate `api-mobility/` package, not `/api` directly
+
+Researched against current Microsoft Learn docs before writing any bicep: Azure
+Static Web Apps allows exactly **one backend type per environment** — managed
+functions (what `/api` is today) OR a linked custom backend, never both. Linking
+a custom Function App as the SWA `/api` backend is therefore an all-or-nothing
+cutover: every existing `/api/*` route has to move onto the SAME custom Function
+App, not just the new mobility routes. That is a real, coordinated migration
+(bicep + the deploy workflow's `api_location`/deployment step + the existing
+managed-functions code all moving together) that cannot be safely scripted or
+verified without a live Azure subscription to deploy against — genuinely
+different from every other gated-flag feature this repo has shipped so far
+(`deployAiAssistant` is purely additive; this is not).
+
+Given that, this pass builds the new protocol as a **standalone, independently
+buildable/testable package** (`api-mobility/`, own `package.json`/`tsconfig.json`/
+`host.json`) rather than inside `/api`:
+- Zero risk to `/api`'s existing, live, SWA-managed deployment — nothing in this
+  package is imported by or affects `/api`'s own build.
+- Real CI coverage from day one (`npm install && npm run test:unit`, wired into
+  `deploy.yml`'s `build_and_test` job) instead of "trust me, it'll work once
+  deployed" — every commit is independently verified in this sandbox: build,
+  full test suite, and the bicep template all pass.
+- At the actual cutover (`deployMobilityBackend: true` + `swaSku: Standard` +
+  the existing `/api` code physically merged onto the new Function App — see
+  runbook below), this package's functions move into `/api`, since post-cutover
+  both sets of endpoints deploy through the same custom Function App anyway and
+  the temporary duplication (`elevationService.ts`, `infrastructureService.ts` —
+  see `api-mobility/README.md`) stops being necessary.
+
+### What's real vs. what's a documented v1 scope cut
+
+**Real, tested, working end to end (verified in this pass — `npm test` green in
+`api-mobility/`, webapp's 38/38 test files still green, both `npm run build`s
+clean, the bicep template compiles with the standalone Bicep CLI and every new
+resource confirmed gated on `deployMobilityBackend` in the emitted ARM JSON):**
+- `MobilityJobRequest`/`MobilityJobStatusResponse` — the **third** webapp/api
+  must-match pair (`api-mobility/src/types/mobilityJob.ts` ↔
+  `webapp/src/utils/mobilityJobApi.ts`), with the same validate-at-the-boundary
+  discipline as `MobilityAssistantPayload`.
+- A real Durable orchestrator (`mobilityJobOrchestrator.ts`) running five
+  sequential activities — sample the grid, cost field + cheapest route,
+  corridor field, chokepoints + hex min-cut, unscored key-terrain candidates —
+  each writing its own client-facing artefact blob and an internal
+  continuation blob for the next stage, `context.df.setCustomStatus` updated
+  after every stage. Heavy data (the sampled grid, the corridor field) is
+  threaded via BLOB POINTERS between activities, never through Durable's own
+  activity input/output serialisation — generalised from §47.4's viewshed row
+  ("pass a blob URI, never the cell array") to every stage boundary.
+- `POST /mobility/jobs` (202, `{jobId, statusUrl}` — deliberately not
+  `client.createCheckStatusResponse`'s own management URLs, which would leak
+  Durable internals to a public caller) and `GET /mobility/jobs/{jobId}`
+  (pointers + a **freshly-minted, read-only, single-blob SAS per artefact, on
+  every poll** — see the refinement below).
+- Table-Storage-backed rate limiting (fixed window + a concurrent-job cap that
+  refuses `429` rather than queueing) — closes §47.3's own named gap in
+  `rateLimit.ts`'s in-memory buckets.
+- `webapp/src/terrain/mobilityJobClient.ts` — its own polling interval (not
+  Durable's 30s default), tracks the highest artefact `seq` delivered so a
+  dropped connection resumes rather than re-fetching or losing progress.
+- `MobilityBackendJobPanel.tsx` — a **manual** trigger in `MobilityPanel.tsx`,
+  gated on `VITE_MOBILITY_API_BASE_URL` being set (unset in every deployment
+  until a real cutover, so there's no dead button). Manual, not automatic
+  threshold routing — §38's own gate ("no automatic tier-2/tier-3 routing
+  should ship" until telemetry justifies a threshold) still applies; a manual
+  button needs no such calibration and is what generates the usage evidence
+  that gate is waiting on.
+
+**Deliberate v1 scope cuts (each flagged in code/docs, not silent):**
+- **Vegetation is an estimated placeholder** (`vegetation: 'grassland'`,
+  `vegEstimated: true` on every cell) — the client's NVIS path needs PNG
+  decoding, the NSW SVTM path needs polygon classification; neither is ported
+  server-side yet. Every tier-2 run therefore reports `usedEstimatedData: true`
+  today, honestly.
+- **DEA surface-water frequency is not sampled** server-side (OSM waterway/
+  water-body geometry still drives the real hydrology gate).
+- **No painted-area membership test.** `MobilityJobRequest` carries
+  already-resolved origin/objective BOUNDING BOXES, not painted dab strokes;
+  origin/objective seed keys are always the nearest-cell-to-bounds-centroid
+  fallback `buildMobilityGrid` itself already falls back to when a painted
+  area resolves to zero member cells.
+- **Algorithmic coverage is a real subset of tier 1's**, not full parity: the
+  optimiser's cheapest route + corridors (`optimiser-routes` evidence, not the
+  simulated-mover ensemble), hex chokepoints/min-cut (not the road-network-
+  exact cut), UNSCORED key-terrain candidates (scoring needs a corridor-
+  comparison re-run per candidate — real work, deferred rather than rushed).
+  Not yet wired into tier 2 at all: the movement ensemble, the restriction
+  planner, observation/viewshed, concealment. The client Worker (tier 1)
+  remains the only path for all of those today.
+- **Export/AI-briefing gating on `provisional` is not wired into the existing
+  export/briefing endpoints** — those currently operate on client-computed
+  (tier-1) payloads; threading tier-2 artefacts into the same pipeline is
+  follow-up work, tracked here rather than silently skipped.
+
+### A real SAS refinement over the design text
+
+§47.3 describes one job-scoped SAS issued at submit time. This storage account
+is not ADLS Gen2 (no hierarchical namespace), so a true prefix-scoped SAS isn't
+available — the only container-level SAS Azure would offer instead also grants
+read access to every OTHER job's artefacts, a real cross-job leak. Shipped
+instead: a fresh, read-only, single-blob SAS minted per artefact on every
+status poll (`mobilityJobStore.ts`). Slightly more server work per poll,
+genuinely job-scoped — tighter than the design text even asked for, not a
+weaker substitute.
+
+### Infra: additive-only until a deliberate cutover
+
+`infra/main.bicep` additions, all `if (deployMobilityBackend)`: the
+`mobilityjobs` blob container (24h-equivalent lifecycle rule — Azure blob
+lifecycle policy only expresses whole days, so `daysAfterModificationGreaterThan: 1`
+is the closest native approximation), a `mobilityjobratelimit` table, a Flex
+Consumption Function App + plan, and a `Microsoft.Web/staticSites/linkedBackends`
+resource linking it as the SWA's `/api` backend. **Unverified by a live
+deployment** — reviewed against current Microsoft Learn documentation and
+compiled cleanly with the standalone Bicep CLI (0 errors; the one new warning
+matches an existing, already-accepted pattern elsewhere in this file), but
+Flex Consumption's exact schema and the linked-backend cutover behaviour
+should be reviewed against Azure once more before the owner's first real use.
+
+**Manual cutover runbook** (not automated by this template or by `deploy.yml`
+— a deliberate one-way infra switch, not a flag flip):
+1. Deploy `api-mobility/` to the new Function App resource once (`az
+   functionapp` deploy or equivalent) with `deployMobilityBackend: false`
+   still set, so the SWA linked-backend resource doesn't exist yet — this
+   step just gets code onto the Function App, `deployMobilityBackend` only
+   controls whether the Function App/plan/linked-backend RESOURCES exist.
+2. Set the GitHub Actions workflow's SWA deploy step's `api_location` to `''`
+   (per Microsoft's own "remove managed functions before linking" requirement)
+   — a `deploy.yml` change, not a bicep parameter.
+3. Physically merge `/api`'s existing functions into `api-mobility/` (or vice
+   versa) — post-cutover there is exactly one Function App serving `/api/*`.
+4. Redeploy with `deployMobilityBackend: true` AND `swaSku: Standard` set
+   together.
+5. Verify every existing `/api/*` endpoint still resolves through the new
+   linked backend before considering the cutover complete.
 
 ---
 

@@ -15,11 +15,10 @@
  * wide→refine→polish idiom (routeOptimizer.ts) applied to this mode.
  */
 
+import { PaintedArea, singleDabArea, MoverTrajectory } from '@firebreak/terrain';
 import { buildMobilityGrid } from './mobilityGrid';
-import { PaintedArea, singleDabArea } from './paintedArea';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
-import { MoverTrajectory } from './movementSimulation';
 
 /** Linear interpolation between the two path nodes bracketing `elapsedSeconds`.
  *  Clamps to the endpoints outside the path's time range. Returns null for an

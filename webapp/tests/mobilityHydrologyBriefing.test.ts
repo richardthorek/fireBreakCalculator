@@ -11,11 +11,11 @@
  * Plain node:assert. Run: npx tsx webapp/tests/mobilityHydrologyBriefing.test.ts
  */
 import * as assert from 'node:assert';
-import { hexKey, AxialCoord, makeProjection } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
+import { hexKey, AxialCoord, makeProjection } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
 import { MobilityAppreciationResult } from '../src/terrain/mobilityAppreciation';
 import { buildMobilityAssistantPayload } from '../src/utils/mobilityAssistantApi';
-import { getMoverProfile } from '../src/terrain/moverProfiles';
+import { getMoverProfile } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

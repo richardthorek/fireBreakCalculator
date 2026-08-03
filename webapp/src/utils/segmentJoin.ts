@@ -7,7 +7,7 @@
  */
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { classifySlope, VegetationType } from '../config/classification';
+import { classifySlope, VegetationType } from '@firebreak/terrain';
 
 export interface JoinedSegment {
   startM: number;

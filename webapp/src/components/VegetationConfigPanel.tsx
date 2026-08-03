@@ -12,7 +12,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { VegetationFormationMappingApi, CreateVegetationMappingInput } from '../types/vegetationMappingApi';
-import { VegetationType, VEGETATION_TYPES } from '../config/classification';
+import { VegetationType, VEGETATION_TYPES } from '@firebreak/terrain';
 import { getVegetationTypeDisplayName, getVegetationTypeExample } from '../utils/formatters';
 
 interface VegetationConfigPanelProps {

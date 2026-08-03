@@ -21,7 +21,7 @@
  * confidence.
  */
 
-import { VegetationType } from '../config/classification';
+import { VegetationType } from './classification';
 import { MoverProfile } from './moverProfiles';
 import { lookupStructure } from './dataLayers/structureTable';
 import { RoadWayTags, roadClassCeiling } from './roadSpeedModel';

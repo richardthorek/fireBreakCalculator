@@ -61,11 +61,11 @@ import { union } from '@turf/union';
 import { difference } from '@turf/difference';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
-import { LatLng } from '../utils/chainage';
+import { LatLng } from './chainage';
 import {
   AxialCoord, makeProjection, toLocal, toLatLng, axialToLocal, localToAxial, hexCorners, hexSpiral,
   HEX_AREA_FACTOR,
-} from '../utils/hexGrid';
+} from './hexGrid';
 
 export type BrushSize = 'small' | 'medium' | 'large' | 'xl';
 

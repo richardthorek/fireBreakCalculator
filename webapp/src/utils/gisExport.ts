@@ -15,7 +15,7 @@
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { buildJoinedSegments, JoinedSegment } from './segmentJoin';
-import { buildChainageIndex, sliceByChainage, LatLng } from './chainage';
+import { buildChainageIndex, sliceByChainage, LatLng } from '@firebreak/terrain';
 import { provenanceProperties, provenanceStamp, DISCLAIMER_LONG } from '../config/provenance';
 
 export interface ExportPlanInput {

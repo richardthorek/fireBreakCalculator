@@ -10,16 +10,16 @@
  * Plain node:assert. Run: npx tsx webapp/tests/keyTerrain.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
-import { buildCorridorField } from '../src/terrain/corridorField';
-import { computeChokepoints, findKDissimilarPaths } from '../src/terrain/corridorAnalysis';
-import { computeMinCutBarrier } from '../src/terrain/minCutBarrier';
+import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
+import { buildCorridorField } from '@firebreak/terrain';
+import { computeChokepoints, findKDissimilarPaths } from '@firebreak/terrain';
+import { computeMinCutBarrier } from '@firebreak/terrain';
 import {
   generateKeyTerrainCandidates, scoreKeyTerrainCandidates, buildKeyTerrainResult, KEY_TERRAIN_MISSION_CAVEAT,
-} from '../src/terrain/keyTerrain';
-import { LatLng } from '../src/utils/chainage';
+} from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

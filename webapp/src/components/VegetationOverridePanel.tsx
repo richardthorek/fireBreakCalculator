@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import {
   VegetationOverridesConfig,
   SegmentVegetationOverride,

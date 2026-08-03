@@ -3,7 +3,7 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadGraph.test.ts
  */
 import * as assert from 'node:assert';
-import { buildRoadGraph, nearestNode, RoadWay } from '../src/terrain/roadGraph';
+import { buildRoadGraph, nearestNode, RoadWay } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

@@ -7,7 +7,7 @@ import * as assert from 'node:assert';
 import {
   createHexDab, resolvePaintedAreaGeometry, isInsideResolvedArea, paintedAreaBounds, singleDabArea,
   BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M, brushApproxRadiusM, PaintedArea,
-} from '../src/terrain/paintedArea';
+} from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

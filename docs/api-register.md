@@ -1,6 +1,6 @@
 # API Register
 
-**Last Updated**: July 28, 2026  
+**Last Updated**: August 3, 2026  
 **Purpose**: Machine-readable catalog of all API endpoints
 **Update Policy**: MUST update when endpoints are added, modified, or removed
 
@@ -165,6 +165,45 @@ interface MobilityRunTelemetry {
   deviceMemoryGb: number | null;
 }
 ```
+
+## Terrain Mobility Backend (tier-2, OCOKA 5)
+
+Served by the **separate** `api-mobility/` Function App, NOT `/api` — gated
+behind `infra/main.bicep`'s `deployMobilityBackend bool = false` (off in every
+deployment today; see [ROUTE_INTELLIGENCE.md](ROUTE_INTELLIGENCE.md) §49 for
+why this can't be an additive endpoint on `/api` the way every other row on
+this page is). Base URL is whatever `VITE_MOBILITY_API_BASE_URL` is set to for
+a given deployment — unset means the feature doesn't exist client-side either.
+
+| Endpoint | Method | Purpose | Request Body | Response | Auth Required |
+|----------|--------|---------|--------------|----------|---------------|
+| `/mobility/jobs` | POST | Start a tier-2 mobility appreciation job (Durable orchestration) | `MobilityJobRequest` | `202 { jobId, statusUrl }` | No (Table-Storage rate-limited + concurrent-job cap) |
+| `/mobility/jobs/{jobId}` | GET | Poll job status — pointers only, never Durable internals; each artefact carries a freshly-minted read-only SAS `url`, reminted every poll | None | `MobilityJobStatusResponse` (see below) | No |
+
+```typescript
+interface MobilityJobRequest {
+  originBounds: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  objectiveBounds: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  moverProfileId: string;
+  nightMode: boolean;
+  fidelity: 'quick' | 'standard' | 'fine';
+}
+
+interface MobilityJobStatusResponse {
+  jobId: string;
+  phase: 'running' | 'complete' | 'failed';
+  provisional: boolean;       // export/AI-briefing must refuse while true
+  artefacts: { seq: number; kind: 'grid-summary' | 'route' | 'corridors' | 'obstacles' | 'key-terrain'; blobPath: string; url: string }[];
+  incompleteStages?: string[];
+  error?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+```
+
+`MobilityJobRequest`/`MobilityJobStatusResponse` are the **third** webapp/api
+must-match pair (`api-mobility/src/types/mobilityJob.ts` ↔
+`webapp/src/utils/mobilityJobApi.ts`).
 
 ## AI Assistant Endpoints
 

@@ -11,7 +11,7 @@
 
 import { logger } from './logger';
 import { mapFormationToVegetationType, _clearVegetationMappingCache } from './vegetationMappingHelper';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import { tilesCovering, tileUrl, NSW_TILE_DEG, MAX_NSW_TILES } from './vegetationTiles';
 
 const ARC_GIS_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/VIS/SVTM_NSW_Extant_PCT/MapServer';

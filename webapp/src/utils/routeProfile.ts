@@ -9,7 +9,7 @@
  */
 
 import { TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { VegetationType } from '../config/classification';
+import { VegetationType } from '@firebreak/terrain';
 import { VegetationOverridesConfig, getEffectiveVegetation } from '../types/vegetationOverrides';
 
 /** One resolved slice of the planned line with uniform-ish conditions. */

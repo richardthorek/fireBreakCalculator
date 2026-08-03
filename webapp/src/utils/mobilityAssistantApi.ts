@@ -17,8 +17,8 @@
  */
 
 import { MobilityAppreciationResult, carriesWaterSignal } from '../terrain/mobilityAppreciation';
-import { DelayLedgerEntry } from '../terrain/delayLedger';
-import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '../terrain/roadSpeedModel';
+import { DelayLedgerEntry } from '@firebreak/terrain';
+import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '@firebreak/terrain';
 import { AssistantResponse, postAssistant } from './assistantApi';
 
 export interface MobilityCorridorSummary {
