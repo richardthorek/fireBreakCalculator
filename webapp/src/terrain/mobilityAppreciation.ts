@@ -52,6 +52,7 @@ import {
 import { SimPathNode } from './mobilityWorker';
 import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
 import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
+import { KeyTerrainResult } from './keyTerrain';
 import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
 import {
   buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
@@ -161,6 +162,12 @@ export interface MobilityAppreciationResult {
    *  case alongside `barrier` above (which still covers off-road ground the
    *  same profile could also use) — not a replacement for it. */
   roadNetworkBarrier: RoadMinCutResult | null;
+  /** OCOKA 4 (docs/ROUTE_INTELLIGENCE.md §47.1) — candidates from chokepoints/
+   *  min-cut/corridor-bottleneck ground, each scored by a real re-run with it
+   *  denied. Null when no path existed to score against (matches every other
+   *  post-search product's null-on-unreachable convention) OR — today,
+   *  temporarily — while OCOKA 4's worker wiring lands; see `terrain/keyTerrain.ts`. */
+  keyTerrain: KeyTerrainResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
    *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
@@ -555,6 +562,7 @@ export async function runMobilityAppreciation(
     chokepoints: [],
     barrier: null,
     roadNetworkBarrier: null,
+    keyTerrain: null,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
@@ -825,6 +833,7 @@ export async function runMobilityAppreciation(
     chokepoints,
     barrier,
     roadNetworkBarrier,
+    keyTerrain: null, // OCOKA 4 worker wiring lands separately — see terrain/keyTerrain.ts
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
