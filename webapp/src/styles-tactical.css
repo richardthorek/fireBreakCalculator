@@ -254,6 +254,41 @@
 .mobility-profile-meta { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .mobility-profile-source, .mobility-profile-notes { color: var(--tac-text-dim); font-size: 0.75em; line-height: 1.4; }
 .mobility-night-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85em; color: var(--tac-text-dim); }
+
+/* Quick mover-class picker — four broad classes above the full dropdown so
+ * a user on mobile can tap once and run without scrolling (owner 2026-07-29). */
+.mobility-quick-profile-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px 0 4px;
+}
+.mobility-quick-profile-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: rgba(12, 17, 24, 0.92);
+  color: var(--tac-text-dim, #6b7f8f);
+  border: 1px solid var(--tac-border, #1c2733);
+  border-radius: 6px;
+  padding: 8px 4px;
+  font-size: 0.65em;
+  font-weight: 700;
+  font-family: var(--tac-mono-font, monospace);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.mobility-quick-profile-btn.active {
+  border-color: var(--tac-accent, #38bdf8);
+  color: var(--tac-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.10);
+}
+.mobility-quick-profile-btn:hover:not(.active) {
+  border-color: var(--tac-text-dim, #6b7f8f);
+  color: var(--tac-text, #d7e4ee);
+}
 .mobility-aoi-row { display: flex; gap: 8px; }
 .mobility-aoi-detail { display: flex; flex-direction: column; gap: 2px; font-size: 0.8em; color: var(--tac-text-dim); }
 .tac-hint { font-size: 0.78em; color: var(--tac-text-dim); line-height: 1.5; }
@@ -543,9 +578,29 @@
   border-radius: 999px;
   white-space: nowrap;
 }
-.corridor-ease--open { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
+.corridor-ease--unrestricted { background: rgba(30, 158, 98, 0.18); color: var(--tac-go); }
 .corridor-ease--restricted { background: rgba(246, 166, 9, 0.18); color: var(--tac-slowgo); }
 .corridor-ease--severely-restricted { background: rgba(216, 35, 42, 0.18); color: var(--tac-nogo); }
+
+/* "Most likely" / "most risky" picks (docs §35 remainder, owner: "we should
+ * be seeing a 'most likely' and 'most risky' type of option to inform our
+ * planning") — a planning aid, not a replacement for reading every corridor
+ * card: the two most often point at DIFFERENT corridors (the busiest is
+ * usually busiest because it's easiest), which is the actual value of
+ * showing both rather than just rank order. */
+.corridor-picks { display: flex; gap: 6px; flex-wrap: wrap; }
+.corridor-pick {
+  font-family: var(--tac-mono-font);
+  font-size: 0.6em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+.corridor-pick--likely { color: var(--tac-accent); background: rgba(90, 169, 230, 0.12); }
+.corridor-pick--risky { color: var(--tac-nogo); background: rgba(216, 35, 42, 0.12); }
 
 .corridor-figures {
   display: grid;

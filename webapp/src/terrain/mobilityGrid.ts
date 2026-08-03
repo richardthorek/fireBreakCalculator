@@ -29,7 +29,7 @@ import { LatLng } from '../utils/chainage';
 import { calculateDistance } from '../utils/slopeCalculation';
 import {
   makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
-  LocalProjection, LocalPoint,
+  LocalProjection, LocalPoint, AxialCoord,
 } from '../utils/hexGrid';
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import {
@@ -499,6 +499,200 @@ export function growBoundsTowardFrontier(
   };
 }
 
+export interface FetchBounds {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
+
+export interface SampledCells {
+  cells: MobilityGridCell[];
+  usedEstimatedData: boolean;
+  infrastructureAvailable: boolean;
+  hydrologyAvailable: boolean;
+  waterFeatures: InfrastructureTrail[];
+  roadWays: InfrastructureTrail[];
+}
+
+/**
+ * Sample elevation/vegetation/road/water for exactly the given hexes and
+ * assemble them into `MobilityGridCell`s — the batched-fetch core
+ * `buildMobilityGrid` has always used, pulled out so `mobilityLazyGrid.ts`
+ * can call the IDENTICAL sampling logic per newly-materialised tile (docs
+ * §35, "eager coarse tiles, lazy fine cells") instead of re-deriving a
+ * second copy that risks drifting from this one. `fetchBounds` scopes the
+ * area-batched calls (vegetation/roads/water) to just the hexes being
+ * sampled this call — for a single whole-box call (`buildMobilityGrid`
+ * itself) that's the padded box; for one lazy-grid round it's just the new
+ * tile ring's own bounds, so a round only pays network cost for the ground
+ * it actually just added.
+ *
+ * Deliberately does NOT compute `crossSlopeDeg` (left at 0, the same
+ * "unknown" default the interface already documents) — that needs the
+ * neighbour-plane fit over whatever the FULL currently-materialised set is
+ * at the moment it runs, not just this batch, so callers apply
+ * `applyCrossSlope` themselves afterward over their own accumulated cells.
+ */
+export async function sampleCellsForHexes(
+  hexesRaw: { hex: AxialCoord; center: LocalPoint }[],
+  proj: LocalProjection,
+  size: number,
+  fetchBounds: FetchBounds,
+  signal?: AbortSignal,
+  onProgress?: (fraction: number) => void
+): Promise<SampledCells | null> {
+  if (hexesRaw.length < 1) return { cells: [], usedEstimatedData: false, infrastructureAvailable: true, hydrologyAvailable: true, waterFeatures: [], roadWays: [] };
+  if (signal?.aborted) return null;
+
+  const points = hexesRaw.map(c => toLatLng(proj, c.center));
+  // Corner points too — see `waterDistanceM`'s doc comment on why a linear
+  // watercourse narrower than the hex is more likely caught this way than by
+  // testing cell centres alone. Local coords converted once here, alongside
+  // the centres, rather than recomputed per cell in the sampling loop below.
+  const cornerPoints = hexesRaw.map(c => hexCorners(c.center, size).map(p => toLatLng(proj, p)));
+
+  const [elevRes, vegRes, infra, waterways, waterFrequencyRaster] = await Promise.all([
+    sampleElevationsCached(points),
+    sampleVegetation(points, signal, (done, total) => onProgress?.(0.05 + 0.55 * (done / Math.max(1, total))),
+      fetchBounds),
+    // 'highway-mobility' (docs §35 — the wider road set, motorway/trunk/
+    // primary included), NOT the fire-break optimizer's REUSABLE_HIGHWAYS
+    // default: a hex sitting on a motorway is exactly the case a movement/
+    // denial appreciation most needs to register as onTrail, and the
+    // fire-break "reusable broken ground" set deliberately excludes it. Also
+    // carries surface/tracktype/smoothness per way, feeding the road-class
+    // speed ceiling below.
+    fetchCorridorMobilityRoads(fetchBounds.minLat, fetchBounds.minLng, fetchBounds.maxLat, fetchBounds.maxLng, signal).catch(() => ({ trails: [], available: false })),
+    // Hydrology (docs §34) — two independent sources, batched exactly like
+    // everything else here (one request each regardless of grid size, not
+    // per-cell): OSM waterway/water-body geometry for a crisp, resolution-
+    // independent "is there a mapped watercourse here" answer, and DEA WOfS
+    // for a measured (if colour-ramp-approximated) wet-frequency where OSM
+    // tagging is sparse. Neither failure blocks the run — a hydrology-blind
+    // appreciation degrades to what Pass 1-4 already shipped, flagged via
+    // `hydrologyAvailable` rather than silently.
+    fetchCorridorWaterways(fetchBounds.minLat, fetchBounds.minLng, fetchBounds.maxLat, fetchBounds.maxLng, signal).catch(() => ({ trails: [], available: false })),
+    fetchSurfaceWaterFrequencyArea(fetchBounds, signal).catch(() => null),
+  ]);
+  if (signal?.aborted) return null;
+  onProgress?.(0.65);
+
+  const cells: MobilityGridCell[] = hexesRaw.map((c, i) => {
+    const center = points[i];
+    let waterDistanceM = Infinity;
+    let inWaterBody = false;
+    let nearestWaterwayKind: string | null = null;
+    if (waterways.trails.length > 0) {
+      // Centre + six hex corners (see the field's own doc comment on why):
+      // stop the moment any sample point lands inside/on the water, since
+      // nothing can beat 0.
+      const samplePoints = [center, ...cornerPoints[i]];
+      for (const p of samplePoints) {
+        const d = distanceToNearestWater(p, waterways.trails);
+        if (d < waterDistanceM) waterDistanceM = d;
+        if (waterDistanceM <= 0) break;
+      }
+      // Any sample point — not just the centre — landing inside a water BODY
+      // is enough: a lake's edge clipping a hex corner is still the lake, and
+      // a centre-only check missed that cell entirely.
+      const waterBodyFeatures = waterways.trails.filter(f => f.kind === 'water');
+      if (waterBodyFeatures.length > 0) {
+        inWaterBody = samplePoints.some(p => distanceToNearestWater(p, waterBodyFeatures, 0) === 0);
+      }
+      if (waterDistanceM <= WATER_SNAP_M) {
+        // Representative severity label: the nearest LINEAR watercourse class
+        // (river/canal/stream) within snap distance of the cell centre. A
+        // water BODY doesn't need this — `inWaterBody` already says enough,
+        // and `estimateFordingRequirement` in mobilityCost.ts treats a body as
+        // maximally severe regardless of a nearby line's class.
+        let bestD = Infinity;
+        for (const feature of waterways.trails) {
+          if (feature.kind === 'water') continue;
+          const d = distanceToNearestTrail(center, [feature], WATER_SNAP_M);
+          if (d < bestD) { bestD = d; nearestWaterwayKind = feature.kind; }
+        }
+        if (bestD > WATER_SNAP_M) nearestWaterwayKind = null;
+      }
+    }
+    const waterFrequency = waterFrequencyRaster
+      ? sampleSurfaceWaterFrequencyRaster(waterFrequencyRaster, center.lat, center.lng)?.frequency ?? null
+      : null;
+
+    // onTrail + the nearest trail's own tags in ONE scan (docs §35) — the
+    // road-class speed model (roadSpeedModel.ts) needs surface/tracktype/
+    // smoothness, not just "is there a trail here", so this now finds the
+    // SAME nearest feature onTrail already needed rather than re-scanning
+    // `infra.trails` a second time for it.
+    let onTrail = false;
+    let nearestTrailTags: RoadWayTags | null = null;
+    if (infra.trails.length > 0) {
+      let bestD = Infinity;
+      for (const feature of infra.trails) {
+        const d = distanceToNearestTrail(center, [feature], TRAIL_SNAP_M);
+        if (d < bestD) {
+          bestD = d;
+          nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
+        }
+        if (bestD <= 0) break; // nothing can beat 0
+      }
+      onTrail = bestD <= TRAIL_SNAP_M;
+      if (!onTrail) nearestTrailTags = null;
+    }
+
+    return {
+      key: hexKey(c.hex),
+      hex: c.hex,
+      center,
+      elevation: elevRes.elevations[i],
+      vegetation: vegRes[i].type,
+      vegEstimated: vegRes[i].estimated,
+      onTrail,
+      nearestTrailTags,
+      crossSlopeDeg: 0, // filled in by applyCrossSlope() once the caller's accumulated grid is finalised
+      waterDistanceM,
+      inWaterBody,
+      nearestWaterwayKind,
+      waterFrequency,
+    };
+  });
+
+  // Fording depth is always a Tier 0 assumption (estimateFordingRequirement
+  // in mobilityCost.ts), so a run whose only estimated ingredient is "this
+  // cell needed a fording judgement" must still trip the honesty flag — not
+  // just elevation/vegetation fallback.
+  const usedHydrologyEstimate = cells.some(
+    c => c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15)
+  );
+
+  return {
+    cells,
+    usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated) || usedHydrologyEstimate,
+    infrastructureAvailable: infra.available,
+    hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
+    waterFeatures: waterways.trails,
+    roadWays: infra.trails,
+  };
+}
+
+/**
+ * Real cross-slope, not the dormant "always unknown" placeholder Pass 1
+ * shipped with (docs §10.7 M3a / §3's own stated scope cut) — computed from
+ * the elevation grid already in hand, no new network call. `edgeMobilityCost`'s
+ * hard side-slope NO-GO gate only ever fires when a real number reaches it;
+ * this is what makes that gate live instead of permanently inert. Mutates
+ * `cells` in place (matches `buildMobilityGrid`'s own prior behaviour) —
+ * `mobilityLazyGrid.ts` calls this over its WHOLE accumulated cell set after
+ * every round, not just the newly-materialised batch, since a cell's plane
+ * fit depends on its neighbours regardless of which round fetched them.
+ */
+export function applyCrossSlope(cells: MobilityGridCell[]): void {
+  const derivatives = computeDemDerivatives(cells);
+  for (const cell of cells) {
+    cell.crossSlopeDeg = derivatives.get(cell.key)?.crossSlopeDeg ?? 0;
+  }
+}
+
 export async function buildMobilityGrid(
   origin: PaintedArea,
   objective: PaintedArea,
@@ -585,130 +779,22 @@ export async function buildMobilityGrid(
   if (signal?.aborted) return null;
   onProgress?.(0.05);
 
-  const points = cellsRaw.map(c => toLatLng(proj, c.center));
-  // Corner points too — see `waterDistanceM`'s doc comment on why a linear
-  // watercourse narrower than the hex is more likely caught this way than by
-  // testing cell centres alone. Local coords converted once here, alongside
-  // the centres, rather than recomputed per cell in the sampling loop below.
+  const sampled = await sampleCellsForHexes(
+    cellsRaw, proj, size,
+    { minLat: boundsSw.lat, minLng: boundsSw.lng, maxLat: boundsNe.lat, maxLng: boundsNe.lng },
+    signal, onProgress
+  );
+  if (!sampled) return null;
+  const { cells, usedEstimatedData, infrastructureAvailable, hydrologyAvailable, waterFeatures, roadWays } = sampled;
+
+  applyCrossSlope(cells);
+
+  // Corner points, recomputed from `cellsRaw` (same order `cells` was built
+  // in) purely for origin/objective membership testing below — cheap, pure
+  // geometry, no network call, so recomputing here rather than threading
+  // `sampleCellsForHexes`'s internal copy back out keeps that helper's
+  // return shape focused on what callers outside this module actually need.
   const cornerPoints = cellsRaw.map(c => hexCorners(c.center, size).map(p => toLatLng(proj, p)));
-
-  const [elevRes, vegRes, infra, waterways, waterFrequencyRaster] = await Promise.all([
-    sampleElevationsCached(points),
-    sampleVegetation(points, signal, (done, total) => onProgress?.(0.05 + 0.55 * (done / Math.max(1, total))),
-      { minLat: boundsSw.lat, minLng: boundsSw.lng, maxLat: boundsNe.lat, maxLng: boundsNe.lng }),
-    // 'highway-mobility' (docs §35 — the wider road set, motorway/trunk/
-    // primary included), NOT the fire-break optimizer's REUSABLE_HIGHWAYS
-    // default: a hex sitting on a motorway is exactly the case a movement/
-    // denial appreciation most needs to register as onTrail, and the
-    // fire-break "reusable broken ground" set deliberately excludes it. Also
-    // carries surface/tracktype/smoothness per way, feeding the road-class
-    // speed ceiling below.
-    fetchCorridorMobilityRoads(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
-    // Hydrology (docs §34) — two independent sources, batched exactly like
-    // everything else here (one request each regardless of grid size, not
-    // per-cell): OSM waterway/water-body geometry for a crisp, resolution-
-    // independent "is there a mapped watercourse here" answer, and DEA WOfS
-    // for a measured (if colour-ramp-approximated) wet-frequency where OSM
-    // tagging is sparse. Neither failure blocks the run — a hydrology-blind
-    // appreciation degrades to what Pass 1-4 already shipped, flagged via
-    // `hydrologyAvailable` rather than silently.
-    fetchCorridorWaterways(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsNe.lng, signal).catch(() => ({ trails: [], available: false })),
-    fetchSurfaceWaterFrequencyArea(
-      { minLat: boundsSw.lat, minLng: boundsSw.lng, maxLat: boundsNe.lat, maxLng: boundsNe.lng }, signal
-    ).catch(() => null),
-  ]);
-  if (signal?.aborted) return null;
-  onProgress?.(0.65);
-
-  const cells: MobilityGridCell[] = cellsRaw.map((c, i) => {
-    const center = points[i];
-    let waterDistanceM = Infinity;
-    let inWaterBody = false;
-    let nearestWaterwayKind: string | null = null;
-    if (waterways.trails.length > 0) {
-      // Centre + six hex corners (see the field's own doc comment on why):
-      // stop the moment any sample point lands inside/on the water, since
-      // nothing can beat 0.
-      const samplePoints = [center, ...cornerPoints[i]];
-      for (const p of samplePoints) {
-        const d = distanceToNearestWater(p, waterways.trails);
-        if (d < waterDistanceM) waterDistanceM = d;
-        if (waterDistanceM <= 0) break;
-      }
-      // Any sample point — not just the centre — landing inside a water BODY
-      // is enough: a lake's edge clipping a hex corner is still the lake, and
-      // a centre-only check missed that cell entirely.
-      const waterBodyFeatures = waterways.trails.filter(f => f.kind === 'water');
-      if (waterBodyFeatures.length > 0) {
-        inWaterBody = samplePoints.some(p => distanceToNearestWater(p, waterBodyFeatures, 0) === 0);
-      }
-      if (waterDistanceM <= WATER_SNAP_M) {
-        // Representative severity label: the nearest LINEAR watercourse class
-        // (river/canal/stream) within snap distance of the cell centre. A
-        // water BODY doesn't need this — `inWaterBody` already says enough,
-        // and `estimateFordingRequirement` in mobilityCost.ts treats a body as
-        // maximally severe regardless of a nearby line's class.
-        let bestD = Infinity;
-        for (const feature of waterways.trails) {
-          if (feature.kind === 'water') continue;
-          const d = distanceToNearestTrail(center, [feature], WATER_SNAP_M);
-          if (d < bestD) { bestD = d; nearestWaterwayKind = feature.kind; }
-        }
-        if (bestD > WATER_SNAP_M) nearestWaterwayKind = null;
-      }
-    }
-    const waterFrequency = waterFrequencyRaster
-      ? sampleSurfaceWaterFrequencyRaster(waterFrequencyRaster, center.lat, center.lng)?.frequency ?? null
-      : null;
-
-    // onTrail + the nearest trail's own tags in ONE scan (docs §35) — the
-    // road-class speed model (roadSpeedModel.ts) needs surface/tracktype/
-    // smoothness, not just "is there a trail here", so this now finds the
-    // SAME nearest feature onTrail already needed rather than re-scanning
-    // `infra.trails` a second time for it.
-    let onTrail = false;
-    let nearestTrailTags: RoadWayTags | null = null;
-    if (infra.trails.length > 0) {
-      let bestD = Infinity;
-      for (const feature of infra.trails) {
-        const d = distanceToNearestTrail(center, [feature], TRAIL_SNAP_M);
-        if (d < bestD) {
-          bestD = d;
-          nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
-        }
-        if (bestD <= 0) break; // nothing can beat 0
-      }
-      onTrail = bestD <= TRAIL_SNAP_M;
-      if (!onTrail) nearestTrailTags = null;
-    }
-
-    return {
-      key: hexKey(c.hex),
-      hex: c.hex,
-      center,
-      elevation: elevRes.elevations[i],
-      vegetation: vegRes[i].type,
-      vegEstimated: vegRes[i].estimated,
-      onTrail,
-      nearestTrailTags,
-      crossSlopeDeg: 0, // filled in below once the grid is finalised
-      waterDistanceM,
-      inWaterBody,
-      nearestWaterwayKind,
-      waterFrequency,
-    };
-  });
-
-  // Real cross-slope, not the dormant "always unknown" placeholder Pass 1
-  // shipped with (docs §10.7 M3a / §3's own stated scope cut) — computed
-  // once here from the elevation grid already in hand, no new network call.
-  // `edgeMobilityCost`'s hard side-slope NO-GO gate only ever fires when a
-  // real number reaches it; this is what makes that gate live instead of
-  // permanently inert.
-  const derivatives = computeDemDerivatives(cells);
-  for (const cell of cells) {
-    cell.crossSlopeDeg = derivatives.get(cell.key)?.crossSlopeDeg ?? 0;
-  }
 
   // Resolve each painted area's paint/erase strokes into one shape ONCE
   // here, rather than per cell — the geometry-boolean-ops replay is real
@@ -719,14 +805,6 @@ export async function buildMobilityGrid(
   const objectiveKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], objectiveGeom)).map(c => c.key);
 
   onProgress?.(0.7);
-
-  // Fording depth is always a Tier 0 assumption (estimateFordingRequirement
-  // in mobilityCost.ts), so a run whose only estimated ingredient is "this
-  // cell needed a fording judgement" must still trip the honesty flag — not
-  // just elevation/vegetation fallback.
-  const usedHydrologyEstimate = cells.some(
-    c => c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15)
-  );
 
   return {
     cells,
@@ -740,11 +818,11 @@ export async function buildMobilityGrid(
       : [nearestCellKey(cells, { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 })],
     objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys
       : [nearestCellKey(cells, { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 })],
-    usedEstimatedData: elevRes.estimated || vegRes.some(v => v.estimated) || usedHydrologyEstimate,
-    infrastructureAvailable: infra.available,
-    hydrologyAvailable: waterways.available || waterFrequencyRaster !== null,
-    waterFeatures: waterways.trails,
-    roadWays: infra.trails,
+    usedEstimatedData,
+    infrastructureAvailable,
+    hydrologyAvailable,
+    waterFeatures,
+    roadWays,
     boundsPadFactor,
     boundsSw,
     boundsNe,

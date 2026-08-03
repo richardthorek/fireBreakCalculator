@@ -14,6 +14,7 @@
  */
 
 import React, { useMemo } from 'react';
+import { Footprints, Car, Truck, Tractor } from 'lucide-react';
 import { MOVER_PROFILES, MoverProfile, MoverFamily } from '../terrain/moverProfiles';
 import { MobilityAppreciationResult } from '../terrain/mobilityAppreciation';
 import { PaintedArea, BrushSize } from '../terrain/paintedArea';
@@ -113,6 +114,28 @@ function groupByFamily(profiles: MoverProfile[]): [MoverFamily, MoverProfile[]][
   return order.map(f => [f, profiles.filter(p => p.family === f)]);
 }
 
+/**
+ * Four broad movement classes for a fast start on mobile (owner, 2026-07-29:
+ * "the coordinates panel isn't super useful and shouldn't be the 'top' of
+ * the control bar. Consider a four icon/button selector for quick and broad
+ * vehicle/movement classes instead of having to scroll down to the dropdown
+ * and then scroll the list... then it's an easy few taps to get started").
+ * Each maps to one REAL, already-catalogued profile (`moverProfiles.ts`) —
+ * not a new synthetic "class", just a fast path to the four defaults most
+ * likely to match a first tap, picked from the AU fleet/foot families this
+ * app's own audience actually operates (docs comment on `AU_FLEET_PROFILES`:
+ * "the vehicles the StationKit fire audience actually operates"). The full
+ * dropdown below remains for every other catalogued profile (ADF classes,
+ * generic width bands, laden/unit foot variants, specific dozer classes) —
+ * this is a shortcut for the common case, not a replacement for it.
+ */
+const QUICK_PROFILES: { key: string; label: string; profileId: string; Icon: typeof Footprints }[] = [
+  { key: 'foot', label: 'Foot', profileId: 'foot-individual-unladen', Icon: Footprints },
+  { key: '4x4', label: '4x4', profileId: 'au-light-4wd', Icon: Car },
+  { key: 'medium', label: 'Medium', profileId: 'au-medium-truck', Icon: Truck },
+  { key: 'heavy', label: 'Heavy', profileId: 'au-heavy-dozer', Icon: Tractor },
+];
+
 export const MobilityPanel: React.FC<MobilityPanelProps> = ({
   profileId, onProfileChange, nightMode, onNightModeChange,
   roadSpeedOverrides, onRoadSpeedOverridesChange,
@@ -159,7 +182,23 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
     <div className="tac-panel mobility-panel">
       <div className="tac-label">TERRAIN APPRECIATION — POC</div>
 
-      <TacticalCoordinateReadout lat={cursor?.lat ?? null} lng={cursor?.lng ?? null} />
+      {/* Quick mover-class picker (owner, 2026-07-29: "an easy few taps to
+          get started" on mobile, ahead of the coordinate readout and the
+          full dropdown — see QUICK_PROFILES's own doc comment). */}
+      <div className="mobility-quick-profile-row" role="group" aria-label="Quick mover class">
+        {QUICK_PROFILES.map(({ key, label, profileId: qId, Icon }) => (
+          <button
+            key={key}
+            type="button"
+            className={`mobility-quick-profile-btn${profileId === qId ? ' active' : ''}`}
+            onClick={() => onProfileChange(qId)}
+            aria-pressed={profileId === qId}
+          >
+            <Icon size={20} strokeWidth={2} aria-hidden />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="tac-panel mobility-section">
         <div className="tac-label">MOVER PROFILE</div>
@@ -235,6 +274,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
         </div>
       </div>
 
+      <TacticalCoordinateReadout lat={cursor?.lat ?? null} lng={cursor?.lng ?? null} />
+
       <div className="tac-panel mobility-section">
         <div className="tac-label">AREAS OF INTEREST</div>
         <div className="mobility-aoi-detail tac-mono">
@@ -281,8 +322,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
           <div className="mobility-result-stats tac-mono">
             <div>{result.cellCount} CELLS SAMPLED</div>
             <div>{result.reachableCount} REACHABLE</div>
-            <div className="mobility-stat-nogo">{result.noGoCount} NO-GO</div>
-            <div className="mobility-stat-slowgo">{result.slowGoCount} SLOW-GO</div>
+            <div className="mobility-stat-nogo">{result.severelyRestrictedCount} SEVERELY RESTRICTED</div>
+            <div className="mobility-stat-slowgo">{result.restrictedCount} RESTRICTED</div>
           </div>
           {result.usedEstimatedData && (
             <DataConfidenceBadge tier="estimated" label="ONE OR MORE TIER 0 SAMPLES" />
@@ -295,7 +336,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
               className={displayMode === 'trafficability' ? 'active' : ''}
               onClick={() => onDisplayModeChange('trafficability')}
             >
-              GO / SLOW-GO / NO-GO
+              UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED
             </button>
             <button
               className={displayMode === 'isochrone' ? 'active' : ''}
@@ -505,6 +546,16 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
                   {c.easeClass.replace('-', ' ').toUpperCase()}
                 </span>
               </div>
+              {(c.id === displayedCorridorField.mostLikelyCorridorId || c.id === displayedCorridorField.mostRiskyCorridorId) && (
+                <div className="corridor-picks">
+                  {c.id === displayedCorridorField.mostLikelyCorridorId && (
+                    <span className="corridor-pick corridor-pick--likely">MOST LIKELY</span>
+                  )}
+                  {c.id === displayedCorridorField.mostRiskyCorridorId && (
+                    <span className="corridor-pick corridor-pick--risky">MOST RISKY</span>
+                  )}
+                </div>
+              )}
               <div className="corridor-figures tac-mono">
                 <div>
                   {Math.round(c.shareOfRoutes * 100)}% OF{' '}
@@ -514,7 +565,8 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
                 <div>MEDIAN {(c.medianTravelSeconds / 60).toFixed(0)} MIN · BEST {(c.fastestTravelSeconds / 60).toFixed(0)} MIN</div>
                 <div>BOTTLENECK ~{c.bottleneckWidthM.toFixed(0)} M</div>
                 <div>{c.bottleneckAbreast} ABREAST · {c.frontage.replace('-', ' ').toUpperCase()}</div>
-                <div>{Math.round(c.goFraction * 100)}% GO · {Math.round(c.slowGoFraction * 100)}% SLOW</div>
+                <div>{Math.round(c.unrestrictedFraction * 100)}% UNRESTRICTED · {Math.round(c.restrictedFraction * 100)}% RESTRICTED</div>
+                <div>{Math.round(c.riskScore * 100)}% RISK · {Math.round(c.waterCrossingFraction * 100)}% WATER</div>
                 <div>{c.cells.length} CELLS</div>
               </div>
               {c.usedEstimatedData && (

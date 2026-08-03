@@ -27,7 +27,9 @@
  *                 can show the field building rather than freezing.
  */
 
-import { runAccumulatedCostSearch, assembleMobilityResults, extractPath, MobilityGridCell } from './accumulatedCost';
+import {
+  runAccumulatedCostSearch, assembleMobilityResults, extractPath, MobilityGridCell, AccumulatedCostSearchResult,
+} from './accumulatedCost';
 import { LocalProjection } from '../utils/hexGrid';
 import { getMoverProfile } from './moverProfiles';
 import { simulateMovementEnsemble, MovementEnsembleResult } from './movementSimulation';
@@ -56,6 +58,16 @@ export interface MobilitySearchRequest {
    *  that module's own doc comment on why: a Worker shares no memory with
    *  the main thread that set it). Undefined/absent means "no overrides". */
   roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Resume a previous search rather than reseeding fresh from `originKeys`
+   *  — the lazy tile-ring growth loop (docs §35, `mobilityLazyGrid.ts`):
+   *  `cells` on THIS request is the cumulative set after materialising one
+   *  more ring of tiles, and this is the `reach` a PRIOR 'search' response
+   *  already returned for the smaller set. See
+   *  `accumulatedCost.ts#AccumulatedCostSearchOptions.resumeFrom` for why
+   *  this is correct (Dijkstra with non-negative edges never needs to revise
+   *  a settled distance) rather than just a shortcut. `Map`s structured-clone
+   *  natively across the worker boundary, same as `RoadGraph`'s own fields. */
+  resumeFrom?: AccumulatedCostSearchResult;
 }
 
 export interface MobilityMovementRequest {
@@ -101,6 +113,13 @@ export interface MobilitySearchResponse {
   requestId: number;
   results: ReturnType<typeof assembleMobilityResults>;
   path: SimPathNode[] | null;
+  /** The full accumulated search state (`best`/`prev`) — returned so the
+   *  caller can hand it straight back in as `resumeFrom` on the NEXT request
+   *  once it materialises another tile ring, continuing this exact search
+   *  rather than restarting it (docs §35, `mobilityLazyGrid.ts`). Callers
+   *  that don't need it (every existing 'search' call site, which is
+   *  decisive in one shot) simply ignore the field. */
+  reach: AccumulatedCostSearchResult;
 }
 
 export interface MobilityMovementResponse {
@@ -189,7 +208,10 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
   }
 
   if (!profile) {
-    post({ kind: 'search', requestId: req.requestId, results: [], path: null });
+    post({
+      kind: 'search', requestId: req.requestId, results: [], path: null,
+      reach: { best: new Map(), prev: new Map() },
+    });
     return;
   }
   // Throttled to whole-percent steps, same discipline as the movement
@@ -198,6 +220,7 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
   // more in structured-clone overhead than the search itself.
   let lastSearchPercent = -1;
   const reach = runAccumulatedCostSearch(req.cells, req.originKeys, profile, req.nightMode, {
+    resumeFrom: req.resumeFrom,
     onProgress: f => {
       const percent = Math.floor(f * 100);
       if (percent === lastSearchPercent) return;
@@ -218,5 +241,5 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
     });
   }
 
-  post({ kind: 'search', requestId: req.requestId, results, path });
+  post({ kind: 'search', requestId: req.requestId, results, path, reach });
 };

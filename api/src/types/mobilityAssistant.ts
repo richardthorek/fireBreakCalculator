@@ -16,7 +16,9 @@ export interface MobilityCorridorSummary {
   bottleneckWidthM: number;
   bottleneckAbreast: number;
   frontage: string;
-  goFractionPct: number;
+  /** Renamed from `goFractionPct` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md §47);
+   *  `normalizeLegacyMobilityFields` below accepts the old name too. */
+  unrestrictedFractionPct: number;
 }
 
 export interface MobilityPlacementSummary {
@@ -36,8 +38,10 @@ export interface MobilityAssistantPayload {
   nightMode: boolean;
   cellCount: number;
   reachableCount: number;
-  noGoCount: number;
-  slowGoCount: number;
+  /** Renamed from `noGoCount`/`slowGoCount` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md
+   *  §47); `normalizeLegacyMobilityFields` below accepts the old names too. */
+  severelyRestrictedCount: number;
+  restrictedCount: number;
   /** True when any sampled cell used estimated/fallback data. */
   estimatedData: boolean;
   /** True when either hydrology source (OSM waterway/water-body geometry, DEA
@@ -115,6 +119,33 @@ function isFiniteNumber(v: any): boolean {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
+/**
+ * Accepts a cached SPA client still posting the pre-OCOKA-1 field names
+ * (docs/ROUTE_INTELLIGENCE.md §47) — `noGoCount`/`slowGoCount`/`goFractionPct`
+ * — by copying them onto the current fields IN PLACE, only when the current
+ * field is absent. Mutates `v` (and each entry of `v.topCorridors`) so the
+ * validator below, and everything downstream that reads the typed payload,
+ * sees a real value on the canonical field either way. This is the known
+ * webapp/api must-match pair (two prior confirmed hits) — the realistic skew
+ * is a cached client posting to a fresh API, not the reverse.
+ */
+function normalizeLegacyMobilityFields(v: any): void {
+  if (!v || typeof v !== 'object') return;
+  if (v.severelyRestrictedCount === undefined && isFiniteNumber(v.noGoCount)) {
+    v.severelyRestrictedCount = v.noGoCount;
+  }
+  if (v.restrictedCount === undefined && isFiniteNumber(v.slowGoCount)) {
+    v.restrictedCount = v.slowGoCount;
+  }
+  if (Array.isArray(v.topCorridors)) {
+    for (const c of v.topCorridors) {
+      if (c && typeof c === 'object' && c.unrestrictedFractionPct === undefined && isFiniteNumber(c.goFractionPct)) {
+        c.unrestrictedFractionPct = c.goFractionPct;
+      }
+    }
+  }
+}
+
 function isCorridorSummary(v: any): v is MobilityCorridorSummary {
   return (
     v &&
@@ -126,7 +157,7 @@ function isCorridorSummary(v: any): v is MobilityCorridorSummary {
     isFiniteNumber(v.bottleneckWidthM) &&
     isFiniteNumber(v.bottleneckAbreast) &&
     typeof v.frontage === 'string' &&
-    isFiniteNumber(v.goFractionPct)
+    isFiniteNumber(v.unrestrictedFractionPct)
   );
 }
 
@@ -148,6 +179,7 @@ function isPlacementSummary(v: any): v is MobilityPlacementSummary {
  * `isAssistantPayload` in `assistant.ts`.
  */
 export function isMobilityAssistantPayload(v: any): v is MobilityAssistantPayload {
+  normalizeLegacyMobilityFields(v);
   return !!(
     v &&
     typeof v.moverProfileLabel === 'string' &&
@@ -155,8 +187,8 @@ export function isMobilityAssistantPayload(v: any): v is MobilityAssistantPayloa
     typeof v.nightMode === 'boolean' &&
     isFiniteNumber(v.cellCount) &&
     isFiniteNumber(v.reachableCount) &&
-    isFiniteNumber(v.noGoCount) &&
-    isFiniteNumber(v.slowGoCount) &&
+    isFiniteNumber(v.severelyRestrictedCount) &&
+    isFiniteNumber(v.restrictedCount) &&
     typeof v.estimatedData === 'boolean' &&
     typeof v.hydrologyAvailable === 'boolean' &&
     isFiniteNumber(v.waterAffectedCellCount) &&

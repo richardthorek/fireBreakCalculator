@@ -73,7 +73,13 @@ export function recordMobilityRunTelemetry(
     for (const cell of result.cells) {
       vegetationHistogram[cell.vegetation] = (vegetationHistogram[cell.vegetation] ?? 0) + 1;
     }
-    const goCount = Math.max(0, result.cellCount - result.noGoCount - result.slowGoCount);
+    // The result object's own fields are `severelyRestrictedCount`/`restrictedCount`
+    // (OCOKA 1, docs/ROUTE_INTELLIGENCE.md §47) — mapped explicitly to the WIRE
+    // names below, which stay `noGoCount`/`slowGoCount`/`goCount` deliberately.
+    // This is an existing analytics time series in Table Storage; renaming the
+    // wire shape would split the series the OCOKA 5/8 backend-routing threshold
+    // depends on.
+    const goCount = Math.max(0, result.cellCount - result.severelyRestrictedCount - result.restrictedCount);
 
     const nav = navigator as Navigator & { deviceMemory?: number };
     const payload = {
@@ -84,8 +90,8 @@ export function recordMobilityRunTelemetry(
       cellCount: result.cellCount,
       targetCellCount: result.targetCellCount,
       reachableCount: result.reachableCount,
-      noGoCount: result.noGoCount,
-      slowGoCount: result.slowGoCount,
+      noGoCount: result.severelyRestrictedCount,
+      slowGoCount: result.restrictedCount,
       goCount,
       distanceM,
       searchAttempts: result.searchAttempts,

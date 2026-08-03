@@ -29,7 +29,8 @@ export interface MobilityCorridorSummary {
   bottleneckWidthM: number;
   bottleneckAbreast: number;
   frontage: string;
-  goFractionPct: number;
+  /** Renamed from `goFractionPct` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md §47). */
+  unrestrictedFractionPct: number;
 }
 
 export interface MobilityPlacementSummary {
@@ -46,8 +47,11 @@ export interface MobilityAssistantPayload {
   nightMode: boolean;
   cellCount: number;
   reachableCount: number;
-  noGoCount: number;
-  slowGoCount: number;
+  /** Renamed from `noGoCount`/`slowGoCount` (OCOKA 1, docs/ROUTE_INTELLIGENCE.md
+   *  §47) to the current MCOO mobility-class vocabulary. The API validator
+   *  accepts the legacy keys too, for a cached client posting to a fresh API. */
+  severelyRestrictedCount: number;
+  restrictedCount: number;
   estimatedData: boolean;
   /** True when either hydrology source (OSM waterway/water-body geometry, DEA
    *  WOfS frequency, docs §34) returned real data for this AOI — mirrors
@@ -167,8 +171,8 @@ export function buildMobilityAssistantPayload(
     nightMode,
     cellCount: result.cellCount,
     reachableCount: result.reachableCount,
-    noGoCount: result.noGoCount,
-    slowGoCount: result.slowGoCount,
+    severelyRestrictedCount: result.severelyRestrictedCount,
+    restrictedCount: result.restrictedCount,
     estimatedData: result.usedEstimatedData,
     hydrologyAvailable: result.hydrologyAvailable,
     waterAffectedCellCount: result.cells.filter(carriesWaterSignal).length,
@@ -184,7 +188,7 @@ export function buildMobilityAssistantPayload(
       bottleneckWidthM: Math.round(c.bottleneckWidthM),
       bottleneckAbreast: c.bottleneckAbreast,
       frontage: c.frontage,
-      goFractionPct: Math.round(c.goFraction * 1000) / 10,
+      unrestrictedFractionPct: Math.round(c.unrestrictedFraction * 1000) / 10,
     })),
     chokepointCount: result.chokepoints.length,
     topChokepointPassCount: result.chokepoints[0]?.passCount ?? null,

@@ -48,7 +48,7 @@ test('THE REPORTED SCENARIO: a steep climb that would hard-block off-trail is NO
   const from = base({ elevation: 0, onTrail: true, nearestTrailTags: { highway: 'primary' } });
   const to = base({ elevation: 500, onTrail: true, nearestTrailTags: { highway: 'primary' } }); // atan(500/100) ≈ 79°
   const r = edgeMobilityCost(vehicle, from, to, 100);
-  assert.notStrictEqual(r.trafficability, 'NO-GO',
+  assert.notStrictEqual(r.trafficability, 'severely-restricted',
     `FAILED: an onTrail edge was still hard-blocked by raw slope (${r.blockedReason})`);
   assert.ok(isFinite(r.timeSeconds), 'expected a finite travel time, not Infinity');
 });
@@ -57,7 +57,7 @@ test('CONTROL: the IDENTICAL climb, off-trail, is still correctly hard-blocked �
   const from = base({ elevation: 0, onTrail: false });
   const to = base({ elevation: 500, onTrail: false });
   const r = edgeMobilityCost(vehicle, from, to, 100);
-  assert.strictEqual(r.trafficability, 'NO-GO', 'off-trail, the same steep climb must still be NO-GO');
+  assert.strictEqual(r.trafficability, 'severely-restricted', 'off-trail, the same steep climb must still be severely restricted');
   assert.strictEqual(r.timeSeconds, Infinity);
 });
 
@@ -65,28 +65,28 @@ test('CONTROL: an edge with only ONE end on the trail is still gated (matches th
   const from = base({ elevation: 0, onTrail: true });
   const to = base({ elevation: 500, onTrail: false });
   const r = edgeMobilityCost(vehicle, from, to, 100);
-  assert.strictEqual(r.trafficability, 'NO-GO', 'a road that doesn\'t continue at the arrival cell should not exempt a genuine off-road climb');
+  assert.strictEqual(r.trafficability, 'severely-restricted', 'a road that doesn\'t continue at the arrival cell should not exempt a genuine off-road climb');
 });
 
 test('THE REPORTED SCENARIO (cross-slope): a side-slope well beyond the vehicle\'s roll-over limit is not blocked on a mapped road', () => {
   const from = base({ elevation: 100, onTrail: true, nearestTrailTags: { highway: 'primary' } });
   const to = base({ elevation: 100, onTrail: true, nearestTrailTags: { highway: 'primary' } });
   const r = edgeMobilityCost(vehicle, from, to, 100, { crossSlopeDeg: 40 }); // way past maxSideSlopeDeg=18
-  assert.notStrictEqual(r.trafficability, 'NO-GO', `FAILED: onTrail cross-slope still hard-blocked (${r.blockedReason})`);
+  assert.notStrictEqual(r.trafficability, 'severely-restricted', `FAILED: onTrail cross-slope still hard-blocked (${r.blockedReason})`);
 });
 
 test('CONTROL: the identical cross-slope off-trail is still NO-GO', () => {
   const from = base({ elevation: 100, onTrail: false });
   const to = base({ elevation: 100, onTrail: false });
   const r = edgeMobilityCost(vehicle, from, to, 100, { crossSlopeDeg: 40 });
-  assert.strictEqual(r.trafficability, 'NO-GO');
+  assert.strictEqual(r.trafficability, 'severely-restricted');
 });
 
 test('a mild, genuinely within-limits slope on-trail behaves exactly as before (this is not a general speed change)', () => {
   const from = base({ elevation: 0, onTrail: true, nearestTrailTags: null });
   const to = base({ elevation: 5, onTrail: true, nearestTrailTags: null }); // atan(5/100) ≈ 2.9°, well within 22°
   const r = edgeMobilityCost(vehicle, from, to, 100);
-  assert.notStrictEqual(r.trafficability, 'NO-GO');
+  assert.notStrictEqual(r.trafficability, 'severely-restricted');
   const expectedSeconds = (0.1 / vehicle.roadSpeedKmh) * 3600;
   assert.ok(Math.abs(r.timeSeconds - expectedSeconds) < 5,
     `expected the ordinary onTrail speed calc unaffected: ~${expectedSeconds}s, got ${r.timeSeconds}s`);

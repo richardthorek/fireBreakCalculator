@@ -461,7 +461,15 @@ statement per approach, per vehicle class:
 
 | Reused unchanged | New | Changed |
 |---|---|---|
-| `hexGrid.ts`, `sampleElevationsCached`, `sampleVegetation` + retention, NVIS/SVTM services, `infrastructureService.ts`, `mapboxTrails.ts`, `normalizeHeatmap`, heatmap layers, `gisExport/gisImport`, provenance/honesty plumbing, rate limiting, auth, AI grounding gate | `moverProfiles.ts` (catalogue), `mobilityCost.ts` (directional, profile-parameterised), `accumulatedCost.ts` (multi-source Dijkstra → cost field + isochrones), `corridorAnalysis.ts` (route-preference surface, band extraction, k-dissimilar routes, betweenness), `barrierPlanner.ts` (dual-graph min-cut, measure siting), `counterMeasures.ts` (catalogue + breach/delay matrix), `viewshed.ts`, `denialLedger.ts` | `edgeCost` → injectable cost strategy; `optimizeRoute` → multi-source/multi-target; MapboxDraw `role` gains `origin`/`objective`/`deny`/`observe`/`measure`; `areaScan.ts` generalised from box to polygon AOI |
+| `hexGrid.ts`, `sampleElevationsCached`, `sampleVegetation` + retention, NVIS/SVTM services, `infrastructureService.ts`, `mapboxTrails.ts`, `normalizeHeatmap`, heatmap layers, `gisExport/gisImport`, provenance/honesty plumbing, rate limiting, auth, AI grounding gate | `moverProfiles.ts` (catalogue), `mobilityCost.ts` (directional, profile-parameterised), `accumulatedCost.ts` (multi-source Dijkstra → cost field + isochrones), `corridorAnalysis.ts` (route-preference surface, band extraction, k-dissimilar routes, betweenness), `barrierPlanner.ts` (dual-graph min-cut, measure siting), `counterMeasures.ts` (catalogue + breach/delay matrix), `viewshed.ts` (§47), `oakoc.ts` (§47), `keyTerrain.ts` (§47), `mobilityClass.ts` (§47), `denialLedger.ts` | `edgeCost` → injectable cost strategy; `optimizeRoute` → multi-source/multi-target; **the AOI role gains `observe`** — see the correction below; `areaScan.ts` generalised from box to polygon AOI |
+
+**Correction (2026-08-02, §47).** This table originally said *"MapboxDraw `role` gains
+`origin`/`objective`/`deny`/`observe`/`measure`"*. There is no MapboxDraw role concept in the
+live code — AOIs are specified with the **paint tool** (`mobilityBoxRole: 'origin' |
+'objective'`, painted as real hex dabs by `paintedArea.ts`). So `observe` lands as a **third
+paint role**, not a MapboxDraw role. That is also the better outcome: the paint UX already
+exists, is mobile-friendly, and an observation post is exactly the kind of thing it already
+produces — a place on the ground.
 
 **New data layers required** (and the honest state of each): directional slope and
 cross-slope — derivable from the DEM in hand, no new source. Soil and wetness —
@@ -494,7 +502,7 @@ already solve the upstream-quota half, which is what makes the rest tractable.
 | M2 | Corridor & chokepoint analytics — route-preference surface, k-dissimilar routes, betweenness, GO/SLOW-GO/NO-GO overlay + export | Pure compute on M1; no new data sources |
 | M3 | **Trafficability & vegetation structure** — the fidelity problem. Splits into M3a–M3f; see **§10.7** | The real unknown, and the analytical core. NVIS cannot answer trafficability (§10.1); the biggest free wins are time-since-fire, fractional cover and surface-water frequency, *not* computer vision (§10.3c) |
 | M4 | Counter-mobility planner — measure catalogue, breach/delay matrix, min-cut siting, delay ledger, bypass rule, egress-safety gate | **Gated on a sourced delay basis** (§5) — without it, output is fabricated |
-| M5 | Intent & observation — viewshed/concealment weighting, named scenarios, consensus corridors, sensor/OP siting | Tier-2 framing must ship with it |
+| M5 | Intent & observation — **split at §47**: **M5a** OCOKA/IPB framing + mobility-class vocabulary migration · **M5b** `viewshed.ts` + Observation and fields of fire · **M5c** key terrain · **M5d** cover & concealment · **M5e** exposure-weighted cost blend, named scenarios, consensus corridors, sensor/OP siting | Tier-2 framing must ship with M5e. **M5e is deferred** — it changes `edgeMobilityCost`'s inputs, and therefore corridors → min-cut → restrictions → delay ledger → every exported number, so it must not ride along with a presentation restructure. M5a–M5d are roadmap rows OCOKA 1/3/4/6/7 |
 
 Two hard dependencies to settle before M4 is worth starting: a citable or
 explicitly user-entered basis for breach/delay values, and the CPU/scale work in
@@ -2416,6 +2424,17 @@ verified in this sandbox (no Mapbox token, no GIS desktop tooling here) —
 **confirm on the live preview / a real GIS client** before relying on the
 exported files operationally.
 
+**Addendum (2026-08-02, OCOKA 1, §47).** The `GO`/`SLOW-GO`/`NO-GO` fractions
+this section describes are superseded by the current MCOO vocabulary
+(`unrestricted`/`restricted`/`severely-restricted`) — `corridorProperties()`
+now dual-emits both the current field names (`mobility_class`,
+`unrestricted_fraction`, `restricted_fraction`, `severely_restricted_fraction`)
+and the legacy ones (`ease_class`, `go_fraction`, `slow_go_fraction`,
+`no_go_fraction`) for one release, since a saved external symbology may key off
+the attribute name. `missionProperties()` gained `schema_version: 2`. This
+section's own text above is left as the original as-built record; see §47.6
+for the full migration and its contract risks.
+
 ## 30. AI assistant narrative for Terrain Mobility results (2026-07-27)
 
 Closes the "assistant narrative through the grounding gate" backlog item: a
@@ -3123,8 +3142,21 @@ was reviewed and found correctly connected — no further gaps found.
 
 ## 35. The bounding box is the bug — lazy grid, cost budget, corridor-count stop (design, 2026-07-27)
 
-**Status: DESIGN ONLY. Not built.** Recorded here before implementation per
-CLAUDE.md's roadmap-first rule.
+**Status (2026-07-29): points 1, 2, 3, 5 and 6 of "the design" below — lazy
+grid materialisation, the α·C* cost budget, the corridor-count stop rule,
+tile-ring data fetch, and honest failure — are BUILT** (steps 45+46,
+`mobilityLazyGrid.ts` + `accumulatedCost.ts`'s `resumeFrom` +
+`corridorField.ts`'s `riskScore`/`mostLikelyCorridorId`/
+`mostRiskyCorridorId`; see "Shipped: lazy grid materialisation" and "Shipped:
+α·C* budget + corridor-count stop + risk picks" immediately after the design
+below for what actually landed and how it differs from the design as
+originally specified). **Only point 4 — the two-pass coarse/fine resolution
+split — remains DESIGN ONLY** (deferred, not scheduled; the shipped single-
+pass approach already keeps hex size uniform for the whole run, which is
+what point 4 was protecting against). The design as originally written is
+left below UNCHANGED as the historical reference; do not edit it to match
+what shipped — the shipped addenda after it are where implementation
+reality lives.
 
 ### The field report
 
@@ -3313,6 +3345,207 @@ but real at very fine resolution over very large areas.
 
 - **Mixed-size cells in one graph** — superseded by the two-pass approach
   above.
+
+---
+
+### Shipped: lazy grid materialisation + resumable search (2026-07-29, step 45)
+
+Builds points 1 ("delete the box"), 5 ("eager coarse tiles, lazy fine
+cells") and 6 ("honest failure") of the design above. Deliberately does
+**not** attempt points 2–4 (the `α·C*` ellipse, the corridor-count stop
+rule, the two-pass coarse/fine split) — those still govern how the search
+decides WHEN it has enough; this pass only changed HOW the grid it searches
+gets assembled.
+
+**What actually shipped, and one deliberate simplification from the design
+as written:**
+
+- **Tiles, not per-cell materialisation.** The design's point 1 frames this
+  as per-CELL lazy materialisation under an A* frontier; point 5 separately
+  notes cell-by-cell awaiting would "wreck" the worker's synchronous search
+  and proposes coarse-tile batching as the resolution. What's built goes
+  straight to tile batching as the ONLY unit of materialisation — a tile
+  (~10×10 hexes) is fetched, sampled and added to the grid as one atomic
+  batch, never a single cell at a time. This is a simplification of the
+  design's two-tier framing (per-cell frontier reasoning, tile-batched I/O
+  underneath it), not an addition to it: the frontier check that decides
+  WHICH tiles to fetch next still runs per-cell (`mobilityLazyGrid.ts` scans
+  every reachable cell's hex neighbours each round), so resolution at the
+  frontier is exactly as fine as the design calls for — only the atomic unit
+  of "fetch this next" is a tile rather than a cell, which is what point 5
+  already required regardless.
+- **Resumable Dijkstra, not restart-with-a-bigger-box.** The mechanism that
+  makes tile-by-tile growth affordable — `accumulatedCost.ts`'s new
+  `resumeFrom` option — isn't named explicitly in the original design text,
+  but is exactly what "materialise a hex only when the A* frontier reaches
+  it... the explored region grows organically" requires in practice: without
+  it, every tile added would force a full grid rebuild + full Dijkstra
+  restart, which is functionally the OLD `boundsPadFactor` retry this step
+  replaces, just with smaller box-growth increments. `resumeFrom` seeds a
+  fresh search's heap from a prior partial result's already-settled `best`/
+  `prev` maps — correct because Dijkstra with non-negative edges never
+  revises a settled distance once popped, so this is equivalent to having
+  run one longer, uninterrupted search all along.
+- **Fixed hex size for the whole run**, chosen once from an initial footprint
+  sized by the SAME `computePaddedBounds` math the old first attempt used —
+  this is what keeps `demDerivatives.ts`, `corridorField.ts`, chokepoints and
+  min-cut completely untouched: they still receive one ordinary, uniform-hex,
+  finished `MobilityGridCell[]`, exactly as before. A typical short-range run
+  (the common case) uses the identical hex count/resolution it always did.
+- **Growth stop condition is a cell/tile ceiling, not a cost budget.** This is
+  the honest gap versus the full design: point 6 ("honest failure") is built
+  — a hard ceiling produces a stated "stopped at the search ceiling, not yet
+  proven unreachable" outcome, distinguished in the log/result from a genuine
+  terrain enclosure ("the reachable frontier ran out of new ground to grow
+  into") — but the ceiling itself is `computeCellBudget`'s existing
+  fidelity-tier `hardCeiling` × a fixed multiplier, not the self-sizing
+  `α·C*` travel-time ellipse point 2 specifies. That remains the "Slice B
+  remainder" item in `master_plan.md`.
+- **crossSlopeDeg caveat** (honestly documented, not solved): a cell's local
+  plane-fit slope is computed from whichever neighbours are materialised at
+  the moment ITS round runs and is never retroactively recomputed once the
+  cell is settled — a cell settled at a transient tile edge keeps that
+  round's value even if a later round completes its neighbourhood. This is
+  the same "incomplete-neighbourhood edge effect" the old fixed-box approach
+  already had for its outer ring (a real, pre-existing, accepted
+  characteristic of a locally-fit derivative on a finite sample), now
+  transient rather than permanent. `crossSlopeDeg` was already documented
+  elsewhere as a conservative upper-bound proxy, not a precise per-edge
+  figure — this doesn't change what any caller may assume about it.
+
+**Files:** `webapp/src/terrain/mobilityLazyGrid.ts` (new — the tile
+partition + materialisation loop), `accumulatedCost.ts` (`resumeFrom` on
+`runAccumulatedCostSearch`), `mobilityGrid.ts` (`sampleCellsForHexes`/
+`applyCrossSlope` extracted from `buildMobilityGrid`, behaviour-preserving —
+`buildMobilityGrid` itself, and its other callers `unitSimulation.ts`/
+`roadRouteSearch.ts`, are unchanged), `mobilityWorker.ts`/
+`mobilityWorkerClient.ts` (`resumeFrom`/`reach` threaded across the worker
+boundary — `Map`s structured-clone natively, same precedent as `RoadGraph`),
+`mobilityAppreciation.ts` (the `MAX_ATTEMPTS`/`boundsPadFactor` retry loop
+replaced by one call into `runLazyMobilitySearch`).
+
+**Tests:** `resumableSearch.test.ts` (resumed search matches a from-scratch
+search over the identical final cell set exactly; never revises an
+already-settled distance; a synthetic barrier-with-a-gap grid proven
+reachable only once a resumed round materialises the gap's tile, not on the
+narrower first round) and `lazyTilePartition.test.ts` (the tile partition
+never double-materialises or drops a hex) — both at the engine level, no
+network, matching this suite's own established precedent for exactly the
+same reason `buildMobilityGrid` itself was never given a full-pipeline test
+(the orchestration is network-coupled). Full existing Terrain Mobility test
+suite (32 files) still green.
+
+---
+
+### Shipped: α·C* budget + corridor-count stop + risk picks (2026-07-29, step 46)
+
+Closes design points 2 and 3, on top of step 45's lazy loop. Owner:
+*"proceed with the Slice B remainder item... ensure every analysis result
+has 2-5 corridors surfaced... we should be seeing a 'most likely' and 'most
+risky' type of option to inform our planning."* The third ask (risk
+labelling) is genuinely new relative to the original §35 design text, not a
+gap in it — added here as a natural extension once corridor count became a
+real, computed loop signal rather than an afterthought.
+
+**Two-phase growth, exactly as designed:**
+- **Phase 1 (unconstrained).** `mobilityLazyGrid.ts` grows with no cost
+  limit — only the existing cell/tile/round ceilings — until the objective
+  is reached at all. The cheapest confirmed cost at that point is `C*`
+  (`costStarSeconds` on the result), the design's own notation.
+- **Phase 2 (budgeted).** Once `C*` is known, the frontier-tile computation
+  that already decided which tiles to fetch next is filtered to cells whose
+  arrival time is `≤ α·C*` — a cell beyond that budget doesn't get to pull
+  in new tiles. This is deliberately NOT a literal geometric ellipse drawn
+  separately: the design calls the budget "self-sizing," and an isochrone
+  boundary (arrival time, following however the terrain actually bends) is
+  a MORE self-sizing shape than a mathematical ellipse would be — real
+  detours rarely trace an ellipse. `α` defaults to 2.0 and is threaded as an
+  option (`LazyMobilitySearchOptions.alpha` →
+  `MobilityAppreciationOptions.corridorBudgetAlpha`) matching the design's
+  "user-adjustable" call, though no UI control is wired to it yet.
+
+**Corridor count is the PRIMARY stop rule, exactly as the design orders it**
+(cost budget and cell/tile ceiling are the safety bounds BEHIND it, not the
+main rule): once a route exists, `estimateDistinctCorridorCount` derives up
+to 5 dissimilar routes (`corridorAnalysis.ts#findKDissimilarPaths`, capped
+at the target so deriving more than needed wastes a search with no decision
+value) and clusters them with the IDENTICAL avenue-similarity test the final
+presentation pass uses (`corridorField.ts#clusterRoutes`, now exported for
+this reuse — deliberately not a second, possibly-disagreeing
+approximation). Growth continues (budget/ceiling permitting) while fewer
+than 2 distinct avenues are confirmed; stops once 2 are found, capped at 5
+regardless of remaining budget. A genuinely single-avenue AOI still gets an
+honest 1-corridor result once the α·C* budget or ceiling is real — this is
+not a fabrication requirement, it's a "look properly before concluding
+there's only one way" requirement.
+
+**Cost note, stated plainly:** unlike step 45 (which added zero cost to the
+common single-round case), this DOES add real cost to every run — at least
+one `estimateDistinctCorridorCount` call (≤5 searches) once a route is
+found, since checking for a second avenue is now unconditional rather than
+"stop the instant ANY route exists." This is a deliberate, accepted
+trade-off for the explicit "ensure every analysis has 2-5 corridors"
+requirement, not a regression of step 45's own "a normal run pays nothing
+extra" property for the tile-growth mechanism itself — the added cost is a
+handful of cheap searches, not more network fetching or grid rebuilding.
+
+**"Most likely" / "most risky":**
+- `CorridorField.mostLikelyCorridorId` — simply the rank-1 corridor's own
+  id. No new computation: `rank` was already "carries the most weighted
+  movement," this just names that corridor explicitly rather than leaving
+  the reader to infer it from sort order.
+- `CorridorField.mostRiskyCorridorId` — the corridor with the highest new
+  `Corridor.riskScore` (0..1), independent of rank (the busiest corridor is
+  very often ALSO the easiest — that's usually why it's busiest — so the
+  two ids commonly point at different corridors; that divergence is the
+  actual planning value of showing both, not noise to resolve). Formula,
+  stated plainly rather than left implicit — the identical honesty framing
+  `easeClass`'s own thresholds already carry ("this product's own
+  engineering choice... deliberately NOT presented as a doctrinal
+  classification"):
+
+  ```
+  riskScore = 0.4 × (slowGoFraction + noGoFraction)   — terrain hazard
+            + 0.3 × waterCrossingFraction              — fording exposure
+            + 0.3 × (1 − pinchRatio)                   — single-point-of-failure throat
+  ```
+
+  Every input is a real, already-computed per-corridor fraction — no new
+  data source. `pinchRatio` and `waterCrossingFraction` are new PER-corridor
+  fields (`CorridorField.pinchRatio` only ever tracked the busiest
+  corridor's own throat, not every corridor's). `waterCrossingFraction`
+  reuses `carriesWaterSignal` — moved from `mobilityAppreciation.ts` to
+  `accumulatedCost.ts` (re-exported from its old location for every existing
+  caller) specifically so `corridorField.ts`, a module
+  `mobilityAppreciation.ts` itself imports, could call it without a
+  circular import.
+
+**Surfaced, not just computed:** the assessment log states which corridor
+is which and why (e.g. `MOST LIKELY: CORRIDOR 1 · MOST RISKY: CORRIDOR 2
+(38% RISK — 40% SLOW/NO-GO, 25% WATER SIGNAL, PINCH RATIO 0.42)`);
+`MobilityPanel.tsx`'s corridor cards gained `[MOST LIKELY]`/`[MOST RISKY]`
+pill badges (`.corridor-pick--likely`/`.corridor-pick--risky` in
+`styles-tactical.css`, styled to match the existing `.corridor-ease` pattern)
+plus a risk/water figure line.
+
+**Files:** `mobilityLazyGrid.ts` (two-phase growth, `estimateDistinctCorridorCount`,
+`alpha`/`costStarSeconds`/`corridorCountAtStop`), `corridorField.ts`
+(`riskScore`/`pinchRatio`/`waterCrossingFraction` per corridor,
+`mostLikelyCorridorId`/`mostRiskyCorridorId` on the field, `clusterRoutes`
+exported), `accumulatedCost.ts` (`carriesWaterSignal` relocated),
+`mobilityAppreciation.ts` (re-export + new log lines + `corridorBudgetAlpha`
+option), `MobilityPanel.tsx`/`styles-tactical.css` (badges).
+
+**Tests:** `corridorRiskAndCount.test.ts` (9 checks) — reuses
+`corridorClustering.test.ts`'s proven two-gap barrier fixture, makes ONLY
+the south gap a real mapped-stream ford (passable but hazardous for a
+profile with fording capability), and proves `riskScore`/
+`mostRiskyCorridorId` correctly identify the hazardous avenue specifically
+— not just confirming a number moved, confirming it moved for the RIGHT
+corridor — plus `clusterRoutes` cluster-count checks (two real gaps → two
+clusters; one sealed → one cluster, the exact building block
+`estimateDistinctCorridorCount` depends on). Full existing suite (34 files)
+still green.
 
 ---
 
@@ -3970,7 +4203,11 @@ states its real hex count and size.
 anchor-sharing within one area, erase/repaint ordering, a far-south paint
 doesn't degrade, `singleDabArea`'s unit-sim replan caller still works), 9 in
 `hexRingSpiral.test.ts` (ring cell counts match the standard 6k formula,
-spiral truncates to an exact count, determinism). All run via `npx tsx`.
+spiral truncates to an exact count, determinism). Run via `npm test` in
+`webapp/` (OCOKA 1, docs §47 — `scripts/runTests.mjs` runs every
+`webapp/tests/*.test.ts` under `tsx` and is now a CI gate; previously these
+ran by hand only). A live-network file (`nvis-fidelity.test.ts`) is excluded
+from the default run — see that script's own comment.
 
 `paintedOverlapFraction`/`isPaintedAreaMember` (`mobilityGrid.ts`) are
 exported for testability, but `mobilityGrid.ts` itself transitively imports
@@ -5161,6 +5398,192 @@ computes the fields correctly, including a genuine below-threshold
 required field; template narrates the no-data caution, the water-found
 summary, and stays silent on a clean AOI). Full existing suite green in both
 packages; `tsc`/build clean in both.
+
+---
+
+## 47. OCOKA / IPB restructure + backend offload (2026-08-02, design)
+
+Owner direction, two parts: (a) reframe Terrain Mobility's analysis and presentation
+around the military terrain framework the mode had partly implemented by accident, and
+(b) move the compute to a parallel backend holding a first-paint / update latency
+contract. Roadmap rows: `master_plan.md` "Next up" → OCOKA 1–9. **Fire-break mode is out
+of scope** and keeps its SMEACS/LACES fire-service framing.
+
+### 47.0 Terminology — corrected same day (audience, not vintage)
+
+The direction arrived using **OCOKA**. Initial research (US Army ATP 2-01.3) concluded
+this was superseded by the reordered **OAKOC**, with the parent process renamed IPB →
+IPOE — and the doc briefly stated that. That was wrong for this product: it checked only
+US doctrine and never confirmed what the ADF — `PITCH_TERRAIN_DENIAL.md`'s actual named
+audience (NORFORCE, RFSU, 1CER, Pilbara Regiment) — currently teaches. Corroborated
+across multiple searches against The Cove (the Australian Army's own
+professional-military-education platform): **the Australian Army currently uses OCOKA
+and IPB**, in the ordering below. This is two different armies' current terminology, not
+an old-vs-new supersession, and this product follows the ADF's, since that is its
+audience:
+
+| Term | ADF current (this product uses) | US Army current (for reference — not used here) |
+|---|---|---|
+| Five factors | **OCOKA** — Observation and fields of fire · Cover and concealment · Obstacles · Key terrain · Avenues of approach | OAKOC — same five factors, reordered (USMC retains KOCOA) |
+| Parent process | **IPB** — Intelligence Preparation of the *Battlespace* | IPOE — …of the *Operational Environment* (ATP 2-01.3 Change 2, Jan 2024; Change 3, May 2025) |
+| Mobility classes (MCOO) | GO / SLOW-GO / NO-GO — **unverified against ADF-specific doctrine**; see the residual-uncertainty note below | UNRESTRICTED / RESTRICTED / SEVERELY RESTRICTED |
+| METT-TC | METT-TC | METT-TC **(I)** (FM 3-0, Oct 2022) |
+
+**Residual uncertainty, stated plainly.** This is corroborated via search-snippet
+summaries of one source family, not a document read in full —
+`cove.army.gov.au` returned HTTP 503 on every direct fetch attempted, and no specific
+current LWP-G/LWD publication was located confirming OCOKA/IPB as still doctrinally
+*mandated* rather than merely commonly taught. A firmer primary source or SME review is
+still worth doing before this goes in front of a serving audience, per
+`PITCH_TERRAIN_DENIAL.md`'s own closing note. The MCOO mobility-class vocabulary
+(UNRESTRICTED/RESTRICTED/SEVERELY RESTRICTED) was sourced the same US-doctrine way as the
+original, incorrect OAKOC/IPOE call and has **not yet been separately checked** against
+ADF terminology — treat it as provisional pending the same check, not as confirmed.
+
+This engine was carrying **two vintages simultaneously** — `mobilityCost.ts` on
+`GO/SLOW-GO/NO-GO`, `corridorField.ts` on `open/restricted/severely-restricted`. §47a
+collapses both onto one union in `terrain/mobilityClass.ts`.
+
+Definitions the implementation is held to:
+- **Key terrain** — "any locality, or area, the seizure or retention of which affords a
+  marked advantage to either combatant" (ATP 2-01.3). The definition is about *advantage
+  conferred by control*, not difficulty — which is why chokepoint betweenness alone is
+  **not** key terrain, and why the `compareCorridorFields` delta is the right basis.
+- **Decisive terrain** — designated by the commander, **not derived from the map**. We
+  compute the predicate and present a *candidate*; we never assert it.
+- **Mobility corridor vs avenue of approach** — `Corridor` is a mobility corridor; an
+  avenue *groups* mutually supporting corridors. `Corridor` is deliberately **not**
+  renamed (20+ call sites, tests, GIS `kind`, layer ids); a thin `AvenueOfApproach`
+  grouping layer sits above it.
+- **Obstacles** split **existing** (natural + cultural) vs **reinforcing** (emplaced).
+  Both halves are already computed; only the naming was missing.
+- **Cover ≠ concealment.** Cover is protection from fire; concealment is protection from
+  observation. Never blended into one score.
+
+### 47.1 Audit against the five factors
+
+| Factor | State at 2026-08-02 | Where |
+|---|---|---|
+| Obstacles | Largely built, unnamed | `minCutBarrier.ts`, `counterMeasures.ts` (already uses the correct ATP 3-90.8 effects disrupt/turn/fix/block), `delayLedger.ts`, `restrictionPlanner.ts` |
+| Avenues of approach | Largely built, unnamed | `corridorField.ts`, `corridorAnalysis.ts` |
+| Key terrain | Not built, ~90% computable | `computeChokepoints`, `computeMinCutBarrier`, `computeRoadNetworkMinCut`, `compareCorridorFields` |
+| Observation & fields of fire | Not built | New `viewshed.ts` — already named in §8's architecture delta |
+| Cover & concealment | Not built | `dataLayers/structureTable.ts` + fractional cover + dead ground |
+
+The two genuine gaps are **§9's existing M5**, not new scope. M5 is therefore split:
+**M5a** OCOKA framing + vocabulary · **M5b** viewshed/observation · **M5c** key terrain ·
+**M5d** cover/concealment · **M5e** named scenarios + consensus corridors (**deferred**).
+
+### 47.2 Honesty constraints specific to the new factors
+
+1. **Elevation is a bare-earth DEM** (`elevationService.ts`; recorded in
+   `config/provenance.ts`), sampled **one value per hex centre** — there is no raster in
+   hand, which is what decides the viewshed algorithm. A bare-earth viewshed is
+   **systematically optimistic**, and it errs in the unsafe direction: ground looks
+   observed when it is not. Per `PITCH_TERRAIN_DENIAL.md` §4's own commitment to bias
+   estimates in the direction of the question, the **screened (pessimistic) surface is the
+   default**; bare-earth is a toggle; both export. If elevation came from the Terrain-RGB
+   fallback (`usedMockElevation`), Observation drops to `generic-fallback`.
+2. **Fields of fire** is computed only where the user states an effective range. Default
+   is `fieldsOfFireAssessed: false`. The tool never infers a weapon or sensor.
+3. **Cover is not computed.** `coverAssessed: false` ships as a machine-readable property
+   in the GIS export, the assistant payload and the briefing — not merely UI prose — so the
+   guard survives leaving the app.
+4. **`not-assessed` is a first-class state**, distinct from "computed, found nothing".
+5. **Semantic drift, and it cuts against us.** `'NO-GO'` is a *hard gate* here (edge
+   excluded, `blockedReason` set). Doctrinally *severely restricted* does not imply
+   impassability. `SEVERELY_RESTRICTED_MEANING` in `mobilityClass.ts` is the single
+   exported qualification legend/export/briefing must all use, so they cannot drift.
+6. **Tier-3 boundary restated.** `ObserverPost` has no name and no person field. The tool
+   models terrain, not people.
+
+### 47.3 Backend architecture (extends §38)
+
+**Blocking infra finding.** The API is **SWA managed functions on the Free plan**
+(`infra/main.bicep` has no `Microsoft.Web/sites`; `swaSku = 'Free'`). Managed functions are
+**HTTP-trigger-only, Consumption-only, and cannot run Durable Functions**; bring-your-own
+backends **require SWA Standard**; and **every request through `/api` is capped at 45 s**
+regardless of backend. The contract cannot be met by extending the current API.
+
+- **Topology:** separate Functions app on **Flex Consumption**, linked as the `/api`
+  backend, orchestrated with **Durable fan-out/fan-in**, behind
+  `deployMobilityBackend bool = false` (mirroring the existing `deployAiAssistant` flag) so
+  the repo keeps deploying on Free throughout.
+- **Protocol:** `POST /api/mobility/jobs` → `202 {jobId, statusUrl, resultsBaseUrl, sas}`;
+  status polling returns **pointers, never data** (Durable custom status is capped at 16 KB
+  UTF-16 — it is Table-Storage-backed); artefacts are append-only blobs at
+  `mobilityjobs/{jobId}/{seq}-{kind}.json` with a 24-hour lifecycle rule, read **direct
+  from Blob** with a job-scoped read-only SAS. Resumability falls out: a client tracks the
+  highest `seq` and re-fetches only what it lacks. This is the §38 tier-3 row's "resumable
+  chunked result-delivery protocol", and it is the *same* protocol for tiers 2 and 3.
+- **Do not rely on Durable's default polling cadence** — `defaultAsyncRequestSleepTimeMilliseconds`
+  is 30 s, three times slower than the contract. The client drives its own interval.
+- **Rejected:** SignalR/Web PubSub (SWA `/api` is HTTP-only, needs its own resource and auth
+  path, and degrades worse through a real connection drop); SSE/chunked over `/api` (the
+  45 s cap forces reconnection logic anyway, with no native resume).
+- **Code sharing:** §38's "no rewrite, just call the existing modules" was optimistic —
+  they live in a different package with a different tsconfig. **Extract**
+  `shared/@firebreak/terrain`, do not copy; copying would make the algorithm itself a drift
+  surface. Feasible: the only React coupling is two *type-only* `ConfidenceTier` imports,
+  and `logger.ts` already guards `import.meta.env` specifically so these modules run outside
+  Vite. `mapboxTrails.ts` stays client-only (it reads a live GL map) — a real capability
+  difference, recorded rather than hidden.
+- **Security gap to close:** `rateLimit.ts` uses **in-memory per-instance buckets**, so it
+  under-enforces on a scaled-out plan. The job endpoint needs a Table-Storage-backed limiter,
+  plus a concurrent-job cap that refuses `429` rather than queueing.
+
+### 47.4 What parallelises, honestly
+
+| Stage | Parallel | Note |
+|---|---|---|
+| Tile sampling | Yes, by tile | **Except Overpass** — it rate-limits and this repo already fought that (2026-07-12). Cap at 2–3 concurrent. |
+| Viewshed | Yes — best candidate | By observer and sector; merge is an integer add. Pass a **blob URI**, never the cell array (Durable serialises activity inputs). |
+| Key-terrain candidates | Yes | Each is a pure function of `(cells, penalties)`. |
+| Mover ensemble | Yes | Requires `hash(seed, moverIndex)` seeding for chunk-invariance — **this changes today's numbers once**, and must be flagged as deliberate, never silent drift. |
+| Hex vs road min-cut | 2-way, free | Independent of each other. |
+| Multi-source Dijkstra | **No** | Sequential frontier expansion. Δ-stepping is a real correctness risk and this repo has refused that trade before (`minCutBarrier.ts` chose textbook max-flow over the planar-dual construction for the same reason). Get the win from multi-resolution coarse-first instead. |
+| k-dissimilar routes | **No** | Iteration *i+1*'s penalties come from iteration *i*'s route. |
+| Restriction planner | **No across restrictions** | Each is chosen against the world the previous made. **The long pole.** Only the ensemble *inside* each evaluation parallelises. |
+
+### 47.5 Latency contract and where it is genuinely at risk
+
+Contract: first paint ~10 s, a meaningful update at least every ~10 s thereafter. Owner
+chose **scale-to-zero**, so this is a **warm-run** contract — a cold run misses it and must
+show an explicit "starting up" state, never a spinner implying progress.
+
+Named risks, stated rather than asserted away: cold NVIS/Overpass upstreams over new ground
+can take 5–20 s and we control neither (fallback: paint the coarse **DEM-only**
+classification first, flagged, and upgrade it when vegetation lands); Flex cold start with
+always-ready 0; the fine Dijkstra on very large AOIs, where the ~10 s update is **real
+progress, not new map content** — and the UI must say which it is; the restriction planner's
+sequential loop (mitigated by surfacing its existing `onProgress`/`onLog` per-candidate
+stream); and mobile links, which are latency-bound *fetching*, which is why artefacts are
+chunked small and individually useful rather than one large blob.
+
+**Partial-result rules (the highest-risk part of the change).** Every artefact carries
+`provisional` and `supersededBy`. **Export is disabled while provisional**; if forced
+through an explicit confirm it carries `provisional: true` + `incomplete_stages`. The **AI
+briefing is blocked server-side**, not just in the UI — the endpoint is public, and
+narrating a converging result as final is fabrication by omission. An abandoned run stays
+**permanently provisional and never upgradeable**. Promotion to final happens only when the
+run completes *and* every expected artefact kind is present.
+
+### 47.6 Contract risks in the vocabulary migration
+
+- **GIS export** — external consumers key saved symbology off attribute names, and a
+  rename fails silently. **Dual-emit for one release** (`mobility_class` +
+  `unrestricted_fraction`/… alongside the legacy four), plus `schema_version: 2`. Removing
+  the legacy keys is its own roadmap row, not a quiet cleanup. See `GIS_INTEROP.md`.
+- **`MobilityAssistantPayload`** — the known must-match pair with two prior confirmed hits.
+  The realistic skew is a cached SPA posting to a fresh API, so the validator accepts either
+  vocabulary. `MobilityJobRequest` becomes the **third** such pair.
+- **`mobilityTelemetry.ts` wire names are frozen** (`goCount`/`slowGoCount`/`noGoCount`) —
+  they are an analytics time series in Table Storage that §47.3's tier-routing threshold
+  depends on, and renaming splits the series.
+- **Saved plans carry no risk** — mobility results are never persisted
+  (`setMobilityResult(null)` on any AOI change).
+- **Dated as-built sections §§16–46 keep their original wording** as historical record;
+  correcting them would falsify history. Only forward-looking sections are migrated.
 
 ---
 
