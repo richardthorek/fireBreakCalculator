@@ -18,6 +18,7 @@
 
 import { MobilityAppreciationResult, carriesWaterSignal } from '../terrain/mobilityAppreciation';
 import { DelayLedgerEntry } from '../terrain/delayLedger';
+import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '../terrain/roadSpeedModel';
 import { AssistantResponse, postAssistant } from './assistantApi';
 
 export interface MobilityCorridorSummary {
@@ -81,6 +82,13 @@ export interface MobilityAssistantPayload {
   movement?: MobilityMovementSummary;
   restrictions?: MobilityRestrictionSummary[];
   restrictionEffect?: MobilityRestrictionEffectSummary;
+  /** User-edited road-class speeds (docs §35 config UI, step 21) — same
+   *  `countActiveRoadSpeedOverrides` single-source-of-truth
+   *  `mobilityGisExport.ts`'s export attributes already use. Optional, same
+   *  "arrived after the endpoint shipped" reasoning as the movement block
+   *  above — an older cached client's payload still validates. */
+  roadSpeedOverridesActive?: boolean;
+  roadSpeedOverrideCount?: number;
 }
 
 export interface MobilityMovementSummary {
@@ -126,13 +134,17 @@ const pct1 = (fraction: number): number => Math.round(fraction * 1000) / 10;
 export function buildMobilityAssistantPayload(
   result: MobilityAppreciationResult,
   nightMode: boolean,
-  ledger: DelayLedgerEntry[] | null
+  ledger: DelayLedgerEntry[] | null,
+  roadSpeedOverrides?: RoadSpeedOverrides | null
 ): MobilityAssistantPayload {
   const cf = result.corridorField;
   const ens = result.ensemble;
   const plan = result.restrictionPlan;
+  const roadSpeedOverrideCount = countActiveRoadSpeedOverrides(roadSpeedOverrides);
   return {
     corridorEvidence: cf?.evidence,
+    roadSpeedOverridesActive: roadSpeedOverrideCount > 0,
+    roadSpeedOverrideCount,
     movement: ens
       ? {
         moverCount: ens.moverCount,

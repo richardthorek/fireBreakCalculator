@@ -46,6 +46,7 @@ import { MobilityGridCell } from '../terrain/accumulatedCost';
 import { CounterMeasurePlacement, DelayLedgerEntry } from '../terrain/delayLedger';
 import { CounterMeasure } from '../terrain/counterMeasures';
 import { carriesWaterSignal } from '../terrain/mobilityAppreciation';
+import { RoadSpeedOverrides, countActiveRoadSpeedOverrides } from '../terrain/roadSpeedModel';
 import { provenanceProperties, provenanceStamp, DISCLAIMER_LONG } from '../config/provenance';
 import { LatLng } from '../utils/chainage';
 import { xmlEscape, kmlColor, kmlCoords } from './gisExport';
@@ -62,6 +63,11 @@ export interface ExportMobilityInput {
    *  the water-crossing gate had nothing to work from, stated rather than
    *  silently absent (mirrors `MobilityAppreciationResult.hydrologyAvailable`). */
   hydrologyAvailable: boolean;
+  /** User-edited road-class speeds (docs §35 config UI, step 21) — visibly
+   *  flagged in the panel/run log already; this is what carries that same
+   *  flag into export attributes, matching how hydrology already behaves.
+   *  `null`/empty means no overrides were configured for this run. */
+  roadSpeedOverrides: RoadSpeedOverrides | null;
   corridorField: CorridorField | null;
   chokepoints: ChokepointCell[];
   barrier: MinCutResult | null;
@@ -96,6 +102,7 @@ function hydrologySummary(cells: MobilityGridCell[]) {
 
 function missionProperties(input: ExportMobilityInput) {
   const { waterAffectedCellCount, waterBodyCellCount } = hydrologySummary(input.cells);
+  const roadSpeedOverrideCount = countActiveRoadSpeedOverrides(input.roadSpeedOverrides);
   return {
     kind: 'terrain_mobility_appreciation',
     name: input.name || 'Terrain mobility appreciation',
@@ -113,6 +120,11 @@ function missionProperties(input: ExportMobilityInput) {
     hydrology_available: input.hydrologyAvailable,
     water_affected_cell_count: waterAffectedCellCount,
     water_body_cell_count: waterBodyCellCount,
+    // Road-speed override confidence (general queue item, docs §35 step 21) —
+    // carries the SAME flag the panel already shows live into the export
+    // attributes, matching how hydrology already behaves here.
+    road_speed_overrides_active: roadSpeedOverrideCount > 0,
+    road_speed_override_count: roadSpeedOverrideCount,
   };
 }
 

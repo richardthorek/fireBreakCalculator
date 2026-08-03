@@ -163,6 +163,7 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       nightMode,
       usedEstimatedData: result.usedEstimatedData,
       hydrologyAvailable: result.hydrologyAvailable,
+      roadSpeedOverrides,
       corridorField: result.corridorField,
       chokepoints: result.chokepoints,
       barrier: result.barrier,
@@ -172,11 +173,11 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       measures: COUNTER_MEASURES,
       ledger: cmLedger,
     };
-  }, [result, nightMode, cmPlacements, cmLedger]);
+  }, [result, nightMode, cmPlacements, cmLedger, roadSpeedOverrides]);
 
   const assistantPayload = useMemo(
-    () => (result ? buildMobilityAssistantPayload(result, nightMode, cmLedger) : null),
-    [result, nightMode, cmLedger]
+    () => (result ? buildMobilityAssistantPayload(result, nightMode, cmLedger, roadSpeedOverrides) : null),
+    [result, nightMode, cmLedger, roadSpeedOverrides]
   );
 
   return (

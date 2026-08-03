@@ -204,6 +204,18 @@ async function main() {
     assert.ok(!text.toLowerCase().includes('water signal'));
   });
 
+  await test('states road-speed overrides were in effect, with the real count, when active', () => {
+    const text = buildTemplateMobilityBriefing({
+      ...basePayload, roadSpeedOverridesActive: true, roadSpeedOverrideCount: 3,
+    });
+    assert.ok(text.includes('3 road-class speed override(s) were in effect'), text);
+  });
+
+  await test('says nothing about road-speed overrides when none were configured (no noise)', () => {
+    const text = buildTemplateMobilityBriefing(basePayload);
+    assert.ok(!text.toLowerCase().includes('override'));
+  });
+
   await test('never fabricates a corridor when none was formed', () => {
     const text = buildTemplateMobilityBriefing({ ...basePayload, topCorridors: [] });
     // Wording changed 2026-07-27 when the "Movement:" heading was given over to
@@ -319,6 +331,14 @@ async function main() {
 
   await test('validator rejects an unknown corridor evidence value', () => {
     assert.ok(!isMobilityAssistantPayload({ ...movementPayload, corridorEvidence: 'vibes' }));
+  });
+
+  await test('validator accepts a payload with roadSpeedOverride fields present and well-formed', () => {
+    assert.ok(isMobilityAssistantPayload({ ...basePayload, roadSpeedOverridesActive: true, roadSpeedOverrideCount: 2 }));
+  });
+
+  await test('validator rejects a roadSpeedOverrideCount that is not a finite number', () => {
+    assert.ok(!isMobilityAssistantPayload({ ...basePayload, roadSpeedOverridesActive: true, roadSpeedOverrideCount: 'two' }));
   });
 
   console.log('System prompt audience parameter:');

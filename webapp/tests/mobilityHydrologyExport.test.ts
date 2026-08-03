@@ -115,6 +115,7 @@ function baseInput(hydrologyAvailable: boolean): ExportMobilityInput {
     nightMode: false,
     usedEstimatedData: false,
     hydrologyAvailable,
+    roadSpeedOverrides: null,
     corridorField,
     chokepoints: [],
     barrier: null,
@@ -143,6 +144,22 @@ test('GeoJSON mission feature reports hydrology_available: false honestly, not d
   const geojson = JSON.parse(toMobilityGeoJSON(baseInput(false)));
   const mission = geojson.features.find((f: any) => f.properties.kind === 'terrain_mobility_appreciation');
   assert.strictEqual(mission.properties.hydrology_available, false);
+});
+
+test('GeoJSON mission feature reports road_speed_overrides_active: false and a zero count when none were configured', () => {
+  const geojson = JSON.parse(toMobilityGeoJSON(baseInput(true)));
+  const mission = geojson.features.find((f: any) => f.properties.kind === 'terrain_mobility_appreciation');
+  assert.strictEqual(mission.properties.road_speed_overrides_active, false);
+  assert.strictEqual(mission.properties.road_speed_override_count, 0);
+});
+
+test('GeoJSON mission feature carries the real override count when overrides were configured', () => {
+  const input = baseInput(true);
+  input.roadSpeedOverrides = { highway: { track: 8 }, surface: { gravel: 12 } };
+  const geojson = JSON.parse(toMobilityGeoJSON(input));
+  const mission = geojson.features.find((f: any) => f.properties.kind === 'terrain_mobility_appreciation');
+  assert.strictEqual(mission.properties.road_speed_overrides_active, true);
+  assert.strictEqual(mission.properties.road_speed_override_count, 2);
 });
 
 test('each CORRIDOR feature carries only ITS OWN water-crossing count — not the grid total', () => {
