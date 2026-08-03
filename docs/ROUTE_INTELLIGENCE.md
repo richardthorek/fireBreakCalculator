@@ -5697,5 +5697,49 @@ chokepoint/min-cut machinery" claim — now real, no invented signal.
 
 ---
 
+## 48. Fixed: `onTrail` detection was centre-point-only (2026-08-03, live bug report)
+
+**Reported:** a road painted straight through an analysed area came out NO-GO/
+severely-restricted on both sides of the real, unbroken road, blocking a much more
+direct route the road should have enabled. Screenshot showed a real "Collector Rd"
+threading through a broad, mostly-red (severely-restricted) painted area — the road
+itself never rendered as a distinct override, and the hexes it visibly crossed stayed
+red exactly as if no road were there.
+
+**Root cause.** `mobilityGrid.ts`'s `onTrail` scan (feeding the road-class speed model
+AND every onTrail-exempted hard gate in `mobilityCost.ts` — hard slope, fording,
+vegetation gap-width) tested only a hex's CENTRE point against `TRAIL_SNAP_M` (30 m).
+`waterDistanceM`'s equivalent scan was already upgraded to centre + six hex corners
+(§35 addendum) for exactly this reason; `onTrail` was the one scan left behind. Hex
+size scales with AOI span (`computeCellBudget`) — on a wide-area run it easily exceeds
+30 m, so a road threading diagonally across a hex can pass nowhere near its centroid
+while still visibly crossing a large fraction of its area. A centre-only test read
+that ground as off-trail; `mobilityCost.ts`'s hard gates then applied full vegetation/
+slope severity to ground that a real, mapped road actually crosses.
+
+**Why this wasn't already caught by the existing onTrail-exemption tests.**
+`slopeGateOnTrailExemption.test.ts` and `roadClassOnTrailSpeed.test.ts` both prove the
+EXEMPTION logic in `mobilityCost.ts` is correct once `onTrail` is already `true` — they
+construct fixtures where the road already snaps cleanly to a hex centre. Neither tests
+DETECTION itself under the specific geometry that breaks it (a road that only clips a
+hex's edge/corner). The bug lived one layer upstream of everything those tests cover.
+
+**Fix.** Extracted the scan into a small, pure, newly-exported `sampleOnTrail()`
+(`mobilityGrid.ts`) — same centre + six hex corners, minimum-distance-across-all-points
+pattern the water scan already uses, returning both `onTrail` and the winning feature's
+tags in one pass. `sampleCellsForHexes`'s inline block now just calls it. Both
+`buildMobilityGrid` (whole-AOI runs) and `mobilityLazyGrid.ts` (incremental tile rounds)
+share this one function — `mobilityLazyGrid.ts` never had its own copy of this logic, so
+neither path needed a second fix.
+
+**Tests.** New `onTrailHexCorners.test.ts`, four assertions: centre-only sampling (the
+pre-fix behaviour) misses a road placed exactly at one hex corner and nowhere near the
+centre or other corners; centre+corners (the fix) finds the identical road and reports
+its tags correctly; a genuinely distant road is still correctly off-trail (false-positive
+control); no trails at all resolves cleanly, not a crash. Full suite green: `npm test`
+(37/37 files), `npm run build`.
+
+---
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

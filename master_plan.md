@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — OCOKA 4 (key terrain) shipped, step 50. See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — onTrail hex-corner detection fix shipped, step 51 (live bug report). See Recent Updates for the dated history, including the OCOKA programme and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -246,6 +246,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 48 (OCOKA 1) | Mobility-class vocabulary migration — one MCOO vocabulary instead of two; `webapp/tests/` wired into CI | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47 |
 | 49 (OCOKA 3) | Five-factor OCOKA framing — `terrain/oakoc.ts` assembly + `OakocPanel.tsx`; `roadNetworkBarrier` gets its first map layer/legend/GIS export; `Corridor.bottleneckCellKeys` added | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 | 50 (OCOKA 4) | Key terrain — `terrain/keyTerrain.ts` nominates candidates from chokepoints/min-cut/corridor bottlenecks, scores each by a real worker-run re-search with it denied; `OakocPanel.tsx`'s Key terrain section now real, `decisiveCandidate` always framed as a candidate requiring confirmation | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
+| 51 | Fixed: `onTrail` detection was centre-point-only — a road threading across a hex without passing near its centroid read as off-trail and got hard-gated by vegetation/slope, painting a real, unbroken road NO-GO/severely-restricted (live bug report) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 
 ## Recent Updates
 
@@ -254,6 +255,27 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — Fixed: `onTrail` detection was centre-point-only (step 51,
+  live bug report).** A road painted straight through an analysed area came
+  out NO-GO/severely-restricted on both sides of the real, unbroken road,
+  blocking a much more direct route. Root cause: `mobilityGrid.ts`'s
+  `onTrail` scan tested only a hex's CENTRE point against the 30 m trail
+  snap distance, unlike `waterDistanceM`'s equivalent scan (already
+  centre + six hex corners). A road can thread diagonally across a hex
+  without passing within 30 m of its centroid — especially once hex size
+  grows past ~30 m on a wide-area run, since hex size scales with AOI span
+  (`computeCellBudget`) — so those hexes fell back to vegetation/slope-only
+  classification and got hard-gated at full severity by
+  `mobilityCost.ts`'s onTrail-exempted slope/hydrology/vegetation gates,
+  even though a real mapped road ran through them. Fix: extracted the scan
+  into a small pure `sampleOnTrail()` (`mobilityGrid.ts`) using the same
+  centre+corners, minimum-distance-wins pattern the water scan already had,
+  so `mobilityLazyGrid.ts` (which calls the same shared
+  `sampleCellsForHexes`) gets the fix too without a second copy. New
+  `onTrailHexCorners.test.ts` proves the pre-fix centre-only behaviour
+  missed a corner-clipping road and the fix finds it, plus a
+  false-positive control. Full detail: `ROUTE_INTELLIGENCE.md` §48. Gates
+  green: `npm test` (37/37 files), `npm run build`.
 - **2026-08-03 — OCOKA 4 shipped (step 50).** Key terrain — the one factor
   §47.1's audit called "~90% computable from existing chokepoint/min-cut
   machinery" is now real. New `terrain/keyTerrain.ts`:
@@ -337,13 +359,7 @@ history beyond this window: `git log`.
 - **2026-08-02 — Mobile UI (step 47):** quick mover-class selector (Foot/
   4×4/Medium/Heavy buttons) + `TacticalCoordinateReadout` relocated above
   AREAS OF INTEREST. PR #200.
-- **2026-07-29 — Slice B remainder (step 46):** α·C* cost-budget + 2–5
-  corridor stop rule; "most likely"/"most risky" corridor picks via a new
-  per-corridor `riskScore` composite (documented weights, engineering
-  judgement, not a probability). 9-check `corridorRiskAndCount.test.ts`
-  added; full suite green.
-
-*(Full history for steps 0–45 — 2026-07-10 through 2026-07-29 — is in the
+*(Full history for steps 0–46 — 2026-07-10 through 2026-07-29 — is in the
 Shipped table above, each linked as-built doc's own dated section, and
 `git log`. Pruned from this file 2026-08-03 to keep it agent-scannable; see
 [docs/README.md](docs/README.md) if you need the narrative.)*
