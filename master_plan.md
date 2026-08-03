@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — OCOKA 2 shipped, step 56: `shared/@firebreak/terrain` extracted so the same terrain/mobility algorithm code can run client- and (from OCOKA 5) server-side. See Recent Updates for the dated history, including OCOKA 6/7 (steps 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 3, 2026 — OCOKA 5 shipped, step 57: tier-2 backend job protocol (`api-mobility/`, Durable orchestration, blob artefacts + per-artefact SAS), gated `deployMobilityBackend bool = false`. See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -45,7 +45,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | ~~OCOKA 2 — extract `shared/@firebreak/terrain` workspace package~~ | **Shipped — step 56.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | ~~OCOKA 3 — five-factor framing over existing products~~ | **Shipped — step 49.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.7 |
 | ~~OCOKA 4 — key terrain~~ | **Shipped — step 50.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.8 |
-| **OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)** | Job submit → Durable status polling carrying blob pointers → client reads artefacts direct from Blob with a job-scoped SAS. Ships **before** parallelism deliberately: a wrong partial-result rule is a safety bug, a slow correct run is only slow | L | OCOKA 2 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| ~~OCOKA 5 — backend protocol + tier-2 execution (no fan-out yet)~~ | **Shipped — step 57.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
 | ~~OCOKA 6 — `viewshed.ts` + Observation & fields of fire~~ | **Shipped — step 52.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.9 |
 | ~~OCOKA 7 — cover & concealment~~ | **Shipped — step 53.** | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §47.10 |
 | **OCOKA 8 — backend fan-out** | Parallelise what genuinely parallelises: tile sampling (capped at 2–3 concurrent on Overpass), viewshed by observer, mover ensemble by chunk, key-terrain candidates. Dijkstra and the k-dissimilar loop are sequential by construction and stay that way | M | OCOKA 5, 6 (✅) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
@@ -74,10 +74,7 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 
 - ~~**OCOKA 4**~~ — **Shipped, step 50.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.8.
 
-- **OCOKA 5 — backend protocol + tier-2 execution** (Difficulty: L)
-  - Outcome: analysis runs on the server with results streaming back progressively, and a dropped connection resumes instead of recomputing.
-  - Changes: SWA Free→Standard + a Flex Consumption Function App behind `deployMobilityBackend bool = false` · Durable orchestration · append-only artefact blobs with a 24-hour lifecycle rule · job-scoped read-only SAS · `MobilityJobRequest` becomes the **third** must-match webapp/api pair · Table-Storage-backed rate limiting for the job endpoint (`rateLimit.ts`'s in-memory buckets under-enforce on a scaled-out plan).
-  - Note: export and the AI briefing are **blocked while a run is provisional**, and the briefing block is enforced server-side, not just in the UI.
+- ~~**OCOKA 5**~~ — **Shipped, step 57.** See Shipped table + `ROUTE_INTELLIGENCE.md` §49. Built as a new standalone `api-mobility/` package rather than inside `/api` (SWA allows exactly one backend type at a time — linking a custom backend is a real cutover, not an additive change; see §49's own runbook). All infra gated `deployMobilityBackend bool = false`, unverified by a live deployment. v1 scope: sequential Durable orchestration (route + corridors + hex chokepoints/min-cut + unscored key terrain), estimated-placeholder vegetation, manual trigger only — not yet: the movement ensemble, observation/concealment, road-network-exact min-cut, or export/briefing gating on `provisional`.
 
 - ~~**OCOKA 6**~~ — **Shipped, step 52.** See Shipped table + `ROUTE_INTELLIGENCE.md` §47.9.
 
@@ -241,6 +238,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 54 | Road-speed user-override confidence carried into GIS export attributes and the AI briefing payload/template, mirroring the existing hydrology pattern | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §35 |
 | 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 | 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
+| 57 (OCOKA 5) | Tier-2 backend job protocol — new standalone `api-mobility/` package (Durable orchestrator, 5 sequential activities, blob artefacts, per-artefact SAS, Table-Storage rate limiting), `MobilityJobRequest` third must-match pair, webapp polling client + manual trigger panel, `infra/main.bicep` additions all gated `deployMobilityBackend bool = false`. No fan-out (OCOKA 8); v1 algorithmic subset only | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
 
 ## Recent Updates
 
@@ -249,6 +247,40 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-03 — OCOKA 5 shipped (step 57): tier-2 backend job protocol.**
+  New standalone `api-mobility/` package (not inside `/api` — researched
+  against current Microsoft Learn docs first: a Static Web App allows
+  exactly one backend type at a time, so linking a custom Function App as
+  `/api`'s backend is an all-or-nothing cutover requiring the EXISTING
+  managed-functions code to move onto the same app too, not an additive
+  change like `deployAiAssistant`. Deferred to a documented manual runbook
+  rather than automated blind — see `ROUTE_INTELLIGENCE.md` §49). Ships: a
+  Durable orchestrator running 5 sequential activities (grid sample → cost
+  field/route → corridors → chokepoints/hex min-cut → unscored key terrain),
+  each threading heavy data via blob pointers rather than through Durable's
+  own serialisation; `POST/GET /mobility/jobs` returning pointers only,
+  never Durable internals; a per-artefact SAS reminted on every poll (a real
+  refinement over the design's single-submit-time-SAS text — this storage
+  account has no ADLS Gen2 directory-scoped SAS, so per-blob is what's
+  actually job-scoped rather than container-wide); Table-Storage rate
+  limiting + a concurrent-job cap; `MobilityJobRequest`, the third webapp/api
+  must-match pair; a manual (not automatic-threshold) trigger panel in
+  `MobilityPanel.tsx`, gated on `VITE_MOBILITY_API_BASE_URL` so no
+  deployment shows a dead button. `infra/main.bicep` additions (storage,
+  Flex Consumption Function App + plan, SWA linked-backend resource) all
+  behind `deployMobilityBackend bool = false`, compiled clean with the
+  standalone Bicep CLI but unverified by a live deployment. Deliberate v1
+  scope cuts, each flagged in code/docs: vegetation ships as an estimated
+  placeholder (no server-side NVIS/NSW classification yet), DEA water
+  frequency isn't sampled server-side, origin/objective are bounding boxes
+  not painted-dab membership, and the movement ensemble/restriction
+  planner/observation/concealment/road-network-exact min-cut stay tier-1
+  (client Worker) only for now. No fan-out — that's OCOKA 8, built once
+  tier-2 has real usage evidence. Gates green: `api-mobility`'s own
+  `npm test` (new package), webapp's `npm test` (38/38) + `npm run build`,
+  `api`'s existing tests untouched (zero risk — nothing in the new package
+  is imported by `/api`). PR
+  [#207](https://github.com/richardthorek/fireBreakCalculator/pull/207).
 - **2026-08-03 — OCOKA 2 shipped (step 56): `shared/@firebreak/terrain`
   extracted.** Prerequisite for OCOKA 5's server-side execution — the same
   algorithm code now has one home instead of risking a client/server fork.

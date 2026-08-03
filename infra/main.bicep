@@ -64,6 +64,12 @@ param budgetAlertEmails array = []
 @description('Budget start month (YYYY-MM). Defaults to the current month at deploy time; do not set manually. utcNow() is only valid as a parameter default.')
 param budgetStartMonth string = utcNow('yyyy-MM')
 
+@description('Provision the Terrain Mobility tier-2 backend (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3): a separate Flex Consumption Function App running Durable orchestrations, linked as the SWA `/api` backend. Off by default — mirrors deployAiAssistant. IMPORTANT: linking a custom backend is an all-or-nothing SWA switch (a Static Web App has exactly one backend type at a time) — flipping this to true also requires (a) swaSku set to Standard, and (b) the existing managed-functions `/api` deployment migrated onto this SAME Function App (see api-mobility/README.md and ROUTE_INTELLIGENCE.md §47.3\'s cutover runbook) — NOT automated by this template or by deploy.yml. This bicep block is unverified by a live deployment; review it against the current Microsoft.Web/sites Flex Consumption schema before first use.')
+param deployMobilityBackend bool = false
+
+@description('Region for the mobility backend Function App. Flex Consumption availability varies by region — verify before enabling.')
+param mobilityBackendLocation string = 'australiaeast'
+
 var storageAccountName = toLower(replace('${baseName}${uniqueString(resourceGroup().id)}', '-', ''))
 var swaName = '${baseName}-${environmentName}'
 var aiFoundryName = take('${baseName}-ai-${environmentName}', 24)
@@ -117,6 +123,16 @@ resource savedPlansTable 'Microsoft.Storage/storageAccounts/tableServices/tables
   name: 'savedplans'
 }
 
+// Tier-2 mobility job rate limiting + concurrency cap (OCOKA 5, docs/
+// ROUTE_INTELLIGENCE.md §47.3 — "rateLimit.ts's in-memory buckets
+// under-enforce on a scaled-out plan"). Additive: only used when
+// deployMobilityBackend is true, but harmless (empty) to create either way —
+// gated anyway to keep the resource list honest about what's actually live.
+resource mobilityJobRateLimitTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = if (deployMobilityBackend) {
+  parent: tableService
+  name: 'mobilityjobratelimit'
+}
+
 // Shared cross-user vegetation tile cache (see api/src/services/
 // vegetationTileService.ts): raw NVIS export PNGs / NSW SVTM polygon JSON,
 // keyed by quantised tile. First user at an incident pays the upstream
@@ -134,34 +150,76 @@ resource vegTilesContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   }
 }
 
+// Tier-2 mobility job artefacts (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3):
+// append-only blobs at mobilityjobs/{jobId}/{seq}-{kind}.json, read direct
+// from Blob via a per-artefact SAS (api-mobility/src/services/
+// mobilityJobStore.ts) — never through this app's own API.
+resource mobilityJobsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (deployMobilityBackend) {
+  parent: blobService
+  name: 'mobilityjobs'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // Vegetation changes on a timescale of years — a 365-day expiry means one
 // upstream fetch effectively caches a tile for a whole fire season and
 // beyond (the upstream canary watches for contract drift in between).
+// Mobility job artefacts are the opposite: a run is either read within
+// minutes/hours or abandoned, so 24 hours is generous (§47.3's own figure).
 resource storageLifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
   parent: storage
   name: 'default'
   properties: {
     policy: {
-      rules: [
-        {
-          name: 'vegtiles-expiry'
-          enabled: true
-          type: 'Lifecycle'
-          definition: {
-            filters: {
-              blobTypes: ['blockBlob']
-              prefixMatch: ['vegtiles/']
-            }
-            actions: {
-              baseBlob: {
-                delete: {
-                  daysAfterModificationGreaterThan: 365
+      rules: concat(
+        [
+          {
+            name: 'vegtiles-expiry'
+            enabled: true
+            type: 'Lifecycle'
+            definition: {
+              filters: {
+                blobTypes: ['blockBlob']
+                prefixMatch: ['vegtiles/']
+              }
+              actions: {
+                baseBlob: {
+                  delete: {
+                    daysAfterModificationGreaterThan: 365
+                  }
                 }
               }
             }
           }
-        }
-      ]
+        ],
+        deployMobilityBackend
+          ? [
+              {
+                name: 'mobilityjobs-expiry'
+                enabled: true
+                type: 'Lifecycle'
+                definition: {
+                  filters: {
+                    blobTypes: ['blockBlob']
+                    prefixMatch: ['mobilityjobs/']
+                  }
+                  actions: {
+                    // Blob lifecycle management only expresses whole days —
+                    // 1 is the closest native approximation of §47.3's
+                    // "24-hour lifecycle rule" (deletes on the day boundary
+                    // after modification, so effectively 24-48h, never less).
+                    baseBlob: {
+                      delete: {
+                        daysAfterModificationGreaterThan: 1
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          : []
+      )
     }
   }
 }
@@ -253,6 +311,117 @@ resource aiModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@202
       name: aiModelName
       version: aiModelVersion
     }
+  }
+}
+
+// --- Terrain Mobility tier-2 backend (OCOKA 5, docs/ROUTE_INTELLIGENCE.md
+// §47.3) — a separate Flex Consumption Function App running Durable
+// orchestrations, linked as the SWA `/api` backend. Off by default
+// (deployMobilityBackend). UNVERIFIED BY A LIVE DEPLOYMENT — review against
+// the current Microsoft.Web/sites Flex Consumption schema before first use
+// (see api-mobility/README.md and this param's own @description above for
+// the manual cutover steps this template does NOT automate: swaSku must
+// also be set to Standard, and the existing managed /api deployment must be
+// migrated onto this same Function App).
+
+// Flex Consumption needs its own deployment-package container, separate
+// from the app's runtime data containers above.
+resource mobilityFuncDeploymentsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (deployMobilityBackend) {
+  parent: blobService
+  name: 'mobilityfuncdeployments'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource mobilityFuncPlan 'Microsoft.Web/serverfarms@2023-12-01' = if (deployMobilityBackend) {
+  name: '${baseName}-mobility-plan-${environmentName}'
+  location: mobilityBackendLocation
+  tags: tags
+  sku: {
+    name: 'FC1'
+    tier: 'FlexConsumption'
+  }
+  kind: 'functionapp'
+  properties: {
+    reserved: true // Flex Consumption is Linux-only
+  }
+}
+
+resource mobilityFuncApp 'Microsoft.Web/sites@2024-11-01' = if (deployMobilityBackend) {
+  name: '${baseName}-mobility-${environmentName}'
+  location: mobilityBackendLocation
+  tags: tags
+  kind: 'functionapp,linux'
+  properties: {
+    serverFarmId: deployMobilityBackend ? mobilityFuncPlan.id : ''
+    httpsOnly: true
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: deployMobilityBackend ? '${storage.properties.primaryEndpoints.blob}mobilityfuncdeployments' : ''
+          authentication: {
+            type: 'StorageAccountConnectionString'
+            storageAccountConnectionStringName: 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
+          }
+        }
+      }
+      runtime: {
+        name: 'node'
+        version: '22'
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 40
+        instanceMemoryMB: 2048
+      }
+    }
+    siteConfig: {
+      appSettings: [
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
+        }
+        {
+          name: 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
+        }
+        // Same storage account as /api — additive, not a new resource
+        // (§47.3's own framing). Same env var names as api/src/data/
+        // tableClient.ts + api-mobility's own copy, so one connection
+        // string configures every app that reads it.
+        {
+          name: 'TABLES_CONNECTION_STRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
+        }
+        {
+          name: 'MOBILITY_JOBS_CONTAINER'
+          value: 'mobilityjobs'
+        }
+        {
+          name: 'MOBILITY_JOB_RATE_LIMIT_TABLE_NAME'
+          value: 'mobilityjobratelimit'
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: deployMonitoring ? appInsights.properties.ConnectionString : ''
+        }
+      ]
+    }
+  }
+}
+
+// Links the Function App above as the SWA's `/api` backend. Requires
+// swaSku = 'Standard' (bring-your-own-backend is a Standard-plan-only
+// feature) — NOT set automatically by this template; the operator sets it
+// explicitly alongside deployMobilityBackend at cutover time, matching the
+// deliberate "review before executing" framing of a one-way backend switch.
+resource mobilityLinkedBackend 'Microsoft.Web/staticSites/linkedBackends@2023-12-01' = if (deployMobilityBackend) {
+  parent: swa
+  name: 'mobility-backend'
+  properties: {
+    backendResourceId: mobilityFuncApp.id
+    region: mobilityBackendLocation
   }
 }
 

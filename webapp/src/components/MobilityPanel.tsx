@@ -32,6 +32,7 @@ import { CorridorField } from '@firebreak/terrain';
 import { RoadSpeedOverrides } from '@firebreak/terrain';
 import { RoadSpeedOverridePanel } from './RoadSpeedOverridePanel';
 import { MobilityFidelity } from '../terrain/mobilityGrid';
+import { MobilityBackendJobPanel } from './MobilityBackendJobPanel';
 
 export interface MobilityPanelProps {
   profileId: string;
@@ -280,6 +281,14 @@ export const MobilityPanel: React.FC<MobilityPanelProps> = ({
       </div>
 
       <TacticalCoordinateReadout lat={cursor?.lat ?? null} lng={cursor?.lng ?? null} />
+
+      <MobilityBackendJobPanel
+        originPaint={originPaint}
+        objectivePaint={objectivePaint}
+        profileId={profileId}
+        nightMode={nightMode}
+        fidelity={fidelity}
+      />
 
       <div className="tac-panel mobility-section">
         <div className="tac-label">AREAS OF INTEREST</div>
