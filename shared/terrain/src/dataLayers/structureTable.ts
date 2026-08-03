@@ -66,8 +66,8 @@
  *    instruction that an honest "couldn't improve this" beats a padded guess.
  */
 
-import { VegetationType } from '../../config/classification';
-import { ConfidenceTier } from '../../components/DataConfidenceBadge';
+import { VegetationType } from '../classification';
+import { ConfidenceTier } from '../confidenceTier';
 
 export interface StructureEstimate {
   /** Representative stem diameter, mm. */
@@ -271,4 +271,95 @@ const STRUCTURE_TABLE: Record<VegetationType, StructureEstimate> = {
  */
 export function lookupStructure(vegetation: VegetationType): StructureEstimate {
   return STRUCTURE_TABLE[vegetation] ?? MEDIUMSCRUB;
+}
+
+// =============================================================================
+// SCREENING_HEIGHT_M — OCOKA 6 (docs/ROUTE_INTELLIGENCE.md §47, master_plan.md
+// "Next up"), for `terrain/viewshed.ts`'s line-of-sight occlusion test: how
+// tall a stand of this vegetation class typically stands, i.e. how much of an
+// observer's or target's height it can hide.
+//
+// PROVENANCE, STATED PLAINLY. Unlike every row above (each anchored to a
+// field-plot or regulatory figure specific to ONE vegetation class), these
+// four values are derived from a single shared standard: Specht (1970)'s tree
+// height classes (>30 m tall / 10–30 m mid / 5–10 m low forest) and Muir
+// (1977)'s shrub height classes (>2 m tall shrubland / <2 m low shrubland) —
+// the two structural standards NVIS itself is built on (confirmed via
+// websearch this session; the primary source, DCCEEW's own "Australian
+// Vegetation Attribute Manual" chapter 2, returned HTTP 503 from this
+// sandbox on every attempt, the SAME sandbox network limitation already
+// recorded against dcceew.gov.au in this file's LIGHTSHRUB row — so this is
+// citing a well-established, government-adopted classification standard
+// confirmed via secondary description, not a number read off the primary
+// PDF table). Each row below is a REPRESENTATIVE POINT within the relevant
+// band for this app's own `VegetationType`↔MVG mapping
+// (`nvisVegetationService.ts`'s `MVG_CLASSES`), not a directly-measured
+// canopy height for this exact class — hence 'estimated', never 'published',
+// for every row except grassland (see its own note).
+export interface ScreeningHeight {
+  /** Representative screening height, metres. What a line of sight must
+   *  clear to see past (or through) a stand of this class. */
+  heightM: number;
+  confidence: ConfidenceTier;
+  source: string;
+}
+
+const SPECHT_MUIR_CITATION =
+  'Specht (1970) tree-strata height classes (>30 m tall / 10–30 m mid / 5–10 m low forest) and ' +
+  'Muir (1977) shrub-strata height classes (>2 m tall shrubland / <2 m low shrubland) — the ' +
+  'structural standards NVIS height classes are built on, confirmed via websearch this session ' +
+  '(DCCEEW\'s own primary PDF, the Australian Vegetation Attribute Manual ch.2, returned HTTP 503 ' +
+  'from this sandbox, same limitation already recorded in this file\'s LIGHTSHRUB row).';
+
+const GRASSLAND_HEIGHT: ScreeningHeight = {
+  heightM: 0.5,
+  confidence: 'estimated',
+  source:
+    'Grassland/tussock/hummock-grassland formations carry no tree or shrub stratum by definition ' +
+    '(Specht 1970 structural classification — same citation this file\'s own GRASSLAND row already ' +
+    'uses for the equivalent qualitative point). 0.5 m is a representative tussock/hummock height, ' +
+    'not a measured figure for this app\'s AOIs.',
+};
+
+const LIGHTSHRUB_HEIGHT: ScreeningHeight = {
+  heightM: 1.0,
+  confidence: 'estimated',
+  source:
+    `${SPECHT_MUIR_CITATION} This app's lightshrub class maps mostly to open woodland / sparse ` +
+    'shrubland MVGs (11, 13, 22, 31 — see nvisVegetationService.ts) — the lower Muir "low shrubland" ' +
+    'band (<2 m); 1.0 m is a representative point within it, not this specific class measured.',
+};
+
+const MEDIUMSCRUB_HEIGHT: ScreeningHeight = {
+  heightM: 3.0,
+  confidence: 'estimated',
+  source:
+    `${SPECHT_MUIR_CITATION} This app's mediumscrub class maps to woodland/shrubland/heath/mallee ` +
+    'MVGs (5, 6, 8, 14–18, 29, 32) — spanning Muir\'s "tall shrubland" band (>2 m) and the lower edge ' +
+    'of Specht\'s low-forest band; 3.0 m is a representative point above the 2 m tall-shrub threshold, ' +
+    'not this specific class measured.',
+};
+
+const HEAVYFOREST_HEIGHT: ScreeningHeight = {
+  heightM: 20.0,
+  confidence: 'estimated',
+  source:
+    `${SPECHT_MUIR_CITATION} This app's heavyforest class maps mostly to open/tall-open forest MVGs ` +
+    '(1–4, 7, 9, 10, 30 — the SAME MVG range Wood et al. 2015\'s tall-eucalypt-forest plots this ' +
+    'file\'s own HEAVYFOREST row is anchored to), i.e. Specht\'s 10–30 m mid/open-forest band; 20 m is ' +
+    'a representative point within it, not a canopy height this app has directly measured.',
+};
+
+const SCREENING_HEIGHT_M: Record<VegetationType, ScreeningHeight> = {
+  grassland: GRASSLAND_HEIGHT,
+  lightshrub: LIGHTSHRUB_HEIGHT,
+  mediumscrub: MEDIUMSCRUB_HEIGHT,
+  heavyforest: HEAVYFOREST_HEIGHT,
+};
+
+/** Look up the representative screening height for a vegetation class —
+ *  `terrain/viewshed.ts`'s only use of this file. Same fallback discipline
+ *  as `lookupStructure`. */
+export function lookupScreeningHeight(vegetation: VegetationType): ScreeningHeight {
+  return SCREENING_HEIGHT_M[vegetation] ?? MEDIUMSCRUB_HEIGHT;
 }

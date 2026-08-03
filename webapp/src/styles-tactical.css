@@ -219,6 +219,79 @@
   color: var(--tac-text-dim);
 }
 
+/* ---------- OakocPanel — "not yet assessed" factor cards (OCOKA 3/4/6/7) ----------
+ * Key terrain / observation / cover & concealment are always `'not-assessed'`
+ * right now (features not built yet, not a per-run finding) — see
+ * `terrain/oakoc.ts`'s header comment and `OakocPanel.tsx`'s own doc comment
+ * for why this MUST read as visually distinct from both an assessed factor
+ * and the separate `'not-assessed'` gate obstacles/avenues use for an
+ * unreachable objective. Dashed border + a badge that is deliberately NOT
+ * one of `.tac-badge`'s four confidence tiers (measured/published/estimated/
+ * generic-fallback) — this isn't a fifth, lower-trust tier, it's "no
+ * analysis ran at all", a different claim entirely. */
+.oakoc-notassessed {
+  border: 1px dashed var(--tac-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.oakoc-notassessed-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px dashed var(--tac-text-dim);
+  color: var(--tac-text-dim);
+  font-family: var(--tac-mono-font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.oakoc-notassessed p {
+  margin: 0;
+  font-size: 0.8em;
+  line-height: 1.5;
+  color: var(--tac-text-dim);
+}
+
+/* ---------- Key terrain candidate cards (OCOKA 4, OakocPanel.tsx) ----------
+ * Same compact-card shape `.cm-measure-card` uses in CounterMobilityPanel —
+ * one card per scored candidate, a source badge, and a real numeric score. */
+.keyterrain-candidate {
+  border: 1px solid var(--tac-border);
+  border-radius: 3px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.keyterrain-candidate-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.keyterrain-candidate-score { color: var(--tac-accent); font-weight: 700; }
+.keyterrain-candidate-summary { font-size: 0.82em; color: var(--tac-text-dim); }
+/* Decisive-candidate callout — deliberately the same visual weight as
+ * `.corridor-unconstrained` but in the NOGO colour: this is the single
+ * highest-stakes claim this panel can surface. The colour is what earns a
+ * reader's attention; the copy inside is what keeps it a CANDIDATE requiring
+ * a commander's confirmation rather than an assertion — see `keyTerrain.ts`'s
+ * header and `OcokaKeyTerrainFactor`'s doc comment in `oakoc.ts`. Never
+ * change the class without re-checking the text it wraps still reads that way. */
+.keyterrain-decisive {
+  border: 1px solid var(--tac-nogo);
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: rgba(216, 35, 42, 0.08);
+  padding: 8px 10px;
+  font-size: 0.78em;
+  line-height: 1.5;
+  color: var(--tac-text);
+}
+.keyterrain-decisive strong { color: var(--tac-nogo); }
+
 /* ---------- Terrain mode tab switcher (appreciation / counter-mobility) ---------- */
 .mobility-mode-tabs { display: flex; gap: 6px; padding: 8px 8px 0; flex-shrink: 0; }
 .mobility-mode-tabs button {
@@ -501,6 +574,11 @@
   border-color: var(--tac-slowgo, #F6A609);
   color: var(--tac-slowgo, #F6A609);
 }
+.mobility-overlay-btn--observe.active,
+.mobility-overlay-btn--observe:hover {
+  border-color: #EC4899;
+  color: #EC4899;
+}
 .mobility-overlay-btn--run {
   background: var(--tac-accent, #38bdf8);
   color: #04212f;
@@ -701,6 +779,11 @@
   border-color: var(--tac-slowgo, #F6A609);
   background: rgba(246, 166, 9, 0.12);
   box-shadow: 0 0 0 1px rgba(47, 30, 4, 0.7) inset, 0 0 10px rgba(246, 166, 9, 0.35);
+}
+.paint-brush-cursor--observe {
+  border-color: #EC4899;
+  background: rgba(236, 72, 153, 0.12);
+  box-shadow: 0 0 0 1px rgba(47, 4, 27, 0.7) inset, 0 0 10px rgba(236, 72, 153, 0.35);
 }
 /* Erase reads as a hollow, dashed danger ring — it removes area, and must not
  * look like just another colour of paint. */

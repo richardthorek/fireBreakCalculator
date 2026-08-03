@@ -9,15 +9,14 @@
  * without the caller subscribing to the worker itself.
  */
 
-import { AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell } from './accumulatedCost';
-import { LocalProjection } from '../utils/hexGrid';
+import {
+  AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell, LocalProjection, MovementEnsembleResult,
+  RestrictionPlan, RoadSpeedOverrides, RoadGraph, CorridorField, KeyTerrainCandidate, KeyTerrainResult,
+  ObserverViewshed, ViewshedOptions,
+} from '@firebreak/terrain';
 import {
   MobilityWorkerRequest, MobilityWorkerResponse, SimPathNode,
 } from './mobilityWorker';
-import { MovementEnsembleResult } from './movementSimulation';
-import { RestrictionPlan } from './restrictionPlanner';
-import { RoadSpeedOverrides } from './roadSpeedModel';
-import { RoadGraph } from './roadGraph';
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
@@ -153,6 +152,75 @@ export function runMovementEnsembleInWorker(
       roadSpeedOverrides: options.roadSpeedOverrides,
       preferredRouteKeys: options.preferredRouteKeys,
       roadGraph: options.roadGraph,
+    };
+    w.postMessage(request);
+  });
+}
+
+/** Score key terrain candidates (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1,
+ *  keyTerrain.ts) in the worker — `scoreKeyTerrainCandidates` is up to
+ *  `MAX_CANDIDATES_EVALUATED × EVALUATION_ROUTE_COUNT` full route searches,
+ *  the same CPU-bound shape `runMovementEnsembleInWorker` above exists to
+ *  keep off the main thread (see `keyTerrain.ts`'s own header and
+ *  `mobilityWorker.ts`'s 'keyTerrain' branch). Candidate GENERATION
+ *  (`generateKeyTerrainCandidates`) is cheap and stays on the main thread —
+ *  callers pass its already-nominated `candidates` in here unchanged. */
+export function runKeyTerrainScoringInWorker(
+  cells: MobilityGridCell[],
+  hexSize: number,
+  proj: LocalProjection,
+  originKeys: string[],
+  objectiveKeys: string[],
+  profileId: string,
+  nightMode: boolean,
+  baselineField: CorridorField,
+  candidates: KeyTerrainCandidate[],
+  roadSpeedOverrides?: RoadSpeedOverrides
+): Promise<KeyTerrainResult | null> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(response.kind === 'keyTerrain' ? response.result : null),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'keyTerrain', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      baselineField, candidates, roadSpeedOverrides,
+    };
+    w.postMessage(request);
+  });
+}
+
+/** Trace real per-observer line-of-sight (OCOKA 6, docs/ROUTE_INTELLIGENCE.md
+ *  §47/§8, viewshed.ts) in the worker — `computeViewshedForObserver` runs a
+ *  full front-to-back trace to every in-range cell for each painted observer,
+ *  the same CPU-bound, no-network-I/O shape `runMovementEnsembleInWorker` and
+ *  `runKeyTerrainScoringInWorker` above already exist to keep off the main
+ *  thread (see viewshed.ts's own header: running this on the main thread
+ *  reproduces the same step-41 page-hang regression). Unlike key terrain
+ *  there is no separate cheap "candidate generation" step that stays on the
+ *  main thread first — painting an observer is just recording the hex key
+ *  the user clicked, nothing to generate beyond that, so this call IS the
+ *  whole computation; `observerKeys` crosses into the worker as-is. Resolves
+ *  to an empty array (not null) on a kind mismatch — this answer is
+ *  inherently a list, one entry per observer that resolved to a real cell,
+ *  so there is no singular "whole request failed" null the way
+ *  `runKeyTerrainScoringInWorker`'s one-result call has; an empty list is
+ *  the correct, only sensible empty case. */
+export function runViewshedInWorker(
+  cells: MobilityGridCell[],
+  hexSize: number,
+  observerKeys: string[],
+  options?: ViewshedOptions
+): Promise<ObserverViewshed[]> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(response.kind === 'viewshed' ? response.observers : []),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'viewshed', requestId, cells, hexSize, observerKeys, options,
     };
     w.postMessage(request);
   });

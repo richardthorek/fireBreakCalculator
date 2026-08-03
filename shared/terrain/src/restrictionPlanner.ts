@@ -56,10 +56,10 @@
  * apart.
  */
 
-import { LatLng } from '../utils/chainage';
+import { LatLng } from './chainage';
 import { MobilityGridCell, runCostToGoSearch } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { LocalProjection } from '../utils/hexGrid';
+import { LocalProjection } from './hexGrid';
 import {
   MovementEnsembleResult, createEdgeCostCache, simulateMovementEnsemble, EdgeCostCache,
 } from './movementSimulation';

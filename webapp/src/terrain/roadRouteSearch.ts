@@ -52,16 +52,12 @@
  * log line that reports it; never presented as a door-to-door ETA.
  */
 
-import { PaintedArea, paintedAreaBounds } from './paintedArea';
+import {
+  PaintedArea, paintedAreaBounds, buildRoadGraph, nodesWithin, RoadWay, RoadGraph, WaterBodyPolygon, findRoadRoute,
+  RoadSpeedOverrides, MoverProfile, calculateDistance, MobilityGridCell, DissimilarRoute,
+} from '@firebreak/terrain';
 import { InfrastructureTrail, fetchCorridorMobilityRoads, fetchCorridorWaterways } from '../utils/infrastructureService';
-import { buildRoadGraph, nodesWithin, RoadWay, RoadGraph, WaterBodyPolygon } from './roadGraph';
-import { findRoadRoute } from './roadRouting';
-import { RoadSpeedOverrides } from './roadSpeedModel';
-import { MoverProfile } from './moverProfiles';
-import { calculateDistance } from '../utils/slopeCalculation';
 import { nearestCellKey, computePaddedBounds } from './mobilityGrid';
-import { MobilityGridCell } from './accumulatedCost';
-import { DissimilarRoute } from './corridorAnalysis';
 
 export interface RoadRouteWaypoint {
   lat: number;

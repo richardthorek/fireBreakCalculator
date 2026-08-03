@@ -10,11 +10,11 @@
  * hits — the box genuinely pre-warms the corridor it covers.
  */
 
-import { LatLng } from './chainage';
+import { LatLng } from '@firebreak/terrain';
 import {
   makeProjection, toLocal, toLatLng, hexKey, hexNeighbors, hexCorners,
   chooseHexSize, generateBoxHexes, LocalProjection, LocalPoint, AxialCoord,
-} from './hexGrid';
+} from '@firebreak/terrain';
 import {
   sampleElevationsCached, sampleVegetation, edgeCost, normalizeHeatmap,
   HexHeatmapCell, SampledNode, RawHeatmapCell,

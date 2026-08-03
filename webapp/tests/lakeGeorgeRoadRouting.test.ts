@@ -25,9 +25,9 @@
  * Plain node:assert. Run: npx tsx webapp/tests/lakeGeorgeRoadRouting.test.ts
  */
 import * as assert from 'node:assert';
-import { buildRoadGraph, nearestNode, RoadWay } from '../src/terrain/roadGraph';
-import { findRoadRoute } from '../src/terrain/roadRouting';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
+import { buildRoadGraph, nearestNode, RoadWay } from '@firebreak/terrain';
+import { findRoadRoute } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

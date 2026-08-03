@@ -7,8 +7,8 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadClassOnTrailSpeed.test.ts
  */
 import * as assert from 'node:assert';
-import { edgeMobilityCost, MobilitySample } from '../src/terrain/mobilityCost';
-import { MOVER_PROFILES } from '../src/terrain/moverProfiles';
+import { edgeMobilityCost, MobilitySample } from '@firebreak/terrain';
+import { MOVER_PROFILES } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

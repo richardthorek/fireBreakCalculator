@@ -21,13 +21,14 @@
  */
 
 import React, { useState } from 'react';
-import { SEVERELY_RESTRICTED_MEANING } from '../terrain/mobilityClass';
+import { SEVERELY_RESTRICTED_MEANING } from '@firebreak/terrain';
 
 export interface MobilityLegendProps {
   /** Which layers are currently drawn — the key shows only these. */
   present: {
     originPaint: boolean;
     objectivePaint: boolean;
+    observePaint: boolean;
     cells: boolean;
     displayMode: 'trafficability' | 'isochrone';
     corridors: boolean;
@@ -36,6 +37,7 @@ export interface MobilityLegendProps {
     transitField: boolean;
     chokepoints: boolean;
     barrier: boolean;
+    roadBarrier: boolean;
     restrictions: boolean;
     water: boolean;
     unitPath: boolean;
@@ -94,12 +96,13 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             </span>
           </div>
 
-          {(present.originPaint || present.objectivePaint) && (
+          {(present.originPaint || present.objectivePaint || present.observePaint) && (
             <section>
               <h4>Your areas</h4>
               <ul>
                 {present.originPaint && <Swatch color="#38bdf8">Origin — where movement starts from</Swatch>}
                 {present.objectivePaint && <Swatch color="#F6A609">Objective — where it is heading</Swatch>}
+                {present.observePaint && <Swatch color="#EC4899">Observer — line-of-sight traced from here (OCOKA 6)</Swatch>}
               </ul>
             </section>
           )}
@@ -186,7 +189,7 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
             </section>
           )}
 
-          {(present.chokepoints || present.barrier || present.restrictions) && (
+          {(present.chokepoints || present.barrier || present.roadBarrier || present.restrictions) && (
             <section>
               <h4>Denial</h4>
               <ul>
@@ -198,6 +201,13 @@ export const MobilityLegend: React.FC<MobilityLegendProps> = ({ present, overlay
                 {present.barrier && (
                   <Swatch color="#D8232A" kind="line">
                     Solid red line — the cheapest continuous cut that severs origin from objective.
+                  </Swatch>
+                )}
+                {present.roadBarrier && (
+                  <Swatch color="#7C3AED" kind="dash">
+                    Dashed purple line — road-network-exact min-cut: the cheapest set of real road
+                    segments that severs the route (a more precise vehicle-specific answer alongside
+                    the solid-red hex cut above).
                   </Swatch>
                 )}
                 {present.restrictions && (

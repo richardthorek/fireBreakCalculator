@@ -143,6 +143,41 @@ export function hexSpiral(center: AxialCoord, count: number): AxialCoord[] {
   return out;
 }
 
+/** Hex-step distance between two axial coords (cube-coordinate formula) —
+ *  `hexLine`'s own step count, and a small general utility in its own right. */
+export function hexDistance(a: AxialCoord, b: AxialCoord): number {
+  const aq = a.q, ar = a.r, as = -a.q - a.r;
+  const bq = b.q, br = b.r, bs = -b.q - b.r;
+  return Math.max(Math.abs(aq - bq), Math.abs(ar - br), Math.abs(as - bs));
+}
+
+/** The straight line of hexes from `a` to `b`, inclusive of both ends, in
+ *  order — OCOKA 6 (docs/ROUTE_INTELLIGENCE.md §47, master_plan.md
+ *  "Next up"), `terrain/viewshed.ts`'s line-of-sight trace: the ordered
+ *  sequence of intermediate cells a sightline from an observer to a target
+ *  passes through. Standard cube-coordinate line draw (Red Blob Games hex
+ *  grid reference, same source this file's own header credits for the rest
+ *  of its hex math): lerp the cube coordinates of `a` and `b` at
+ *  `hexDistance(a, b) + 1` evenly-spaced steps, cube-rounding each back to
+ *  the nearest hex. A tiny epsilon nudge on one endpoint (the reference
+ *  implementation's own fix) breaks exact ties when the line runs straight
+ *  along a hex edge, so it doesn't ambiguously alias between two adjacent
+ *  hexes at that step. */
+export function hexLine(a: AxialCoord, b: AxialCoord): AxialCoord[] {
+  const n = hexDistance(a, b);
+  if (n === 0) return [a];
+  const aq = a.q + 1e-6, ar = a.r + 2e-6;
+  const bq = b.q + 1e-6, br = b.r + 2e-6;
+  const out: AxialCoord[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    out.push(cubeRoundToAxial(aq + (bq - aq) * t, ar + (br - ar) * t));
+  }
+  out[0] = a;
+  out[n] = b;
+  return out;
+}
+
 /** Regular-hexagon area factor: area = factor × circumradius². Exported so
  *  callers outside this module (e.g. paintedArea.ts's brush sizing) derive
  *  hex area from the SAME formula `chooseHexSize` uses, rather than a second,

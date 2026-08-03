@@ -16,11 +16,11 @@ import type { ViewBounds } from '../utils/liveFeedsService';
 import { ensureStreetsSource, extractCorridorTrails } from '../utils/mapboxTrails';
 import { setLocalTrailProvider } from '../utils/infrastructureService';
 import { smoothPolygonGeometry } from '../utils/polygonSmoothing';
-import { MobilityClass } from '../terrain/mobilityClass';
+import { MobilityClass } from '@firebreak/terrain';
 import {
   metersPerPixel, brushApproxRadiusM, applyStrokes, BrushSize, PaintStrokeMode, PaintedArea,
   BRUSH_HEX_COUNT, PAINT_HEX_SIZE_M,
-} from '../terrain/paintedArea';
+} from '@firebreak/terrain';
 import { union } from '@turf/union';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
@@ -167,19 +167,22 @@ interface MapboxMapViewProps {
   tacticalMode?: boolean;
   /** Which area is currently armed for painting (press-drag over the map
    *  lays down dabs while armed — see terrain/paintedArea.ts). */
-  mobilityBoxRole?: 'origin' | 'objective' | null;
-  onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | null) => void;
+  mobilityBoxRole?: 'origin' | 'objective' | 'observe' | null;
+  onMobilityBoxRoleChange?: (role: 'origin' | 'objective' | 'observe' | null) => void;
   /** Fired for every dab painted (or erased — see mobilityPaintMode) while a
    *  role is armed. This component reports only the raw click/drag POINT —
    *  the caller (App.tsx) builds the actual hex dab via `createHexDab`,
    *  since it holds the painted area's existing strokes (needed for the
    *  area's anchor — see paintedArea.ts's module header) and the current
    *  brush size. */
-  onMobilityPaintDab?: (role: 'origin' | 'objective', point: { lat: number; lng: number }) => void;
+  onMobilityPaintDab?: (role: 'origin' | 'objective' | 'observe', point: { lat: number; lng: number }) => void;
   /** Persistent painted areas — ordered paint/erase stroke sequences,
    *  resolved to one shape and rendered until cleared. */
   mobilityOriginPaint?: PaintedArea;
   mobilityObjectivePaint?: PaintedArea;
+  /** OCOKA 6 (docs/ROUTE_INTELLIGENCE.md §47/§8) — optional; each painted hex
+   *  becomes its own candidate observation post for `viewshed.ts`. */
+  mobilityObservePaint?: PaintedArea;
   /** Brush size — a FIXED ground hex count (`BRUSH_HEX_COUNT`), not a
    *  screen-relative pixel radius (docs §35). */
   mobilityBrushSize?: BrushSize;
@@ -235,6 +238,12 @@ interface MapboxMapViewProps {
   chokepoints?: { center: { lat: number; lng: number }; passCount: number }[] | null;
   /** Pass 2 — cheapest severing cut segments (the barrier plan line). */
   barrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
+  /** OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — the road-network-EXACT min-cut:
+   *  the cheapest set of REAL road segments (not hex-cell edges) that severs
+   *  the road network between the painted areas, for vehicle profiles. A
+   *  separate, more precise sibling to `barrierSegments` above, not a
+   *  replacement — see `computeRoadNetworkMinCut` in terrain/minCutBarrier.ts. */
+  roadBarrierSegments?: { from: { lat: number; lng: number }; to: { lat: number; lng: number } }[] | null;
   /** Owner feedback (2026-07-26): primary Terrain-mode actions must be
    *  reachable as floating map buttons, not buried in a side panel the user
    *  has to scroll/expand to reach on mobile. */
@@ -320,6 +329,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   onMobilityPaintDab,
   mobilityOriginPaint = [],
   mobilityObjectivePaint = [],
+  mobilityObservePaint = [],
   mobilityBrushSize = 'medium',
   onMobilityBrushSizeChange,
   mobilityPaintMode = 'paint',
@@ -336,6 +346,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   roadRoute = null,
   chokepoints = null,
   barrierSegments = null,
+  roadBarrierSegments = null,
   onRunAppreciation,
   onCancelAppreciation,
   mobilityRunning = false,
@@ -1662,6 +1673,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   // full replay, which is still correct.
   const originPaintGeomRef = useRef<{ count: number; feature: PaintedFeature }>({ count: 0, feature: null });
   const objectivePaintGeomRef = useRef<{ count: number; feature: PaintedFeature }>({ count: 0, feature: null });
+  const observePaintGeomRef = useRef<{ count: number; feature: PaintedFeature }>({ count: 0, feature: null });
 
   // Terrain Mobility mode — persistent painted origin (cyan) / objective
   // (amber) areas, rendered until cleared from App.tsx. Real ground size
@@ -1722,6 +1734,40 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
     return () => remove();
   }, [mobilityObjectivePaint]);
+
+  // Terrain Mobility mode — persistent painted OBSERVER area (pink, OCOKA 6,
+  // docs/ROUTE_INTELLIGENCE.md §47/§8) — same union/render mechanism as
+  // origin/objective above, a third and genuinely distinct colour (not used
+  // by origin/objective, roadNetworkBarrier's dashed purple, or the
+  // corridor blue/violet family — see MobilityLegend.tsx). Optional,
+  // additional analysis: rendering is skipped entirely when nothing is
+  // painted, same as the other two.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-observe-paint-outline')) map.removeLayer('mobility-observe-paint-outline');
+        if (map.getLayer('mobility-observe-paint')) map.removeLayer('mobility-observe-paint');
+        if (map.getSource('mobility-observe-paint')) map.removeSource('mobility-observe-paint');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (mobilityObservePaint.length === 0) { observePaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    const geometry = resolvePaintedAreaIncrementally(observePaintGeomRef, mobilityObservePaint);
+    if (!geometry) { remove(); return; }
+    const data = { type: 'Feature' as const, properties: {}, geometry };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-observe-paint');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-observe-paint', { type: 'geojson', data } as any);
+        map.addLayer({ id: 'mobility-observe-paint', type: 'fill', source: 'mobility-observe-paint', paint: { 'fill-color': '#EC4899', 'fill-opacity': 0.22 } });
+        map.addLayer({ id: 'mobility-observe-paint-outline', type: 'line', source: 'mobility-observe-paint', paint: { 'line-color': '#EC4899', 'line-width': 1.5 } });
+      } catch (e) { logger.warn('Failed to render painted observer area', e); }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => remove();
+  }, [mobilityObservePaint]);
 
   // Terrain Mobility mode — result heatmap. Two independently switchable
   // colourings over the SAME cells (docs "Terrain Mobility & Counter-
@@ -2514,6 +2560,50 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     return () => { unregisterOverlayOpacity('mobility-barrier'); remove(); };
   }, [barrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
 
+  // OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — road-network-exact min-cut: the
+  // cheapest set of REAL road segments (not hex-cell edges) severing the road
+  // network between the painted areas. A separate layer from `mobility-barrier`
+  // above, not a restyle of it — dashed purple so it reads as the more precise,
+  // road-geometry-exact sibling rather than a duplicate of the hex cut.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        if (map.getLayer('mobility-road-barrier')) map.removeLayer('mobility-road-barrier');
+        if (map.getSource('mobility-road-barrier')) map.removeSource('mobility-road-barrier');
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!roadBarrierSegments || roadBarrierSegments.length === 0) { remove(); return; }
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: roadBarrierSegments.map(s => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates: [[s.from.lng, s.from.lat], [s.to.lng, s.to.lat]] },
+      })),
+    };
+    const apply = () => {
+      try {
+        const existing = map.getSource('mobility-road-barrier');
+        if (existing) { existing.setData(data); return; }
+        map.addSource('mobility-road-barrier', { type: 'geojson', data } as any);
+        map.addLayer({
+          id: 'mobility-road-barrier',
+          type: 'line',
+          source: 'mobility-road-barrier',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#7C3AED', 'line-width': 5, 'line-opacity': 0.85, 'line-dasharray': [2, 1.5] },
+        });
+        registerOverlayOpacity('mobility-road-barrier', 'line-opacity', 0.85);
+      } catch (e) {
+        logger.warn('Failed to render road-network barrier plan', e);
+      }
+    };
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+    return () => { unregisterOverlayOpacity('mobility-road-barrier'); remove(); };
+  }, [roadBarrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
+
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
   // incidents. Data is fetched by LiveFeedsControl (now in AnalysisPanel);
   // this just syncs it onto the map whenever it changes.
@@ -2907,6 +2997,17 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'objective' ? null : 'objective')}
           >
             {mobilityBoxRole === 'objective' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityObjectivePaint.length > 0 ? `Objective (${mobilityObjectivePaint.length})` : 'Paint objective')}
+          </button>
+          {/* Observer (OCOKA 6, docs/ROUTE_INTELLIGENCE.md §47/§8) — optional,
+           *  additional analysis, not required to run an appreciation (unlike
+           *  origin/objective above), so it sits alongside them rather than
+           *  gating the run button below on it. */}
+          <button
+            type="button"
+            className={`mobility-overlay-btn mobility-overlay-btn--observe${mobilityBoxRole === 'observe' ? ' active' : ''}`}
+            onClick={() => onMobilityBoxRoleChange?.(mobilityBoxRole === 'observe' ? null : 'observe')}
+          >
+            {mobilityBoxRole === 'observe' ? (mobilityPaintMode === 'erase' ? 'Drag to erase…' : 'Drag to paint…') : (mobilityObservePaint.length > 0 ? `Observer (${mobilityObservePaint.length})` : 'Paint observer')}
           </button>
           {mobilityBoxRole && (
             <div className="mobility-brush-row">

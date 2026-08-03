@@ -15,13 +15,12 @@
  *    minCutBarrier.ts.
  */
 
-import { LatLng } from '../utils/chainage';
+import { LatLng } from './chainage';
 import {
-  MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions,
+  MobilityGridCell, runAccumulatedCostSearch, extractPath, AccumulatedCostSearchOptions, SimPathNode,
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
-import { SimPathNode } from './mobilityWorker';
-import { LocalProjection, axialToLocal, hexCorners, toLatLng } from '../utils/hexGrid';
+import { LocalProjection, axialToLocal, hexCorners, toLatLng } from './hexGrid';
 
 export interface DissimilarRoute {
   keys: string[];

@@ -1,7 +1,7 @@
 /**
  * API equipment types mirroring the Azure Functions backend.
  */
-import { TerrainLevel, VegetationType } from '../config/classification';
+import { TerrainLevel, VegetationType } from '@firebreak/terrain';
 
 export type EquipmentCoreType = 'Machinery' | 'Aircraft' | 'HandCrew';
 

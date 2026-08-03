@@ -4746,6 +4746,105 @@ at — premature before that data exists.
 | T2 | Same-algorithm Function-hosted tier for oversized-for-client, under-Function-timeout runs | Enough telemetry rows to confirm which phase actually dominates on slow devices, so T2 targets the right phase rather than moving the whole pipeline speculatively |
 | T3 | On-demand Container Apps Job tier + resumable chunked delivery | Evidence from T2 that a real (not hypothetical) tail of runs exceeds a Function's timeout/memory ceiling |
 
+### 38.1 OCOKA 2 shipped (2026-08-03): `shared/@firebreak/terrain` extracted
+
+Prerequisite for OCOKA 5's server-side execution. This section's own §38 design
+above assumed "the API can just call the existing modules" — optimistic: they
+lived in `webapp/src/terrain`, a different package with a different
+`tsconfig.json`, so a shared package had to be extracted first, or the
+algorithm itself becomes a fourth must-match drift surface alongside the
+GIS-export/AI-briefing/`MobilityJobRequest` pairs this doc already tracks.
+
+**What moved (extracted, not copied) into `shared/terrain/src/`:** every
+module that is a pure function over already-sampled data, no network I/O, no
+browser API — `accumulatedCost.ts`, `concealment.ts`, `corridorAnalysis.ts`,
+`corridorField.ts`, `counterMeasures.ts`, `delayLedger.ts`, `keyTerrain.ts`,
+`minCutBarrier.ts`, `mobilityClass.ts`, `mobilityCost.ts`,
+`movementSimulation.ts`, `moverProfiles.ts`, `paintedArea.ts`,
+`restrictionPlanner.ts`, `roadGraph.ts`, `roadRouting.ts`,
+`roadSpeedModel.ts`, `viewshed.ts`, `dataLayers/demDerivatives.ts`,
+`dataLayers/structureTable.ts` — plus the "sampling utils" and shared
+vocabulary both modes touch: `utils/chainage.ts`, `utils/hexGrid.ts`,
+`config/classification.ts`, and a new `geo.ts` holding just the pure
+`calculateDistance`/`calculateSlope` extracted out of
+`utils/slopeCalculation.ts` (which keeps its own network/Mapbox-token-coupled
+code and now imports the pure pair back).
+
+**What stayed in `webapp/src/terrain`, and why — every one a real capability
+difference to record, not hide, same principle as `mapboxTrails.ts` staying
+client-only for reading a live GL map:**
+- `mobilityGrid.ts`, `mobilityLazyGrid.ts` — orchestrate live network
+  sampling (elevation, vegetation, trails, water).
+- `mobilityAppreciation.ts` — the top-level orchestrator; calls the above
+  plus the Worker client.
+- `mobilityWorker.ts` / `mobilityWorkerClient.ts` — Web Worker `self` API /
+  Vite's `new Worker(new URL(...), {type:'module'})` asset-URL syntax.
+- `mobilityTelemetry.ts` — fire-and-forget network telemetry (§38 above).
+- `roadRouteSearch.ts` — fetches live road/waterway data.
+- `unitSimulation.ts` — depends on two of the above.
+- `oakoc.ts` — a deliberate exception in the OTHER direction: it only
+  assembles the OCOKA five-factor view model for `OakocPanel.tsx` from an
+  already-computed `MobilityAppreciationResult`. It never computes anything a
+  server would independently need to compute, so forcing that large
+  orchestrator type to move too would have bought nothing.
+
+**How webapp consumes it — deliberately not an npm workspace.** The original
+plan called for a root `package.json` with npm workspaces. Investigating the
+actual deploy path changed that: Azure Static Web Apps deploys via
+`Azure/static-web-apps-deploy@v1`, which runs an independent Oryx remote
+build scoped to `app_location: 'webapp'` / `api_location: 'api'` — it has no
+notion of a workspace root and would not know to install or build a sibling
+`shared/` package first. A workspace-hoisted `node_modules` risked silently
+breaking that live production deploy with no local repro. Instead,
+`@firebreak/terrain` is a TypeScript path alias: `webapp/tsconfig.json`'s
+`compilerOptions.paths` and `webapp/vite.config.ts`'s `resolve.alias` both
+point the specifier straight at `shared/terrain/src/index.ts`. Vite bundles
+it like any other local module; there is nothing to install, so there is
+nothing for the remote build to miss. `shared/terrain/package.json` still
+exists (name, its own `tsconfig.json`, a `build` script) so CI can
+type-check the package standalone — catching an accidental
+network/browser-coupled import before it reaches webapp's own build — but
+nothing consumes that build's output. See `shared/terrain/README.md` for the
+full rationale; when OCOKA 5 wires the API to this package, prefer the same
+path-alias (or a TS project reference) pattern unless Azure Functions
+deployment is separately re-verified to tolerate a workspace install.
+
+**Two small pre-existing snags, found and fixed in the move (not introduced
+by it):**
+- `SimPathNode` lived in `mobilityWorker.ts` (stays client-side), but
+  `corridorAnalysis.ts` and `mobilityAppreciation.ts` (one moving, one
+  staying) both needed it purely as a data shape with no Worker dependency.
+  Relocated to `accumulatedCost.ts`; `mobilityWorker.ts` re-exports it for
+  its own webapp callers.
+- `nearestCellKey` lived in `mobilityGrid.ts` (stays client-side, since it
+  orchestrates live sampling), but `keyTerrain.ts` (moving) needed it as pure
+  geometry over an already-built cell array. Same fix: relocated to
+  `accumulatedCost.ts`, re-exported from `mobilityGrid.ts`.
+- `ConfidenceTier` was declared in `components/DataConfidenceBadge.tsx` — a
+  React component file — and imported as a type-only dependency by
+  `counterMeasures.ts` and `dataLayers/structureTable.ts`, both now moving.
+  Relocated the type alone to `shared/terrain/src/confidenceTier.ts`;
+  `DataConfidenceBadge.tsx` re-exports it for its own webapp callers.
+
+**Ensemble seeding made chunk-invariant.** The OCOKA 2 spec's other
+requirement: `movementSimulation.ts`'s mover ensemble used ONE
+`mulberry32(seed)` PRNG instance shared across every mover in the loop, so
+mover N's random draws depended on exactly how many draws movers 0..N-1 had
+already consumed — correct, but inherently un-chunkable (OCOKA 8's fan-out
+needs to run mover batches independently, in any order, on any worker). Each
+mover now gets its own stream from `hashSeedForMover(seed, moverIndex)` (a
+small splitmix32-style avalanche), instantiated inside the mover loop instead
+of once outside it. **This changes today's ensemble numbers once** — same
+seed, same AOI, a different draw sequence per mover — a flagged, deliberate
+one-time change, never silent drift; no test in the suite asserted an exact
+draw sequence, so nothing needed updating to match.
+
+**Verification:** `shared/terrain`'s own standalone `tsc --noEmit` is clean
+(new CI step, `.github/workflows/deploy.yml`); webapp `npm test` (38/38
+files) and `npm run build` both green against the alias; api
+`npm run test:unit` green and unaffected (api does not consume this package
+yet — that begins at OCOKA 5).
+
 ---
 
 ## 39. Small-AOI detour padding — profile-scaled, not just proportional (2026-07-28)
@@ -5584,6 +5683,397 @@ run completes *and* every expected artefact kind is present.
   (`setMobilityResult(null)` on any AOI change).
 - **Dated as-built sections §§16–46 keep their original wording** as historical record;
   correcting them would falsify history. Only forward-looking sections are migrated.
+
+### 47.7 OCOKA 3 shipped (2026-08-03) — five-factor framing
+
+`terrain/oakoc.ts` + `OakocPanel.tsx`, per the §47.1 audit: assembly only, no new
+computation.
+
+- **Obstacles** — `buildOcokaAppreciation` names the existing-vs-reinforcing split the
+  code already computed. EXISTING (natural + cultural, i.e. derived from the terrain
+  itself) is `barrier` (hex min-cut) and `roadNetworkBarrier` (road-network-exact
+  min-cut), plus the chokepoint cells both are sited against. REINFORCING (deliberately
+  emplaced) is `restrictionPlan` — the already-computed recommended-measure set.
+  User-*placed* measures stay `CounterMobilityPanel.tsx`'s job; duplicating them here
+  would be a second, divergent obstacle list.
+- **Avenues of approach** — presented directly from `corridorField`/
+  `restrictedCorridorField`. The `AvenueOfApproach` grouping layer described in §47.0
+  (an avenue groups mutually supporting corridors) is **deliberately not built** —
+  grouping honestly needs a real adjacency/support test, which is new computation this
+  stage doesn't do. Each corridor is shown as its own avenue-equivalent band in the
+  meantime; `OakocPanel.tsx` states this scope boundary in the UI, not just here.
+- **`'not-assessed'` gate** — Obstacles/Avenues read `result.path` (null = the objective
+  was unreachable, so `mobilityAppreciation.ts` never ran the corridor/chokepoint/
+  min-cut block at all) as the assessed/not-assessed test. This is a different claim
+  from "ran, found nothing" (e.g. `barrier: null` with a real path — a genuine "no
+  separating cut needed" finding), and the two are rendered with deliberately different
+  UI treatment (`OakocPanel.tsx`'s own header comment) so a reader can never conflate
+  them.
+- **Key terrain / Observation & fields of fire / Cover & concealment** ship now as
+  explicit `'not-assessed'` placeholders (OCOKA 4/6/7 respectively) rather than being
+  omitted — `fieldsOfFireAssessed: false` and `coverAssessed: false` are the exact
+  machine-readable flags §47.2 requires once those factors exist, shipped early at zero
+  cost so OCOKA 6/7 have nothing left to retrofit into export/briefing payloads.
+- **`roadNetworkBarrier`'s first map layer + export feature** — was computed on every
+  vehicle run and discarded until now. `MapboxMapView.tsx` renders it as its own layer
+  (`mobility-road-barrier`, dashed purple `#7C3AED`, distinct from the hex cut's solid
+  red) with a `MobilityLegend.tsx` entry; `mobilityGisExport.ts` exports it to both
+  GeoJSON and KML (carrying the real OSM way name per segment where known — the hex
+  barrier has no equivalent since it cuts hex-cell edges, not named road geometry).
+- **`Corridor.bottleneckCellKeys` added** — names the exact cells in a corridor's own
+  narrowest iso-arrival-time slice (previously only counted), for OCOKA 4's future
+  key-terrain candidate scoring.
+- Not touched: `MobilityAssistantPayload`/GIS export attribute names for the AI
+  briefing — `roadNetworkBarrier` reaching the assistant payload is left for whichever
+  future stage actually narrates Obstacles, to avoid adding fields the briefing
+  template doesn't yet read.
+
+### 47.8 OCOKA 4 shipped (2026-08-03) — key terrain
+
+`terrain/keyTerrain.ts`, per the §47.1 audit's "~90% computable from existing
+chokepoint/min-cut machinery" claim — now real, no invented signal.
+
+- **Candidate nomination (`generateKeyTerrainCandidates`)** — cheap, main-thread, no
+  search runs. Pulls from four already-computed products: the top-6 chokepoints by pass
+  count, every hex min-cut segment, every road-network min-cut segment, and the
+  narrowest-slice `bottleneckCellKeys` of the top-3 ranked corridors (§47.7's
+  `Corridor.bottleneckCellKeys` addition, put to its intended use). Identical-ground
+  candidates are deduplicated, chokepoint provenance winning the tie since it carries
+  the richest real figure (an actual route-pass count).
+- **Scoring (`scoreKeyTerrainCandidates`) — MUST run in the worker.** Up to 10
+  candidates, each re-scored by a real re-run of `buildCorridorField` with that ground
+  denied (reduced to 6 routes per re-run, `restrictionPlanner.ts`'s identical
+  evaluation-vs-headline reduction), diffed against the baseline via the existing
+  `compareCorridorFields`. This is the same CPU-bound, no-network-I/O shape the
+  'movement' worker request already exists for; running it on the main thread
+  reproduces step 41's page-hang regression exactly. New `mobilityWorker.ts` /
+  `mobilityWorkerClient.ts` `'keyTerrain'` request/response kind, same
+  `requestId`-correlated promise pattern as 'search'/'movement'.
+- **Scored against the optimiser field, deliberately.** `optimiserCorridorField` (the
+  k-cheapest-routes field, always computed regardless of which one heads the UI) is the
+  baseline every candidate is diffed against — never the possibly-absent,
+  possibly-expensive-to-reproduce simulated-mover `corridorField`. A stated methodology
+  choice: "how much would denying this change the cheapest-route picture", not "...the
+  modelled-behaviour picture."
+- **`Infinity`, not a finite multiplier, for denial.** Every other `edgePenalties` user
+  in this mode (`counterMeasures.ts`) stays deliberately finite — "no entry here is
+  rated `block`", because a real physical obstacle in that catalogue is always
+  breachable given time. Key terrain asks a genuinely different, more absolute
+  question: "if this ground were fully controlled, what happens". A finite multiplier
+  can never make `decisiveCandidate` mean anything — Dijkstra with any finite edge cost
+  will always still find a route if one is topologically possible, however costly
+  (proven while writing `keyTerrain.test.ts`: even a 1e6 multiplier over the sole gap
+  in a hard-blocked water barrier still returned a route). `DENIAL_PENALTY_MULTIPLIER =
+  Infinity` is the same "excluded from the graph" treatment `travel.blocked` already
+  gets elsewhere (`minCutBarrier.ts`, `roadRouting.ts`), expressed through the penalty
+  map instead of a second mechanism.
+- **Decisive terrain stays a candidate, never an assertion.** Doctrine (ATP 2-01.3)
+  reserves decisive terrain for ground a commander *designates*, never derives from a
+  map. `decisiveCandidate: boolean` is a real computed predicate (`afterField === null`
+  — denying this candidate made the objective fully unreachable by every analysed
+  route) but is exposed, scored, and rendered (`OakocPanel.tsx`) only as a flag
+  requiring confirmation. `KEY_TERRAIN_MISSION_CAVEAT` — key terrain is doctrinally
+  relative to a mission this tool is not given, so it can only measure "how much does
+  denying this ground change the movement picture," a real but strictly narrower
+  question than "confers advantage" — is carried verbatim on every `KeyTerrainResult`
+  and always rendered, not summarised or dropped, whenever a real result is on screen.
+- **`mobilityAppreciation.ts` orchestration** — runs after chokepoints/barrier/
+  roadNetworkBarrier compute (same `if (path)` block), skips the worker call entirely
+  when candidate generation nominates zero candidates rather than round-tripping an
+  empty request. New `MobilityStage` key `'keyTerrain'` for progress UI.
+- **The two-reason-for-null distinction (`OcokaKeyTerrainFactor`, `oakoc.ts`)** — unique
+  among the five factors, `result` can be `null` for two different honest reasons:
+  `state === 'not-assessed'` (objective unreachable, same as Obstacles/Avenues) vs.
+  `state === 'assessed'` with `result === null` (a real, reachable run that genuinely
+  nominated zero candidates — open terrain with no chokepoint, min-cut or corridor
+  bottleneck worth naming). `OakocPanel.tsx` disambiguates explicitly rather than
+  assuming one implies the other; distinct wording for each ("OBJECTIVE UNREACHABLE" vs
+  "KEY TERRAIN SCORING NOT AVAILABLE FOR THIS RUN" — the latter now genuinely rare
+  rather than the OCOKA 3-era permanent placeholder it replaced).
+- Not touched: `MobilityAssistantPayload`/GIS export — key terrain candidates reaching
+  the AI briefing or GIS attributes is left for a future stage, same boundary OCOKA 3
+  drew around `roadNetworkBarrier`.
+
+### 47.9 OCOKA 6 shipped (2026-08-03) — real observation, third paint role
+
+`terrain/viewshed.ts`, per the §47.1 audit's own naming of Observation as one of the
+two genuine gaps — now real, not a permanent placeholder.
+
+- **Algorithm — a real per-target front-to-back trace, not a shared-horizon sweep.**
+  `computeViewshedForObserver` walks a new `hexLine()` (`hexGrid.ts`, standard
+  cube-coordinate line draw) from observer to every in-range target, tracking the
+  running max obstruction angle and comparing the target's own angle against it. This
+  is simpler and cheaper-to-verify than the amortised "R3"-family sweep some viewshed
+  literature uses — stated honestly rather than borrowed as a label for a variant that
+  isn't the literature's actual optimisation. Earth curvature + atmospheric refraction
+  (`k = 0.13`, the standard surveying combined coefficient) are applied to every
+  distant point, on top of the already-known bare-earth-DEM optimism — proven by
+  `viewshed.test.ts` to genuinely limit range over flat, open ground (not a no-op).
+- **Screened vs bare-earth, both always computed.** A new `SCREENING_HEIGHT_M` table
+  (`dataLayers/structureTable.ts`) gives each `VegetationType` a representative
+  canopy-screening height, derived from Specht (1970)/Muir (1977) NVIS structural
+  height-class bands (the primary DCCEEW PDF returned HTTP 503 from this sandbox, same
+  limitation already recorded against that host in this file's LIGHTSHRUB row — cited
+  via secondary confirmation instead). The screened (pessimistic) surface is the
+  headline; bare-earth (optimistic) is always computed alongside it, never the
+  default — §47.2's rule 1, restated in code.
+- **Third paint role, not a MapboxDraw role** — exactly the correction §8 already made
+  for this table: `mobilityBoxRole` gains `'observe'` alongside `'origin'`/
+  `'objective'`, a pink (`#EC4899`) fill/outline/brush-cursor distinct from every
+  existing swatch. Each painted hex becomes its own candidate observation post —
+  `MobilityGridResult.observerKeys`, resolved the SAME real area-overlap way
+  origin/objective already are (not a coarser point-snap). No nearest-cell fallback:
+  empty is the ordinary "no observers this run" state, not an error.
+- **Accuracy fix caught before shipping:** `mobilityLazyGrid.ts`'s observer resolution
+  only ever runs once, at round 1, and later rounds grow toward the search's own
+  reachable frontier — never toward a painted observer. An observer sited off to one
+  side of the direct route could silently never be materialised. Fixed by unioning the
+  observer paint's own bounds into the round-1 footprint unconditionally.
+- **`state` gate is its OWN, deliberately different from every other factor.**
+  `OcokaObservationFactor.state` is keyed on whether an observer was painted at all,
+  not `result.path` — a viewshed never depended on origin reaching objective, so it
+  runs (or doesn't) independent of whether the search found a route.
+  `fieldsOfFireAssessed` stays `false` regardless: fields of fire needs a user-stated
+  effective range, a real, separate, still-deferred gap (`DEFAULT_MAX_RANGE_M` is a
+  compute-bound cap, never a stated range).
+- Capped at `MAX_OBSERVERS_EVALUATED` (8) — each observer is a full grid-wide trace,
+  same "protect the run from an unbounded input" discipline `keyTerrain.ts`'s own cap
+  uses.
+
+### 47.10 OCOKA 7 shipped (2026-08-03) — concealment from dead ground + vegetation
+
+`terrain/concealment.ts` — the remaining letter, split into a real half and a
+permanent gap, never blended into one score (§47.1's own instruction).
+
+- **Concealment is now real, built almost entirely from OCOKA 6's own output.** Dead
+  ground (defilade) is a set complement over `ObservationResult.screenedUnionKeys` —
+  doctrine is explicit that defilade only means something relative to a specified
+  position, and the painted observers ARE that position, so no second trace is
+  needed. Vegetation-structure concealment reuses the SAME `SCREENING_HEIGHT_M` table
+  at Muir (1977)'s own "tall shrubland" threshold (>2 m) — a stand at or above it
+  reliably breaks a standing person's silhouette, independent of any observer.
+- **Cover stays permanently, honestly not computed.** `coverAssessed: false` is now
+  explicitly independent of concealment's own state (previously the whole factor was
+  one flat `'not-assessed'` placeholder) — neither a bare-earth DEM nor a 4-class
+  vegetation taxonomy can see a rock, bund or building, full stop. This is a build
+  limitation, not a per-run gate, unlike `concealmentState` below.
+- **Same gate as Observation, not `path`.** `concealmentState` is real/not-assessed on
+  the identical condition Observation uses (an observer was painted) — concealment is
+  only ever computed once `observation` already exists.
+- `OakocPanel.tsx`'s Cover and concealment section now shows real dead-ground/
+  vegetation/combined counts alongside the permanent "cover not computed" card, never
+  merged into one number.
+
+---
+
+## 48. Fixed: `onTrail` detection was centre-point-only (2026-08-03, live bug report)
+
+**Reported:** a road painted straight through an analysed area came out NO-GO/
+severely-restricted on both sides of the real, unbroken road, blocking a much more
+direct route the road should have enabled. Screenshot showed a real "Collector Rd"
+threading through a broad, mostly-red (severely-restricted) painted area — the road
+itself never rendered as a distinct override, and the hexes it visibly crossed stayed
+red exactly as if no road were there.
+
+**Root cause.** `mobilityGrid.ts`'s `onTrail` scan (feeding the road-class speed model
+AND every onTrail-exempted hard gate in `mobilityCost.ts` — hard slope, fording,
+vegetation gap-width) tested only a hex's CENTRE point against `TRAIL_SNAP_M` (30 m).
+`waterDistanceM`'s equivalent scan was already upgraded to centre + six hex corners
+(§35 addendum) for exactly this reason; `onTrail` was the one scan left behind. Hex
+size scales with AOI span (`computeCellBudget`) — on a wide-area run it easily exceeds
+30 m, so a road threading diagonally across a hex can pass nowhere near its centroid
+while still visibly crossing a large fraction of its area. A centre-only test read
+that ground as off-trail; `mobilityCost.ts`'s hard gates then applied full vegetation/
+slope severity to ground that a real, mapped road actually crosses.
+
+**Why this wasn't already caught by the existing onTrail-exemption tests.**
+`slopeGateOnTrailExemption.test.ts` and `roadClassOnTrailSpeed.test.ts` both prove the
+EXEMPTION logic in `mobilityCost.ts` is correct once `onTrail` is already `true` — they
+construct fixtures where the road already snaps cleanly to a hex centre. Neither tests
+DETECTION itself under the specific geometry that breaks it (a road that only clips a
+hex's edge/corner). The bug lived one layer upstream of everything those tests cover.
+
+**Fix.** Extracted the scan into a small, pure, newly-exported `sampleOnTrail()`
+(`mobilityGrid.ts`) — same centre + six hex corners, minimum-distance-across-all-points
+pattern the water scan already uses, returning both `onTrail` and the winning feature's
+tags in one pass. `sampleCellsForHexes`'s inline block now just calls it. Both
+`buildMobilityGrid` (whole-AOI runs) and `mobilityLazyGrid.ts` (incremental tile rounds)
+share this one function — `mobilityLazyGrid.ts` never had its own copy of this logic, so
+neither path needed a second fix.
+
+**Tests.** New `onTrailHexCorners.test.ts`, four assertions: centre-only sampling (the
+pre-fix behaviour) misses a road placed exactly at one hex corner and nowhere near the
+centre or other corners; centre+corners (the fix) finds the identical road and reports
+its tags correctly; a genuinely distant road is still correctly off-trail (false-positive
+control); no trails at all resolves cleanly, not a crash. Full suite green: `npm test`
+(37/37 files), `npm run build`.
+
+**Addendum (2026-08-03, same-day live report) — performance regression, fixed.** "Stuck
+at 20% on any reasonable sized run; very small areas still work" — the exact symptom of
+an O(size²)-ish blow-up confined to the sampling phase, where this scan runs. Root cause:
+the fix above called `distanceToNearestTrail` once per **(sample point × trail feature)
+pair** — 7× the original centre-only scan's already-existing per-feature loop, because it
+needed to know WHICH feature matched (for `nearestTrailTags`, which feeds the road-class
+speed model) at every one of the 7 points, not just the minimum distance. A small AOI has
+few enough cells/features that 7× is invisible; a "reasonable sized" one has enough of
+both that it becomes the dominant cost. Fixed without touching the correctness guarantee
+at all: `distanceToNearestTrail` already scans a WHOLE `trails` array internally in one
+call (the same pattern the water scan's own corner-point loop already uses, immediately
+above this function's call site) — `sampleOnTrail` now calls it that way ONCE PER POINT
+(7 cheap calls, whichever point achieves the true minimum wins) and only THEN runs the
+per-feature identification loop once, for that single winning point, to resolve
+`nearestTrailTags`. Same global minimum-distance-wins semantics, same test suite green
+(37/37 unchanged), without the 7× multiplier on the dominant cost.
+
+---
+
+## 49. OCOKA 5 shipped — tier-2 backend job protocol (2026-08-03)
+
+`api-mobility/` (new standalone package) + `webapp/src/terrain/mobilityJobClient.ts` +
+`webapp/src/utils/mobilityJobApi.ts` + `webapp/src/components/MobilityBackendJobPanel.tsx`
++ `infra/main.bicep` additions, all gated behind `deployMobilityBackend bool = false`
+(default, unchanged from §47.3's design). Per the roadmap's own framing — "Ships
+before parallelism deliberately: a wrong partial-result rule is a safety bug, a slow
+correct run is only slow" — this pass is scoped to getting the JOB PROTOCOL right
+(submit → Durable status polling carrying blob pointers → client reads artefacts
+direct from Blob with a per-artefact SAS), sequentially, no fan-out. Fan-out is
+OCOKA 8, built once tier-2 has real usage evidence.
+
+### Why a separate `api-mobility/` package, not `/api` directly
+
+Researched against current Microsoft Learn docs before writing any bicep: Azure
+Static Web Apps allows exactly **one backend type per environment** — managed
+functions (what `/api` is today) OR a linked custom backend, never both. Linking
+a custom Function App as the SWA `/api` backend is therefore an all-or-nothing
+cutover: every existing `/api/*` route has to move onto the SAME custom Function
+App, not just the new mobility routes. That is a real, coordinated migration
+(bicep + the deploy workflow's `api_location`/deployment step + the existing
+managed-functions code all moving together) that cannot be safely scripted or
+verified without a live Azure subscription to deploy against — genuinely
+different from every other gated-flag feature this repo has shipped so far
+(`deployAiAssistant` is purely additive; this is not).
+
+Given that, this pass builds the new protocol as a **standalone, independently
+buildable/testable package** (`api-mobility/`, own `package.json`/`tsconfig.json`/
+`host.json`) rather than inside `/api`:
+- Zero risk to `/api`'s existing, live, SWA-managed deployment — nothing in this
+  package is imported by or affects `/api`'s own build.
+- Real CI coverage from day one (`npm install && npm run test:unit`, wired into
+  `deploy.yml`'s `build_and_test` job) instead of "trust me, it'll work once
+  deployed" — every commit is independently verified in this sandbox: build,
+  full test suite, and the bicep template all pass.
+- At the actual cutover (`deployMobilityBackend: true` + `swaSku: Standard` +
+  the existing `/api` code physically merged onto the new Function App — see
+  runbook below), this package's functions move into `/api`, since post-cutover
+  both sets of endpoints deploy through the same custom Function App anyway and
+  the temporary duplication (`elevationService.ts`, `infrastructureService.ts` —
+  see `api-mobility/README.md`) stops being necessary.
+
+### What's real vs. what's a documented v1 scope cut
+
+**Real, tested, working end to end (verified in this pass — `npm test` green in
+`api-mobility/`, webapp's 38/38 test files still green, both `npm run build`s
+clean, the bicep template compiles with the standalone Bicep CLI and every new
+resource confirmed gated on `deployMobilityBackend` in the emitted ARM JSON):**
+- `MobilityJobRequest`/`MobilityJobStatusResponse` — the **third** webapp/api
+  must-match pair (`api-mobility/src/types/mobilityJob.ts` ↔
+  `webapp/src/utils/mobilityJobApi.ts`), with the same validate-at-the-boundary
+  discipline as `MobilityAssistantPayload`.
+- A real Durable orchestrator (`mobilityJobOrchestrator.ts`) running five
+  sequential activities — sample the grid, cost field + cheapest route,
+  corridor field, chokepoints + hex min-cut, unscored key-terrain candidates —
+  each writing its own client-facing artefact blob and an internal
+  continuation blob for the next stage, `context.df.setCustomStatus` updated
+  after every stage. Heavy data (the sampled grid, the corridor field) is
+  threaded via BLOB POINTERS between activities, never through Durable's own
+  activity input/output serialisation — generalised from §47.4's viewshed row
+  ("pass a blob URI, never the cell array") to every stage boundary.
+- `POST /mobility/jobs` (202, `{jobId, statusUrl}` — deliberately not
+  `client.createCheckStatusResponse`'s own management URLs, which would leak
+  Durable internals to a public caller) and `GET /mobility/jobs/{jobId}`
+  (pointers + a **freshly-minted, read-only, single-blob SAS per artefact, on
+  every poll** — see the refinement below).
+- Table-Storage-backed rate limiting (fixed window + a concurrent-job cap that
+  refuses `429` rather than queueing) — closes §47.3's own named gap in
+  `rateLimit.ts`'s in-memory buckets.
+- `webapp/src/terrain/mobilityJobClient.ts` — its own polling interval (not
+  Durable's 30s default), tracks the highest artefact `seq` delivered so a
+  dropped connection resumes rather than re-fetching or losing progress.
+- `MobilityBackendJobPanel.tsx` — a **manual** trigger in `MobilityPanel.tsx`,
+  gated on `VITE_MOBILITY_API_BASE_URL` being set (unset in every deployment
+  until a real cutover, so there's no dead button). Manual, not automatic
+  threshold routing — §38's own gate ("no automatic tier-2/tier-3 routing
+  should ship" until telemetry justifies a threshold) still applies; a manual
+  button needs no such calibration and is what generates the usage evidence
+  that gate is waiting on.
+
+**Deliberate v1 scope cuts (each flagged in code/docs, not silent):**
+- **Vegetation is an estimated placeholder** (`vegetation: 'grassland'`,
+  `vegEstimated: true` on every cell) — the client's NVIS path needs PNG
+  decoding, the NSW SVTM path needs polygon classification; neither is ported
+  server-side yet. Every tier-2 run therefore reports `usedEstimatedData: true`
+  today, honestly.
+- **DEA surface-water frequency is not sampled** server-side (OSM waterway/
+  water-body geometry still drives the real hydrology gate).
+- **No painted-area membership test.** `MobilityJobRequest` carries
+  already-resolved origin/objective BOUNDING BOXES, not painted dab strokes;
+  origin/objective seed keys are always the nearest-cell-to-bounds-centroid
+  fallback `buildMobilityGrid` itself already falls back to when a painted
+  area resolves to zero member cells.
+- **Algorithmic coverage is a real subset of tier 1's**, not full parity: the
+  optimiser's cheapest route + corridors (`optimiser-routes` evidence, not the
+  simulated-mover ensemble), hex chokepoints/min-cut (not the road-network-
+  exact cut), UNSCORED key-terrain candidates (scoring needs a corridor-
+  comparison re-run per candidate — real work, deferred rather than rushed).
+  Not yet wired into tier 2 at all: the movement ensemble, the restriction
+  planner, observation/viewshed, concealment. The client Worker (tier 1)
+  remains the only path for all of those today.
+- **Export/AI-briefing gating on `provisional` is not wired into the existing
+  export/briefing endpoints** — those currently operate on client-computed
+  (tier-1) payloads; threading tier-2 artefacts into the same pipeline is
+  follow-up work, tracked here rather than silently skipped.
+
+### A real SAS refinement over the design text
+
+§47.3 describes one job-scoped SAS issued at submit time. This storage account
+is not ADLS Gen2 (no hierarchical namespace), so a true prefix-scoped SAS isn't
+available — the only container-level SAS Azure would offer instead also grants
+read access to every OTHER job's artefacts, a real cross-job leak. Shipped
+instead: a fresh, read-only, single-blob SAS minted per artefact on every
+status poll (`mobilityJobStore.ts`). Slightly more server work per poll,
+genuinely job-scoped — tighter than the design text even asked for, not a
+weaker substitute.
+
+### Infra: additive-only until a deliberate cutover
+
+`infra/main.bicep` additions, all `if (deployMobilityBackend)`: the
+`mobilityjobs` blob container (24h-equivalent lifecycle rule — Azure blob
+lifecycle policy only expresses whole days, so `daysAfterModificationGreaterThan: 1`
+is the closest native approximation), a `mobilityjobratelimit` table, a Flex
+Consumption Function App + plan, and a `Microsoft.Web/staticSites/linkedBackends`
+resource linking it as the SWA's `/api` backend. **Unverified by a live
+deployment** — reviewed against current Microsoft Learn documentation and
+compiled cleanly with the standalone Bicep CLI (0 errors; the one new warning
+matches an existing, already-accepted pattern elsewhere in this file), but
+Flex Consumption's exact schema and the linked-backend cutover behaviour
+should be reviewed against Azure once more before the owner's first real use.
+
+**Manual cutover runbook** (not automated by this template or by `deploy.yml`
+— a deliberate one-way infra switch, not a flag flip):
+1. Deploy `api-mobility/` to the new Function App resource once (`az
+   functionapp` deploy or equivalent) with `deployMobilityBackend: false`
+   still set, so the SWA linked-backend resource doesn't exist yet — this
+   step just gets code onto the Function App, `deployMobilityBackend` only
+   controls whether the Function App/plan/linked-backend RESOURCES exist.
+2. Set the GitHub Actions workflow's SWA deploy step's `api_location` to `''`
+   (per Microsoft's own "remove managed functions before linking" requirement)
+   — a `deploy.yml` change, not a bicep parameter.
+3. Physically merge `/api`'s existing functions into `api-mobility/` (or vice
+   versa) — post-cutover there is exactly one Function App serving `/api/*`.
+4. Redeploy with `deployMobilityBackend: true` AND `swaSku: Standard` set
+   together.
+5. Verify every existing `/api/*` endpoint still resolves through the new
+   linked backend before considering the cutover complete.
 
 ---
 

@@ -3,7 +3,7 @@
  * Defines the structure for machinery, aircraft, and hand crew specifications.
  */
 
-import { TerrainLevel, VegetationType } from '../config/classification';
+import { TerrainLevel, VegetationType } from '@firebreak/terrain';
 
 export interface MachinerySpec {
   id: string;

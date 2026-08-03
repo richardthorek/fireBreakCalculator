@@ -25,23 +25,18 @@ import type { Polygon, MultiPolygon, Feature } from 'geojson';
 import { intersect } from '@turf/intersect';
 import { area as turfArea } from '@turf/area';
 import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
 import {
-  makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
-  LocalProjection, LocalPoint, AxialCoord,
-} from '../utils/hexGrid';
+  LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
+  LocalProjection, LocalPoint, AxialCoord, MobilityGridCell, nearestCellKey, PaintedArea, paintedAreaBounds,
+  resolvePaintedAreaGeometry, computeDemDerivatives, RoadWayTags, MoverProfile,
+} from '@firebreak/terrain';
+export { nearestCellKey };
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
 import {
   fetchCorridorMobilityRoads, fetchCorridorWaterways, distanceToNearestTrail, distanceToNearestWater,
   InfrastructureTrail,
 } from '../utils/infrastructureService';
-import { MobilityGridCell } from './accumulatedCost';
-import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './paintedArea';
-import { computeDemDerivatives } from './dataLayers/demDerivatives';
 import { fetchSurfaceWaterFrequencyArea, sampleSurfaceWaterFrequencyRaster } from './dataLayers/deaWaterObservationsService';
-import { RoadWayTags } from './roadSpeedModel';
-import { MoverProfile } from './moverProfiles';
 
 // Historical fixed values (2026-07-26, "think about a larger area"), now the
 // 'standard' fidelity tier's baseline at CELL_BUDGET_REFERENCE_DISTANCE_M —
@@ -143,6 +138,13 @@ export interface MobilityGridResult {
   /** Cell keys whose centre falls inside the painted objective area — the
    *  target set `extractPath` picks the cheapest-reached cell from. */
   objectiveKeys: string[];
+  /** Cell keys whose centre falls inside the painted OBSERVER area (OCOKA 6,
+   *  docs/ROUTE_INTELLIGENCE.md §47/§8) — one per painted hex, each treated
+   *  as its own individual observation post for `viewshed.ts`. Unlike
+   *  `originKeys`/`objectiveKeys`, EMPTY IS A LEGITIMATE STATE with no
+   *  nearest-cell fallback: no observer painted is simply "no observers this
+   *  run", not an error a fallback needs to paper over. */
+  observerKeys: string[];
   usedEstimatedData: boolean;
   infrastructureAvailable: boolean;
   /** True when EITHER hydrology source (OSM waterway/water-body geometry, DEA
@@ -233,18 +235,6 @@ export function isPaintedAreaMember(cellCorners: LatLng[], geom: Polygon | Multi
  *  whatever `generateBoxHexes` happened to emit first/last — typically a
  *  corner of the bounding box, nowhere near where the user actually
  *  painted. Squared distance only (comparison, not a real length). */
-export function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
-  let bestKey = cells[0].key;
-  let bestD = Infinity;
-  for (const c of cells) {
-    const dLat = c.center.lat - point.lat;
-    const dLng = c.center.lng - point.lng;
-    const d = dLat * dLat + dLng * dLng;
-    if (d < bestD) { bestD = d; bestKey = c.key; }
-  }
-  return bestKey;
-}
-
 /**
  * Build and sample a hex grid covering `origin`, `objective` (padded so the
  * search has room either side to route around obstacles) and everything
@@ -515,6 +505,81 @@ export interface SampledCells {
   roadWays: InfrastructureTrail[];
 }
 
+export interface OnTrailSample {
+  onTrail: boolean;
+  nearestTrailTags: RoadWayTags | null;
+}
+
+/**
+ * Is this hex "on trail", and if so which mapped feature's tags apply —
+ * tested at `samplePoints` (centre + six hex corners, not centre alone; see
+ * call site) against `trails` within `snapM`. Pulled out as its own pure
+ * function (2026-08-03) so this exact test is unit-testable without the
+ * network-fetching grid-building pipeline around it, and so `mobilityGrid.ts`
+ * has one place this logic lives rather than an inline block a future editor
+ * could drift from `waterDistanceM`'s equivalent multi-point scan just above
+ * its call site.
+ *
+ * MULTI-POINT, NOT CENTRE-ONLY — the fix itself, not incidental to it. A road
+ * can thread diagonally across a hex without ever passing within `snapM` of
+ * its centroid, especially once hex size grows past ~30 m on a wide-area
+ * run (this app's own hex size scales with AOI span — `computeCellBudget`).
+ * A centre-only test silently read that ground as off-trail and let the
+ * vegetation/slope hard gates in `mobilityCost.ts` block it at full
+ * severity — reported live: a road painted straight through an analysed
+ * area came out NO-GO/severely-restricted on both sides of a real, unbroken
+ * road, because most of the hexes it visibly crossed didn't have it within
+ * `snapM` of their own centre.
+ *
+ * PERFORMANCE (2026-08-03, live report — "stuck at 20% on any reasonable
+ * sized run"): the first version of this fix called `distanceToNearestTrail`
+ * once per (point × feature) PAIR — 7× the per-feature-loop cost the
+ * original centre-only scan already had, since it needed to know WHICH
+ * feature matched (for `nearestTrailTags`) at every one of the 7 points, not
+ * just the min distance. `distanceToNearestTrail` already scans a WHOLE
+ * `trails` array internally in one call (same as `distanceToNearestWater`'s
+ * own single combined-array call per point, just above this function's call
+ * site) — this version calls it that way ONCE PER POINT (7 cheap calls) to
+ * find the true minimum distance and WHICH POINT achieves it, then runs the
+ * per-feature identification loop only ONCE, for that single winning point,
+ * to resolve `nearestTrailTags`. Identical correctness (same global
+ * minimum-distance-wins semantics) without paying the per-feature cost at
+ * every point.
+ */
+export function sampleOnTrail(
+  samplePoints: LatLng[],
+  trails: InfrastructureTrail[],
+  snapM: number
+): OnTrailSample {
+  if (trails.length === 0) return { onTrail: false, nearestTrailTags: null };
+  let bestD = Infinity;
+  let bestPoint: LatLng | null = null;
+  for (const p of samplePoints) {
+    const d = distanceToNearestTrail(p, trails, snapM);
+    if (d < bestD) {
+      bestD = d;
+      bestPoint = p;
+    }
+    if (bestD <= 0) break; // nothing can beat 0
+  }
+  const onTrail = bestD <= snapM;
+  if (!onTrail || !bestPoint) return { onTrail, nearestTrailTags: null };
+
+  // Resolve WHICH feature the winning point matched — only needed once, for
+  // tags, not for the distance test itself (already settled above).
+  let tagD = Infinity;
+  let nearestTrailTags: RoadWayTags | null = null;
+  for (const feature of trails) {
+    const d = distanceToNearestTrail(bestPoint, [feature], snapM);
+    if (d < tagD) {
+      tagD = d;
+      nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
+    }
+    if (tagD <= 0) break;
+  }
+  return { onTrail, nearestTrailTags };
+}
+
 /**
  * Sample elevation/vegetation/road/water for exactly the given hexes and
  * assemble them into `MobilityGridCell`s — the batched-fetch core
@@ -621,24 +686,11 @@ export async function sampleCellsForHexes(
 
     // onTrail + the nearest trail's own tags in ONE scan (docs §35) — the
     // road-class speed model (roadSpeedModel.ts) needs surface/tracktype/
-    // smoothness, not just "is there a trail here", so this now finds the
-    // SAME nearest feature onTrail already needed rather than re-scanning
-    // `infra.trails` a second time for it.
-    let onTrail = false;
-    let nearestTrailTags: RoadWayTags | null = null;
-    if (infra.trails.length > 0) {
-      let bestD = Infinity;
-      for (const feature of infra.trails) {
-        const d = distanceToNearestTrail(center, [feature], TRAIL_SNAP_M);
-        if (d < bestD) {
-          bestD = d;
-          nearestTrailTags = { highway: feature.kind, surface: feature.surface, tracktype: feature.tracktype, smoothness: feature.smoothness };
-        }
-        if (bestD <= 0) break; // nothing can beat 0
-      }
-      onTrail = bestD <= TRAIL_SNAP_M;
-      if (!onTrail) nearestTrailTags = null;
-    }
+    // smoothness, not just "is there a trail here", so this uses the SAME
+    // nearest feature onTrail already needed rather than re-scanning
+    // `infra.trails` a second time for it. Centre + six hex corners, not
+    // centre alone — see `sampleOnTrail`'s own doc comment for why.
+    const { onTrail, nearestTrailTags } = sampleOnTrail([center, ...cornerPoints[i]], infra.trails, TRAIL_SNAP_M);
 
     return {
       key: hexKey(c.hex),
@@ -700,6 +752,13 @@ export async function buildMobilityGrid(
     signal?: AbortSignal;
     onProgress?: (fraction: number) => void;
     boundsPadFactor?: number;
+    /** Painted OBSERVER area (OCOKA 6) — optional, and does NOT affect
+     *  bounds/cell-budget/hex-size the way origin/objective do (an observer
+     *  can sit anywhere already inside the box those two determine; it never
+     *  grows the search area). Resolved the SAME real area-overlap way as
+     *  origin/objective, not a coarser point-snap, so a multi-hex brush dab
+     *  becomes one candidate observation post per hex it covers. */
+    observerPaint?: PaintedArea;
     /** Bypasses `computePaddedBounds` entirely when supplied — the targeted-
      *  retry path (`mobilityAppreciation.ts`'s `growBoundsTowardFrontier`):
      *  grow the box specifically toward whichever edge the reachable
@@ -718,7 +777,7 @@ export async function buildMobilityGrid(
 ): Promise<MobilityGridResult | null> {
   const {
     signal, onProgress, boundsPadFactor = 0.2, explicitBounds, fidelity = DEFAULT_MOBILITY_FIDELITY,
-    minDetourPadM: detourPadM = 0,
+    minDetourPadM: detourPadM = 0, observerPaint,
   } = options;
 
   const originBounds = paintedAreaBounds(origin);
@@ -803,6 +862,13 @@ export async function buildMobilityGrid(
   const objectiveGeom = resolvePaintedAreaGeometry(objective);
   const originKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], originGeom)).map(c => c.key);
   const objectiveKeys = cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], objectiveGeom)).map(c => c.key);
+  // No nearest-cell fallback here (unlike origin/objective) — an empty
+  // observerPaint, or none at all, is the ordinary "no observers this run"
+  // case, not a degenerate seed set that needs papering over.
+  const observerGeom = observerPaint ? resolvePaintedAreaGeometry(observerPaint) : null;
+  const observerKeys = observerGeom
+    ? cells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], observerGeom)).map(c => c.key)
+    : [];
 
   onProgress?.(0.7);
 
@@ -818,6 +884,7 @@ export async function buildMobilityGrid(
       : [nearestCellKey(cells, { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 })],
     objectiveKeys: objectiveKeys.length > 0 ? objectiveKeys
       : [nearestCellKey(cells, { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 })],
+    observerKeys,
     usedEstimatedData,
     infrastructureAvailable,
     hydrologyAvailable,

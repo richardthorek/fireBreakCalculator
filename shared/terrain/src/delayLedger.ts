@@ -42,7 +42,7 @@ import {
 } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { CounterMeasure } from './counterMeasures';
-import { hexKey, hexNeighbors } from '../utils/hexGrid';
+import { hexKey, hexNeighbors } from './hexGrid';
 
 /** Multiplier used for the bypass search — "known covered ground, still
  *  passable but suboptimal" per docs §5's bypass-rule framing. Deliberately

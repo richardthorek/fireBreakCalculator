@@ -73,7 +73,8 @@ drift — see `master_plan.md` Vision principle 4.
     for the MCOO mobility classes — **unverified against ADF-specific
     doctrine**, carried over from the same US-sourced research; treat as
     provisional until checked the same way OCOKA/IPB was.
-    Import the union from `terrain/mobilityClass.ts`; do not redeclare it.
+    Import the union from `@firebreak/terrain` (`shared/terrain/src/mobilityClass.ts`,
+    OCOKA 2 — see `webapp/CLAUDE.md`); do not redeclare it.
   - **Do not overclaim the new factors.** Elevation is a bare-earth DEM, so every
     sight line is systematically optimistic; *fields of fire* is computed only for
     user-stated ranges; *cover* (protection from fire) is **not computed at all**

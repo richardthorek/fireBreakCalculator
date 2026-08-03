@@ -21,7 +21,7 @@ import { readPlanFromUrl, encodePlan, SharedPlan } from './utils/planSharing';
 import { AccountControl } from './components/AccountControl';
 import { SuiteSession } from './utils/suiteAuth';
 import { createSavedPlan, SavedPlanApi } from './utils/savedPlansApi';
-import { buildChainageIndex, pointAtChainage, sliceByChainage } from './utils/chainage';
+import { buildChainageIndex, pointAtChainage, sliceByChainage } from '@firebreak/terrain';
 import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
 import { scanArea } from './utils/areaScan';
 import { OptimizerStatus } from './components/AdvisorPanel';
@@ -30,22 +30,23 @@ import { LiveFeedMapData } from './utils/liveFeedLayers';
 import { ViewBounds } from './utils/liveFeedsService';
 import { logger } from './utils/logger';
 import { refinePath } from './utils/pathRefinement';
-import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from './terrain/paintedArea';
+import { PaintedArea, PaintStrokeMode, BrushSize, createHexDab } from '@firebreak/terrain';
 import { runMobilityAppreciation, MobilityAppreciationResult } from './terrain/mobilityAppreciation';
-import { DEFAULT_ISOCHRONE_MINUTES } from './terrain/accumulatedCost';
-import { DEFAULT_MOVER_PROFILE_ID } from './terrain/moverProfiles';
-import { RoadSpeedOverrides } from './terrain/roadSpeedModel';
+import { DEFAULT_ISOCHRONE_MINUTES } from '@firebreak/terrain';
+import { DEFAULT_MOVER_PROFILE_ID } from '@firebreak/terrain';
+import { RoadSpeedOverrides } from '@firebreak/terrain';
 import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, originObjectiveDistanceM } from './terrain/mobilityGrid';
-import { MobilityClass } from './terrain/mobilityClass';
+import { MobilityClass } from '@firebreak/terrain';
 import { recordMobilityRunTelemetry, MobilityStageTimestamp } from './terrain/mobilityTelemetry';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
-import { COUNTER_MEASURES } from './terrain/counterMeasures';
-import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from './terrain/delayLedger';
-import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from './terrain/corridorField';
+import { OakocPanel } from './components/OakocPanel';
+import { COUNTER_MEASURES } from '@firebreak/terrain';
+import { computeDelayLedger, buildScenarioEdgePenalties, CounterMeasurePlacement, DelayLedgerEntry } from '@firebreak/terrain';
+import { buildCorridorField, compareCorridorFields, CorridorComparison, CorridorField } from '@firebreak/terrain';
 import { UnitSimulationController, EnsembleAnimationController, EnsembleMoverState } from './terrain/unitSimulation';
 import { MobilityLegend } from './components/MobilityLegend';
-import { DEFAULT_BEHAVIOUR_SPREAD_ID } from './terrain/movementSimulation';
+import { DEFAULT_BEHAVIOUR_SPREAD_ID } from '@firebreak/terrain';
 import { MobilityStage } from './terrain/mobilityAppreciation';
 import './styles-tactical.css';
 
@@ -461,7 +462,7 @@ const App: React.FC = () => {
       // session via state, it just won't survive a reload.
     }
   }, []);
-  const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | null>(null);
+  const [mobilityBoxRole, setMobilityBoxRole] = useState<'origin' | 'objective' | 'observe' | null>(null);
   // Cross-mode cleanup (2026-07-26 UI review: "ensure everything switches...
   // and back again"). Hiding a mode's controls isn't enough on its own — an
   // "armed" tool's state can outlive the switch and keep intercepting clicks
@@ -484,6 +485,10 @@ const App: React.FC = () => {
   // not a screen-relative pixel radius.
   const [mobilityOriginPaint, setMobilityOriginPaint] = useState<PaintedArea>([]);
   const [mobilityObjectivePaint, setMobilityObjectivePaint] = useState<PaintedArea>([]);
+  /** Painted OBSERVER area (OCOKA 6, docs/ROUTE_INTELLIGENCE.md §47/§8) —
+   *  optional, same paint-dab mechanism as origin/objective; each painted
+   *  hex becomes its own candidate observation post for `viewshed.ts`. */
+  const [mobilityObservePaint, setMobilityObservePaint] = useState<PaintedArea>([]);
   const [mobilityBrushSize, setMobilityBrushSize] = useState<BrushSize>('medium');
   // Paint vs erase (owner feedback 2026-07-26: "add an erase function") —
   // which kind of stroke the next dab lays down, tagged onto the stroke
@@ -528,7 +533,7 @@ const App: React.FC = () => {
   // Shares the appreciation run's own sampled grid/min-cut segments rather
   // than resampling — see mobilityAppreciation.ts's `cells`/`originKeys`/
   // `objectiveKeys` note.
-  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility'>('appreciation');
+  const [mobilityActiveTab, setMobilityActiveTab] = useState<'appreciation' | 'counterMobility' | 'oakoc'>('appreciation');
   const [cmPendingSegmentIndex, setCmPendingSegmentIndex] = useState<number | null>(null);
   const [cmPlacements, setCmPlacements] = useState<CounterMeasurePlacement[]>([]);
   const [cmLedger, setCmLedger] = useState<DelayLedgerEntry[] | null>(null);
@@ -546,16 +551,22 @@ const App: React.FC = () => {
   // is built HERE (docs §35) because it needs the role's EXISTING strokes —
   // specifically its first dab's anchor (paintedArea.ts's module header) —
   // which live in this component's state, not the map view's.
-  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective', point: { lat: number; lng: number }) => {
-    const setter = role === 'origin' ? setMobilityOriginPaint : setMobilityObjectivePaint;
+  const handleMobilityPaintDab = useCallback((role: 'origin' | 'objective' | 'observe', point: { lat: number; lng: number }) => {
+    const setter = role === 'origin' ? setMobilityOriginPaint : role === 'objective' ? setMobilityObjectivePaint : setMobilityObservePaint;
     setter(prev => [...prev, { mode: mobilityPaintMode, dab: createHexDab(prev, point, mobilityBrushSize) }]);
-    setMobilityResult(null); // a stale result over a changed AOI would mislead
+    // An observer paint change doesn't invalidate origin/objective's own
+    // reachability picture, but re-running is cheap and Observation is
+    // meant to reflect exactly what's currently painted — same "a stale
+    // result over a changed AOI would mislead" reasoning origin/objective
+    // already apply to themselves.
+    setMobilityResult(null);
   }, [mobilityPaintMode, mobilityBrushSize]);
 
-  const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective') => {
+  const handleClearMobilityPaint = useCallback((role?: 'origin' | 'objective' | 'observe') => {
     mobilityAbortRef.current?.abort();
     if (!role || role === 'origin') setMobilityOriginPaint([]);
     if (!role || role === 'objective') setMobilityObjectivePaint([]);
+    if (!role || role === 'observe') setMobilityObservePaint([]);
     setMobilityResult(null);
     setMobilityLogLines([]);
     setMobilityRunning(false);
@@ -600,6 +611,7 @@ const App: React.FC = () => {
         behaviourSpreadId,
         roadSpeedOverrides,
         fidelity: mobilityFidelity,
+        observerPaint: mobilityObservePaint,
         onLog: line => setMobilityLogLines(prev => [...prev, line]),
         onProgress: f => { if (!controller.signal.aborted) setMobilityProgress(f); },
         onStage: stage => {
@@ -661,7 +673,7 @@ const App: React.FC = () => {
     } finally {
       if (!controller.signal.aborted) setMobilityRunning(false);
     }
-  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides, mobilityFidelity]);
+  }, [mobilityOriginPaint, mobilityObjectivePaint, mobilityObservePaint, mobilityProfileId, mobilityNightMode, behaviourSpreadId, roadSpeedOverrides, mobilityFidelity]);
 
   const handleCancelMobilityAppreciation = useCallback(() => {
     mobilityAbortRef.current?.abort();
@@ -1448,6 +1460,7 @@ const App: React.FC = () => {
             onMobilityPaintDab={handleMobilityPaintDab}
             mobilityOriginPaint={mobilityOriginPaint}
             mobilityObjectivePaint={mobilityObjectivePaint}
+            mobilityObservePaint={mobilityObservePaint}
             mobilityBrushSize={mobilityBrushSize}
             onMobilityBrushSizeChange={setMobilityBrushSize}
             mobilityPaintMode={mobilityPaintMode}
@@ -1468,6 +1481,7 @@ const App: React.FC = () => {
             onCorridorHighlight={setHighlightedCorridorId}
             chokepoints={mobilityResult?.chokepoints ?? null}
             barrierSegments={mobilityResult?.barrier?.segments ?? null}
+            roadBarrierSegments={mobilityResult?.roadNetworkBarrier?.segments ?? null}
             onRunAppreciation={handleRunMobilityAppreciation}
             onCancelAppreciation={handleCancelMobilityAppreciation}
             mobilityRunning={mobilityRunning}
@@ -1487,6 +1501,7 @@ const App: React.FC = () => {
               present={{
                 originPaint: mobilityOriginPaint.length > 0,
                 objectivePaint: mobilityObjectivePaint.length > 0,
+                observePaint: mobilityObservePaint.length > 0,
                 cells: !!mobilityHeatmapForMap && mobilityHeatmapForMap.length > 0,
                 displayMode: mobilityDisplayMode,
                 corridors: (displayedMovementCorridorField?.corridors.length ?? 0) > 0,
@@ -1495,6 +1510,7 @@ const App: React.FC = () => {
                 transitField: !!transitCellsForMap && transitCellsForMap.length > 0,
                 chokepoints: (mobilityResult?.chokepoints.length ?? 0) > 0,
                 barrier: (mobilityResult?.barrier?.segments.length ?? 0) > 0,
+                roadBarrier: (mobilityResult?.roadNetworkBarrier?.segments.length ?? 0) > 0,
                 restrictions: (restrictionsForMap?.length ?? 0) > 0,
                 water: (waterFeaturesForMap?.length ?? 0) > 0,
                 unitPath: !!unitSimPath,
@@ -1527,6 +1543,12 @@ const App: React.FC = () => {
               >
                 Counter-mobility planner
               </button>
+              <button
+                className={mobilityActiveTab === 'oakoc' ? 'active' : ''}
+                onClick={() => setMobilityActiveTab('oakoc')}
+              >
+                OCOKA
+              </button>
             </div>
             {mobilityActiveTab === 'appreciation' ? (
             <MobilityPanel
@@ -1542,6 +1564,7 @@ const App: React.FC = () => {
               onBoxRoleChange={setMobilityBoxRole}
               originPaint={mobilityOriginPaint}
               objectivePaint={mobilityObjectivePaint}
+              observePaint={mobilityObservePaint}
               brushSize={mobilityBrushSize}
               onBrushSizeChange={setMobilityBrushSize}
               onClearPaint={handleClearMobilityPaint}
@@ -1573,7 +1596,7 @@ const App: React.FC = () => {
               simMode={simMode}
               onSimModeChange={setSimMode}
             />
-            ) : (
+            ) : mobilityActiveTab === 'counterMobility' ? (
               <CounterMobilityPanel
                 barrierSegments={mobilityResult?.barrier?.segments ?? []}
                 pendingSegmentIndex={cmPendingSegmentIndex}
@@ -1589,6 +1612,8 @@ const App: React.FC = () => {
                 corridorView={corridorView}
                 onCorridorViewChange={setCorridorView}
               />
+            ) : (
+              <OakocPanel result={mobilityResult} />
             )}
             </>
           ) : (

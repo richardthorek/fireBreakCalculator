@@ -12,7 +12,7 @@ import {
   HIGHWAY_SPEED_KMH,
   TRACKTYPE_SPEED_CAP_KMH,
   UNTAGGED_TRACK_FALLBACK_KMH,
-} from '../src/terrain/roadSpeedModel';
+} from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

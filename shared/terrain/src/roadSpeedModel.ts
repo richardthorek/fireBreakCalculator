@@ -155,6 +155,18 @@ export interface RoadSpeedOverrides {
   smoothness?: Partial<Record<string, number>>;
 }
 
+/** How many distinct tag-values across all four tables carry a user
+ *  override — the single source of truth for "were overrides in effect for
+ *  this run", so GIS export (`mobilityGisExport.ts`) and the AI briefing
+ *  payload (`mobilityAssistantApi.ts`) can't drift into disagreeing about
+ *  it. `undefined`/`null` reads as zero, matching how `roadClassCeiling`
+ *  itself treats an absent override table. */
+export function countActiveRoadSpeedOverrides(overrides: RoadSpeedOverrides | null | undefined): number {
+  if (!overrides) return 0;
+  const tables = [overrides.highway, overrides.surface, overrides.tracktype, overrides.smoothness];
+  return tables.reduce((sum, t) => sum + (t ? Object.keys(t).length : 0), 0);
+}
+
 interface Component {
   speedKmh: number;
   confidence: RoadClassConfidence;

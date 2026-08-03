@@ -1,0 +1,35 @@
+{
+  "name": "api-mobility",
+  "version": "1.0.0",
+  "description": "Terrain Mobility backend (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3) — Durable Functions job protocol on a separate Flex Consumption Function App. Standalone package (own build, own tests) until the deployMobilityBackend cutover merges it into /api — see README.md.",
+  "private": true,
+  "scripts": {
+    "prebuild": "npm --prefix ../shared/terrain install",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "prestart": "npm run clean && npm run build",
+    "start": "func start",
+    "test": "npm run test:unit",
+    "test:unit": "npm run build && node ./dist/api-mobility/src/test/mobilityJob.test.js && node ./dist/api-mobility/src/test/mobilityJobRateLimit.test.js && node ./dist/api-mobility/src/test/mobilityGridServer.test.js"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.2",
+    "@azure/functions": "^4.11.2",
+    "@azure/storage-blob": "^12.33.0",
+    "durable-functions": "^3.5.0",
+    "@turf/boolean-point-in-polygon": "^7.3.5",
+    "@turf/difference": "^7.3.5",
+    "@turf/helpers": "^7.3.5",
+    "@turf/union": "^7.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.x",
+    "rimraf": "^6.1.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.x"
+  },
+  "main": "dist/api-mobility/src/index.js"
+}

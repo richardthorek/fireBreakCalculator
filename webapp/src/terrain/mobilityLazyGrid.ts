@@ -40,27 +40,19 @@
  * assume about it.
  */
 
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
 import {
-  makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, hexCorners, hexNeighbors, axialToLocal,
-  generateBoxHexes, LocalProjection, LocalPoint, AxialCoord,
-} from '../utils/hexGrid';
+  LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, hexCorners, hexNeighbors,
+  axialToLocal, generateBoxHexes, LocalProjection, LocalPoint, AxialCoord, PaintedArea, paintedAreaBounds,
+  resolvePaintedAreaGeometry, MobilityGridCell, MobilityCellResult, AccumulatedCostSearchResult,
+  assembleMobilityResults, getMoverProfile, MoverProfile, RoadSpeedOverrides, findKDissimilarPaths, clusterRoutes,
+} from '@firebreak/terrain';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { PaintedArea, paintedAreaBounds, resolvePaintedAreaGeometry } from './paintedArea';
 import {
   computePaddedBounds, computeCellBudget, sampleCellsForHexes, applyCrossSlope, isPaintedAreaMember, nearestCellKey,
   minDetourPadM, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, MobilityGridResult,
 } from './mobilityGrid';
-import {
-  MobilityGridCell, MobilityCellResult, AccumulatedCostSearchResult, assembleMobilityResults,
-} from './accumulatedCost';
-import { getMoverProfile, MoverProfile } from './moverProfiles';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
-import { RoadSpeedOverrides } from './roadSpeedModel';
-import { findKDissimilarPaths } from './corridorAnalysis';
-import { clusterRoutes } from './corridorField';
 
 /** Hexes per tile side — a tile is a batch of roughly `TILE_HEX_SPAN²` hexes,
  *  fetched with ONE round of area-batched network calls (docs §35 point 5:
@@ -212,6 +204,13 @@ export interface LazyMobilitySearchOptions {
   nightMode: boolean;
   fidelity?: MobilityFidelity;
   roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Painted OBSERVER area (OCOKA 6, docs/ROUTE_INTELLIGENCE.md §47/§8) —
+   *  optional, resolved once at round 1 the SAME real area-overlap way as
+   *  origin/objective (see `buildMobilityGrid`'s identical field for the
+   *  non-lazy path). Unlike origin/objective, NO nearest-cell fallback: an
+   *  empty match (or no `observerPaint` at all) is the ordinary "no
+   *  observers this run" state. */
+  observerPaint?: PaintedArea;
   /** docs §35 design point 2 — the α multiplier on the best-found cost C*
    *  that bounds Phase 2 growth (see the constants' own doc comment above).
    *  Design calls this "user-adjustable" (owner: "2x default with a UI
@@ -271,7 +270,8 @@ export interface LazyMobilitySearchResult {
  * different path from here on.
  */
 function initialFootprint(
-  origin: PaintedArea, objective: PaintedArea, fidelity: MobilityFidelity, profileRoadSpeedKmh: number
+  origin: PaintedArea, objective: PaintedArea, fidelity: MobilityFidelity, profileRoadSpeedKmh: number,
+  observerPaint?: PaintedArea
 ): {
   proj: LocalProjection; hexSize: number; tileSizeM: number; targetCellCount: number; maxHexCells: number;
   min: LocalPoint; max: LocalPoint;
@@ -283,7 +283,22 @@ function initialFootprint(
   const detourPadM = minDetourPadM({ roadSpeedKmh: profileRoadSpeedKmh });
   const padded = computePaddedBounds(originBounds, objectiveBounds, INITIAL_PAD_FACTOR, detourPadM);
   if (!padded) return null;
-  const { boundsSw, boundsNe } = padded;
+  let { boundsSw, boundsNe } = padded;
+
+  // Observer resolution (OCOKA 6) only ever runs ONCE, at round 1, against
+  // whatever this initial footprint covers — later rounds' organic growth is
+  // driven by the COST SEARCH's own reachable frontier, not by where an
+  // observer was painted, so an observer sitting outside this box would
+  // silently never be found even after later rounds materialise tiles
+  // elsewhere. Union the observer paint's own bounds in here, unconditionally,
+  // so a real observation post the user painted off to one side of the direct
+  // route is guaranteed to be in the round-1 cell set rather than depending on
+  // the search happening to grow toward it.
+  const observerBounds = observerPaint ? paintedAreaBounds(observerPaint) : null;
+  if (observerBounds) {
+    boundsSw = { lat: Math.min(boundsSw.lat, observerBounds.minLat), lng: Math.min(boundsSw.lng, observerBounds.minLng) };
+    boundsNe = { lat: Math.max(boundsNe.lat, observerBounds.maxLat), lng: Math.max(boundsNe.lng, observerBounds.maxLng) };
+  }
 
   const boxWidthM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsSw.lat, boundsNe.lng);
   const boxHeightM = calculateDistance(boundsSw.lat, boundsSw.lng, boundsNe.lat, boundsSw.lng);
@@ -312,12 +327,12 @@ export async function runLazyMobilitySearch(
 ): Promise<LazyMobilitySearchResult | null> {
   const {
     signal, fidelity = DEFAULT_MOBILITY_FIDELITY, roadSpeedOverrides, onProgress, onLog, onRoundStart, onPreviewCells,
-    alpha = DEFAULT_ALPHA,
+    alpha = DEFAULT_ALPHA, observerPaint,
   } = options;
   const profile = getMoverProfile(options.profileId);
   if (!profile) return null;
 
-  const foot = initialFootprint(origin, objective, fidelity, profile.roadSpeedKmh);
+  const foot = initialFootprint(origin, objective, fidelity, profile.roadSpeedKmh, observerPaint);
   if (!foot) return null;
   const { proj, hexSize, tileSizeM, targetCellCount, maxHexCells, min, max } = foot;
   const cellCeiling = maxHexCells * LAZY_CELL_CEILING_MULTIPLIER;
@@ -327,6 +342,7 @@ export async function runLazyMobilitySearch(
   const objectiveBounds = paintedAreaBounds(objective)!;
   const originGeom = resolvePaintedAreaGeometry(origin);
   const objectiveGeom = resolvePaintedAreaGeometry(objective);
+  const observerGeom = observerPaint ? resolvePaintedAreaGeometry(observerPaint) : null;
 
   const materialized = new Map<string, MobilityGridCell>();
   const materializedTiles = new Set<string>();
@@ -340,6 +356,7 @@ export async function runLazyMobilitySearch(
 
   let originKeys: string[] = [];
   let objectiveKeys: string[] = [];
+  let observerKeys: string[] = [];
   let reach: AccumulatedCostSearchResult | undefined;
   let results: MobilityCellResult[] = [];
   let path: SimPathNode[] | null = null;
@@ -412,6 +429,13 @@ export async function runLazyMobilitySearch(
         : [nearestCellKey(allCells, { lat: (originBounds.minLat + originBounds.maxLat) / 2, lng: (originBounds.minLng + originBounds.maxLng) / 2 })];
       objectiveKeys = objectiveMatch.length > 0 ? objectiveMatch
         : [nearestCellKey(allCells, { lat: (objectiveBounds.minLat + objectiveBounds.maxLat) / 2, lng: (objectiveBounds.minLng + objectiveBounds.maxLng) / 2 })];
+      // No nearest-cell fallback (unlike origin/objective) — no observers
+      // painted, or none matching the round-1 footprint, is the ordinary
+      // "no observers this run" state, same convention `buildMobilityGrid`
+      // uses for its own observerKeys.
+      observerKeys = observerGeom
+        ? allCells.filter((_, i) => isPaintedAreaMember(cornerPoints[i], observerGeom)).map(c => c.key)
+        : [];
     }
 
     // Same real classification `assembleMobilityResults` always does — a
@@ -518,6 +542,7 @@ export async function runLazyMobilitySearch(
     proj,
     originKeys,
     objectiveKeys,
+    observerKeys,
     usedEstimatedData,
     infrastructureAvailable,
     hydrologyAvailable,

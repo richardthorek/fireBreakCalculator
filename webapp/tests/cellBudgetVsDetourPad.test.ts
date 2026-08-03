@@ -23,9 +23,9 @@
  */
 import * as assert from 'node:assert';
 import { computePaddedBounds, computeCellBudget, minDetourPadM } from '../src/terrain/mobilityGrid';
-import { chooseHexSize } from '../src/utils/hexGrid';
+import { chooseHexSize } from '@firebreak/terrain';
 import { calculateDistance } from '../src/utils/slopeCalculation';
-import { getMoverProfile } from '../src/terrain/moverProfiles';
+import { getMoverProfile } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {

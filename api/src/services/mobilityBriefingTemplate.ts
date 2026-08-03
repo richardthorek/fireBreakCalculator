@@ -112,6 +112,14 @@ export function buildTemplateMobilityBriefing(payload: MobilityAssistantPayload)
     lines.push('Caution: part of this appreciation uses estimated/fallback data — verify conditions on the ground.');
   }
 
+  if (payload.roadSpeedOverridesActive) {
+    const count = payload.roadSpeedOverrideCount ?? 0;
+    lines.push(
+      `Note: ${count} road-class speed override(s) were in effect for this run, in place of the ` +
+      'sourced defaults — verify the edited value(s) still apply before acting on the timing above.'
+    );
+  }
+
   if (!payload.hydrologyAvailable) {
     lines.push('Caution: no waterway/water-body data was available for this area — the water-crossing gate had nothing to check against.');
   } else if (payload.waterAffectedCellCount > 0) {

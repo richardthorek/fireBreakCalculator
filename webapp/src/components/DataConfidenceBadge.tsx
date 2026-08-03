@@ -5,8 +5,9 @@
  */
 
 import React from 'react';
+import type { ConfidenceTier } from '@firebreak/terrain';
 
-export type ConfidenceTier = 'measured' | 'published' | 'estimated' | 'generic-fallback';
+export type { ConfidenceTier };
 
 export interface DataConfidenceBadgeProps {
   tier: ConfidenceTier;

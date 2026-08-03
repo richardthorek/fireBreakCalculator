@@ -4,75 +4,30 @@
  */
 
 import { SlopeSegment, SlopeCategory, TrackAnalysis } from '../types/config';
-import { classifySlope, slopeCategoryColor } from '../config/classification';
+import { classifySlope, slopeCategoryColor, calculateDistance, calculateSlope } from '@firebreak/terrain';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
 import { fetchElevationProfile } from './elevationApi';
 
-// Coordinate type compatibility for both Leaflet and Mapbox GL JS
+// calculateDistance and calculateSlope are pure (no network/browser deps) and
+// live in shared/terrain/src/geo.ts so terrain/mobility mode's algorithms
+// (also pure) can use the same code — see shared/terrain/README.md.
+export { calculateDistance, calculateSlope };
+
+// Coordinate type compatibility for both Leaflet and Mapbox GL JS — a
+// fire-break-mode-only compatibility shim (terrain/mobility mode's pure
+// algorithms all use the canonical `LatLng {lat,lng}` shape already), so it
+// stays local rather than moving to the shared package.
 type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
 
-// Helper to normalize coordinates
 const normalizeCoord = (coord: LatLngLike): { lat: number; lng: number } => {
   if ('lng' in coord) {
     return { lat: coord.lat, lng: coord.lng };
   }
-  // Handle lon format
   return { lat: coord.lat, lng: (coord as { lat: number; lon: number }).lon };
-};
-
-/**
- * Calculate total distance of a polyline
- * Accepts array of coordinate objects
- */
-export function calculateDistance(points: LatLngLike[]): number;
-export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number;
-export function calculateDistance(pointsOrLat: LatLngLike[] | number, lng1?: number, lat2?: number, lng2?: number): number {
-  // Handle array of points
-  if (Array.isArray(pointsOrLat)) {
-    let totalDistance = 0;
-    for (let i = 0; i < pointsOrLat.length - 1; i++) {
-      const start = normalizeCoord(pointsOrLat[i]);
-      const end = normalizeCoord(pointsOrLat[i + 1]);
-      totalDistance += calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
-    }
-    return totalDistance;
-  }
-  
-  // Handle individual coordinates
-  return calculateDistanceBetweenPoints(pointsOrLat, lng1!, lat2!, lng2!);
-}
-
-/**
- * Calculate distance between two lat/lng points using Haversine formula
- * Returns distance in meters
- */
-const calculateDistanceBetweenPoints = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-  const R = 6371000; // Earth's radius in meters
-  const dLat = toRadians(lat2 - lat1);
-  const dLng = toRadians(lng2 - lng1);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
 };
 
 /** Convert degrees to radians */
 const toRadians = (degrees: number): number => degrees * (Math.PI / 180);
-
-/**
- * Calculate slope between two points in degrees
- */
-export const calculateSlope = (
-  startElevation: number, 
-  endElevation: number, 
-  horizontalDistance: number
-): number => {
-  if (horizontalDistance === 0) return 0;
-  const verticalDistance = Math.abs(endElevation - startElevation);
-  const slopeRadians = Math.atan(verticalDistance / horizontalDistance);
-  return slopeRadians * (180 / Math.PI); // Convert to degrees
-};
 
 /**
  * Categorize slope based on angle in degrees
@@ -313,7 +268,7 @@ export const generateInterpolatedPoints = (
   for (let i = 0; i < points.length - 1; i++) {
     const start = normalizeCoord(points[i]);
     const end = normalizeCoord(points[i + 1]);
-    const segmentDistance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
+    const segmentDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
 
     // If this is the first point, include it
     if (i === 0) interpolatedPoints.push(start);
@@ -330,7 +285,7 @@ export const generateInterpolatedPoints = (
         const pt = { lat: interpolatedLat, lng: interpolatedLng };
         // Avoid duplicates if an interpolated point coincides with the last added
         const lastPoint = interpolatedPoints[interpolatedPoints.length - 1];
-        if (!lastPoint || calculateDistanceBetweenPoints(normalizeCoord(lastPoint).lat, normalizeCoord(lastPoint).lng, pt.lat, pt.lng) > 0.001) {
+        if (!lastPoint || calculateDistance(normalizeCoord(lastPoint).lat, normalizeCoord(lastPoint).lng, pt.lat, pt.lng) > 0.001) {
           interpolatedPoints.push(pt);
         }
         distanceAlongSegment += intervalDistance;
@@ -340,7 +295,7 @@ export const generateInterpolatedPoints = (
     // Always include the original end point of this segment (user-dropped)
     const last = interpolatedPoints[interpolatedPoints.length - 1];
     const endPt = { lat: end.lat, lng: end.lng };
-    if (!last || calculateDistanceBetweenPoints(normalizeCoord(last).lat, normalizeCoord(last).lng, endPt.lat, endPt.lng) > 0.001) {
+    if (!last || calculateDistance(normalizeCoord(last).lat, normalizeCoord(last).lng, endPt.lat, endPt.lng) > 0.001) {
       interpolatedPoints.push(endPt);
     }
 
@@ -381,7 +336,7 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
   for (let i = 0; i < interpolatedPoints.length - 1; i++) {
     const start = normalizeCoord(interpolatedPoints[i]);
     const end = normalizeCoord(interpolatedPoints[i + 1]);
-    const distance = calculateDistanceBetweenPoints(start.lat, start.lng, end.lat, end.lng);
+    const distance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
     if (distance <= 0.001) continue;
     segmentPlan.push({
       start, end, distance,
@@ -432,7 +387,7 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
     for (let k = 0; k < profilePoints.length - 1; k++) {
       const a = normalizeCoord(profilePoints[k]);
       const b = normalizeCoord(profilePoints[k + 1]);
-      const subDist = calculateDistanceBetweenPoints(a.lat, a.lng, b.lat, b.lng);
+      const subDist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
       const subSlope = calculateSlope(elevs[k], elevs[k + 1], subDist);
       if (subSlope > maxSubSlope) maxSubSlope = subSlope;
       weightedSlopeSum += subSlope * subDist;

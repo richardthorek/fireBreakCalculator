@@ -7,7 +7,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Truck, Wrench, Plane, Users, LayoutDashboard, Mountain, Sparkles, Flame } from 'lucide-react';
 import { MachinerySpec, AircraftSpec, HandCrewSpec, TrackAnalysis, VegetationAnalysis } from '../types/config';
-import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '../config/classification';
+import { deriveTerrainFromSlope, VEGETATION_TYPES, TerrainLevel, VegetationType } from '@firebreak/terrain';
 import { DistributionBar } from './DistributionBar';
 import { OverlapMatrix } from './OverlapMatrix';
 import { HelpContent } from './HelpContent';
@@ -24,7 +24,7 @@ import { buildShareUrl, printBriefing, SharedPlan } from '../utils/planSharing';
 import { DISCLAIMER_SHORT } from '../config/provenance';
 import { buildPlanAssessment } from '../utils/planInsights';
 import { OptimizedRouteResult } from '../utils/routeOptimizer';
-import { formatChainage, LatLng } from '../utils/chainage';
+import { formatChainage, LatLng } from '@firebreak/terrain';
 import { ExportImportControls } from './ExportImportControls';
 import { ExportPlanInput } from '../utils/gisExport';
 import { ImportedFeatures } from '../utils/gisImport';

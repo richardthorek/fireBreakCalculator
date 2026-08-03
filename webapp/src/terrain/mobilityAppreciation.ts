@@ -30,38 +30,38 @@
  * the ensemble produced anything.
  */
 
+import {
+  carriesWaterSignal, LocalProjection, PaintedArea, MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID,
+  DEFAULT_MOVEMENT_SIM_SEED, RestrictionPlan, MobilityCellResult, IsochroneBand, buildIsochroneBands,
+  DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell, getMoverProfile, MoverProfile, setRoadSpeedOverrides,
+  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, computeMinCutBarrier, MinCutResult,
+  computeRoadNetworkMinCut, RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
+  buildObservationResult, ConcealmentResult, buildConcealmentResult, buildRoadGraph, nodesWithin, RoadGraph, RoadWay,
+  WaterBodyPolygon, buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
+} from '@firebreak/terrain';
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
-import { carriesWaterSignal } from './accumulatedCost';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { LocalProjection } from '../utils/hexGrid';
-import { PaintedArea } from './paintedArea';
-import { runMovementEnsembleInWorker } from './mobilityWorkerClient';
-import { MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID, DEFAULT_MOVEMENT_SIM_SEED } from './movementSimulation';
-import { RestrictionPlan } from './restrictionPlanner';
-import {
-  MobilityCellResult, IsochroneBand, buildIsochroneBands, DEFAULT_ISOCHRONE_MINUTES,
-  MobilityGridCell,
-} from './accumulatedCost';
-import { getMoverProfile, MoverProfile } from './moverProfiles';
-import { setRoadSpeedOverrides, RoadSpeedOverrides } from './roadSpeedModel';
+import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker } from './mobilityWorkerClient';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
   findEarlyVehicleRoadRoutePreview,
 } from './roadRouteSearch';
 import { SimPathNode } from './mobilityWorker';
-import { computeChokepoints, DissimilarRoute, ChokepointCell } from './corridorAnalysis';
-import { computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult } from './minCutBarrier';
-import { buildRoadGraph, nodesWithin, RoadGraph, RoadWay, WaterBodyPolygon } from './roadGraph';
-import {
-  buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
-} from './corridorField';
 
 /** Moved to `accumulatedCost.ts` (see its own doc comment on why — corridor
  *  risk scoring needed it without a circular import) — re-exported here so
  *  every existing caller (`mobilityGisExport.ts`, `mobilityAssistantApi.ts`)
  *  keeps working from the same import path. */
 export { carriesWaterSignal };
+
+/** Hard cap on painted observer hexes actually traced (OCOKA 6) — each is a
+ *  full grid-wide viewshed (`viewshed.ts`'s own header: MUST run in the
+ *  worker, CPU-bound). A user painting a long ridge line of dabs must not
+ *  turn into dozens of full re-traces in a single run; matches the same
+ *  "protect the run from an unbounded input" discipline
+ *  `keyTerrain.ts`'s `MAX_CANDIDATES_EVALUATED` already uses. */
+const MAX_OBSERVERS_EVALUATED = 8;
 
 export interface MobilityAppreciationResult {
   results: MobilityCellResult[];
@@ -161,6 +161,33 @@ export interface MobilityAppreciationResult {
    *  case alongside `barrier` above (which still covers off-road ground the
    *  same profile could also use) — not a replacement for it. */
   roadNetworkBarrier: RoadMinCutResult | null;
+  /** OCOKA 4 (docs/ROUTE_INTELLIGENCE.md §47.1) — candidates from chokepoints/
+   *  min-cut/corridor-bottleneck ground, each scored by a real re-run with it
+   *  denied. Null when no path existed to score against (matches every other
+   *  post-search product's null-on-unreachable convention), or when a path
+   *  existed but nominated zero candidates (an honest, if unlikely, empty
+   *  field). See `terrain/keyTerrain.ts`. */
+  keyTerrain: KeyTerrainResult | null;
+  /** OCOKA 6 (docs/ROUTE_INTELLIGENCE.md §47/§8) — real line-of-sight from
+   *  every painted OBSERVER hex, screened (vegetation-canopy-aware) and
+   *  bare-earth surfaces both computed. Null whenever no observer was
+   *  painted for this run (the ordinary case — Observation is optional,
+   *  additional analysis, not gated on path the way Obstacles/Avenues/Key
+   *  terrain are) — see `oakoc.ts`'s `OcokaObservationFactor` for how this
+   *  becomes the real Observation and fields of fire factor.
+   *  `fieldsOfFireAssessed` stays `false` regardless: fields of fire needs a
+   *  user-stated effective range, which this stage does not yet collect. */
+  observation: ObservationResult | null;
+  /** OCOKA 7 (docs/ROUTE_INTELLIGENCE.md §47) — concealment from dead ground
+   *  (relative to the SAME painted observers `observation` is keyed on) and
+   *  from vegetation structure. Null under the identical condition
+   *  `observation` is null (no observer painted — defilade only means
+   *  something relative to a specified position) — `terrain/concealment.ts`
+   *  is only ever called once `observation` already exists. Cover
+   *  (protection from fire) is NOT part of this field at all: it is not
+   *  computed, full stop, and `oakoc.ts`'s `coverAssessed: false` says so
+   *  independently of whatever this field holds. */
+  concealment: ConcealmentResult | null;
   /** The exact sampled grid this run searched over — kept so a later
    *  counter-mobility ledger (`computeDelayLedger`) can be scored against the
    *  SAME cells the min-cut `barrier.segments` are keyed to, rather than
@@ -182,7 +209,7 @@ export interface MobilityAppreciationResult {
  *  reports, so a bar and a label can be driven from one clock without drifting
  *  apart. */
 export interface MobilityStage {
-  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'done';
+  key: 'grid' | 'sampling' | 'search' | 'ensemble' | 'corridors' | 'chokepoints' | 'barrier' | 'restrictions' | 'keyTerrain' | 'observation' | 'done';
   label: string;
   fraction: number;
 }
@@ -277,6 +304,13 @@ export interface MobilityAppreciationOptions {
    *  "user-adjustable" per the owner's own framing — this is the plumbing
    *  for that control; no UI is wired to it yet. */
   corridorBudgetAlpha?: number;
+  /** Painted OBSERVER area (OCOKA 6, docs/ROUTE_INTELLIGENCE.md §47/§8) —
+   *  optional. Each painted hex becomes its own candidate observation post;
+   *  see `viewshed.ts` for what gets computed from it and `oakoc.ts` for how
+   *  it becomes the real Observation and fields of fire factor. Absent or
+   *  empty is the ordinary case (most runs paint no observer at all), not an
+   *  error — Observation simply stays 'not-assessed' for that run. */
+  observerPaint?: PaintedArea;
 }
 
 export async function runMobilityAppreciation(
@@ -294,6 +328,7 @@ export async function runMobilityAppreciation(
     roadSpeedOverrides,
     fidelity = DEFAULT_MOBILITY_FIDELITY,
     corridorBudgetAlpha,
+    observerPaint,
   } = options;
   // Progress across this run is assembled from several sources that don't
   // know about each other — a retry's own sampling pass, the worker's search
@@ -372,7 +407,7 @@ export async function runMobilityAppreciation(
   // Lake-George-shaped run pays for more, and only for the new ground.
   let samplingAnnounced = false;
   const lazy = await runLazyMobilitySearch(origin, objective, {
-    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha,
+    signal, fidelity, profileId, nightMode, roadSpeedOverrides, alpha: corridorBudgetAlpha, observerPaint,
     onProgress: f => {
       onProgress(f * 0.55);
       if (f > 0.02 && !samplingAnnounced) {
@@ -555,6 +590,9 @@ export async function runMobilityAppreciation(
     chokepoints: [],
     barrier: null,
     roadNetworkBarrier: null,
+    observation: null,
+    concealment: null,
+    keyTerrain: null,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,
@@ -574,6 +612,9 @@ export async function runMobilityAppreciation(
   let ensemble: MovementEnsembleResult | null = null;
   let restrictionPlan: RestrictionPlan | null = null;
   let restrictedCorridorField: CorridorField | null = null;
+  let keyTerrain: KeyTerrainResult | null = null;
+  let observation: ObservationResult | null = null;
+  let concealment: ConcealmentResult | null = null;
   if (path) {
     // --- UNRESTRICTED MOVEMENT: the headline answer. Simulated movers, not
     // solved routes. This is what the corridors are built from.
@@ -791,6 +832,73 @@ export async function runMobilityAppreciation(
         }
       }
     }
+
+    // Key terrain (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1) — candidates
+    // nominated from the chokepoint/min-cut/corridor-bottleneck products just
+    // computed above, cheap on the main thread; scoring is the expensive part
+    // and runs in the worker (keyTerrain.ts's own header explains why both
+    // halves are split this way). Scored against `optimiserCorridorField`,
+    // deliberately, per that module's header — never the (possibly absent,
+    // possibly simulated-mover) `corridorField`.
+    if (optimiserCorridorField) {
+      const keyTerrainCandidates = generateKeyTerrainCandidates(
+        grid.cells, chokepoints, barrier, roadNetworkBarrier, optimiserCorridorField
+      );
+      if (keyTerrainCandidates.length > 0) {
+        onStage?.({ key: 'keyTerrain', label: 'Scoring key terrain candidates', fraction: 0.99 });
+        onLog?.(`SCORING ${keyTerrainCandidates.length} KEY TERRAIN CANDIDATE(S)…`);
+        keyTerrain = await runKeyTerrainScoringInWorker(
+          grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+          optimiserCorridorField, keyTerrainCandidates, roadSpeedOverrides
+        );
+        if (signal?.aborted) return null;
+        if (keyTerrain) {
+          const decisiveCount = keyTerrain.candidates.filter(c => c.decisiveCandidate).length;
+          onLog?.(
+            `KEY TERRAIN — ${keyTerrain.candidatesConsidered} CANDIDATE(S) CONSIDERED, ${keyTerrain.candidates.length} SCORED` +
+            (decisiveCount > 0 ? `, ${decisiveCount} CANDIDATE DECISIVE (REQUIRES CONFIRMATION)` : '')
+          );
+        }
+      }
+    }
+  }
+
+  // Observation and fields of fire (OCOKA 6, docs/ROUTE_INTELLIGENCE.md
+  // §47/§8) — deliberately OUTSIDE the `if (path)` block above: unlike
+  // Obstacles/Avenues/Key terrain, viewshed is a standalone geometric
+  // computation over the sampled grid and never depended on origin
+  // reaching objective at all. Gated only on whether the user painted an
+  // observer — the ordinary case is nobody did, and that is simply
+  // "nothing to compute", not a failure (see `ObservationResult`'s own
+  // null-when-no-observer convention downstream in `oakoc.ts`).
+  if (grid.observerKeys.length > 0) {
+    // Hard cap, same "protect the run from an unbounded input" discipline
+    // `keyTerrain.ts`'s MAX_CANDIDATES_EVALUATED already uses — each
+    // observer is a full grid-wide trace (viewshed.ts's own header), so a
+    // user painting a long ridge line of dabs must not turn into dozens of
+    // full re-traces in one run.
+    const observerKeys = grid.observerKeys.slice(0, MAX_OBSERVERS_EVALUATED);
+    onStage?.({ key: 'observation', label: `Tracing line of sight from ${observerKeys.length} observer(s)`, fraction: 0.99 });
+    onLog?.(`TRACING LINE OF SIGHT FROM ${observerKeys.length} OBSERVER(S)…`);
+    const observers = await runViewshedInWorker(grid.cells, grid.hexSize, observerKeys);
+    if (signal?.aborted) return null;
+    observation = buildObservationResult(observers, optimiserCorridorField);
+    if (observation.corridorCoverageFraction !== null) {
+      onLog?.(`OBSERVATION — ${Math.round(observation.corridorCoverageFraction * 100)}% OF THE HEADLINE CORRIDOR(S) SEEN BY AT LEAST ONE OBSERVER`);
+    } else {
+      onLog?.(`OBSERVATION — ${observation.screenedUnionKeys.size} CELL(S) SEEN BY AT LEAST ONE OBSERVER`);
+    }
+
+    // Concealment (OCOKA 7, docs/ROUTE_INTELLIGENCE.md §47) — only ever
+    // computed once `observation` is real: defilade only means something
+    // relative to specified positions (the same painted observers), and
+    // dead ground is a set complement over `observation`'s own union, not a
+    // second trace (see `concealment.ts`'s own header).
+    concealment = buildConcealmentResult(grid.cells, observation);
+    onLog?.(
+      `CONCEALMENT — ${concealment.concealedKeys.size}/${concealment.cellsConsidered} CELL(S) CONCEALED FROM ` +
+      `EVERY PAINTED OBSERVER (${concealment.deadGroundKeys.size} DEAD GROUND, ${concealment.vegetationConcealedKeys.size} BY VEGETATION)`
+    );
   }
 
   onLog?.(`RESULT — ${reachableCount}/${grid.cells.length} CELLS REACHABLE · ${severelyRestrictedCount} SEVERELY RESTRICTED · ${restrictedCount} RESTRICTED`);
@@ -825,6 +933,9 @@ export async function runMobilityAppreciation(
     chokepoints,
     barrier,
     roadNetworkBarrier,
+    keyTerrain,
+    observation,
+    concealment,
     cells: grid.cells,
     originKeys: grid.originKeys,
     objectiveKeys: grid.objectiveKeys,

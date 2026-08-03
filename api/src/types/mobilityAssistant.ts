@@ -80,6 +80,12 @@ export interface MobilityAssistantPayload {
   movement?: MobilityMovementSummary;
   restrictions?: MobilityRestrictionSummary[];
   restrictionEffect?: MobilityRestrictionEffectSummary;
+  /** User-edited road-class speeds (webapp docs §35 config UI, step 21) —
+   *  mirrors the webapp's own `countActiveRoadSpeedOverrides`. Optional,
+   *  same "arrived after the endpoint shipped" reasoning as the movement
+   *  block above. */
+  roadSpeedOverridesActive?: boolean;
+  roadSpeedOverrideCount?: number;
 }
 
 /** The unrestricted movement ensemble, as a distribution rather than one ETA. */
@@ -208,7 +214,9 @@ export function isMobilityAssistantPayload(v: any): v is MobilityAssistantPayloa
     (v.corridorEvidence === undefined || v.corridorEvidence === 'optimiser-routes' || v.corridorEvidence === 'simulated-movers') &&
     (v.movement === undefined || isMovementSummary(v.movement)) &&
     (v.restrictions === undefined || (Array.isArray(v.restrictions) && v.restrictions.every(isRestrictionSummary))) &&
-    (v.restrictionEffect === undefined || isRestrictionEffectSummary(v.restrictionEffect))
+    (v.restrictionEffect === undefined || isRestrictionEffectSummary(v.restrictionEffect)) &&
+    (v.roadSpeedOverridesActive === undefined || typeof v.roadSpeedOverridesActive === 'boolean') &&
+    (v.roadSpeedOverrideCount === undefined || isFiniteNumber(v.roadSpeedOverrideCount))
   );
 }
 

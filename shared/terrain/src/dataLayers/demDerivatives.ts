@@ -32,7 +32,7 @@
  *    per docs §8).
  */
 
-import { AxialCoord, hexNeighbors, hexKey, makeProjection, toLocal } from '../../utils/hexGrid';
+import { AxialCoord, hexNeighbors, hexKey, makeProjection, toLocal } from '../hexGrid';
 
 export interface DemDerivativeCell {
   key: string;

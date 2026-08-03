@@ -26,7 +26,7 @@
  * the user's own waypoints — are never moved.
  */
 
-import { LatLng } from './chainage';
+import { LatLng } from '@firebreak/terrain';
 import { calculateDistance } from './slopeCalculation';
 import { InfrastructureTrail } from './infrastructureService';
 

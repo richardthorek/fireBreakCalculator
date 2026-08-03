@@ -33,7 +33,7 @@
  * presented as absence of trails.
  */
 
-import { LatLng } from './chainage';
+import { LatLng } from '@firebreak/terrain';
 import { logger } from './logger';
 import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
 import { polygon as turfPolygon } from '@turf/helpers';

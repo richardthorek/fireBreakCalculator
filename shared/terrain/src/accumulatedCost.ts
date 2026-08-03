@@ -33,18 +33,50 @@
  * under-estimate it, which is the correct bias for a hard safety gate.
  */
 
-import { LatLng } from '../utils/chainage';
-import { calculateDistance } from '../utils/slopeCalculation';
-import { VegetationType } from '../config/classification';
+import { LatLng } from './chainage';
+import { calculateDistance } from './geo';
+import { VegetationType } from './classification';
 import {
   LocalProjection, AxialCoord, hexKey, hexNeighbors, hexCorners, axialToLocal, toLatLng,
-} from '../utils/hexGrid';
+} from './hexGrid';
 import { MoverProfile } from './moverProfiles';
 import { RoadWayTags } from './roadSpeedModel';
 import {
   MobilitySample, TrafficabilityClass, edgeMobilityCost, signedSlopeDegrees, estimateStructureFromVegetation,
   estimateFordingRequirement,
 } from './mobilityCost';
+
+/** One step of a resolved path through the grid, with elapsed time —
+ *  the shape produced by every search in this module and consumed by the
+ *  Web Worker boundary (`mobilityWorker.ts` — Worker `self` API, stays
+ *  client-side) and the pure route/corridor modules alike. Defined here
+ *  rather than in the worker file itself, since it carries no Worker-API
+ *  dependency and several pure modules (`corridorAnalysis.ts`,
+ *  `mobilityAppreciation.ts`) need it too; `mobilityWorker.ts` re-exports it
+ *  for its own webapp-side consumers. */
+export interface SimPathNode {
+  lat: number;
+  lng: number;
+  cumulativeSeconds: number;
+}
+
+/** Nearest grid cell to `point` (naive linear scan — grids here are small
+ *  enough that this is never the bottleneck). Defined here rather than in
+ *  `mobilityGrid.ts` (which stays client-side: it orchestrates live network
+ *  sampling) since this is pure geometry over an already-built cell array,
+ *  and `keyTerrain.ts` needs it too; `mobilityGrid.ts` re-exports it for its
+ *  own webapp-side consumers. */
+export function nearestCellKey(cells: MobilityGridCell[], point: LatLng): string {
+  let bestKey = cells[0].key;
+  let bestD = Infinity;
+  for (const c of cells) {
+    const dLat = c.center.lat - point.lat;
+    const dLng = c.center.lng - point.lng;
+    const d = dLat * dLat + dLng * dLng;
+    if (d < bestD) { bestD = d; bestKey = c.key; }
+  }
+  return bestKey;
+}
 
 export interface MobilityGridCell {
   key: string;

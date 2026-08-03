@@ -16,11 +16,11 @@
  * Plain node:assert. Run: npx tsx webapp/tests/roadRouteFusion.test.ts
  */
 import * as assert from 'node:assert';
-import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '../src/utils/hexGrid';
-import { MobilityGridCell } from '../src/terrain/accumulatedCost';
+import { generateBoxHexes, hexKey, LocalPoint, makeProjection } from '@firebreak/terrain';
+import { MobilityGridCell } from '@firebreak/terrain';
 import { roadRouteToDissimilarRoute, RoadRouteSearchResult } from '../src/terrain/roadRouteSearch';
-import { computeChokepoints } from '../src/terrain/corridorAnalysis';
-import { LatLng } from '../src/utils/chainage';
+import { computeChokepoints } from '@firebreak/terrain';
+import { LatLng } from '@firebreak/terrain';
 
 let passed = 0;
 function test(name: string, fn: () => void) {
