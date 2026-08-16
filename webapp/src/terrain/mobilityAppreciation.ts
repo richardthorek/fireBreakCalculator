@@ -37,7 +37,7 @@ import {
   RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, MinCutResult,
   RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
   buildObservationResult, ConcealmentResult, buildConcealmentResult, buildRoadGraph, nodesWithin, RoadGraph, RoadWay,
-  WaterBodyPolygon, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
+  WaterBodyPolygon, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes, TransitCell,
 } from '@firebreak/terrain';
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
@@ -265,6 +265,19 @@ export interface MobilityAppreciationOptions {
    */
   onPartialResult?: (partial: MobilityAppreciationResult) => void;
   /**
+   * Fires REPEATEDLY (unlike every other `onX` callback here, which fires
+   * once) — a real interim transit-cell snapshot from the baseline mover
+   * ensemble as movers complete, throttled to roughly every 250ms
+   * (`movementSimulation.ts`'s `onPartialTracks`, WP4 streaming work). This
+   * is what lets corridors visibly thicken on the map DURING the ensemble
+   * run, rather than only appearing once `onPartialResult`'s search-only
+   * field is later replaced by the final result. `moversDone` is honest —
+   * "this many movers have been simulated so far", not a claim about
+   * `moverCount`'s eventual total — so a caller wanting a fraction divides
+   * by the `moverCount` it itself requested. Omit for no streaming.
+   */
+  onEnsembleProgress?: (cells: TransitCell[], moversDone: number) => void;
+  /**
    * Fires ONCE, as soon as the box-free vehicle road route (docs §35 Slice A)
    * resolves — typically a couple of seconds in, well before `onPartialResult`
    * (which waits on the ENTIRE hex-grid sampling + multi-source search
@@ -324,7 +337,7 @@ export async function runMobilityAppreciation(
 ): Promise<MobilityAppreciationResult | null> {
   const {
     profileId, nightMode = false, signal, onProgress: onProgressRaw, onLog, onStage, onPreviewCells, onPartialResult,
-    onRoadRoute,
+    onRoadRoute, onEnsembleProgress,
     moverCount = 240,
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
@@ -657,6 +670,7 @@ export async function runMobilityAppreciation(
           else onProgress(0.72 + f * 0.23);
         },
         onLog: line => onLog?.(line),
+        onPartialTracks: onEnsembleProgress,
       }
     );
     if (signal?.aborted) return null;

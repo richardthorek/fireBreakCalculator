@@ -64,6 +64,7 @@ import {
   CorridorEvidence, DissimilarRoute, scoreKeyTerrainCandidates, buildKeyTerrainResult, KeyTerrainCandidate,
   KeyTerrainResult, computeViewshedForObserver, ObserverViewshed, ViewshedOptions, SimPathNode, buildCorridorField,
   computeChokepoints, ChokepointCell, computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult,
+  TransitCell,
 } from '@firebreak/terrain';
 export type { SimPathNode };
 
@@ -290,6 +291,22 @@ export interface MobilityMovementResponse {
   plan: RestrictionPlan | null;
 }
 
+/** A REAL (not synthetic) interim transit-cell snapshot from the baseline
+ *  mover ensemble, throttled by `simulateMovementEnsemble`'s own
+ *  `onPartialTracks` (movementSimulation.ts — see its header for the
+ *  time-based throttle reasoning). WP4, movement-analysis performance/
+ *  streaming work: this is what lets the map show corridors thickening as
+ *  movers complete, instead of only the terminal `MobilityMovementResponse`.
+ *  Zero or more of these precede exactly one terminal 'movement' response
+ *  per request — never a substitute for it, and never carries `ensemble`/
+ *  `plan` itself (those stay final-result-only). */
+export interface MobilityMovementPartialResponse {
+  kind: 'movementPartial';
+  requestId: number;
+  cells: TransitCell[];
+  moversDone: number;
+}
+
 export interface MobilityKeyTerrainResponse {
   kind: 'keyTerrain';
   requestId: number;
@@ -352,6 +369,7 @@ export interface MobilityProgressResponse {
 export type MobilityWorkerResponse =
   | MobilitySearchResponse
   | MobilityMovementResponse
+  | MobilityMovementPartialResponse
   | MobilityKeyTerrainResponse
   | MobilityViewshedResponse
   | MobilityCorridorsResponse
@@ -425,6 +443,8 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
         preferredRouteKeys: req.preferredRouteKeys,
         roadGraph: req.roadGraph,
         roadSpeedOverrides: req.roadSpeedOverrides,
+        onPartialTracks: (cells, moversDone) =>
+          post({ kind: 'movementPartial', requestId: req.requestId, cells, moversDone }),
       }
     );
 

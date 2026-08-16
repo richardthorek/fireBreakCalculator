@@ -13,7 +13,7 @@ import {
   AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell, LocalProjection, MovementEnsembleResult,
   RestrictionPlan, RoadSpeedOverrides, RoadGraph, CorridorField, CorridorFieldOptions, DissimilarRoute,
   CorridorEvidence, KeyTerrainCandidate, KeyTerrainResult, ObserverViewshed, ViewshedOptions, ChokepointCell,
-  MinCutResult, RoadMinCutResult,
+  MinCutResult, RoadMinCutResult, TransitCell,
 } from '@firebreak/terrain';
 import {
   MobilityWorkerRequest, MobilityWorkerResponse, SimPathNode,
@@ -25,6 +25,11 @@ let nextRequestId = 1;
 interface PendingEntry {
   resolve: (response: MobilityWorkerResponse) => void;
   onProgress?: (fraction: number, phase: 'search' | 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
+  /** Interim, real (not synthetic) mover-ensemble transit snapshots — see
+   *  `MobilityMovementPartialResponse`'s own doc comment. Routed here the
+   *  same way `onProgress` is (never resolves/deletes the pending entry),
+   *  so the eventual terminal 'movement' response still reaches the caller. */
+  onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
 }
 const pending = new Map<number, PendingEntry>();
 
@@ -36,6 +41,10 @@ function ensureWorker(): Worker {
     if (!entry) return;
     if (e.data.kind === 'progress') {
       entry.onProgress?.(e.data.fraction, e.data.phase, e.data.log);
+      return;
+    }
+    if (e.data.kind === 'movementPartial') {
+      entry.onPartialTracks?.(e.data.cells, e.data.moversDone);
       return;
     }
     pending.delete(e.data.requestId);
@@ -108,6 +117,11 @@ export interface MovementEnsembleRequestOptions {
    *  (docs §42b) — see `MobilityMovementRequest.roadGraph`'s doc comment for
    *  why this is unrestricted-baseline-only by construction. */
   roadGraph?: RoadGraph;
+  /** Interim, REAL transit-cell snapshots from the baseline ensemble as
+   *  movers complete (WP4, movement-analysis performance/streaming work) —
+   *  see `MobilityMovementPartialResponse`'s own doc comment. Omit for no
+   *  streaming (unchanged behaviour for every existing caller). */
+  onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
 }
 
 export interface MovementEnsembleOutcome {
@@ -145,6 +159,7 @@ export function runMovementEnsembleInWorker(
         // carries 'search' for the OTHER request kind, still type-checks.
         else if (phase !== 'search') options.onProgress?.(fraction, phase);
       },
+      onPartialTracks: options.onPartialTracks,
     });
     const request: MobilityWorkerRequest = {
       kind: 'movement', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,

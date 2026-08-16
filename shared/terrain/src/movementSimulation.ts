@@ -638,6 +638,41 @@ export interface TransitCell {
   moverCount: number;
 }
 
+/** `transitCounts` (running per-cell crossing tally) -> sorted `TransitCell[]`
+ *  — the SAME projection `simulateMovementEnsemble` builds once at the end
+ *  of the full run, factored out here so a `onPartialTracks` snapshot mid-run
+ *  (WP4, movement-analysis performance/streaming work) and the final result
+ *  share exactly one implementation rather than risking the two drifting.
+ *  `moverCount` here is "movers completed so far" for a partial snapshot,
+ *  the full ensemble size for the final one — either way it is the honest
+ *  denominator for "fraction of movers that crossed this cell" AT THAT
+ *  POINT, not a claim about the eventual total. */
+export function buildTransitCells(
+  transitCounts: Map<string, number>,
+  moverCount: number,
+  byKey: Map<string, MobilityGridCell>,
+  hexSize: number,
+  proj: LocalProjection
+): TransitCell[] {
+  const transitCells: TransitCell[] = [];
+  for (const [key, count] of transitCounts) {
+    const cell = byKey.get(key);
+    if (!cell) continue;
+    const local = axialToLocal(cell.hex, hexSize);
+    const polygon = hexCorners(local, hexSize).map(p => toLatLng(proj, p));
+    polygon.push(polygon[0]);
+    transitCells.push({
+      key,
+      center: cell.center,
+      polygon,
+      transitFraction: count / moverCount,
+      moverCount: count,
+    });
+  }
+  transitCells.sort((a, b) => b.transitFraction - a.transitFraction);
+  return transitCells;
+}
+
 export interface MovementEnsembleResult {
   /** Always true. Present so no consumer can render these numbers without
    *  having had to acknowledge what they are (see the module honesty note). */
@@ -702,6 +737,14 @@ export interface MovementSimulationOptions {
   keepTrajectories?: number;
   /** Fires with 0..1 as movers complete, for progress UI. */
   onProgress?: (fraction: number) => void;
+  /** Fires with a REAL (not synthetic) interim transit-cell snapshot,
+   *  throttled to roughly `PARTIAL_TRACKS_INTERVAL_MS` — for painting
+   *  corridors in as the ensemble runs, rather than only once at the end.
+   *  Every snapshot is the honest picture from the movers simulated SO FAR;
+   *  it only ever gets denser/more settled as `moversDone` climbs toward
+   *  `moverCount`, never retracted or corrected. Omit for no streaming
+   *  (the default — every existing caller). */
+  onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
   /** Directed edges severed by an emplaced restriction. Never traversable. */
   blockedEdges?: Set<string>;
   /** Reuse a cache across runs over the same grid (restrictionPlanner.ts). */
@@ -724,6 +767,19 @@ export interface MovementSimulationOptions {
 
 const DEFAULT_MOVER_COUNT = 240;
 const DEFAULT_KEEP_TRAJECTORIES = 14;
+/** Minimum real time between `onPartialTracks` snapshots — see that
+ *  option's call site for why this is time-based, not a mover-count
+ *  stride. 250ms keeps a "painting in" feel (well under the ~10s update
+ *  contract, docs Sec47.5) without the buildTransitCells() cost dominating
+ *  the mover loop itself on a fast device. Millisecond resolution
+ *  (`Date.now()`, not `performance.now()`) is deliberate: this package has
+ *  no DOM lib (`tsconfig.json` — it must also run server-side, `api-mobility`),
+ *  and sub-millisecond precision buys nothing against a 250ms interval. */
+const PARTIAL_TRACKS_INTERVAL_MS = 250;
+
+function nowMs(): number {
+  return Date.now();
+}
 
 /** Bearing in radians from a→b, for the turn penalty. */
 function bearingRad(a: LatLng, b: LatLng): number {
@@ -815,6 +871,9 @@ export function simulateMovementEnsemble(
   const tracks: MoverTrack[] = [];
   let lostCount = 0;
   let usedEstimatedData = false;
+  // See PARTIAL_TRACKS_INTERVAL_MS — starts at "now" so the very first
+  // mover can't immediately fire a snapshot of almost nothing.
+  let lastPartialAtMs = nowMs();
 
   // Keep an evenly-spaced sample of trajectories rather than the first N, so
   // the animated movers represent the whole ensemble, not just its opening.
@@ -972,24 +1031,25 @@ export function simulateMovementEnsemble(
       sampleTrajectories.push({ steps, arrived, totalSeconds: elapsed, behaviour });
     }
     options.onProgress?.((m + 1) / moverCount);
+    // Streamed partial result (WP4, movement-analysis performance work) —
+    // "corridors appearing/thickening as they're analysed" needs REAL
+    // interim transit data, not just a percentage. Throttled by WALL-CLOCK
+    // time rather than mover-count fraction: a fixed mover-count stride
+    // (e.g. every 5%) either floods a fast device or starves a slow one,
+    // where a time interval adapts to both. `buildTransitCells` is itself
+    // O(cells crossed so far) — cheap relative to a single mover's own step
+    // search, but NOT free at thousands of cells, hence a real interval
+    // (not "every mover") and skipped entirely when nobody is listening.
+    if (options.onPartialTracks) {
+      const now = nowMs();
+      if (now - lastPartialAtMs >= PARTIAL_TRACKS_INTERVAL_MS) {
+        lastPartialAtMs = now;
+        options.onPartialTracks(buildTransitCells(transitCounts, m + 1, byKey, hexSize, proj), m + 1);
+      }
+    }
   }
 
-  const transitCells: TransitCell[] = [];
-  for (const [key, count] of transitCounts) {
-    const cell = byKey.get(key);
-    if (!cell) continue;
-    const local = axialToLocal(cell.hex, hexSize);
-    const polygon = hexCorners(local, hexSize).map(p => toLatLng(proj, p));
-    polygon.push(polygon[0]);
-    transitCells.push({
-      key,
-      center: cell.center,
-      polygon,
-      transitFraction: count / moverCount,
-      moverCount: count,
-    });
-  }
-  transitCells.sort((a, b) => b.transitFraction - a.transitFraction);
+  const transitCells = buildTransitCells(transitCounts, moverCount, byKey, hexSize, proj);
 
   const sortedArrivals = [...arrivalTimes].sort((a, b) => a - b);
 
