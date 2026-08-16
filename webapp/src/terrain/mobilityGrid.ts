@@ -28,7 +28,8 @@ import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import {
   LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
   LocalProjection, LocalPoint, AxialCoord, MobilityGridCell, nearestCellKey, PaintedArea, paintedAreaBounds,
-  resolvePaintedAreaGeometry, computeDemDerivatives, RoadWayTags, MoverProfile, invalidateCellIndex,
+  resolvePaintedAreaGeometry, computeDemDerivatives, computeCrossSlopeForCells, RoadWayTags, MoverProfile,
+  invalidateCellIndex, hexNeighbors,
 } from '@firebreak/terrain';
 export { nearestCellKey };
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
@@ -750,6 +751,60 @@ export function applyCrossSlope(cells: MobilityGridCell[]): void {
     cell.crossSlopeDeg = derivatives.get(cell.key)?.crossSlopeDeg ?? 0;
   }
   invalidateCellIndex(cells);
+}
+
+/**
+ * Incremental sibling of `applyCrossSlope` (WP5 Tier B) for
+ * `mobilityLazyGrid.ts`'s round-by-round tile-growth loop, which previously
+ * called `applyCrossSlope(allCells)` — a full `computeDemDerivatives` pass
+ * over the WHOLE accumulated grid — once per round, up to `MAX_LAZY_ROUNDS`
+ * (14) times, even though only a small ring of newly-materialised cells
+ * changes each round.
+ *
+ * WHY ONLY `newCells` + THEIR HALO NEED RECOMPUTING: `computeDemDerivatives`
+ * fits each cell's `crossSlopeDeg` from that cell's OWN elevation plus its
+ * PRESENT hex neighbours' elevations (a 1-ring local plane fit — see
+ * `demDerivatives.ts`'s own header). A cell's `elevation`/`center` are set
+ * once at sampling time and never mutated afterward (`sampleCellsForHexes`'s
+ * own doc comment), and `materialized` in `mobilityLazyGrid.ts` only ever
+ * ADDS cells, never removes or replaces one — so the ONLY way an
+ * already-computed cell's plane fit can change between rounds is a
+ * previously-missing neighbour slot getting filled by a newly-materialised
+ * cell. That means the set of cells whose `crossSlopeDeg` could possibly
+ * differ from what a prior call already computed is exactly: `newCells`
+ * themselves (never had a value at all) UNION every ALREADY-MATERIALISED
+ * cell that is hex-adjacent to at least one of them (a "halo" one ring out
+ * — its neighbour set just grew). Every cell outside that set keeps
+ * whatever `crossSlopeDeg` a prior call already wrote onto it, which is
+ * correct (not stale), not merely reused for speed, because nothing that
+ * value depends on has moved.
+ *
+ * `allCells` must be the FULL accumulated set, same contract as
+ * `applyCrossSlope` — needed so the halo/new cells' plane fits see every
+ * neighbour materialised so far; cells outside the recompute set are read
+ * (for neighbour lookups of others) but never written.
+ */
+export function applyCrossSlopeIncremental(allCells: MobilityGridCell[], newCells: MobilityGridCell[]): void {
+  if (newCells.length > 0) {
+    const byKey = new Map(allCells.map(c => [c.key, c]));
+    const recompute = new Map<string, MobilityGridCell>();
+    for (const c of newCells) recompute.set(c.key, c);
+    for (const c of newCells) {
+      for (const nHex of hexNeighbors(c.hex)) {
+        const n = byKey.get(hexKey(nHex));
+        if (n && !recompute.has(n.key)) recompute.set(n.key, n);
+      }
+    }
+    const derivatives = computeCrossSlopeForCells([...recompute.values()], allCells);
+    for (const cell of recompute.values()) {
+      cell.crossSlopeDeg = derivatives.get(cell.key) ?? 0;
+    }
+  }
+  // A round with zero new cells (defensive — the caller's own loop already
+  // never runs a round with nothing new) still invalidates the index below,
+  // matching `applyCrossSlope`'s own unconditional call — cheap, and keeps
+  // this function safe to call even in that edge case.
+  invalidateCellIndex(allCells);
 }
 
 export async function buildMobilityGrid(

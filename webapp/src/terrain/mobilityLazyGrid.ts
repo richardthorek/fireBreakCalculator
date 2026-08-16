@@ -48,8 +48,8 @@ import {
 } from '@firebreak/terrain';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import {
-  computePaddedBounds, computeCellBudget, sampleCellsForHexes, applyCrossSlope, isPaintedAreaMember, nearestCellKey,
-  minDetourPadM, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, MobilityGridResult,
+  computePaddedBounds, computeCellBudget, sampleCellsForHexes, applyCrossSlopeIncremental, isPaintedAreaMember,
+  nearestCellKey, minDetourPadM, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, MobilityGridResult,
 } from './mobilityGrid';
 import { runMobilitySearchInWorker } from './mobilityWorkerClient';
 import { SimPathNode } from './mobilityWorker';
@@ -131,6 +131,37 @@ const MAX_TARGET_CORRIDORS = 5;
  *  its own larger `DEFAULT_CORRIDOR_ROUTE_COUNT` (14) — this is only a
  *  cheap growth-decision signal, not the presented analysis. */
 const CORRIDOR_CHECK_ROUTE_COUNT = MAX_TARGET_CORRIDORS;
+
+/**
+ * WP5 Tier B (redundant-pass elimination) — `estimateDistinctCorridorCount`
+ * runs up to `CORRIDOR_CHECK_ROUTE_COUNT` (5) more Dijkstra searches plus a
+ * route-clustering pass; re-running it EVERY round, unthrottled, once a
+ * route exists but the target corridor count hasn't been confirmed yet,
+ * meant a many-round Lake-George-shaped run could pay for this on every one
+ * of up to `MAX_LAZY_ROUNDS` (14) rounds even in its diminishing-returns
+ * tail, where a thin new ring on an already-large accumulated grid is
+ * unlikely to have changed the distinct-avenue count since the last check.
+ *
+ * A round's check is skipped only when growth since the LAST check is under
+ * this fraction of the CURRENT total materialised cell count — see the
+ * throttle's own use site in `runLazyMobilitySearch` for the two safety
+ * nets that keep this from ever defeating the stop condition: the very
+ * FIRST check (before any corridor has been confirmed at all) always runs
+ * regardless of growth, which makes this a complete no-op for the common
+ * single-round case (unchanged from before this fix); and any round within
+ * one of the hard `MAX_LAZY_ROUNDS` cap always runs too, so the loop's own
+ * reported `corridorCountAtStop` is never stale at the exact moment growth
+ * is forced to stop for an unrelated reason. Skipping a check only ever
+ * DELAYS a stop decision (the loop just keeps growing, which the existing
+ * ceiling/budget bounds already cap) — it can never cause an INCORRECT
+ * early stop, since the break condition only fires off a freshly-read
+ * value. 20% is a deliberately generous threshold (checks on almost every
+ * round early in a run, since early rounds by construction add a large
+ * fraction of the still-small total) that only meaningfully throttles the
+ * later, large-total tail — "err toward re-checking too often rather than
+ * too rarely" per this work package's own instruction.
+ */
+const CORRIDOR_CHECK_MIN_GROWTH_FRACTION = 0.2;
 
 /** How many genuinely distinct avenues (route clusters, the SAME similarity
  *  test `corridorField.ts`'s own presentation pass uses — see
@@ -367,6 +398,10 @@ export async function runLazyMobilitySearch(
   // distinct corridors are confirmed). See the constants' own doc comment.
   let costStar: number | undefined;
   let corridorCountAtStop = 0;
+  // WP5 Tier B throttle state — see `CORRIDOR_CHECK_MIN_GROWTH_FRACTION`'s
+  // own doc comment for the two safety nets these back.
+  let cellCountAtLastCorridorCheck = 0;
+  let everCheckedCorridorCount = false;
 
   while (true) {
     round++;
@@ -419,7 +454,10 @@ export async function runLazyMobilitySearch(
     roadWays.push(...sampled.roadWays);
 
     const allCells = Array.from(materialized.values());
-    applyCrossSlope(allCells);
+    // WP5 Tier B — recompute crossSlopeDeg only for this round's new cells
+    // and their halo (see `applyCrossSlopeIncremental`'s own doc comment),
+    // not the whole accumulated set every round.
+    applyCrossSlopeIncremental(allCells, sampled.cells);
 
     if (round === 1) {
       const cornerPoints = allCells.map(c => hexCorners(axialToLocal(c.hex, hexSize), hexSize).map(p => toLatLng(proj, p)));

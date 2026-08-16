@@ -149,6 +149,107 @@ function fitLocalPlane(points: LocalPlanePoint[]): FittedPlane | null {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/** One cell's local least-squares plane fit against its PRESENT hex
+ *  neighbours (found via `byKey`, so a cell not yet materialised simply
+ *  isn't in the fit — exactly `computeDemDerivatives`'s original inline
+ *  behaviour). Factored out (WP5 Tier B) so `computeDemDerivatives`'s main
+ *  loop below and the incremental `computeCrossSlopeForCells` (also this
+ *  module) call the IDENTICAL fit logic — a single source of truth for
+ *  "what is this cell's cross-slope", so the two can never independently
+ *  drift on the answer. Returns `neighbors` too so callers that also need
+ *  `topographicPosition` (a plain neighbour-elevation comparison, unrelated
+ *  to the plane fit itself) don't have to re-walk `hexNeighbors` a second
+ *  time for the same cell. */
+function fitCellPlane(
+  cell: DemDerivativeCell,
+  byKey: Map<string, DemDerivativeCell>
+): { neighbors: DemDerivativeCell[]; crossSlopeDeg: number; roughness: number; tanSlope: number } {
+  const neighbors: DemDerivativeCell[] = [];
+  for (const h of hexNeighbors(cell.hex)) {
+    const n = byKey.get(hexKey(h));
+    if (n) neighbors.push(n);
+  }
+
+  // Local tangent-plane projection centred on THIS cell — reused from
+  // hexGrid.ts (the same projection style the rest of the mode already
+  // relies on) purely to get signed (x, y) metre offsets for the plane fit;
+  // at hex-cell separations (tens–hundreds of metres) this is equivalent to
+  // a geodesic distance for our purposes.
+  const proj = makeProjection(cell.center);
+  const neighborLocal = neighbors.map((n) => {
+    const p = toLocal(proj, n.center);
+    return { key: n.key, x: p.x, y: p.y, z: n.elevation };
+  });
+
+  const plane = fitLocalPlane([{ x: 0, y: 0, z: cell.elevation }, ...neighborLocal]);
+
+  let crossSlopeDeg = 0;
+  let roughness = 0;
+  let tanSlope = 0;
+
+  if (plane) {
+    tanSlope = Math.hypot(plane.b, plane.c);
+    crossSlopeDeg = Math.atan(tanSlope) * (180 / Math.PI);
+    if (neighborLocal.length > 0) {
+      const residuals = neighborLocal.map((p) => p.z - (plane.a + plane.b * p.x + plane.c * p.y));
+      const meanRes = residuals.reduce((s, r) => s + r, 0) / residuals.length;
+      const variance = residuals.reduce((s, r) => s + (r - meanRes) ** 2, 0) / residuals.length;
+      roughness = Math.sqrt(variance);
+    }
+  } else if (neighborLocal.length > 0) {
+    // Degenerate fit (< 3 usable points, or a collinear boundary
+    // configuration) — fall back to the steepest single-neighbour slope as
+    // a coarser crossSlopeDeg proxy. Roughness needs ≥3 points to mean
+    // anything (a residual against a single neighbour is just the raw
+    // slope, not an independent "bumpiness" signal) so it is left at 0
+    // rather than manufactured from too little data.
+    for (const p of neighborLocal) {
+      const dist = Math.hypot(p.x, p.y);
+      if (dist <= 0) continue;
+      const s = Math.abs(p.z - cell.elevation) / dist;
+      if (s > tanSlope) tanSlope = s;
+    }
+    crossSlopeDeg = Math.atan(tanSlope) * (180 / Math.PI);
+  }
+
+  return { neighbors, crossSlopeDeg, roughness, tanSlope };
+}
+
+/**
+ * `crossSlopeDeg` ONLY (no roughness/topographicPosition/TWI), for a SUBSET
+ * of cells — WP5 Tier B, the incremental sibling of `computeDemDerivatives`
+ * for `mobilityLazyGrid.ts`'s round-by-round tile-growth loop, where the
+ * caller (`applyCrossSlope`/`applyCrossSlopeIncremental` in
+ * `mobilityGrid.ts`) has only ever read `crossSlopeDeg` off the full result
+ * — recomputing every OTHER cell's untouched roughness/TPI/TWI on every
+ * round was already pure waste before this function existed.
+ *
+ * Deliberately scoped to `targetCells` only, and deliberately does NOT
+ * attempt TWI at all: `computeDemDerivatives`'s TWI pass is a GLOBAL
+ * multiple-flow-direction accumulation over the WHOLE grid in descending-
+ * elevation order (a cell's TWI can depend on flow routed in from cells many
+ * hops upslope) — that is NOT safe to compute incrementally the way
+ * `crossSlopeDeg` is (a pure function of one cell's own 1-ring
+ * neighbourhood, via `fitCellPlane` above), so no caller of this function
+ * should assume TWI/roughness/topographicPosition are being kept in sync —
+ * they simply aren't computed here.
+ *
+ * `allCells` is used for neighbour lookups only (never mutated, never
+ * itself recomputed) — must be the FULL accumulated cell set so a
+ * `targetCells` member's plane fit sees every neighbour actually
+ * materialised so far, exactly like `computeDemDerivatives` itself.
+ */
+export function computeCrossSlopeForCells(
+  targetCells: DemDerivativeCell[],
+  allCells: DemDerivativeCell[]
+): Map<string, number> {
+  const byKey = new Map<string, DemDerivativeCell>();
+  for (const c of allCells) byKey.set(c.key, c);
+  const results = new Map<string, number>();
+  for (const cell of targetCells) results.set(cell.key, fitCellPlane(cell, byKey).crossSlopeDeg);
+  return results;
+}
+
 export function computeDemDerivatives(cells: DemDerivativeCell[]): Map<string, DemDerivatives> {
   const byKey = new Map<string, DemDerivativeCell>();
   for (const c of cells) byKey.set(c.key, c);
@@ -157,53 +258,7 @@ export function computeDemDerivatives(cells: DemDerivativeCell[]): Map<string, D
   const tanSlopeByKey = new Map<string, number>();
 
   for (const cell of cells) {
-    const neighbors: DemDerivativeCell[] = [];
-    for (const h of hexNeighbors(cell.hex)) {
-      const n = byKey.get(hexKey(h));
-      if (n) neighbors.push(n);
-    }
-
-    // Local tangent-plane projection centred on THIS cell — reused from
-    // hexGrid.ts (the same projection style the rest of the mode already
-    // relies on) purely to get signed (x, y) metre offsets for the plane fit;
-    // at hex-cell separations (tens–hundreds of metres) this is equivalent to
-    // a geodesic distance for our purposes.
-    const proj = makeProjection(cell.center);
-    const neighborLocal = neighbors.map((n) => {
-      const p = toLocal(proj, n.center);
-      return { key: n.key, x: p.x, y: p.y, z: n.elevation };
-    });
-
-    const plane = fitLocalPlane([{ x: 0, y: 0, z: cell.elevation }, ...neighborLocal]);
-
-    let crossSlopeDeg = 0;
-    let roughness = 0;
-    let tanSlope = 0;
-
-    if (plane) {
-      tanSlope = Math.hypot(plane.b, plane.c);
-      crossSlopeDeg = Math.atan(tanSlope) * (180 / Math.PI);
-      if (neighborLocal.length > 0) {
-        const residuals = neighborLocal.map((p) => p.z - (plane.a + plane.b * p.x + plane.c * p.y));
-        const meanRes = residuals.reduce((s, r) => s + r, 0) / residuals.length;
-        const variance = residuals.reduce((s, r) => s + (r - meanRes) ** 2, 0) / residuals.length;
-        roughness = Math.sqrt(variance);
-      }
-    } else if (neighborLocal.length > 0) {
-      // Degenerate fit (< 3 usable points, or a collinear boundary
-      // configuration) — fall back to the steepest single-neighbour slope as
-      // a coarser crossSlopeDeg proxy. Roughness needs ≥3 points to mean
-      // anything (a residual against a single neighbour is just the raw
-      // slope, not an independent "bumpiness" signal) so it is left at 0
-      // rather than manufactured from too little data.
-      for (const p of neighborLocal) {
-        const dist = Math.hypot(p.x, p.y);
-        if (dist <= 0) continue;
-        const s = Math.abs(p.z - cell.elevation) / dist;
-        if (s > tanSlope) tanSlope = s;
-      }
-      crossSlopeDeg = Math.atan(tanSlope) * (180 / Math.PI);
-    }
+    const { neighbors, crossSlopeDeg, roughness, tanSlope } = fitCellPlane(cell, byKey);
     tanSlopeByKey.set(cell.key, tanSlope);
 
     // Topographic Position Index (Weiss 2001), hex-neighbour scale: cell
