@@ -79,8 +79,11 @@ const LAZY_CELL_CEILING_MULTIPLIER = 4;
 /** Safety net independent of cell count — defends against a pathological
  *  shape where each round only turns up a handful of new cells (a narrow,
  *  winding reachable channel) that would otherwise take many rounds to hit
- *  the cell ceiling. */
-const MAX_LAZY_ROUNDS = 14;
+ *  the cell ceiling. Exported purely for direct, network-free unit testing
+ *  of the WP5 Tier B corridor-count-check throttle below
+ *  (`shouldCheckCorridorCount`) — same "purely for testing" precedent as
+ *  `tileKeyOf`/`tilesCoveringBox`/`hexesForTile` further down this file. */
+export const MAX_LAZY_ROUNDS = 14;
 
 /**
  * docs §35 design point 2 ("a cost budget replaces the geometric bound") and
@@ -160,8 +163,33 @@ const CORRIDOR_CHECK_ROUTE_COUNT = MAX_TARGET_CORRIDORS;
  * fraction of the still-small total) that only meaningfully throttles the
  * later, large-total tail — "err toward re-checking too often rather than
  * too rarely" per this work package's own instruction.
+ *
+ * Exported alongside `shouldCheckCorridorCount` below purely for direct,
+ * network-free unit testing (same precedent as `MAX_LAZY_ROUNDS`).
  */
-const CORRIDOR_CHECK_MIN_GROWTH_FRACTION = 0.2;
+export const CORRIDOR_CHECK_MIN_GROWTH_FRACTION = 0.2;
+
+/**
+ * Pure throttle decision — the LITERAL predicate `runLazyMobilitySearch`'s
+ * own loop calls (not a second, possibly-disagreeing reimplementation),
+ * pulled out so it can be unit-tested without mocking every network fetch
+ * the surrounding async loop needs. See `CORRIDOR_CHECK_MIN_GROWTH_FRACTION`'s
+ * own doc comment for the full reasoning behind each branch.
+ */
+export function shouldCheckCorridorCount(
+  everCheckedCorridorCount: boolean,
+  materializedCellCount: number,
+  cellCountAtLastCorridorCheck: number,
+  round: number
+): boolean {
+  const growthSinceLastCheck = materializedCellCount - cellCountAtLastCorridorCheck;
+  const nearRoundCap = round >= MAX_LAZY_ROUNDS - 1;
+  return (
+    !everCheckedCorridorCount ||
+    growthSinceLastCheck >= CORRIDOR_CHECK_MIN_GROWTH_FRACTION * materializedCellCount ||
+    nearRoundCap
+  );
+}
 
 /** How many genuinely distinct avenues (route clusters, the SAME similarity
  *  test `corridorField.ts`'s own presentation pass uses — see
@@ -512,17 +540,33 @@ export async function runLazyMobilitySearch(
     // have been found yet (docs §35 design point 3) — this is the PRIMARY
     // stop rule; the frontier/ceiling checks below are the safety bounds
     // behind it, exactly as designed.
+    //
+    // WP5 Tier B — throttled via the pure `shouldCheckCorridorCount`
+    // predicate above, not run unconditionally on every round. See that
+    // function's own doc comment (and `CORRIDOR_CHECK_MIN_GROWTH_FRACTION`'s)
+    // for the full reasoning: the very first opportunity always checks (so
+    // the common single-round case is byte-for-byte unchanged from before
+    // this fix), and any round near `MAX_LAZY_ROUNDS` always checks too, so
+    // the reported `corridorCountAtStop` is never stale at the moment growth
+    // is forced to stop for an unrelated reason.
     if (path && costStar !== undefined) {
-      corridorCountAtStop = estimateDistinctCorridorCount(
-        allCells, originKeys, objectiveKeys, profile, options.nightMode, hexSize
+      const needsCorridorCheck = shouldCheckCorridorCount(
+        everCheckedCorridorCount, materialized.size, cellCountAtLastCorridorCheck, round
       );
-      if (corridorCountAtStop >= MIN_TARGET_CORRIDORS || corridorCountAtStop >= MAX_TARGET_CORRIDORS) {
-        break; // 2–5 distinct corridors confirmed — done
+      if (needsCorridorCheck) {
+        corridorCountAtStop = estimateDistinctCorridorCount(
+          allCells, originKeys, objectiveKeys, profile, options.nightMode, hexSize
+        );
+        cellCountAtLastCorridorCheck = materialized.size;
+        everCheckedCorridorCount = true;
+        if (corridorCountAtStop >= MIN_TARGET_CORRIDORS || corridorCountAtStop >= MAX_TARGET_CORRIDORS) {
+          break; // 2–5 distinct corridors confirmed — done
+        }
+        onLog?.(
+          `ROUTE FOUND (${(costStar / 60).toFixed(0)} MIN) BUT ONLY ${corridorCountAtStop} DISTINCT CORRIDOR(S) SO FAR — ` +
+          `WIDENING WITHIN α×C* (${alpha}×${(costStar / 60).toFixed(0)} MIN) TO LOOK FOR MORE`
+        );
       }
-      onLog?.(
-        `ROUTE FOUND (${(costStar / 60).toFixed(0)} MIN) BUT ONLY ${corridorCountAtStop} DISTINCT CORRIDOR(S) SO FAR — ` +
-        `WIDENING WITHIN α×C* (${alpha}×${(costStar / 60).toFixed(0)} MIN) TO LOOK FOR MORE`
-      );
     }
 
     // Which tiles does the reachable frontier actually border? Only cells
