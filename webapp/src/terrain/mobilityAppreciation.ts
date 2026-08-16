@@ -43,9 +43,10 @@ import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDet
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
 import {
-  runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker, runCorridorFieldInWorker,
+  runMovementEnsembleInWorker, runViewshedInWorker, runCorridorFieldInWorker,
   runMinCutInWorker,
 } from './mobilityWorkerClient';
+import { runKeyTerrainScoringPooled } from './mobilityWorkerPool';
 import { yieldToMain } from './asyncUtils';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
@@ -549,6 +550,21 @@ export async function runMobilityAppreciation(
   // independent conversions that could drift apart.
   const roadRouteAsDissimilar = roadRoute ? roadRouteToDissimilarRoute(roadRoute, grid.cells) : null;
 
+  // WP5 Tier B (redundant-pass elimination) — `results` (above) is already
+  // the arrival time of every reachable cell from this SAME origin AOI, over
+  // this SAME final `grid.cells`, with no edge penalties (the lazy grid's own
+  // settling search). That is bit-for-bit what `computeCellFacts` inside
+  // `buildCorridorField` would otherwise pay a SEPARATE full Dijkstra to
+  // re-derive, every time below, purely for arrival times — none of the
+  // `runCorridorFieldInWorker` calls below ever carry `edgePenalties` through
+  // the worker's 'corridors' request (see `MobilityCorridorsRequest.options`'s
+  // own doc comment), so this one map is the correct input for every one of
+  // them. Built once here and threaded into the calls that pass
+  // `routesOverride` (ensemble-based, road-route-refolded, restricted) — the
+  // ones the caller already has route/cost data for and would otherwise pay
+  // this search purely for facts, not for the routes themselves.
+  const baselineArrivalSeconds = new Map(results.map(r => [r.key, r.timeSeconds]));
+
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
   const severelyRestrictedCount = results.filter(r => r.trafficability === 'severely-restricted').length;
@@ -720,6 +736,7 @@ export async function runMobilityAppreciation(
           routesOverride: roadRouteAsDissimilar ? [...ensembleRoutes, roadRouteAsDissimilar] : ensembleRoutes,
           evidence: 'simulated-movers',
           weightByAttractiveness: false,
+          arrivalSecondsOverride: baselineArrivalSeconds,
         },
         roadSpeedOverrides
       );
@@ -745,7 +762,10 @@ export async function runMobilityAppreciation(
       onLog?.('FOLDING THE REAL ROAD-NETWORK ROUTE INTO CORRIDOR/CHOKEPOINT ANALYSIS AS A KNOWN-GOOD AVENUE…');
       const withRoadRoute = await runCorridorFieldInWorker(
         grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
-        { routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar] },
+        {
+          routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar],
+          arrivalSecondsOverride: baselineArrivalSeconds,
+        },
         roadSpeedOverrides
       );
       if (signal?.aborted) return null;
@@ -819,6 +839,7 @@ export async function runMobilityAppreciation(
             routesOverride: ensembleTracksToRoutes(restrictionPlan.scenario.tracks, grid.cells),
             evidence: 'simulated-movers',
             weightByAttractiveness: false,
+            arrivalSecondsOverride: baselineArrivalSeconds,
           },
           roadSpeedOverrides
         );
@@ -898,7 +919,15 @@ export async function runMobilityAppreciation(
       if (keyTerrainCandidates.length > 0) {
         onStage?.({ key: 'keyTerrain', label: 'Scoring key terrain candidates', fraction: 0.99 });
         onLog?.(`SCORING ${keyTerrainCandidates.length} KEY TERRAIN CANDIDATE(S)…`);
-        keyTerrain = await runKeyTerrainScoringInWorker(
+        // Pooled across up to 4 worker instances (WP4 fan-out — each
+        // candidate is a pure, independent evaluation; see
+        // mobilityWorkerPool.ts's own header) rather than the single
+        // shared worker every other phase uses — this is the single
+        // largest chunk of a run's total Dijkstra passes (profiling
+        // audit), so it is the one phase where spreading the work across
+        // cores, not just off the main thread, pays for the extra worker
+        // instances' memory duplication.
+        keyTerrain = await runKeyTerrainScoringPooled(
           grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
           optimiserCorridorField, keyTerrainCandidates, roadSpeedOverrides
         );

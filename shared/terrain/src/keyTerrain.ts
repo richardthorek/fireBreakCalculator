@@ -150,13 +150,22 @@ const CHOKEPOINT_CANDIDATE_COUNT = 6;
  *  unlikely to survive the cap below. */
 const CORRIDOR_BOTTLENECK_CANDIDATE_COUNT = 3;
 /** Hard cap on candidates actually re-run and scored — each evaluation is a
- *  real search, see this module's header on cost. */
-const MAX_CANDIDATES_EVALUATED = 10;
+ *  real search, see this module's header on cost. Exported so a pooled
+ *  caller (WP4, movement-analysis performance work — see
+ *  `mobilityWorkerPool.ts`) can pre-slice to this SAME cap before splitting
+ *  candidates across workers; each worker's own `scoreKeyTerrainCandidates`
+ *  call also applies this cap independently, so failing to pre-slice would
+ *  let a pooled run evaluate up to `poolSize × MAX_CANDIDATES_EVALUATED`
+ *  candidates instead of this one bound. */
+export const MAX_CANDIDATES_EVALUATED = 10;
 /** Routes per candidate re-run, reduced from `DEFAULT_CORRIDOR_ROUTE_COUNT`
  *  (14) the same way `restrictionPlanner.ts`'s `EVALUATION_MOVER_COUNT` is
  *  reduced from its headline ensemble — a candidate only needs to be RANKED
- *  against its rivals, not rendered at full fidelity. */
-const EVALUATION_ROUTE_COUNT = 6;
+ *  against its rivals, not rendered at full fidelity. Exported so a pooled
+ *  caller (`mobilityWorkerPool.ts`) building its own `KeyTerrainResult` from
+ *  merged worker responses reports the same value `buildKeyTerrainResult`
+ *  would have. */
+export const EVALUATION_ROUTE_COUNT = 6;
 
 function meanCenter(cells: MobilityGridCell[], keys: string[]): LatLng {
   const byKey = new Map(cells.map(c => [c.key, c]));

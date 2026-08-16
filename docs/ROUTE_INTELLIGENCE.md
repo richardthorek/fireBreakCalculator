@@ -6075,6 +6075,215 @@ should be reviewed against Azure once more before the owner's first real use.
 5. Verify every existing `/api/*` endpoint still resolves through the new
    linked backend before considering the cutover complete.
 
+## 50. Movement-analysis performance + progressive-painting programme (2026-08-16, in progress)
+
+Owner report: the tab hangs during a Terrain Mobility run and the browser
+sometimes offers to kill it; only a text run-log visibly updates; the request
+was also to see real analysis "painted in" as it computes (grids drawn in
+first, colouring as each hex is analysed, corridors appearing/changing as
+they're found), and for the run itself to be materially faster — including
+whether backend offload or more parallelism could help.
+
+**Diagnosis, from a direct profiling audit rather than guesswork:**
+`mobilityAppreciation.ts` ran its post-search phases — ensemble summary,
+corridor-field construction (up to 4 calls), chokepoints, hex min-cut,
+road-network min-cut, key-terrain nomination — as one unbroken synchronous
+block with no `await` anywhere in it; Edmonds-Karp min-cut alone runs a
+`for (guard < 200000)` augmenting-path loop with no yield inside it. A
+standard run performs on the order of 120 full-grid Dijkstra passes (≈18 for
+corridor fields, ≈70 for key-terrain scoring, ≈33 for restriction planning),
+each re-deriving hex neighbours, `hexKey` strings, `toMobilitySample`
+objects and haversine distances from scratch. Separately, every Terrain
+Mobility Mapbox layer's effect had a `setData` fast path that was dead code
+— cleanup ran before the effect's own re-run (React's own ordering), so
+`getSource(id)` was always undefined and every update took the
+`addSource`/`addLayer` branch, re-tessellating the map on every change,
+including on every single paint dab.
+
+**Design decisions (owner-directed, recorded here since they shape every
+stage below):**
+- Numeric drift from constant-factor optimisation is acceptable if
+  documented and tested, not required to be bit-identical — but see WP2
+  below: the actual win turned out to be losslessly achievable anyway.
+- Compute placement: **hybrid, client-first.** A cold Azure Function cannot
+  hit a sub-few-second first paint, so the early, visible part of a run must
+  stay client-side regardless of backend decisions; build the client-side
+  parallel/incremental path now, keep the chunk-decomposition compatible
+  with OCOKA 8's eventual backend fan-out, but do not deploy the backend as
+  part of this program.
+- Search shape: **multi-resolution coarse-to-fine**, not narrowing the
+  search to plausible agent paths — the latter risks silently missing a real
+  avenue of approach away from the direct line, which is precisely what this
+  mode exists to find.
+- Delivery: **one programme, staged as independently-shippable, independently-tested
+  commits** on `claude/movement-analysis-perf-u1yhy5`, each gated on the
+  full `npm test` suite + strict `tsc -b`, rather than one large PR.
+
+### WP0 — SWA deploy pipeline fix (unblocking, unrelated root cause found in passing)
+
+While investigating this work, found `main` had not deployed since
+2026-08-03 — three consecutive pushes failed `Provision & Deploy` silently
+(`Build & Test` stayed green throughout, which is why it went unnoticed).
+Root cause: OCOKA 2 extracted `shared/@firebreak/terrain` as its own package
+consumed via a TS path alias; `build_and_test` got a matching install step,
+but `provision_and_deploy` is a separate job with its own checkout and had
+none, so Oryx's remote build (scoped to `app_location: webapp`, no
+workspace awareness) couldn't resolve `shared/terrain`'s own dependencies
+(`@turf/*`, `geojson`). Fixed by building the webapp on the runner — where
+`shared/terrain` can be installed exactly as `build_and_test` already does
+— and handing the SWA action the prebuilt output via `skip_app_build: true`.
+Shipped as its own PR ([#211](https://github.com/richardthorek/fireBreakCalculator/pull/211),
+merged), off `main`, independent of this programme.
+
+### WP1 — Map layers update incrementally instead of rebuilding (shipped)
+
+Separated lifecycle from data for every Terrain Mobility Mapbox source: each
+is created once and updated via `setData`/`GeoJSONSource#updateData`
+thereafter; removal happens only when the layer genuinely goes away (empty
+data, or unmount), with a `mobilityReattachRef` registry re-running each
+group's `apply()` after a style reload (Mapbox destroys all sources on
+`setStyle`). Added `promoteId` + a `feature-state`-driven colour path
+(`upsertMobilityCells`/`setMobilityCellStates`, `MapboxMapView.tsx`) so a
+cell can be recoloured without re-uploading geometry — the same idiom
+already proven by fire-break's own slope-reveal animation. This is the
+enabling prerequisite for progressive painting: more frequent updates on
+top of the OLD rendering path would have made the hang worse, not better.
+Purely a change to HOW data reaches the map — zero visible change to a
+completed run's own output.
+
+### WP2 — Search-core constant factors (shipped)
+
+New `shared/terrain/src/cellIndex.ts`: precomputes, ONCE per grid (cached by
+array identity), the four things every one of the ~120 passes was
+re-deriving — a numeric neighbour table (`Int32Array`), per-edge haversine
+distances, `MobilitySample` projections, and `crossSlopeDeg` — and
+`runAccumulatedCostSearch`/`runCostToGoSearch` now search over integer
+indices and `Float64Array` state instead of `Map<string, ...>`. Required to
+be a **pure mechanical speedup, bit-identical output** — proven by
+`searchCoreEquivalence.test.ts`, which keeps an independent frozen copy of
+the pre-refactor implementation as a reference oracle and asserts every key,
+value AND Map iteration order matches exactly. Benchmark
+(`tests/bench/searchCoreBench.ts`): ≈2.2–2.5× on the search core alone over
+120 passes at N≈2200.
+
+Two real correctness defects were found and fixed during review, both
+proven with mutation tests (deliberately reintroducing each bug and
+confirming the specific test fails, then restoring and confirming green) —
+neither was caught by the first "tests pass" claim:
+- **Output order silently changed.** `best`'s Map was rebuilt in ascending
+  cell-index order instead of first-insertion order. `resumeFrom` seeds the
+  heap by iterating a prior `best`, so this fed different tie-break-by-
+  insertion-order results into the MinHeap on resume, changing `prev`
+  pointers and the reconstructed route on ties — common on uniform-cost
+  terrain. The original equivalence test compared every key's value but
+  never compared key order, so it passed anyway; fixed by tracking
+  first-insertion order explicitly and strengthening the test to assert
+  order too, plus a deliberately tie-heavy fixture.
+- **A presence check collided with a legitimate sentinel value.**
+  "Already settled" was checked as `bestTime[i] !== Infinity` — but
+  `keyTerrain.ts`'s own candidate-denial mechanism applies an `Infinity`
+  edge penalty on purpose ("deliberately unlike every other penalty", that
+  module's own header), which can legitimately settle a cell's cost at
+  `Infinity`. That collided with the "never visited" sentinel, so a denied
+  cell was re-discovered and re-pushed to the output-order array on every
+  relaxation into it from every direction — the live `RangeError: Invalid
+  array length` crash inside `keyTerrain.test.ts`. Fixed with an explicit
+  `settled: Uint8Array` presence flag, independent of the cost value,
+  matching the original `Map`'s undefined-vs-present semantics.
+
+### WP3 — Corridor field + min-cut moved off the main thread (shipped)
+
+The actual fix for the reported hang. Extends the existing `mobilityWorker.ts`
+protocol with `'corridors'`, `'chokepoints'` and `'minCut'` request kinds
+(chokepoints stays main-thread — genuinely O(K·N) cheap per
+`corridorAnalysis.ts`'s own header, not worth a full `grid.cells`
+structured-clone) and wires `mobilityAppreciation.ts`'s orchestrator to use
+them: all four `buildCorridorField` call sites and both min-cut solves (hex
++ road-network, now one combined worker round trip rather than two — the
+two are independent per §47.4's own parallelism table) now run in the
+worker. A new `yieldToMain()` (`asyncUtils.ts`, prefers `scheduler.yield()`,
+falls back to a `MessageChannel` macrotask) sits before the remaining
+genuinely-cheap main-thread work (chokepoints, key-terrain candidate
+nomination) so the browser gets a paint opportunity between phases. No
+unbroken main-thread stretch capable of reproducing the hang survives in
+this function. Verified via strict `tsc -b` + the full suite + a manual
+trace of every altered call site against the original control flow and log
+order — `mobilityAppreciation.ts` itself has no unit-test harness
+(transitively depends on `import.meta.env` and a real Worker, same
+established limitation as `mobilityGrid.ts`).
+
+### WP4 — Streaming partial results + key-terrain fan-out (shipped, first half of "painted in as we go")
+
+**Streaming.** `simulateMovementEnsemble` (`movementSimulation.ts`) gains an
+optional `onPartialTracks(cells, moversDone)` callback, throttled by real
+wall-clock time (250ms) rather than a mover-count stride — a fixed stride
+either floods a fast device or starves a slow one, a time interval adapts to
+both. `buildTransitCells` (the transit-count → `TransitCell[]` projection)
+is factored out of the final-result path so streamed snapshots and the
+final result share one implementation. A new `'movementPartial'` worker
+response kind carries these out; the client's message dispatcher needed a
+matching special case (routed like `'progress'`, never resolving/deleting
+the pending entry) — without it, a `'movementPartial'` message would have
+fallen through to the generic resolve-and-delete path, prematurely
+resolving the promise with a malformed partial and dropping the real
+terminal response, caught in review before landing. Threaded through as
+`onEnsembleProgress` into a new `mobilityEnsembleProgressCells` state in
+`App.tsx`, which `transitCellsForMap` prefers until the run's own final
+ensemble lands (always supersedes, matching the existing `onPartialResult`
+precedent) — no new map-layer code needed, since `mobility-transit` already
+updates via `setData` (WP1).
+
+Proven correct with two mutation tests on the "pure observer" guarantee
+(supplying the callback must never change the ensemble's own RNG draws or
+final result): a first sabotage that consumed an extra RNG draw turned out
+to be genuinely inert (each mover's stream is independently seeded per
+`hashSeedForMover`, so a dead mover's exhausted RNG being drawn once more
+affects nothing downstream) — a useful negative result, discarded once
+understood. A second sabotage that duplicated a `transitCounts` increment
+inside the throttled branch WAS caught, but only after raising the test's
+own mover count enough to guarantee the throttle actually fires during the
+comparison — the original test's mover count was too small to reliably
+exercise the callback at all, which would have made the comparison pass
+vacuously regardless of correctness.
+
+**Key-terrain fan-out.** New `webapp/src/terrain/mobilityWorkerPool.ts`:
+key-terrain candidate scoring — ≈70 of a standard run's ≈120 Dijkstra
+passes, the single largest chunk, and already proven independent per
+candidate (`keyTerrain.ts`'s own header, §47.4's parallelism table) — now
+fans out across up to 4 worker instances instead of the single shared
+worker, reusing the EXISTING `'keyTerrain'` request/response protocol
+unchanged. Pool size capped well below `navigator.hardwareConcurrency`
+since each worker gets its own structured-clone copy of the full cell
+array. Two correctness traps, both designed around explicitly rather than
+found after the fact: (1) `scoreKeyTerrainCandidates` ranks internally, so
+a chunk-local rank 1 is only correct within that chunk — every pool
+response's own rank is discarded and reassigned globally on the main
+thread after every chunk returns; (2) `scoreKeyTerrainCandidates` also
+independently re-applies `MAX_CANDIDATES_EVALUATED` per call, so chunking
+the FULL candidate list without pre-slicing first would let each of N
+workers apply the cap again, evaluating up to N× the intended bound — the
+pre-slice happens once, before chunking. The merge/re-rank logic is
+extracted into pure, Worker-free functions (`chunkCandidates`,
+`mergeKeyTerrainChunks`) specifically so this risk surface is directly
+unit-testable without spawning a real Worker.
+
+### Remaining (not yet started at time of writing)
+
+- **WP5 — Tier B redundant-pass elimination**: `computeCellFacts` paying a
+  full Dijkstra even when a caller's `routesOverride` means it already has
+  route data; min-cut computing every edge's cost twice (build time and
+  boundary-extraction time); `applyCrossSlope` recomputing the whole
+  accumulated cell set every lazy-grid round instead of just new cells plus
+  a neighbour halo; `estimateDistinctCorridorCount` re-running unthrottled
+  every round.
+- **WP6 — Multi-resolution coarse-to-fine search**: full coarse sweep first
+  (fast first paint), refine only inside candidate corridor bands —
+  deliberately NOT narrowing to agent-plausible paths (would risk missing a
+  real avenue of approach).
+- Frontier-streaming from the Dijkstra search itself (visible reachability
+  "flooding outward" during the search phase, as distinct from the
+  ensemble-transit streaming WP4 already ships) has not been built.
+
 ---
 
 ## Update policy

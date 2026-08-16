@@ -73,12 +73,12 @@ export type { SimPathNode };
  *
  *  - 'corridors' — corridor-field construction (`corridorField.ts`). Every one
  *                 of `mobilityAppreciation.ts`'s `buildCorridorField` calls
- *                 runs at least one full accumulated-cost search internally
- *                 (`computeCellFacts`, regardless of whether `routesOverride`
- *                 skips the k-dissimilar-routes search itself) — the same
- *                 CPU-bound, no-network-I/O shape 'movement'/'keyTerrain'
- *                 already exist to keep off the main thread. No progress
- *                 reporting, same simplicity call 'keyTerrain' already made.
+ *                 that does NOT supply `options.arrivalSecondsOverride` (WP5
+ *                 Tier B) runs at least one full accumulated-cost search
+ *                 internally (`computeCellFacts`) — still the same CPU-bound,
+ *                 no-network-I/O shape 'movement'/'keyTerrain' already exist
+ *                 to keep off the main thread. No progress reporting, same
+ *                 simplicity call 'keyTerrain' already made.
  *  - 'chokepoints' — betweenness over an already-derived route set
  *                 (`corridorAnalysis.ts#computeChokepoints`). Genuinely cheap
  *                 on its own (bounded by route count × route length), but
@@ -227,6 +227,10 @@ export interface MobilityCorridorsRequest {
     routesOverride?: DissimilarRoute[];
     evidence?: CorridorEvidence;
     weightByAttractiveness?: boolean;
+    /** WP5 Tier B — see `buildCorridorField`'s own doc comment on this same
+     *  field. `Map`s structured-clone natively across the worker boundary,
+     *  same as every other Map-valued field already crossing it. */
+    arrivalSecondsOverride?: Map<string, number>;
   };
 }
 

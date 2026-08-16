@@ -336,11 +336,31 @@ function computeCellFacts(
   originKeys: string[],
   profile: MoverProfile,
   nightMode: boolean,
-  edgePenalties?: Map<string, number>
+  edgePenalties?: Map<string, number>,
+  /**
+   * Reuse an arrival-time map an IDENTICAL search already produced, instead
+   * of paying another full `runAccumulatedCostSearch` here purely to re-derive
+   * the same numbers (WP5 Tier B). CALLER'S OWN RESPONSIBILITY: this must be
+   * the `best` map (cellKey → seconds) of a search over the exact same
+   * `cells`/`originKeys`/`profile`/`nightMode`/`edgePenalties` this call would
+   * otherwise run itself — `buildCorridorField` only ever forwards a caller-
+   * supplied value here (see `arrivalSecondsOverride`'s own doc comment on
+   * its parameter), it never guesses or invalidates one, so a caller passing
+   * a mismatched map gets mismatched (silently wrong) facts. Trafficability
+   * below is NEVER taken from this override — it needs its own, different,
+   * per-directed-edge computation (see that loop's own comment) and staying
+   * cheap either way, so there is nothing to save by short-circuiting it too.
+   */
+  arrivalSecondsOverride?: Map<string, number>
 ): CellFacts {
-  const reach = runAccumulatedCostSearch(cells, originKeys, profile, nightMode, { edgePenalties });
-  const arrivalSeconds = new Map<string, number>();
-  for (const [key, v] of reach.best) arrivalSeconds.set(key, v.timeSeconds);
+  let arrivalSeconds: Map<string, number>;
+  if (arrivalSecondsOverride) {
+    arrivalSeconds = arrivalSecondsOverride;
+  } else {
+    const reach = runAccumulatedCostSearch(cells, originKeys, profile, nightMode, { edgePenalties });
+    arrivalSeconds = new Map<string, number>();
+    for (const [key, v] of reach.best) arrivalSeconds.set(key, v.timeSeconds);
+  }
 
   // Per-cell trafficability from the profile's OWN worst outbound edge — the
   // same edgeMobilityCost the search uses, so a cell can never be coloured
@@ -567,6 +587,28 @@ export function buildCorridorField(
      * false for ensemble input.
      */
     weightByAttractiveness?: boolean;
+    /**
+     * WP5 Tier B — skip `computeCellFacts`'s own internal accumulated-cost
+     * search and reuse THIS arrival-time map instead (cellKey → seconds from
+     * the origin AOI). Every caller in `mobilityAppreciation.ts` that passes
+     * `routesOverride` (ensemble-based, road-route-refolded, restricted) has
+     * already run — or has access to — the identical baseline search
+     * elsewhere in the same run (the lazy grid's own settle pass, which uses
+     * the same `cells`/`originKeys`/`profile`/`nightMode` and no
+     * `edgePenalties`, exactly what these calls also use), so paying a SECOND
+     * full Dijkstra here purely to regenerate arrival times a prior search
+     * already produced was pure waste, not a different answer. Leave unset
+     * (the default) for any call whose `edgePenalties` might differ from a
+     * previously-run search — e.g. `keyTerrain.ts`'s per-candidate denial
+     * evaluation, or `App.tsx`'s counter-measure-scenario build — where an
+     * override would silently be WRONG for the penalised network being asked
+     * about. Only ever pass the `best` map of a search over the exact same
+     * (cells, originKeys, profile, nightMode, edgePenalties) this call would
+     * otherwise run internally — mismatched inputs produce a silently wrong
+     * (but structurally valid) `CellFacts`, since nothing here can detect a
+     * mismatch after the fact.
+     */
+    arrivalSecondsOverride?: Map<string, number>;
   } = {}
 ): CorridorField | null {
   const opts: Required<CorridorFieldOptions> = {
@@ -585,7 +627,7 @@ export function buildCorridorField(
   const evidence: CorridorEvidence = options.evidence ?? 'optimiser-routes';
   const weightByAttractiveness = options.weightByAttractiveness ?? true;
 
-  const facts = computeCellFacts(cells, originKeys, profile, nightMode, options.edgePenalties);
+  const facts = computeCellFacts(cells, originKeys, profile, nightMode, options.edgePenalties, options.arrivalSecondsOverride);
   const byKey = new Map(cells.map(c => [c.key, c]));
   const bestSeconds = Math.min(...routes.map(r => r.totalSeconds));
   const hexWidthM = hexSize * Math.sqrt(3); // pointy-top hex flat-to-flat width

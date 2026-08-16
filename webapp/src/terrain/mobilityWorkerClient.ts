@@ -261,6 +261,8 @@ export function runCorridorFieldInWorker(
     routesOverride?: DissimilarRoute[];
     evidence?: CorridorEvidence;
     weightByAttractiveness?: boolean;
+    /** WP5 Tier B — see `buildCorridorField`'s own doc comment on this field. */
+    arrivalSecondsOverride?: Map<string, number>;
   },
   roadSpeedOverrides?: RoadSpeedOverrides
 ): Promise<CorridorField | null> {
