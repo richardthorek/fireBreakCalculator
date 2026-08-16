@@ -6267,15 +6267,79 @@ extracted into pure, Worker-free functions (`chunkCandidates`,
 `mergeKeyTerrainChunks`) specifically so this risk surface is directly
 unit-testable without spawning a real Worker.
 
+### WP5 — Tier B redundant-pass elimination (shipped)
+
+Four independent, mechanical fixes, each landed and independently
+re-verified (not just accepted on the implementer's own test claim) before
+committing:
+
+- **`computeCellFacts` skips its own redundant search when arrival times are
+  already known.** New opt-in `arrivalSecondsOverride` option
+  (`corridorField.ts`) lets a caller that already ran an identical search
+  elsewhere in the run (the lazy grid's own settling search) reuse that
+  `Map` instead of paying a second full `runAccumulatedCostSearch` purely to
+  re-derive arrival times. Defaults to unset for any caller whose
+  `edgePenalties` might differ from the prior search (`keyTerrain.ts`'s
+  per-candidate denial evaluation), where reuse would be silently wrong.
+  Wired from `mobilityAppreciation.ts`'s baseline search into the three
+  `buildCorridorField` call sites that pass `routesOverride`. Review found
+  the override map is structurally different from what the internal search
+  produces (every cell present with `timeSeconds: Infinity` for unreachable
+  ones, vs. unreachable cells simply absent from the map) — traced both
+  actual read sites and confirmed both filter via `isFinite()`, never Map
+  presence, so the difference is behaviourally inert today; a test now
+  exercises that exact production-shaped override, not only the
+  reached-only shape the original test used.
+- **Min-cut stops computing every edge's cost twice.**
+  `computeMinCutBarrier`/`computeRoadNetworkMinCut` each called
+  `edgeMobilityCost`/`edgeTravelTime` once at graph-build time and again at
+  boundary-extraction time, from scratch, for the same edge. Both now cache
+  the build-time passability verdict in a dedicated map (not read from the
+  residual graph's own capacity, which the max-flow solve mutates, making a
+  later `0` ambiguous between "never existed" and "fully saturated"). The
+  hex cache is safely string-keyed (exactly six distinct neighbour
+  directions per cell); the road cache is keyed by `RoadEdge` OBJECT
+  IDENTITY, not a string — the road graph is a real OSM-derived multigraph
+  where two different mapped ways can produce two separate `RoadEdge`s
+  between the same node pair, each with its own independent `blocked`
+  verdict, and a string key would let one silently overwrite the other's
+  cached answer. Proven with a test that builds two parallel edges with
+  opposite passability in both array orderings.
+- **`applyCrossSlope` recomputes only new cells plus their halo**, not the
+  whole accumulated grid every lazy-grid round. The per-cell plane-fit logic
+  is extracted verbatim out of `computeDemDerivatives` (`demDerivatives.ts`)
+  into a shared `fitCellPlane`, so the new incremental
+  `computeCrossSlopeForCells` and the existing full-recompute path can never
+  independently drift. New `applyCrossSlopeIncremental` recomputes exactly
+  `newCells` ∪ every already-materialised cell hex-adjacent to at least one
+  of them — the only cells whose plane fit could possibly have changed,
+  since a cell's `elevation`/`center` are set once at sampling time and
+  never mutated afterward (verified directly by grepping the whole terrain
+  codebase for any such mutation, not just asserted). Deliberately does NOT
+  attempt incremental TWI — that is a global multi-hop flow-accumulation
+  pass, not a pure per-cell computation, so it stays a full-grid-only
+  concern. A test proves the halo boundary exactly (adjacent cells update,
+  near-but-not-adjacent cells don't) and that a multi-round incremental run
+  is bit-identical, cell-for-cell, to one full recompute of the final grid.
+- **`estimateDistinctCorridorCount` is throttled by real growth**, not
+  unconditional every round. A pure `shouldCheckCorridorCount` predicate
+  (checks on the very first opportunity, once accumulated growth reaches
+  20% of the current total, or unconditionally within one round of
+  `MAX_LAZY_ROUNDS` as a growth-independent safety net) is exported and
+  called directly by the loop, so the test exercises the literal production
+  predicate rather than a second implementation. The risk this fix's own
+  brief called out — "must not leave genuine avenues undiscovered" — is
+  tested directly: a realistic slow-growth tail stops within a bounded
+  number of rounds of the true count becoming sufficient, and the
+  adversarial case (a pathological zero-growth plateau, where no
+  growth-based check can ever fire) still stops via the round-cap safety
+  net at exactly its own trigger round, never silently forever.
+
+Gates: 45/45 test files, strict `tsc -b`, `shared/terrain`'s own build,
+all clean.
+
 ### Remaining (not yet started at time of writing)
 
-- **WP5 — Tier B redundant-pass elimination**: `computeCellFacts` paying a
-  full Dijkstra even when a caller's `routesOverride` means it already has
-  route data; min-cut computing every edge's cost twice (build time and
-  boundary-extraction time); `applyCrossSlope` recomputing the whole
-  accumulated cell set every lazy-grid round instead of just new cells plus
-  a neighbour halo; `estimateDistinctCorridorCount` re-running unthrottled
-  every round.
 - **WP6 — Multi-resolution coarse-to-fine search**: full coarse sweep first
   (fast first paint), refine only inside candidate corridor bands —
   deliberately NOT narrowing to agent-plausible paths (would risk missing a
