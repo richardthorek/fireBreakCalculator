@@ -34,15 +34,19 @@ import {
   carriesWaterSignal, LocalProjection, PaintedArea, MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID,
   DEFAULT_MOVEMENT_SIM_SEED, RestrictionPlan, MobilityCellResult, IsochroneBand, buildIsochroneBands,
   DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell, getMoverProfile, MoverProfile, setRoadSpeedOverrides,
-  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, computeMinCutBarrier, MinCutResult,
-  computeRoadNetworkMinCut, RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
+  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, MinCutResult,
+  RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
   buildObservationResult, ConcealmentResult, buildConcealmentResult, buildRoadGraph, nodesWithin, RoadGraph, RoadWay,
-  WaterBodyPolygon, buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
+  WaterBodyPolygon, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
 } from '@firebreak/terrain';
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker } from './mobilityWorkerClient';
+import {
+  runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker, runCorridorFieldInWorker,
+  runMinCutInWorker,
+} from './mobilityWorkerClient';
+import { yieldToMain } from './asyncUtils';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
   findEarlyVehicleRoadRoutePreview,
@@ -601,8 +605,15 @@ export async function runMobilityAppreciation(
   });
 
   // --- Pass 2 + the simulation (docs §32): corridors, chokepoints, min-cut
-  // barrier. Everything except the ensemble/restriction work runs on the main
-  // thread — cheap at this grid size relative to the sampling already done.
+  // barrier. Movement ensemble/restrictions, corridor-field construction and
+  // the min-cut solves all run in the Web Worker (WP3, movement-analysis
+  // performance work) — each `buildCorridorField` call is itself up to
+  // several full Dijkstra searches, and Edmonds-Karp min-cut is the single
+  // most CPU-bound phase this mode runs; running any of them synchronously
+  // here reproduces the page-hang regression (docs §41). Only genuinely
+  // cheap, O(N)-or-better work (chokepoints, key-terrain candidate
+  // nomination) stays on the main thread, each preceded by a `yieldToMain()`
+  // so the browser can paint what the worker call just delivered first.
   let dissimilarRoutes: DissimilarRoute[] = [];
   let chokepoints: ChokepointCell[] = [];
   let barrier: MinCutResult | null = null;
@@ -689,23 +700,27 @@ export async function runMobilityAppreciation(
     // never drift into disagreeing about what a corridor is.
     if (ensemble && ensemble.tracks.length > 0) {
       const ensembleRoutes = ensembleTracksToRoutes(ensemble.tracks, grid.cells);
-      corridorField = buildCorridorField(
-        grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
+      corridorField = await runCorridorFieldInWorker(
+        grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
         {
           routesOverride: roadRouteAsDissimilar ? [...ensembleRoutes, roadRouteAsDissimilar] : ensembleRoutes,
           evidence: 'simulated-movers',
           weightByAttractiveness: false,
-        }
+        },
+        roadSpeedOverrides
       );
+      if (signal?.aborted) return null;
     }
 
     // The optimiser view is still computed: chokepoints and the min-cut below
     // are graph properties of the ROUTE set, and comparing "best routes" with
     // "what movers did" is itself informative.
     onLog?.(`DERIVING UP TO ${DEFAULT_CORRIDOR_ROUTE_COUNT} DISTINCT OPTIMAL ROUTES FOR COMPARISON…`);
-    optimiserCorridorField = buildCorridorField(
-      grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj
+    optimiserCorridorField = await runCorridorFieldInWorker(
+      grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+      undefined, roadSpeedOverrides
     );
+    if (signal?.aborted) return null;
     // Re-cluster once more with the real road route folded in, so it counts
     // as its own avenue (or merges into an existing one, if it's genuinely
     // the same ground) rather than being invisible to chokepoint/corridor
@@ -714,10 +729,13 @@ export async function runMobilityAppreciation(
     // to add.
     if (roadRouteAsDissimilar && optimiserCorridorField) {
       onLog?.('FOLDING THE REAL ROAD-NETWORK ROUTE INTO CORRIDOR/CHOKEPOINT ANALYSIS AS A KNOWN-GOOD AVENUE…');
-      optimiserCorridorField = buildCorridorField(
-        grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
-        { routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar] }
-      ) ?? optimiserCorridorField;
+      const withRoadRoute = await runCorridorFieldInWorker(
+        grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+        { routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar] },
+        roadSpeedOverrides
+      );
+      if (signal?.aborted) return null;
+      optimiserCorridorField = withRoadRoute ?? optimiserCorridorField;
     }
     dissimilarRoutes = optimiserCorridorField?.routes ?? [];
     if (!corridorField) corridorField = optimiserCorridorField;
@@ -781,17 +799,24 @@ export async function runMobilityAppreciation(
       }
       if (restrictionPlan.bypassNote) onLog?.(restrictionPlan.bypassNote.toUpperCase());
       if (restrictionPlan.scenario && restrictionPlan.scenario.tracks.length > 0) {
-        restrictedCorridorField = buildCorridorField(
-          grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
+        restrictedCorridorField = await runCorridorFieldInWorker(
+          grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
           {
             routesOverride: ensembleTracksToRoutes(restrictionPlan.scenario.tracks, grid.cells),
             evidence: 'simulated-movers',
             weightByAttractiveness: false,
-          }
+          },
+          roadSpeedOverrides
         );
+        if (signal?.aborted) return null;
       }
     }
 
+    // Cheap, main-thread work (corridorAnalysis.ts's own header: O(K·N),
+    // negligible next to the worker phases around it) — yield first so the
+    // browser can paint whatever the corridor-field worker calls above just
+    // delivered before this chunk of synchronous work runs.
+    await yieldToMain();
     onStage?.({ key: 'chokepoints', label: 'Finding the ground every route funnels through', fraction: 0.97 });
     chokepoints = computeChokepoints(grid.cells, grid.hexSize, grid.proj, dissimilarRoutes).slice(0, 12);
     if (chokepoints.length > 0) {
@@ -801,13 +826,6 @@ export async function runMobilityAppreciation(
     onProgress(0.98);
     onStage?.({ key: 'barrier', label: 'Siting the cheapest severing cut', fraction: 0.98 });
     onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
-    barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
-    if (barrier) {
-      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/ROAD-CLASS-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
-    } else {
-      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
-    }
-
     // Road-network-EXACT min-cut (docs §42b) — a SEPARATE max-flow problem
     // run directly over the road graph's own nodes/edges (see
     // computeRoadNetworkMinCut's own header for why this is not a rewrite of
@@ -815,22 +833,38 @@ export async function runMobilityAppreciation(
     // connects both painted areas — matching `findVehicleRoadRoute`'s own
     // gating exactly, since this answers the same "is there a road-network
     // path here at all" question the route search already had to resolve.
+    // Computed in the SAME worker request as the hex cut (docs §47.4: the
+    // two are independent of each other, "Hex vs road min-cut — 2-way,
+    // free") rather than as two separate round trips.
+    let roadOriginNodeIds: string[] | undefined;
+    let roadObjectiveNodeIds: string[] | undefined;
     if (mixedRoadGraph) {
       const originPoint = areaCentroid(origin);
       const objectivePoint = areaCentroid(objective);
       const originNodes = originPoint ? nodesWithin(mixedRoadGraph, originPoint, ROAD_ACCESS_SNAP_M) : [];
       const objectiveNodes = objectivePoint ? nodesWithin(mixedRoadGraph, objectivePoint, ROAD_ACCESS_SNAP_M) : [];
       if (originNodes.length > 0 && objectiveNodes.length > 0) {
-        roadNetworkBarrier = computeRoadNetworkMinCut(
-          mixedRoadGraph, originNodes.map(n => n.id), objectiveNodes.map(n => n.id), profile, roadSpeedOverrides
-        );
-        if (roadNetworkBarrier) {
-          onLog?.(
-            `ROAD-NETWORK MIN-CUT — ${roadNetworkBarrier.segments.length} EXACT ROAD SEGMENT(S), ` +
-            `CUT VALUE ${roadNetworkBarrier.cutValue.toFixed(0)} (ROAD-CLASS-WEIGHTED, RESOLUTION = REAL ROAD VERTICES, NOT HEXES)`
-          );
-        }
+        roadOriginNodeIds = originNodes.map(n => n.id);
+        roadObjectiveNodeIds = objectiveNodes.map(n => n.id);
       }
+    }
+    const minCutResult = await runMinCutInWorker(
+      grid.cells, grid.originKeys, grid.objectiveKeys, profileId, nightMode, roadSpeedOverrides,
+      mixedRoadGraph ?? undefined, roadOriginNodeIds, roadObjectiveNodeIds
+    );
+    if (signal?.aborted) return null;
+    barrier = minCutResult.barrier;
+    roadNetworkBarrier = minCutResult.roadNetworkBarrier;
+    if (barrier) {
+      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/ROAD-CLASS-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
+    } else {
+      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
+    }
+    if (roadNetworkBarrier) {
+      onLog?.(
+        `ROAD-NETWORK MIN-CUT — ${roadNetworkBarrier.segments.length} EXACT ROAD SEGMENT(S), ` +
+        `CUT VALUE ${roadNetworkBarrier.cutValue.toFixed(0)} (ROAD-CLASS-WEIGHTED, RESOLUTION = REAL ROAD VERTICES, NOT HEXES)`
+      );
     }
 
     // Key terrain (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1) — candidates
@@ -839,7 +873,10 @@ export async function runMobilityAppreciation(
     // and runs in the worker (keyTerrain.ts's own header explains why both
     // halves are split this way). Scored against `optimiserCorridorField`,
     // deliberately, per that module's header — never the (possibly absent,
-    // possibly simulated-mover) `corridorField`.
+    // possibly simulated-mover) `corridorField`. Yield first — same reasoning
+    // as the chokepoints yield above, this sits right after the min-cut
+    // worker call resolved.
+    await yieldToMain();
     if (optimiserCorridorField) {
       const keyTerrainCandidates = generateKeyTerrainCandidates(
         grid.cells, chokepoints, barrier, roadNetworkBarrier, optimiserCorridorField
