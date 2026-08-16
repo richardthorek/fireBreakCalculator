@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // Lazy-load heavy map libraries to keep initial bundle small. The actual
 // imports (mapbox-gl and mapbox-gl-draw) are performed inside the effect.
 import type { LngLat } from 'mapbox-gl';
@@ -76,6 +76,81 @@ const geojsonBounds = (geojson: any): [[number, number], [number, number]] | nul
 
 const DEFAULT_CENTER: [number, number] = [147.0, -32.0];
 const DEFAULT_ZOOM = 6;
+
+// --- Mobility hex-cell addressability (WP1 — rendering-layer prerequisite for
+// progressive Terrain Mobility painting; see mobility-heatmap/mobility-transit
+// effects below) ------------------------------------------------------------
+
+/** Stable per-hex id used as each source's `promoteId`, so an individual cell
+ *  can be targeted by `setFeatureState`/`updateData` without depending on its
+ *  position in the features array — derived from the polygon's own centroid
+ *  (not an externally supplied index), so it stays correct even if a later
+ *  work package appends cells out of the original scan order via
+ *  `upsertMobilityCells` below. Precision (~0.11 m at 6 decimals) is well
+ *  under the hex grid's real ground size, so two distinct cells never collide. */
+/** Rank-coded corridor colour — deliberately a BLUE/VIOLET family, entirely
+ *  outside the red/amber/green the trafficability heatmap already owns
+ *  (owner, 2026-07-27, live-testing: "the corridors need to be a colour
+ *  other than red... the corridor in red makes it look like it's picking
+ *  the hardest route!" — a real collision: rank 1 was `#D8232A`, identical
+ *  to the heatmap's NO-GO red). Module-level (not component-scoped) since it
+ *  has no dependency on props/state and is used by both the memoised
+ *  corridor-presentation computation and its rendering effect below. */
+function rankColor(rank: number): string {
+  return rank === 1 ? '#3B82F6' : rank === 2 ? '#8B5CF6' : rank === 3 ? '#06B6D4' : '#94a3b8';
+}
+
+function hexCellId(polygon: { lat: number; lng: number }[]): string {
+  let sumLat = 0, sumLng = 0;
+  for (const p of polygon) { sumLat += p.lat; sumLng += p.lng; }
+  const n = polygon.length || 1;
+  return `${(sumLat / n).toFixed(6)},${(sumLng / n).toFixed(6)}`;
+}
+
+/** Imperative escape hatch for a later work package: append new hex features
+ *  and/or update existing ones on an already-mounted mobility source (
+ *  `mobility-heatmap`, `mobility-transit`) WITHOUT a React state round-trip —
+ *  no prop change, no re-render, no re-tessellation of geometry that hasn't
+ *  changed. Prefers `GeoJSONSource#updateData` (mapbox-gl ^3.27+; both
+ *  sources are created with `dynamic: true` so it's available), which merges
+ *  by the `promoteId` feature id — an existing id is overwritten in place, a
+ *  new one appended — so callers only need to pass the features that
+ *  changed. Falls back to a full `setData(fullData)` replace if `updateData`
+ *  is unavailable or throws; pass `fullData` to make that fallback correct. */
+export function upsertMobilityCells(
+  map: any, // dynamically-loaded mapbox-gl instance — see MapboxMapView's mapRef
+  sourceId: string,
+  features: GeoJSON.Feature[],
+  fullData?: GeoJSON.FeatureCollection
+): void {
+  const source = map?.getSource?.(sourceId);
+  if (!source) return;
+  const patch: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features };
+  if (typeof source.updateData === 'function') {
+    try { source.updateData(patch); return; } catch (e) { logger.warn(`updateData failed for ${sourceId}; falling back to setData`, e); }
+  }
+  if (fullData) {
+    try { source.setData(fullData); } catch (e) { logger.warn(`setData fallback failed for ${sourceId}`, e); }
+  }
+}
+
+/** Recolour (or otherwise re-style) already-rendered hex cells in place via
+ *  Mapbox `feature-state`, keyed by the same `cellId` used as `promoteId` —
+ *  no geometry re-upload, no React round-trip. mobility-heatmap's and
+ *  mobility-transit's paint expressions both `coalesce` a `colorOverride`
+ *  feature-state ahead of their normal data-driven colour, so
+ *  `{ colorOverride: '#hex' }` repaints a cell without touching its
+ *  trafficability/transit data; `{ colorOverride: null }` clears the
+ *  override back to the data-driven colour. */
+export function setMobilityCellStates(
+  map: any, // dynamically-loaded mapbox-gl instance — see MapboxMapView's mapRef
+  sourceId: string,
+  updates: { id: string | number; state: Record<string, unknown> }[]
+): void {
+  for (const { id, state } of updates) {
+    try { map?.setFeatureState?.({ source: sourceId, id }, state); } catch (e) { logger.warn(`setFeatureState failed for ${sourceId}#${id}`, e); }
+  }
+}
 
 interface MapboxMapViewProps {
   onDistanceChange: (distance: number | null) => void;
@@ -545,6 +620,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
   const [liveFeedData, setLiveFeedData] = useState<LiveFeedMapData>({ hotspots: null, boundaries: null, incidents: null });
 
+  // WP1 (progressive Terrain Mobility rendering, enabling pre-requisite) —
+  // Mapbox destroys every source/layer belonging to the OLD style whenever
+  // the style reloads (`style.load` refiring — see the handler below). Each
+  // create-once-then-setData mobility layer effect registers its own
+  // idempotent (re-)create function here whenever it has non-empty data, and
+  // removes its entry when its data goes empty; `style.load` then replays
+  // every registered function so a reload can't silently and permanently
+  // drop a layer that's still meant to be showing.
+  const mobilityReattachRef = useRef<Map<string, () => void>>(new Map());
+
   // Initialize map relying solely on hosted style
   useEffect(() => {
     // mark effect body as async by creating and invoking an async function
@@ -952,6 +1037,13 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       // returns nothing (tiles not loaded for the corridor).
       ensureStreetsSource(map);
       setLocalTrailProvider((s, w, n, e, kind) => extractCorridorTrails(map, s, w, n, e, kind));
+      // WP1 — the style reload just wiped every mobility source/layer; replay
+      // whatever's currently registered (each fn re-creates from its own
+      // latest closed-over data if missing, or no-ops if somehow still
+      // present) so a genuinely-in-progress result doesn't silently vanish.
+      for (const reattach of mobilityReattachRef.current.values()) {
+        try { reattach(); } catch (e) { logger.warn('Failed to reattach mobility layer after style reload', e); }
+      }
     });
   map.on('error', (e: any) => { logger.error('Mapbox error', e); if (e?.error?.message?.includes('style')) setError('Failed to load hosted style.'); });
 
@@ -1692,10 +1784,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-origin-paint')) map.removeSource('mobility-origin-paint');
       } catch (e) { /* style may already be gone */ }
     };
-    if (mobilityOriginPaint.length === 0) { originPaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    if (mobilityOriginPaint.length === 0) {
+      originPaintGeomRef.current = { count: 0, feature: null };
+      remove();
+      mobilityReattachRef.current.delete('mobility-origin-paint');
+      return;
+    }
     const geometry = resolvePaintedAreaIncrementally(originPaintGeomRef, mobilityOriginPaint);
-    if (!geometry) { remove(); return; }
+    if (!geometry) { remove(); mobilityReattachRef.current.delete('mobility-origin-paint'); return; }
     const data = { type: 'Feature' as const, properties: {}, geometry };
+    // Source/layers are created ONCE, then updated purely via setData below —
+    // no unconditional teardown-on-cleanup (that was the WP1 bug: React runs
+    // an effect's cleanup before its next run, so an unconditional `remove()`
+    // there meant `getSource` was always undefined and this setData branch
+    // was dead code, forcing a full re-tessellation on every stroke).
     const apply = () => {
       try {
         const existing = map.getSource('mobility-origin-paint');
@@ -1705,8 +1807,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         map.addLayer({ id: 'mobility-origin-paint-outline', type: 'line', source: 'mobility-origin-paint', paint: { 'line-color': '#38bdf8', 'line-width': 1.5 } });
       } catch (e) { logger.warn('Failed to render painted origin area', e); }
     };
+    mobilityReattachRef.current.set('mobility-origin-paint', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
   }, [mobilityOriginPaint]);
   useEffect(() => {
     const map = mapRef.current;
@@ -1718,10 +1820,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-objective-paint')) map.removeSource('mobility-objective-paint');
       } catch (e) { /* style may already be gone */ }
     };
-    if (mobilityObjectivePaint.length === 0) { objectivePaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    if (mobilityObjectivePaint.length === 0) {
+      objectivePaintGeomRef.current = { count: 0, feature: null };
+      remove();
+      mobilityReattachRef.current.delete('mobility-objective-paint');
+      return;
+    }
     const geometry = resolvePaintedAreaIncrementally(objectivePaintGeomRef, mobilityObjectivePaint);
-    if (!geometry) { remove(); return; }
+    if (!geometry) { remove(); mobilityReattachRef.current.delete('mobility-objective-paint'); return; }
     const data = { type: 'Feature' as const, properties: {}, geometry };
+    // See mobility-origin-paint above — create once, update via setData only.
     const apply = () => {
       try {
         const existing = map.getSource('mobility-objective-paint');
@@ -1731,8 +1839,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         map.addLayer({ id: 'mobility-objective-paint-outline', type: 'line', source: 'mobility-objective-paint', paint: { 'line-color': '#F6A609', 'line-width': 1.5 } });
       } catch (e) { logger.warn('Failed to render painted objective area', e); }
     };
+    mobilityReattachRef.current.set('mobility-objective-paint', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
   }, [mobilityObjectivePaint]);
 
   // Terrain Mobility mode — persistent painted OBSERVER area (pink, OCOKA 6,
@@ -1752,10 +1860,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-observe-paint')) map.removeSource('mobility-observe-paint');
       } catch (e) { /* style may already be gone */ }
     };
-    if (mobilityObservePaint.length === 0) { observePaintGeomRef.current = { count: 0, feature: null }; remove(); return; }
+    if (mobilityObservePaint.length === 0) {
+      observePaintGeomRef.current = { count: 0, feature: null };
+      remove();
+      mobilityReattachRef.current.delete('mobility-observe-paint');
+      return;
+    }
     const geometry = resolvePaintedAreaIncrementally(observePaintGeomRef, mobilityObservePaint);
-    if (!geometry) { remove(); return; }
+    if (!geometry) { remove(); mobilityReattachRef.current.delete('mobility-observe-paint'); return; }
     const data = { type: 'Feature' as const, properties: {}, geometry };
+    // See mobility-origin-paint above — create once, update via setData only.
     const apply = () => {
       try {
         const existing = map.getSource('mobility-observe-paint');
@@ -1765,8 +1879,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         map.addLayer({ id: 'mobility-observe-paint-outline', type: 'line', source: 'mobility-observe-paint', paint: { 'line-color': '#EC4899', 'line-width': 1.5 } });
       } catch (e) { logger.warn('Failed to render painted observer area', e); }
     };
+    mobilityReattachRef.current.set('mobility-observe-paint', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
   }, [mobilityObservePaint]);
 
   // Terrain Mobility mode — result heatmap. Two independently switchable
@@ -1788,7 +1902,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     };
 
     if (!cells || cells.length === 0) {
+      unregisterOverlayOpacity('mobility-heatmap');
+      unregisterOverlayOpacity('mobility-heatmap-outline');
       remove();
+      mobilityReattachRef.current.delete('mobility-heatmap');
       return;
     }
 
@@ -1798,6 +1915,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       features: cells.map(c => ({
         type: 'Feature' as const,
         properties: {
+          // WP1 — stable id (also promoted to the feature id below) so a
+          // single cell can later be recoloured via setMobilityCellStates
+          // without re-uploading the whole collection.
+          cellId: hexCellId(c.polygon),
           trafficability: c.trafficability,
           bandIndex: c.bandIndex,
           reached: c.bandIndex >= 0 ? 1 : 0,
@@ -1806,13 +1927,20 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       })),
     };
 
+    // Source/layers are created ONCE, then updated purely via setData below —
+    // no unconditional teardown-on-cleanup (see mobility-origin-paint above
+    // for the full explanation of the WP1 bug this fixes).
     const apply = () => {
       try {
         const existing = map.getSource('mobility-heatmap');
         if (existing) {
           existing.setData(data);
         } else {
-          map.addSource('mobility-heatmap', { type: 'geojson', data } as any);
+          // `promoteId`/`dynamic` make individual cells addressable by
+          // `cellId` for setFeatureState/updateData (see hexCellId,
+          // upsertMobilityCells, setMobilityCellStates above) — a later work
+          // package's progressive-paint path, not used yet by this one.
+          map.addSource('mobility-heatmap', { type: 'geojson', data, promoteId: 'cellId', dynamic: true } as any);
           map.addLayer({
             id: 'mobility-heatmap',
             type: 'fill',
@@ -1826,20 +1954,30 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
             paint: { 'line-color': '#38bdf8', 'line-width': 0.5, 'line-opacity': 0.3 },
           });
         }
+        // `coalesce` prefers a per-feature `colorOverride` state (set later,
+        // out of band, via setMobilityCellStates) ahead of the normal
+        // data-driven colour — with no override set (true today) this is
+        // exactly the previous expression, so rendered colour is unchanged.
         if (mobilityDisplayMode === 'isochrone') {
           map.setPaintProperty('mobility-heatmap', 'fill-color', [
-            'case',
-            ['==', ['get', 'reached'], 0], '#1c2733',
-            ['interpolate', ['linear'], ['get', 'bandIndex'], 0, '#38bdf8', maxBand, '#0b2a3f'],
+            'coalesce',
+            ['feature-state', 'colorOverride'],
+            ['case',
+              ['==', ['get', 'reached'], 0], '#1c2733',
+              ['interpolate', ['linear'], ['get', 'bandIndex'], 0, '#38bdf8', maxBand, '#0b2a3f'],
+            ],
           ]);
           registerOverlayOpacity('mobility-heatmap', 'fill-opacity', ['case', ['==', ['get', 'reached'], 0], 0.06, 0.55]);
         } else {
           map.setPaintProperty('mobility-heatmap', 'fill-color', [
-            'match', ['get', 'trafficability'],
-            'unrestricted', '#1E9E62',
-            'restricted', '#F6A609',
-            'severely-restricted', '#D8232A',
-            '#55607A',
+            'coalesce',
+            ['feature-state', 'colorOverride'],
+            ['match', ['get', 'trafficability'],
+              'unrestricted', '#1E9E62',
+              'restricted', '#F6A609',
+              'severely-restricted', '#D8232A',
+              '#55607A',
+            ],
           ]);
           registerOverlayOpacity('mobility-heatmap', 'fill-opacity', 0.5);
         }
@@ -1848,17 +1986,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.warn('Failed to render mobility heatmap', e);
       }
     };
+    mobilityReattachRef.current.set('mobility-heatmap', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) {
       map.once('idle', apply);
     } else {
       apply();
     }
-
-    return () => {
-      unregisterOverlayOpacity('mobility-heatmap');
-      unregisterOverlayOpacity('mobility-heatmap-outline');
-      remove();
-    };
   }, [mobilityHeatmap, mobilityDisplayMode, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // --- Probabilistic movement field (docs §32) ------------------------------
@@ -1877,33 +2010,46 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-transit')) map.removeSource('mobility-transit');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!mobilityTransitCells || mobilityTransitCells.length === 0) { remove(); return; }
+    if (!mobilityTransitCells || mobilityTransitCells.length === 0) {
+      remove();
+      mobilityReattachRef.current.delete('mobility-transit');
+      return;
+    }
     const data = {
       type: 'FeatureCollection' as const,
       features: mobilityTransitCells.map(c => ({
         type: 'Feature' as const,
-        properties: { transit: Math.min(1, Math.max(0, c.transitFraction)) },
+        // WP1 — same addressable-cell id as mobility-heatmap; see hexCellId.
+        properties: { cellId: hexCellId(c.polygon), transit: Math.min(1, Math.max(0, c.transitFraction)) },
         geometry: { type: 'Polygon' as const, coordinates: [c.polygon.map(p => [p.lng, p.lat])] },
       })),
     };
+    // Source/layer created ONCE, updated purely via setData — see
+    // mobility-origin-paint above for why the old cleanup pattern was wrong.
     const apply = () => {
       try {
         const existing = map.getSource('mobility-transit');
         if (existing) {
           (existing as any).setData(data);
         } else {
-          map.addSource('mobility-transit', { type: 'geojson', data } as any);
+          map.addSource('mobility-transit', { type: 'geojson', data, promoteId: 'cellId', dynamic: true } as any);
           map.addLayer({
             id: 'mobility-transit',
             type: 'fill',
             source: 'mobility-transit',
             paint: {
+              // `coalesce` prefers a per-feature `colorOverride` state (unset
+              // today, so this renders identically to before) ahead of the
+              // data-driven transit-fraction ramp — see mobility-heatmap.
               'fill-color': [
-                'interpolate', ['linear'], ['get', 'transit'],
-                0, '#1b3a5c',
-                0.25, '#2f7fb5',
-                0.6, '#f2c14e',
-                1, '#f2603c',
+                'coalesce',
+                ['feature-state', 'colorOverride'],
+                ['interpolate', ['linear'], ['get', 'transit'],
+                  0, '#1b3a5c',
+                  0.25, '#2f7fb5',
+                  0.6, '#f2c14e',
+                  1, '#f2603c',
+                ],
               ],
               'fill-opacity': 0,
             },
@@ -1914,8 +2060,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         ]);
       } catch (e) { logger.warn('Failed to render movement transit field', e); }
     };
+    mobilityReattachRef.current.set('mobility-transit', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
   }, [mobilityTransitCells, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // --- Hydrology reference layer (docs §34) ---------------------------------
@@ -1942,7 +2088,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-water-line')) map.removeSource('mobility-water-line');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!waterFeatures || waterFeatures.length === 0) { remove(); return; }
+    if (!waterFeatures || waterFeatures.length === 0) { remove(); mobilityReattachRef.current.delete('mobility-water'); return; }
 
     const bodyFeatures = waterFeatures
       .filter(f => f.kind === 'water' && f.coords.length >= 4)
@@ -2003,8 +2149,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         registerOverlayOpacity('mobility-water-line', 'line-opacity', 0.95);
       } catch (e) { logger.warn('Failed to render hydrology reference layer', e); }
     };
+    mobilityReattachRef.current.set('mobility-water', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
   }, [waterFeatures, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // --- Recommended restrictions (docs §32) ---------------------------------
@@ -2028,7 +2174,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-restrictions')) map.removeSource('mobility-restrictions');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!restrictions || restrictions.length === 0) { remove(); return; }
+    if (!restrictions || restrictions.length === 0) { remove(); mobilityReattachRef.current.delete('mobility-restrictions'); return; }
     const data = {
       type: 'FeatureCollection' as const,
       features: restrictions.map(r => ({
@@ -2068,6 +2214,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         registerOverlayOpacity('mobility-restrictions', 'line-opacity', 0.95);
       } catch (e) { logger.warn('Failed to render recommended restrictions', e); }
     };
+    mobilityReattachRef.current.set('mobility-restrictions', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
 
     if (mapboxgl) {
@@ -2084,7 +2231,6 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       }
     }
 
-    return () => { markers.forEach(m => m.remove()); markers.length = 0; remove(); };
   }, [restrictions, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // --- Animated ensemble: many movers at once -------------------------------
@@ -2243,37 +2389,15 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   //
   // `highlightedCorridorId` dims every band but one, so picking a card in the
   // panel answers "which of these is that" unambiguously.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const layerIds = ['mobility-corridor-routes', 'mobility-corridor-routes-casing', 'mobility-corridor-spine', 'mobility-corridor-edge', 'mobility-corridors'];
-    const remove = () => {
-      try {
-        for (const id of layerIds) {
-          if (map.getLayer(id)) map.removeLayer(id);
-          unregisterOverlayOpacity(id);
-        }
-        for (const id of ['mobility-corridor-routes', 'mobility-corridor-edge', 'mobility-corridors']) {
-          if (map.getSource(id)) map.removeSource(id);
-        }
-      } catch (e) { /* style may already be gone */ }
-    };
-    if (!corridors || corridors.length === 0) { remove(); return; }
-
-    // Rank-coded — deliberately a BLUE/VIOLET family, entirely outside the
-    // red/amber/green the trafficability heatmap already owns (owner,
-    // 2026-07-27, live-testing: "the corridors need to be a colour other
-    // than red. The red, amber, green is used for the hex to show
-    // passability so the corridor in red makes it look like it's picking
-    // the hardest route!" — confirmed a real collision, not just taste:
-    // rank 1 was `#D8232A`, identical to the heatmap's own NO-GO red; rank
-    // 2 was `#F6A609`, identical to its SLOW-GO amber). Ease class is
-    // carried as a property for the legend rather than a second colour
-    // axis, so one visual channel = one meaning.
-    const rankColor = (rank: number) =>
-      rank === 1 ? '#3B82F6' : rank === 2 ? '#8B5CF6' : rank === 3 ? '#06B6D4' : '#94a3b8';
-
-    const cellFeatures = corridors.flatMap(c =>
+  //
+  // WP1 — `edgeFeatures` below is a real @turf/union + Chaikin smooth over
+  // each corridor's own hexes (genuine, non-trivial work, not a lookup).
+  // Memoised on `corridors` alone: picking a corridor card only changes
+  // `highlightedCorridorId`, which the effect further down still reacts to
+  // (for the opacity emphasis), but that must NOT re-run the union — only a
+  // genuinely new corridor result should.
+  const corridorPresentation = useMemo(() => {
+    const cellFeatures = (corridors ?? []).flatMap(c =>
       c.cells.map(cell => ({
         type: 'Feature' as const,
         properties: {
@@ -2295,7 +2419,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     // hexes. Falls back to the undissolved cells if the union fails for any
     // reason, so a geometry edge case degrades to the previous look rather
     // than dropping the corridor off the map entirely.
-    const edgeFeatures = corridors.map(c => {
+    const edgeFeatures = (corridors ?? []).map(c => {
       let dissolved: any = null;
       try {
         const polys = c.cells.map(cell => turfPolygon([cell.polygon.map(p => [p.lng, p.lat])]));
@@ -2319,11 +2443,37 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       };
     }).filter((f): f is NonNullable<typeof f> => f !== null);
 
-    const routeFeatures = (corridorRoutes ?? []).map(r => ({
-      type: 'Feature' as const,
-      properties: { corridorId: r.id, color: rankColor(r.rank) },
-      geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
-    }));
+    return { cellFeatures, edgeFeatures };
+  }, [corridors]);
+
+  // Routes can be refined/refreshed independently of the corridors they
+  // belong to (App.tsx's road-snap/corner-smooth pass), so this is its own
+  // memo rather than folded into corridorPresentation above.
+  const corridorRouteFeatures = useMemo(() => (corridorRoutes ?? []).map(r => ({
+    type: 'Feature' as const,
+    properties: { corridorId: r.id, color: rankColor(r.rank) },
+    geometry: { type: 'LineString' as const, coordinates: r.path.map(p => [p.lng, p.lat]) },
+  })), [corridorRoutes]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const layerIds = ['mobility-corridor-routes', 'mobility-corridor-routes-casing', 'mobility-corridor-spine', 'mobility-corridor-edge', 'mobility-corridors'];
+    const remove = () => {
+      try {
+        for (const id of layerIds) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        for (const id of ['mobility-corridor-routes', 'mobility-corridor-edge', 'mobility-corridors']) {
+          if (map.getSource(id)) map.removeSource(id);
+        }
+      } catch (e) { /* style may already be gone */ }
+    };
+    if (!corridors || corridors.length === 0) { remove(); mobilityReattachRef.current.delete('mobility-corridors'); return; }
+
+    const { cellFeatures, edgeFeatures } = corridorPresentation;
+    const routeFeatures = corridorRouteFeatures;
 
     // Highlight is applied as a MULTIPLIER on each layer's own designed
     // opacity, so the density gradient inside the chosen band survives.
@@ -2407,9 +2557,9 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         registerOverlayOpacity('mobility-corridor-routes', 'line-opacity', scaledBy(1));
       } catch (e) { logger.warn('Failed to render movement corridors', e); }
     };
+    mobilityReattachRef.current.set('mobility-corridors', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => remove();
-  }, [corridors, corridorRoutes, highlightedCorridorId, registerOverlayOpacity, unregisterOverlayOpacity]);
+  }, [corridors, corridorPresentation, corridorRouteFeatures, highlightedCorridorId, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Tapping a corridor band on the map selects it, the same selection the
   // panel's corridor cards drive — so the map and the panel are two views of
@@ -2482,7 +2632,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-chokepoints')) map.removeSource('mobility-chokepoints');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!chokepoints || chokepoints.length === 0) { remove(); return; }
+    if (!chokepoints || chokepoints.length === 0) {
+      unregisterOverlayOpacity('mobility-chokepoints');
+      remove();
+      mobilityReattachRef.current.delete('mobility-chokepoints');
+      return;
+    }
     const maxCount = Math.max(1, ...chokepoints.map(c => c.passCount));
     const data = {
       type: 'FeatureCollection' as const,
@@ -2515,8 +2670,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.warn('Failed to render chokepoints', e);
       }
     };
+    mobilityReattachRef.current.set('mobility-chokepoints', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => { unregisterOverlayOpacity('mobility-chokepoints'); remove(); };
   }, [chokepoints, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Pass 2 — min-cut barrier plan: the cheapest set of segments severing the
@@ -2530,7 +2685,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-barrier')) map.removeSource('mobility-barrier');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!barrierSegments || barrierSegments.length === 0) { remove(); return; }
+    if (!barrierSegments || barrierSegments.length === 0) {
+      unregisterOverlayOpacity('mobility-barrier');
+      remove();
+      mobilityReattachRef.current.delete('mobility-barrier');
+      return;
+    }
     const data = {
       type: 'FeatureCollection' as const,
       features: barrierSegments.map(s => ({
@@ -2556,8 +2716,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.warn('Failed to render barrier plan', e);
       }
     };
+    mobilityReattachRef.current.set('mobility-barrier', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => { unregisterOverlayOpacity('mobility-barrier'); remove(); };
   }, [barrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // OCOKA 3 (docs/ROUTE_INTELLIGENCE.md §47) — road-network-exact min-cut: the
@@ -2574,7 +2734,12 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         if (map.getSource('mobility-road-barrier')) map.removeSource('mobility-road-barrier');
       } catch (e) { /* style may already be gone */ }
     };
-    if (!roadBarrierSegments || roadBarrierSegments.length === 0) { remove(); return; }
+    if (!roadBarrierSegments || roadBarrierSegments.length === 0) {
+      unregisterOverlayOpacity('mobility-road-barrier');
+      remove();
+      mobilityReattachRef.current.delete('mobility-road-barrier');
+      return;
+    }
     const data = {
       type: 'FeatureCollection' as const,
       features: roadBarrierSegments.map(s => ({
@@ -2600,8 +2765,8 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         logger.warn('Failed to render road-network barrier plan', e);
       }
     };
+    mobilityReattachRef.current.set('mobility-road-barrier', apply);
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
-    return () => { unregisterOverlayOpacity('mobility-road-barrier'); remove(); };
   }, [roadBarrierSegments, registerOverlayOpacity, unregisterOverlayOpacity]);
 
   // Live context feeds — hotspots, fire/burn boundaries, jurisdictional
