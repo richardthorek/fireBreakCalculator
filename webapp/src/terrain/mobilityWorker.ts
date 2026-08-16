@@ -60,11 +60,42 @@
 import {
   runAccumulatedCostSearch, assembleMobilityResults, extractPath, MobilityGridCell, AccumulatedCostSearchResult,
   LocalProjection, getMoverProfile, simulateMovementEnsemble, MovementEnsembleResult, planRestrictions,
-  RestrictionPlan, setRoadSpeedOverrides, RoadSpeedOverrides, RoadGraph, CorridorField, scoreKeyTerrainCandidates,
-  buildKeyTerrainResult, KeyTerrainCandidate, KeyTerrainResult, computeViewshedForObserver, ObserverViewshed,
-  ViewshedOptions, SimPathNode,
+  RestrictionPlan, setRoadSpeedOverrides, RoadSpeedOverrides, RoadGraph, CorridorField, CorridorFieldOptions,
+  CorridorEvidence, DissimilarRoute, scoreKeyTerrainCandidates, buildKeyTerrainResult, KeyTerrainCandidate,
+  KeyTerrainResult, computeViewshedForObserver, ObserverViewshed, ViewshedOptions, SimPathNode, buildCorridorField,
+  computeChokepoints, ChokepointCell, computeMinCutBarrier, MinCutResult, computeRoadNetworkMinCut, RoadMinCutResult,
 } from '@firebreak/terrain';
 export type { SimPathNode };
+
+/**
+ * Three more request kinds beyond the four above (WP3 performance programme):
+ *
+ *  - 'corridors' — corridor-field construction (`corridorField.ts`). Every one
+ *                 of `mobilityAppreciation.ts`'s `buildCorridorField` calls
+ *                 runs at least one full accumulated-cost search internally
+ *                 (`computeCellFacts`, regardless of whether `routesOverride`
+ *                 skips the k-dissimilar-routes search itself) — the same
+ *                 CPU-bound, no-network-I/O shape 'movement'/'keyTerrain'
+ *                 already exist to keep off the main thread. No progress
+ *                 reporting, same simplicity call 'keyTerrain' already made.
+ *  - 'chokepoints' — betweenness over an already-derived route set
+ *                 (`corridorAnalysis.ts#computeChokepoints`). Genuinely cheap
+ *                 on its own (bounded by route count × route length), but
+ *                 given its own request anyway so it never has to wait behind
+ *                 the slower 'corridors'/'minCut' calls around it in the run
+ *                 — a caller wanting corridors, chokepoints and a barrier all
+ *                 "as soon as each is real" issues them as separate requests,
+ *                 not one bundled response gated on the slowest.
+ *  - 'minCut' — the hex min-cut barrier (`minCutBarrier.ts#computeMinCutBarrier`)
+ *                 and, when a road graph + access nodes are supplied, the
+ *                 road-network-EXACT min-cut (`computeRoadNetworkMinCut`) in
+ *                 the SAME request — both are textbook max-flow/Edmonds-Karp
+ *                 with a `for (guard < 200000)` augmenting-path loop per call,
+ *                 the single most CPU-bound phase this mode runs, and the two
+ *                 are independent of each other (docs §47.4: "Hex vs road
+ *                 min-cut — 2-way, free"), so computing them in one worker
+ *                 round-trip is a real saving, not just convenience.
+ */
 
 export interface MobilitySearchRequest {
   kind?: 'search';
@@ -168,11 +199,75 @@ export interface MobilityViewshedRequest {
   options?: ViewshedOptions;
 }
 
+export interface MobilityCorridorsRequest {
+  kind: 'corridors';
+  requestId: number;
+  cells: MobilityGridCell[];
+  hexSize: number;
+  proj: LocalProjection;
+  originKeys: string[];
+  objectiveKeys: string[];
+  profileId: string;
+  nightMode: boolean;
+  /** Same as `MobilitySearchRequest.roadSpeedOverrides` — see that field's
+   *  doc comment. */
+  roadSpeedOverrides?: RoadSpeedOverrides;
+  /** Forwarded verbatim to `buildCorridorField` — see that function's own
+   *  doc comment for what each governs. `edgePenalties` is deliberately not
+   *  carried here: none of `mobilityAppreciation.ts`'s run-time corridor
+   *  builds (baseline, road-route-folded-in re-cluster, restricted) use it —
+   *  only the counter-mobility ledger's own one-shot scenario build does
+   *  (`App.tsx#handleRunCounterMobilityLedger`, outside a run already in
+   *  progress), and that stays on the main thread rather than growing this
+   *  request's surface for a caller that isn't part of this synchronous
+   *  block in the first place. */
+  options?: CorridorFieldOptions & {
+    routeCount?: number;
+    routesOverride?: DissimilarRoute[];
+    evidence?: CorridorEvidence;
+    weightByAttractiveness?: boolean;
+  };
+}
+
+export interface MobilityChokepointsRequest {
+  kind: 'chokepoints';
+  requestId: number;
+  cells: MobilityGridCell[];
+  hexSize: number;
+  proj: LocalProjection;
+  /** The already-derived route set to compute betweenness over — no profile/
+   *  search needed here, `computeChokepoints` is pure geometry + counting
+   *  over routes a prior 'corridors' (or 'search') request already found. */
+  routes: DissimilarRoute[];
+}
+
+export interface MobilityMinCutRequest {
+  kind: 'minCut';
+  requestId: number;
+  cells: MobilityGridCell[];
+  originKeys: string[];
+  objectiveKeys: string[];
+  profileId: string;
+  nightMode: boolean;
+  roadSpeedOverrides?: RoadSpeedOverrides;
+  /** When ALL THREE of these are supplied (vehicle profiles, road data
+   *  connects both painted areas), the road-network-EXACT min-cut is ALSO
+   *  computed in this same request, independent of the hex cut above (docs
+   *  §42b) — see `computeRoadNetworkMinCut`'s own header. Omit any one to
+   *  skip it, matching `mobilityAppreciation.ts`'s own existing gate. */
+  roadGraph?: RoadGraph;
+  roadOriginNodeIds?: string[];
+  roadObjectiveNodeIds?: string[];
+}
+
 export type MobilityWorkerRequest =
   | MobilitySearchRequest
   | MobilityMovementRequest
   | MobilityKeyTerrainRequest
-  | MobilityViewshedRequest;
+  | MobilityViewshedRequest
+  | MobilityCorridorsRequest
+  | MobilityChokepointsRequest
+  | MobilityMinCutRequest;
 
 export interface MobilitySearchResponse {
   kind: 'search';
@@ -215,6 +310,31 @@ export interface MobilityViewshedResponse {
   observers: ObserverViewshed[];
 }
 
+export interface MobilityCorridorsResponse {
+  kind: 'corridors';
+  requestId: number;
+  /** Null under the same conditions `buildCorridorField` itself returns null
+   *  for (no routes at all, or a degenerate field with no density above the
+   *  membership threshold) — not a signal specific to running in the worker. */
+  field: CorridorField | null;
+}
+
+export interface MobilityChokepointsResponse {
+  kind: 'chokepoints';
+  requestId: number;
+  chokepoints: ChokepointCell[];
+}
+
+export interface MobilityMinCutResponse {
+  kind: 'minCut';
+  requestId: number;
+  barrier: MinCutResult | null;
+  /** Always null when the request didn't supply a road graph + both node
+   *  sets — mirrors `MobilityMinCutRequest`'s own all-or-nothing gate rather
+   *  than a separate error state. */
+  roadNetworkBarrier: RoadMinCutResult | null;
+}
+
 export interface MobilityProgressResponse {
   kind: 'progress';
   requestId: number;
@@ -234,6 +354,9 @@ export type MobilityWorkerResponse =
   | MobilityMovementResponse
   | MobilityKeyTerrainResponse
   | MobilityViewshedResponse
+  | MobilityCorridorsResponse
+  | MobilityChokepointsResponse
+  | MobilityMinCutResponse
   | MobilityProgressResponse;
 
 const post = (message: MobilityWorkerResponse) => (self as unknown as Worker).postMessage(message);
@@ -256,6 +379,18 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
       if (observer) observers.push(observer);
     }
     post({ kind: 'viewshed', requestId: req.requestId, observers });
+    return;
+  }
+
+  // Same reasoning as 'viewshed' above: 'chokepoints' is pure geometry +
+  // counting over an already-derived route set (corridorAnalysis.ts —
+  // computeChokepoints has no `profile`/`nightMode` parameter at all, so it
+  // needs neither a cost model nor road-speed overrides), narrowed away here
+  // before the shared `roadSpeedOverrides`/`profileId` lines below, which no
+  // constituent without those fields can type-check against.
+  if (req.kind === 'chokepoints') {
+    const chokepoints = computeChokepoints(req.cells, req.hexSize, req.proj, req.routes);
+    post({ kind: 'chokepoints', requestId: req.requestId, chokepoints });
     return;
   }
 
@@ -325,6 +460,32 @@ self.onmessage = (e: MessageEvent<MobilityWorkerRequest>) => {
     );
     const result = buildKeyTerrainResult(req.candidates, scored);
     post({ kind: 'keyTerrain', requestId: req.requestId, result });
+    return;
+  }
+
+  if (req.kind === 'corridors') {
+    if (!profile) {
+      post({ kind: 'corridors', requestId: req.requestId, field: null });
+      return;
+    }
+    const field = buildCorridorField(
+      req.cells, req.originKeys, req.objectiveKeys, profile, req.nightMode, req.hexSize, req.proj,
+      req.options ?? {}
+    );
+    post({ kind: 'corridors', requestId: req.requestId, field });
+    return;
+  }
+
+  if (req.kind === 'minCut') {
+    if (!profile) {
+      post({ kind: 'minCut', requestId: req.requestId, barrier: null, roadNetworkBarrier: null });
+      return;
+    }
+    const barrier = computeMinCutBarrier(req.cells, req.originKeys, req.objectiveKeys, profile, req.nightMode);
+    const roadNetworkBarrier = (req.roadGraph && req.roadOriginNodeIds && req.roadObjectiveNodeIds)
+      ? computeRoadNetworkMinCut(req.roadGraph, req.roadOriginNodeIds, req.roadObjectiveNodeIds, profile, req.roadSpeedOverrides)
+      : null;
+    post({ kind: 'minCut', requestId: req.requestId, barrier, roadNetworkBarrier });
     return;
   }
 

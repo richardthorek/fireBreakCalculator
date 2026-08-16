@@ -28,7 +28,7 @@ import { polygon as turfPolygon, featureCollection } from '@turf/helpers';
 import {
   LatLng, calculateDistance, makeProjection, toLocal, toLatLng, hexKey, chooseHexSize, generateBoxHexes, hexCorners,
   LocalProjection, LocalPoint, AxialCoord, MobilityGridCell, nearestCellKey, PaintedArea, paintedAreaBounds,
-  resolvePaintedAreaGeometry, computeDemDerivatives, RoadWayTags, MoverProfile,
+  resolvePaintedAreaGeometry, computeDemDerivatives, RoadWayTags, MoverProfile, invalidateCellIndex,
 } from '@firebreak/terrain';
 export { nearestCellKey };
 import { sampleElevationsCached, sampleVegetation } from '../utils/routeOptimizer';
@@ -737,12 +737,19 @@ export async function sampleCellsForHexes(
  * `mobilityLazyGrid.ts` calls this over its WHOLE accumulated cell set after
  * every round, not just the newly-materialised batch, since a cell's plane
  * fit depends on its neighbours regardless of which round fetched them.
+ *
+ * Invalidates any cached `CellIndex` for this exact `cells` array once done
+ * (`cellIndex.ts`'s own INVARIANT note) — this mutates cells in place, and a
+ * `CellIndex` built before this call would otherwise keep serving stale
+ * `crossSlopeDeg` values to every search that runs after it. Safe (a no-op)
+ * when nothing has indexed this array yet, which is the common case today.
  */
 export function applyCrossSlope(cells: MobilityGridCell[]): void {
   const derivatives = computeDemDerivatives(cells);
   for (const cell of cells) {
     cell.crossSlopeDeg = derivatives.get(cell.key)?.crossSlopeDeg ?? 0;
   }
+  invalidateCellIndex(cells);
 }
 
 export async function buildMobilityGrid(

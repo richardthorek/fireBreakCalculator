@@ -42,9 +42,19 @@ import {
 import { MoverProfile } from './moverProfiles';
 import { RoadWayTags } from './roadSpeedModel';
 import {
-  MobilitySample, TrafficabilityClass, edgeMobilityCost, signedSlopeDegrees, estimateStructureFromVegetation,
+  TrafficabilityClass, edgeMobilityCost, signedSlopeDegrees, estimateStructureFromVegetation,
   estimateFordingRequirement,
 } from './mobilityCost';
+import { CellIndex, getCellIndex, toMobilitySample } from './cellIndex';
+
+/**
+ * `toMobilitySample` now lives in `cellIndex.ts` (WP2, movement-analysis
+ * performance work) — `buildCellIndex` needs to call it and this module needs
+ * `MobilityGridCell` (declared below), so it moved to the side of that
+ * dependency with no cycle. Re-exported here unchanged so every existing
+ * `import { toMobilitySample } from './accumulatedCost'` (`corridorField.ts`,
+ * `minCutBarrier.ts`, `movementSimulation.ts`) keeps working. */
+export { toMobilitySample };
 
 /** One step of a resolved path through the grid, with elapsed time —
  *  the shape produced by every search in this module and consumed by the
@@ -144,31 +154,6 @@ export interface MobilityGridCell {
 export const carriesWaterSignal = (c: Pick<MobilityGridCell, 'inWaterBody' | 'nearestWaterwayKind' | 'waterFrequency'>): boolean =>
   c.inWaterBody || c.nearestWaterwayKind !== null || (c.waterFrequency !== null && c.waterFrequency >= 0.15);
 
-/**
- * Project a grid cell down to the `MobilitySample` shape `edgeMobilityCost`
- * consumes — ONE place that lists every field the cost function reads off a
- * cell, so a field added to either interface (this is where the hydrology
- * fields landed) can't silently go stale at one call site while every other
- * caller picks it up. Every module that builds an edge's `from`/`to` sample
- * (this file, corridorField.ts, minCutBarrier.ts, movementSimulation.ts)
- * should call this rather than hand-writing the object literal.
- */
-export function toMobilitySample(cell: MobilityGridCell): MobilitySample {
-  return {
-    lat: cell.center.lat,
-    lng: cell.center.lng,
-    elevation: cell.elevation,
-    vegetation: cell.vegetation,
-    vegEstimated: cell.vegEstimated,
-    onTrail: cell.onTrail,
-    nearestTrailTags: cell.nearestTrailTags,
-    waterDistanceM: cell.waterDistanceM,
-    inWaterBody: cell.inWaterBody,
-    nearestWaterwayKind: cell.nearestWaterwayKind,
-    waterFrequency: cell.waterFrequency,
-  };
-}
-
 export interface MobilityCellResult {
   key: string;
   center: LatLng;
@@ -261,13 +246,21 @@ function classifyCellTerrain(
 // Binary min-heap (time-ordered) — plain, self-contained, no dependency.
 // ---------------------------------------------------------------------------
 
+/**
+ * Same binary min-heap as before, holding integer cell INDICES (into a
+ * `CellIndex`) rather than string keys — WP2: the search core's own hot loop
+ * never needs a key here, only at the `best`/`prev` output boundary. Push/pop
+ * mechanics (sift-up, sift-down, swap pattern, tie-break-by-insertion-order)
+ * are untouched byte-for-byte from the previous key-based version — only the
+ * payload field changed from `key: string` to `index: number` — so equal-cost
+ * pops resolve in EXACTLY the same order as before. */
 class MinHeap {
-  private items: { key: string; priority: number }[] = [];
+  private items: { index: number; priority: number }[] = [];
 
   get size(): number { return this.items.length; }
 
-  push(key: string, priority: number): void {
-    this.items.push({ key, priority });
+  push(index: number, priority: number): void {
+    this.items.push({ index, priority });
     let i = this.items.length - 1;
     while (i > 0) {
       const parent = (i - 1) >> 1;
@@ -277,7 +270,7 @@ class MinHeap {
     }
   }
 
-  pop(): { key: string; priority: number } | undefined {
+  pop(): { index: number; priority: number } | undefined {
     if (this.items.length === 0) return undefined;
     const top = this.items[0];
     const last = this.items.pop()!;
@@ -373,53 +366,144 @@ export function runAccumulatedCostSearch(
   options: AccumulatedCostSearchOptions = {}
 ): AccumulatedCostSearchResult {
   const { edgePenalties, onProgress, resumeFrom } = options;
-  const byKey = new Map<string, MobilityGridCell>();
-  for (const c of cells) byKey.set(c.key, c);
-  const totalCells = Math.max(1, cells.length);
+  const idx: CellIndex = getCellIndex(cells);
+  const n = cells.length;
+  const totalCells = Math.max(1, n);
 
-  const best = new Map<string, { timeSeconds: number; estimated: boolean }>();
+  // Hot-path state as flat TypedArrays, indexed exactly like `idx` — this
+  // replaces the `Map<string, ...>` `best` lookups WP2's audit found in the
+  // inner loop (waste #2).
+  const bestTime = new Float64Array(n).fill(Infinity);
+  const bestEstimated = new Uint8Array(n);
+  // Presence, tracked SEPARATELY from `bestTime`'s value — NOT "bestTime[i]
+  // !== Infinity". The original `Map<string, ...>` checked key PRESENCE
+  // (`existing === undefined`) to decide "already settled", regardless of
+  // what value was stored. A settled cost CAN legitimately be Infinity: an
+  // `edgePenalties` entry of `Infinity` (keyTerrain.ts's candidate-denial
+  // mechanism, "an Infinity edge penalty, deliberately unlike every other
+  // penalty" — see that module's own header) produces exactly that via
+  // `result.timeSeconds * penalty`, since the raw edge cost's `isFinite`
+  // check runs BEFORE the penalty multiply, not after. Using `bestTime[i]
+  // === Infinity` as the presence sentinel therefore collided with a real,
+  // legitimate settled value: a denied cell got re-discovered and re-pushed
+  // to `order` on every single visit instead of once, corrupting
+  // `settledCount`/the heap and — over enough re-visits, since Infinity
+  // priority entries never trip the heap's own staleness check either
+  // (`Infinity > Infinity` is false) — growing `order` without bound (the
+  // observed live failure: `RangeError: Invalid array length` inside
+  // `keyTerrain.ts`'s scoring loop, the exact caller that uses Infinity
+  // denial penalties).
+  const settled = new Uint8Array(n);
+  // `prev` stays a plain string-keyed Map: it's write-only inside the search
+  // loop (only ever read afterwards, by `extractPath`), so it was never part
+  // of the hot-loop cost this WP targets, and keeping it string-keyed sidesteps
+  // needing a second overflow structure for `resumeFrom.prev` entries whose
+  // key predates the current (possibly grown) cell set.
   const prev = new Map<string, string>();
+  // `resumeFrom` may carry settled cells that AREN'T in this call's `cells`
+  // (e.g. a shrinking or disjoint cell set between rounds) — original code
+  // still copied them into `best` unconditionally, just never relaxed
+  // through them (they never made it onto the heap). Preserved here as a
+  // small overflow map, merged back in at the end.
+  const overflowBest = new Map<string, { timeSeconds: number; estimated: boolean }>();
+  // Records `best`'s FIRST-INSERTION order — the same order the original
+  // Map-based implementation produced for free via `Map.set` (a `.set()` on
+  // an already-present key never moves it). This matters beyond cosmetics:
+  // `runAccumulatedCostSearch`'s own resume path below iterates a prior
+  // result's `best` to seed the heap, so insertion order feeds the MinHeap's
+  // tie-break-by-insertion-order, which changes which predecessor wins an
+  // exact tie (common on uniform-cost terrain) and therefore the
+  // reconstructed route. Out-of-grid `resumeFrom` keys are interleaved here
+  // in their original relative position (not appended after everything
+  // else), exactly matching the original single-Map insertion order.
+  const order: string[] = [];
   const heap = new MinHeap();
+  let settledCount = 0;
+
   if (resumeFrom) {
-    for (const [key, v] of resumeFrom.best) best.set(key, v);
+    for (const [key, v] of resumeFrom.best) {
+      order.push(key);
+      const i = idx.keyToIndex.get(key);
+      if (i === undefined) { overflowBest.set(key, v); settledCount++; continue; }
+      if (!settled[i]) { settledCount++; settled[i] = 1; }
+      bestTime[i] = v.timeSeconds;
+      bestEstimated[i] = v.estimated ? 1 : 0;
+    }
     for (const [key, p] of resumeFrom.prev) prev.set(key, p);
-    for (const [key, v] of best) {
-      if (byKey.has(key)) heap.push(key, v.timeSeconds);
+    // Same iteration order as the original (resumeFrom.best's own insertion
+    // order) — matters for tie-break-by-insertion-order in the heap below.
+    for (const [key] of resumeFrom.best) {
+      const i = idx.keyToIndex.get(key);
+      if (i !== undefined) heap.push(i, bestTime[i]);
     }
   } else {
     for (const key of originKeys) {
-      if (!byKey.has(key)) continue;
-      best.set(key, { timeSeconds: 0, estimated: false });
-      heap.push(key, 0);
+      const i = idx.keyToIndex.get(key);
+      if (i === undefined) continue;
+      if (!settled[i]) { settledCount++; order.push(key); settled[i] = 1; }
+      bestTime[i] = 0;
+      bestEstimated[i] = 0;
+      heap.push(i, 0);
+    }
+  }
+
+  // Convert the caller-supplied string-keyed `edgePenalties` into an
+  // index-keyed lookup ONCE per search, rather than building a template
+  // string per relaxation in the hot loop below. `edgePenalties` is supplied
+  // by exactly the hottest callers (corridorAnalysis.ts's k-dissimilar route
+  // loop, keyTerrain.ts's scoring passes), so this conversion cost is paid
+  // once per search instead of once per edge. Public signature (string-keyed
+  // map) is unchanged; keys that don't resolve in this grid are simply
+  // dropped, matching the original `Map.get` returning `undefined` for them.
+  let edgePenaltiesByIndex: Map<number, number> | undefined;
+  if (edgePenalties) {
+    edgePenaltiesByIndex = new Map();
+    for (const [key, penalty] of edgePenalties) {
+      const sep = key.indexOf('|');
+      if (sep === -1) continue;
+      const fromIdx = idx.keyToIndex.get(key.slice(0, sep));
+      const toIdx = idx.keyToIndex.get(key.slice(sep + 1));
+      if (fromIdx === undefined || toIdx === undefined) continue;
+      edgePenaltiesByIndex.set(fromIdx * n + toIdx, penalty);
     }
   }
 
   while (heap.size > 0) {
     const cur = heap.pop()!;
-    const known = best.get(cur.key);
-    if (!known || cur.priority > known.timeSeconds) continue; // stale heap entry
-    const cell = byKey.get(cur.key);
-    if (!cell) continue;
-    onProgress?.(Math.min(1, best.size / totalCells));
+    if (cur.priority > bestTime[cur.index]) continue; // stale heap entry
+    onProgress?.(Math.min(1, settledCount / totalCells));
 
-    for (const nHex of hexNeighbors(cell.hex)) {
-      const nKey = hexKey(nHex);
-      const neighbor = byKey.get(nKey);
-      if (!neighbor) continue;
-      const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const sampleA: MobilitySample = toMobilitySample(cell);
-      const sampleB: MobilitySample = toMobilitySample(neighbor);
-      const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
+    const base = cur.index * 6;
+    for (let d = 0; d < 6; d++) {
+      const nIdx = idx.neighbors[base + d];
+      if (nIdx === -1) continue;
+      const dist = idx.neighborDistM[base + d];
+      const sampleA = idx.samples[cur.index];
+      const sampleB = idx.samples[nIdx];
+      const result = edgeMobilityCost(profile, sampleA, sampleB, dist, { nightMode, crossSlopeDeg: idx.crossSlopeDeg[cur.index] });
       if (!isFinite(result.timeSeconds)) continue; // NO-GO edge — never relax through it
-      const penalty = edgePenalties?.get(`${cur.key}|${nKey}`) ?? 1;
-      const candidateTime = known.timeSeconds + result.timeSeconds * penalty;
-      const existing = best.get(nKey);
-      if (!existing || candidateTime < existing.timeSeconds) {
-        const estimated = known.estimated || result.estimated;
-        best.set(nKey, { timeSeconds: candidateTime, estimated });
-        prev.set(nKey, cur.key);
-        heap.push(nKey, candidateTime);
+      const penalty = edgePenaltiesByIndex ? (edgePenaltiesByIndex.get(cur.index * n + nIdx) ?? 1) : 1;
+      const candidateTime = bestTime[cur.index] + result.timeSeconds * penalty;
+      const hadExisting = settled[nIdx] === 1;
+      if (!hadExisting || candidateTime < bestTime[nIdx]) {
+        if (!hadExisting) { settledCount++; order.push(idx.indexToKey[nIdx]); settled[nIdx] = 1; }
+        const estimated = bestEstimated[cur.index] === 1 || result.estimated;
+        bestTime[nIdx] = candidateTime;
+        bestEstimated[nIdx] = estimated ? 1 : 0;
+        prev.set(idx.indexToKey[nIdx], idx.indexToKey[cur.index]);
+        heap.push(nIdx, candidateTime);
       }
+    }
+  }
+
+  const best = new Map<string, { timeSeconds: number; estimated: boolean }>();
+  for (const key of order) {
+    const i = idx.keyToIndex.get(key);
+    if (i !== undefined) {
+      best.set(key, { timeSeconds: bestTime[i], estimated: bestEstimated[i] === 1 });
+    } else {
+      const v = overflowBest.get(key);
+      if (v) best.set(key, v);
     }
   }
 
@@ -454,46 +538,63 @@ export function runCostToGoSearch(
    *  has to turn around (movementSimulation.ts enforces the block itself). */
   blockedEdges?: Set<string>
 ): Map<string, number> {
-  const byKey = new Map<string, MobilityGridCell>();
-  for (const c of cells) byKey.set(c.key, c);
+  const idx: CellIndex = getCellIndex(cells);
+  const n = cells.length;
 
-  const best = new Map<string, number>();
+  const bestTime = new Float64Array(n).fill(Infinity);
+  // Presence, tracked separately from `bestTime`'s value — see
+  // `runAccumulatedCostSearch`'s identical `settled` array for why a
+  // `bestTime[i] === Infinity` presence check is unsafe in general (this
+  // function has no `edgePenalties` today, so it cannot currently produce a
+  // legitimate Infinity-valued settled cost, but the check itself is the
+  // same anti-pattern that broke the forward search — fixed here too rather
+  // than leaving a latent trap for the next caller/change).
+  const settled = new Uint8Array(n);
   const heap = new MinHeap();
+  // Tracks `best`'s first-insertion order — see `runAccumulatedCostSearch`'s
+  // identical `order` array for why this matters (tie-break-by-insertion-
+  // order feeds into any caller that seeds a heap from this result).
+  const order: number[] = [];
   for (const key of objectiveKeys) {
-    if (!byKey.has(key)) continue;
-    best.set(key, 0);
-    heap.push(key, 0);
+    const i = idx.keyToIndex.get(key);
+    if (i === undefined) continue;
+    if (!settled[i]) { order.push(i); settled[i] = 1; }
+    bestTime[i] = 0;
+    heap.push(i, 0);
   }
 
   while (heap.size > 0) {
     const cur = heap.pop()!;
-    const known = best.get(cur.key);
-    if (known === undefined || cur.priority > known) continue; // stale heap entry
-    const cell = byKey.get(cur.key);
-    if (!cell) continue;
+    if (cur.priority > bestTime[cur.index]) continue; // stale heap entry
 
-    for (const nHex of hexNeighbors(cell.hex)) {
-      const nKey = hexKey(nHex);
-      const neighbor = byKey.get(nKey);
-      if (!neighbor) continue;
-      const dist = calculateDistance(neighbor.center.lat, neighbor.center.lng, cell.center.lat, cell.center.lng);
+    const base = cur.index * 6;
+    for (let d = 0; d < 6; d++) {
+      const nIdx = idx.neighbors[base + d];
+      if (nIdx === -1) continue;
       // Directed edge neighbour → cell: the cost of the step that would bring
-      // a mover standing at `neighbor` onto `cell`, which is the direction the
-      // remaining-time field must be built from.
-      const sampleFrom: MobilitySample = toMobilitySample(neighbor);
-      const sampleTo: MobilitySample = toMobilitySample(cell);
-      if (blockedEdges?.has(`${nKey}|${cur.key}`)) continue;
-      const result = edgeMobilityCost(profile, sampleFrom, sampleTo, dist, { nightMode, crossSlopeDeg: neighbor.crossSlopeDeg });
+      // a mover standing at `neighbor` onto `cell` (`cur`), which is the
+      // direction the remaining-time field must be built from. `neighborDistM`
+      // is stored once as `cell → neighbour` (the forward search's own
+      // order); reused here in reverse order because haversine distance is
+      // symmetric — see cellIndex.ts's header for the bit-identical proof.
+      const dist = idx.neighborDistM[base + d];
+      if (blockedEdges?.has(`${idx.indexToKey[nIdx]}|${idx.indexToKey[cur.index]}`)) continue;
+      const sampleFrom = idx.samples[nIdx];
+      const sampleTo = idx.samples[cur.index];
+      const result = edgeMobilityCost(profile, sampleFrom, sampleTo, dist, { nightMode, crossSlopeDeg: idx.crossSlopeDeg[nIdx] });
       if (!isFinite(result.timeSeconds)) continue;
-      const candidate = known + result.timeSeconds;
-      const existing = best.get(nKey);
-      if (existing === undefined || candidate < existing) {
-        best.set(nKey, candidate);
-        heap.push(nKey, candidate);
+      const candidate = bestTime[cur.index] + result.timeSeconds;
+      const existing = settled[nIdx] === 1;
+      if (!existing || candidate < bestTime[nIdx]) {
+        if (!existing) { order.push(nIdx); settled[nIdx] = 1; }
+        bestTime[nIdx] = candidate;
+        heap.push(nIdx, candidate);
       }
     }
   }
 
+  const best = new Map<string, number>();
+  for (const i of order) best.set(idx.indexToKey[i], bestTime[i]);
   return best;
 }
 
