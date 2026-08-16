@@ -142,18 +142,39 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy app + API to Static Web App
-        uses: Azure/static-web-apps-deploy@v1
+      # Oryx's remote build for the SWA action has no workspace awareness — it
+      # only sees `app_location` (webapp), so it can't install
+      # shared/terrain's own node_modules and the webapp build fails resolving
+      # `@firebreak/terrain`'s transitive imports (geojson, @turf/*). Build the
+      # webapp here on the runner instead, matching the build_and_test job's
+      # steps, and hand the SWA action the finished output (skip_app_build).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+
+      - name: Shared terrain package — install (consumed via TS path alias)
+        working-directory: ./shared/terrain
+        run: npm install
+
+      - name: Webapp — install and build
+        working-directory: ./webapp
         env:
           VITE_MAPBOX_ACCESS_TOKEN: ${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
           VITE_SUITE_AUTH_URL: ${{ env.SUITE_AUTH_URL }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy app + API to Static Web App
+        uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ steps.swa_token.outputs.token }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: 'upload'
-          app_location: 'webapp'
+          skip_app_build: true
+          app_location: 'webapp/dist'
           api_location: 'api'
-          output_location: 'dist'
+          output_location: ''
 
       - name: Deployment summary
         run: |
