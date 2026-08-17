@@ -34,15 +34,20 @@ import {
   carriesWaterSignal, LocalProjection, PaintedArea, MovementEnsembleResult, DEFAULT_BEHAVIOUR_SPREAD_ID,
   DEFAULT_MOVEMENT_SIM_SEED, RestrictionPlan, MobilityCellResult, IsochroneBand, buildIsochroneBands,
   DEFAULT_ISOCHRONE_MINUTES, MobilityGridCell, getMoverProfile, MoverProfile, setRoadSpeedOverrides,
-  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, computeMinCutBarrier, MinCutResult,
-  computeRoadNetworkMinCut, RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
+  RoadSpeedOverrides, computeChokepoints, DissimilarRoute, ChokepointCell, MinCutResult,
+  RoadMinCutResult, KeyTerrainResult, generateKeyTerrainCandidates, ObservationResult,
   buildObservationResult, ConcealmentResult, buildConcealmentResult, buildRoadGraph, nodesWithin, RoadGraph, RoadWay,
-  WaterBodyPolygon, buildCorridorField, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes,
+  WaterBodyPolygon, CorridorField, DEFAULT_CORRIDOR_ROUTE_COUNT, ensembleTracksToRoutes, TransitCell,
 } from '@firebreak/terrain';
 import { MobilityGridResult, MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, minDetourPadM } from './mobilityGrid';
 import { runLazyMobilitySearch } from './mobilityLazyGrid';
 import { InfrastructureTrail } from '../utils/infrastructureService';
-import { runMovementEnsembleInWorker, runKeyTerrainScoringInWorker, runViewshedInWorker } from './mobilityWorkerClient';
+import {
+  runMovementEnsembleInWorker, runViewshedInWorker, runCorridorFieldInWorker,
+  runMinCutInWorker,
+} from './mobilityWorkerClient';
+import { runKeyTerrainScoringPooled } from './mobilityWorkerPool';
+import { yieldToMain } from './asyncUtils';
 import {
   findVehicleRoadRoute, roadRouteToDissimilarRoute, RoadRouteSearchResult, ROAD_ACCESS_SNAP_M, areaCentroid,
   findEarlyVehicleRoadRoutePreview,
@@ -261,6 +266,19 @@ export interface MobilityAppreciationOptions {
    */
   onPartialResult?: (partial: MobilityAppreciationResult) => void;
   /**
+   * Fires REPEATEDLY (unlike every other `onX` callback here, which fires
+   * once) — a real interim transit-cell snapshot from the baseline mover
+   * ensemble as movers complete, throttled to roughly every 250ms
+   * (`movementSimulation.ts`'s `onPartialTracks`, WP4 streaming work). This
+   * is what lets corridors visibly thicken on the map DURING the ensemble
+   * run, rather than only appearing once `onPartialResult`'s search-only
+   * field is later replaced by the final result. `moversDone` is honest —
+   * "this many movers have been simulated so far", not a claim about
+   * `moverCount`'s eventual total — so a caller wanting a fraction divides
+   * by the `moverCount` it itself requested. Omit for no streaming.
+   */
+  onEnsembleProgress?: (cells: TransitCell[], moversDone: number) => void;
+  /**
    * Fires ONCE, as soon as the box-free vehicle road route (docs §35 Slice A)
    * resolves — typically a couple of seconds in, well before `onPartialResult`
    * (which waits on the ENTIRE hex-grid sampling + multi-source search
@@ -320,7 +338,7 @@ export async function runMobilityAppreciation(
 ): Promise<MobilityAppreciationResult | null> {
   const {
     profileId, nightMode = false, signal, onProgress: onProgressRaw, onLog, onStage, onPreviewCells, onPartialResult,
-    onRoadRoute,
+    onRoadRoute, onEnsembleProgress,
     moverCount = 240,
     behaviourSpreadId = DEFAULT_BEHAVIOUR_SPREAD_ID,
     simulationSeed = DEFAULT_MOVEMENT_SIM_SEED,
@@ -532,6 +550,21 @@ export async function runMobilityAppreciation(
   // independent conversions that could drift apart.
   const roadRouteAsDissimilar = roadRoute ? roadRouteToDissimilarRoute(roadRoute, grid.cells) : null;
 
+  // WP5 Tier B (redundant-pass elimination) — `results` (above) is already
+  // the arrival time of every reachable cell from this SAME origin AOI, over
+  // this SAME final `grid.cells`, with no edge penalties (the lazy grid's own
+  // settling search). That is bit-for-bit what `computeCellFacts` inside
+  // `buildCorridorField` would otherwise pay a SEPARATE full Dijkstra to
+  // re-derive, every time below, purely for arrival times — none of the
+  // `runCorridorFieldInWorker` calls below ever carry `edgePenalties` through
+  // the worker's 'corridors' request (see `MobilityCorridorsRequest.options`'s
+  // own doc comment), so this one map is the correct input for every one of
+  // them. Built once here and threaded into the calls that pass
+  // `routesOverride` (ensemble-based, road-route-refolded, restricted) — the
+  // ones the caller already has route/cost data for and would otherwise pay
+  // this search purely for facts, not for the routes themselves.
+  const baselineArrivalSeconds = new Map(results.map(r => [r.key, r.timeSeconds]));
+
   const bands = buildIsochroneBands(results, DEFAULT_ISOCHRONE_MINUTES);
   const reachableCount = results.filter(r => isFinite(r.timeSeconds)).length;
   const severelyRestrictedCount = results.filter(r => r.trafficability === 'severely-restricted').length;
@@ -601,8 +634,15 @@ export async function runMobilityAppreciation(
   });
 
   // --- Pass 2 + the simulation (docs §32): corridors, chokepoints, min-cut
-  // barrier. Everything except the ensemble/restriction work runs on the main
-  // thread — cheap at this grid size relative to the sampling already done.
+  // barrier. Movement ensemble/restrictions, corridor-field construction and
+  // the min-cut solves all run in the Web Worker (WP3, movement-analysis
+  // performance work) — each `buildCorridorField` call is itself up to
+  // several full Dijkstra searches, and Edmonds-Karp min-cut is the single
+  // most CPU-bound phase this mode runs; running any of them synchronously
+  // here reproduces the page-hang regression (docs §41). Only genuinely
+  // cheap, O(N)-or-better work (chokepoints, key-terrain candidate
+  // nomination) stays on the main thread, each preceded by a `yieldToMain()`
+  // so the browser can paint what the worker call just delivered first.
   let dissimilarRoutes: DissimilarRoute[] = [];
   let chokepoints: ChokepointCell[] = [];
   let barrier: MinCutResult | null = null;
@@ -646,6 +686,7 @@ export async function runMobilityAppreciation(
           else onProgress(0.72 + f * 0.23);
         },
         onLog: line => onLog?.(line),
+        onPartialTracks: onEnsembleProgress,
       }
     );
     if (signal?.aborted) return null;
@@ -689,23 +730,28 @@ export async function runMobilityAppreciation(
     // never drift into disagreeing about what a corridor is.
     if (ensemble && ensemble.tracks.length > 0) {
       const ensembleRoutes = ensembleTracksToRoutes(ensemble.tracks, grid.cells);
-      corridorField = buildCorridorField(
-        grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
+      corridorField = await runCorridorFieldInWorker(
+        grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
         {
           routesOverride: roadRouteAsDissimilar ? [...ensembleRoutes, roadRouteAsDissimilar] : ensembleRoutes,
           evidence: 'simulated-movers',
           weightByAttractiveness: false,
-        }
+          arrivalSecondsOverride: baselineArrivalSeconds,
+        },
+        roadSpeedOverrides
       );
+      if (signal?.aborted) return null;
     }
 
     // The optimiser view is still computed: chokepoints and the min-cut below
     // are graph properties of the ROUTE set, and comparing "best routes" with
     // "what movers did" is itself informative.
     onLog?.(`DERIVING UP TO ${DEFAULT_CORRIDOR_ROUTE_COUNT} DISTINCT OPTIMAL ROUTES FOR COMPARISON…`);
-    optimiserCorridorField = buildCorridorField(
-      grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj
+    optimiserCorridorField = await runCorridorFieldInWorker(
+      grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+      undefined, roadSpeedOverrides
     );
+    if (signal?.aborted) return null;
     // Re-cluster once more with the real road route folded in, so it counts
     // as its own avenue (or merges into an existing one, if it's genuinely
     // the same ground) rather than being invisible to chokepoint/corridor
@@ -714,10 +760,16 @@ export async function runMobilityAppreciation(
     // to add.
     if (roadRouteAsDissimilar && optimiserCorridorField) {
       onLog?.('FOLDING THE REAL ROAD-NETWORK ROUTE INTO CORRIDOR/CHOKEPOINT ANALYSIS AS A KNOWN-GOOD AVENUE…');
-      optimiserCorridorField = buildCorridorField(
-        grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
-        { routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar] }
-      ) ?? optimiserCorridorField;
+      const withRoadRoute = await runCorridorFieldInWorker(
+        grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
+        {
+          routesOverride: [...optimiserCorridorField.routes, roadRouteAsDissimilar],
+          arrivalSecondsOverride: baselineArrivalSeconds,
+        },
+        roadSpeedOverrides
+      );
+      if (signal?.aborted) return null;
+      optimiserCorridorField = withRoadRoute ?? optimiserCorridorField;
     }
     dissimilarRoutes = optimiserCorridorField?.routes ?? [];
     if (!corridorField) corridorField = optimiserCorridorField;
@@ -781,17 +833,44 @@ export async function runMobilityAppreciation(
       }
       if (restrictionPlan.bypassNote) onLog?.(restrictionPlan.bypassNote.toUpperCase());
       if (restrictionPlan.scenario && restrictionPlan.scenario.tracks.length > 0) {
-        restrictedCorridorField = buildCorridorField(
-          grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode, grid.hexSize, grid.proj,
+        // FOUND IN REVIEW: this call previously reused `baselineArrivalSeconds`
+        // (the UNRESTRICTED search) as `arrivalSecondsOverride` here — wrong,
+        // because this scenario's routes were generated with
+        // `restrictionPlan.blockedEdges` severed (`restrictionPlanner.ts`).
+        // Reusing the unrestricted arrival times would have reported fast,
+        // unrestricted arrival times for cells the restriction actually slows
+        // or cuts off — corrupting the restricted corridor's own bottleneck/
+        // width bucketing (`computeCellFacts`'s iso-arrival-time slicing) with
+        // fabricated-looking "facts" a field user would read as real. Fixed
+        // by giving `computeCellFacts`'s own internal search the SAME
+        // blocked-edge network the scenario itself was built against, via
+        // `edgePenalties` (an Infinity penalty per already-directed edge key —
+        // `blockedEdges` is stored pre-expanded to both directions, see that
+        // field's own doc comment), and NOT supplying `arrivalSecondsOverride`
+        // — there is no already-computed restricted-network arrival map to
+        // reuse (the ensemble's own cost-to-go field is a REVERSE search from
+        // the objective, not the forward one `computeCellFacts` needs), so
+        // this one call pays the full search WP5 Fix 1 otherwise saves.
+        const restrictedEdgePenalties = new Map(restrictionPlan.blockedEdges.map(key => [key, Infinity]));
+        restrictedCorridorField = await runCorridorFieldInWorker(
+          grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
           {
             routesOverride: ensembleTracksToRoutes(restrictionPlan.scenario.tracks, grid.cells),
             evidence: 'simulated-movers',
             weightByAttractiveness: false,
-          }
+            edgePenalties: restrictedEdgePenalties,
+          },
+          roadSpeedOverrides
         );
+        if (signal?.aborted) return null;
       }
     }
 
+    // Cheap, main-thread work (corridorAnalysis.ts's own header: O(K·N),
+    // negligible next to the worker phases around it) — yield first so the
+    // browser can paint whatever the corridor-field worker calls above just
+    // delivered before this chunk of synchronous work runs.
+    await yieldToMain();
     onStage?.({ key: 'chokepoints', label: 'Finding the ground every route funnels through', fraction: 0.97 });
     chokepoints = computeChokepoints(grid.cells, grid.hexSize, grid.proj, dissimilarRoutes).slice(0, 12);
     if (chokepoints.length > 0) {
@@ -801,13 +880,6 @@ export async function runMobilityAppreciation(
     onProgress(0.98);
     onStage?.({ key: 'barrier', label: 'Siting the cheapest severing cut', fraction: 0.98 });
     onLog?.('SITING CHEAPEST SEVERING CUT (MAX-FLOW/MIN-CUT)…');
-    barrier = computeMinCutBarrier(grid.cells, grid.originKeys, grid.objectiveKeys, profile, nightMode);
-    if (barrier) {
-      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/ROAD-CLASS-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
-    } else {
-      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
-    }
-
     // Road-network-EXACT min-cut (docs §42b) — a SEPARATE max-flow problem
     // run directly over the road graph's own nodes/edges (see
     // computeRoadNetworkMinCut's own header for why this is not a rewrite of
@@ -815,22 +887,38 @@ export async function runMobilityAppreciation(
     // connects both painted areas — matching `findVehicleRoadRoute`'s own
     // gating exactly, since this answers the same "is there a road-network
     // path here at all" question the route search already had to resolve.
+    // Computed in the SAME worker request as the hex cut (docs §47.4: the
+    // two are independent of each other, "Hex vs road min-cut — 2-way,
+    // free") rather than as two separate round trips.
+    let roadOriginNodeIds: string[] | undefined;
+    let roadObjectiveNodeIds: string[] | undefined;
     if (mixedRoadGraph) {
       const originPoint = areaCentroid(origin);
       const objectivePoint = areaCentroid(objective);
       const originNodes = originPoint ? nodesWithin(mixedRoadGraph, originPoint, ROAD_ACCESS_SNAP_M) : [];
       const objectiveNodes = objectivePoint ? nodesWithin(mixedRoadGraph, objectivePoint, ROAD_ACCESS_SNAP_M) : [];
       if (originNodes.length > 0 && objectiveNodes.length > 0) {
-        roadNetworkBarrier = computeRoadNetworkMinCut(
-          mixedRoadGraph, originNodes.map(n => n.id), objectiveNodes.map(n => n.id), profile, roadSpeedOverrides
-        );
-        if (roadNetworkBarrier) {
-          onLog?.(
-            `ROAD-NETWORK MIN-CUT — ${roadNetworkBarrier.segments.length} EXACT ROAD SEGMENT(S), ` +
-            `CUT VALUE ${roadNetworkBarrier.cutValue.toFixed(0)} (ROAD-CLASS-WEIGHTED, RESOLUTION = REAL ROAD VERTICES, NOT HEXES)`
-          );
-        }
+        roadOriginNodeIds = originNodes.map(n => n.id);
+        roadObjectiveNodeIds = objectiveNodes.map(n => n.id);
       }
+    }
+    const minCutResult = await runMinCutInWorker(
+      grid.cells, grid.originKeys, grid.objectiveKeys, profileId, nightMode, roadSpeedOverrides,
+      mixedRoadGraph ?? undefined, roadOriginNodeIds, roadObjectiveNodeIds
+    );
+    if (signal?.aborted) return null;
+    barrier = minCutResult.barrier;
+    roadNetworkBarrier = minCutResult.roadNetworkBarrier;
+    if (barrier) {
+      onLog?.(`MIN-CUT — ${barrier.segments.length} SEGMENT(S), CUT VALUE ${barrier.cutValue.toFixed(0)} (UNIT/ROAD-CLASS-WEIGHTED, NOT YET REAL VEHICLE CAPACITY)`);
+    } else {
+      onLog?.('MIN-CUT SKIPPED — NO SEPARATING CUT NEEDED OR FOUND');
+    }
+    if (roadNetworkBarrier) {
+      onLog?.(
+        `ROAD-NETWORK MIN-CUT — ${roadNetworkBarrier.segments.length} EXACT ROAD SEGMENT(S), ` +
+        `CUT VALUE ${roadNetworkBarrier.cutValue.toFixed(0)} (ROAD-CLASS-WEIGHTED, RESOLUTION = REAL ROAD VERTICES, NOT HEXES)`
+      );
     }
 
     // Key terrain (OCOKA 4, docs/ROUTE_INTELLIGENCE.md §47.1) — candidates
@@ -839,7 +927,10 @@ export async function runMobilityAppreciation(
     // and runs in the worker (keyTerrain.ts's own header explains why both
     // halves are split this way). Scored against `optimiserCorridorField`,
     // deliberately, per that module's header — never the (possibly absent,
-    // possibly simulated-mover) `corridorField`.
+    // possibly simulated-mover) `corridorField`. Yield first — same reasoning
+    // as the chokepoints yield above, this sits right after the min-cut
+    // worker call resolved.
+    await yieldToMain();
     if (optimiserCorridorField) {
       const keyTerrainCandidates = generateKeyTerrainCandidates(
         grid.cells, chokepoints, barrier, roadNetworkBarrier, optimiserCorridorField
@@ -847,7 +938,15 @@ export async function runMobilityAppreciation(
       if (keyTerrainCandidates.length > 0) {
         onStage?.({ key: 'keyTerrain', label: 'Scoring key terrain candidates', fraction: 0.99 });
         onLog?.(`SCORING ${keyTerrainCandidates.length} KEY TERRAIN CANDIDATE(S)…`);
-        keyTerrain = await runKeyTerrainScoringInWorker(
+        // Pooled across up to 4 worker instances (WP4 fan-out — each
+        // candidate is a pure, independent evaluation; see
+        // mobilityWorkerPool.ts's own header) rather than the single
+        // shared worker every other phase uses — this is the single
+        // largest chunk of a run's total Dijkstra passes (profiling
+        // audit), so it is the one phase where spreading the work across
+        // cores, not just off the main thread, pays for the extra worker
+        // instances' memory duplication.
+        keyTerrain = await runKeyTerrainScoringPooled(
           grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
           optimiserCorridorField, keyTerrainCandidates, roadSpeedOverrides
         );

@@ -51,7 +51,7 @@ import { MobilityGridCell, toMobilitySample } from './accumulatedCost';
 import { MoverProfile } from './moverProfiles';
 import { edgeMobilityCost } from './mobilityCost';
 import { calculateDistance } from './geo';
-import { RoadGraph } from './roadGraph';
+import { RoadGraph, RoadEdge } from './roadGraph';
 import { edgeTravelTime } from './roadRouting';
 import { RoadSpeedOverrides } from './roadSpeedModel';
 
@@ -174,6 +174,20 @@ export function computeMinCutBarrier(
   const byKey = new Map(cells.map(c => [c.key, c]));
   const graph = new ResidualGraph();
 
+  // WP5 Tier B — whether a directed edge was passable (GO/SLOW-GO) at BUILD
+  // time, keyed `${fromKey}|${toKey}`, so the boundary-segment extraction
+  // pass below can reuse the answer instead of paying `edgeMobilityCost`
+  // (which itself calls `calculateDistance` and the full slope/vegetation/
+  // fording cost model) a second time for the exact same directed edge.
+  // Deliberately its OWN map rather than reading `ResidualGraph.cap`: that
+  // map is the graph's MUTABLE RESIDUAL capacity — `pushFlow` below rewrites
+  // it as flow is pushed, so by extraction time a `0` there is genuinely
+  // ambiguous between "never existed" and "existed, now fully saturated".
+  // Existence, unlike capacity, never changes after build time, so a plain
+  // boolean is both sufficient (extraction only ever asks "was this a real
+  // edge in the original graph?") and safe to cache.
+  const edgeExists = new Map<string, boolean>();
+
   let edgeCount = 0;
   for (const cell of cells) {
     for (const nHex of hexNeighbors(cell.hex)) {
@@ -182,7 +196,9 @@ export function computeMinCutBarrier(
       if (!neighbor) continue;
       const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
       const result = edgeMobilityCost(profile, toMobilitySample(cell), toMobilitySample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
-      if (!isFinite(result.timeSeconds)) continue; // NO-GO — carries no traffic, excluded
+      const passable = isFinite(result.timeSeconds);
+      edgeExists.set(`${cell.key}|${nKey}`, passable);
+      if (!passable) continue; // NO-GO — carries no traffic, excluded
       graph.addEdge(cell.key, nKey, edgeCapacity(cell, neighbor));
       edgeCount++;
     }
@@ -237,9 +253,11 @@ export function computeMinCutBarrier(
       if (reachable.has(nKey)) continue; // not crossing the cut boundary
       const neighbor = byKey.get(nKey);
       if (!neighbor) continue;
-      const dist = calculateDistance(cell.center.lat, cell.center.lng, neighbor.center.lat, neighbor.center.lng);
-      const result = edgeMobilityCost(profile, toMobilitySample(cell), toMobilitySample(neighbor), dist, { nightMode, crossSlopeDeg: cell.crossSlopeDeg });
-      if (!isFinite(result.timeSeconds)) continue; // wasn't a real edge in the original graph
+      // WP5 Tier B — reuse the BUILD-time passability answer for this exact
+      // directed edge instead of recomputing `edgeMobilityCost` again (see
+      // `edgeExists`'s own doc comment above for why a fresh map, not the
+      // residual graph, is what's safe to read here).
+      if (!edgeExists.get(`${cell.key}|${nKey}`)) continue; // wasn't a real edge in the original graph
       segments.push({ fromKey: cell.key, toKey: nKey, from: cell.center, to: neighbor.center });
     }
   }
@@ -315,11 +333,36 @@ export function computeRoadNetworkMinCut(
   if (graph.nodes.size === 0) return null;
   const flowGraph = new ResidualGraph();
 
+  // WP5 Tier B — same reasoning as `computeMinCutBarrier`'s own `edgeExists`:
+  // a separate, immutable-after-build map of "was this directed road edge
+  // passable", so the boundary-segment extraction pass can skip a second
+  // `edgeTravelTime` call (blocked/fording/road-class lookup) for the exact
+  // same edge, rather than reading it off `flowGraph`'s own capacity map —
+  // which `pushFlow` mutates during the max-flow solve, so a `0` there by
+  // extraction time cannot be trusted to mean "never existed".
+  //
+  // Keyed by the `RoadEdge` OBJECT ITSELF, not a `${fromId}|${toId}` string —
+  // unlike the hex grid (exactly six, uniquely-directioned neighbours per
+  // cell), `graph.adjacency` is a real OSM-derived multigraph: two distinct
+  // ways can legitimately produce two separate `RoadEdge`s between the SAME
+  // node pair (a junction where more than one mapped way meets), each with
+  // its own `wayTags`/`crossesStandingWater` and therefore its own,
+  // independent `blocked` verdict. A string key would collide those into one
+  // cached boolean and let one edge's passability silently overwrite the
+  // other's — exactly the "presence-check collides with a legitimate
+  // distinct value" failure mode WP2 shipped once already. Both the build
+  // loop and the extraction loop below iterate the SAME `graph.adjacency`
+  // arrays, so the same `RoadEdge` object reference is what extraction sees
+  // too, making object identity a safe, collision-free key.
+  const edgeExists = new Map<RoadEdge, boolean>();
+
   let edgeCount = 0;
   for (const [fromId, edges] of graph.adjacency) {
     for (const edge of edges) {
       const travel = edgeTravelTime(edge, profile, overrides);
-      if (travel.blocked) continue; // a real NO-GO (impassable/unfordable) — carries no traffic, excluded
+      const passable = !travel.blocked;
+      edgeExists.set(edge, passable);
+      if (!passable) continue; // a real NO-GO (impassable/unfordable) — carries no traffic, excluded
       const highway = edge.wayTags.highway;
       const capacity = (highway ? HIGHWAY_CAPACITY_TIER[highway] : undefined) ?? DEFAULT_TRAIL_CAPACITY_MULTIPLIER;
       flowGraph.addEdge(fromId, edge.to, capacity);
@@ -371,8 +414,11 @@ export function computeRoadNetworkMinCut(
     if (!reachable.has(fromId)) continue;
     for (const edge of edges) {
       if (reachable.has(edge.to)) continue; // not crossing the cut boundary
-      const travel = edgeTravelTime(edge, profile, overrides);
-      if (travel.blocked) continue; // wasn't a real edge in the original graph
+      // WP5 Tier B — reuse the BUILD-time passability answer for this exact
+      // `RoadEdge` object instead of recomputing `edgeTravelTime` again (see
+      // `edgeExists`'s own doc comment above for why this is keyed by object
+      // identity rather than a `${from}|${to}` string).
+      if (!edgeExists.get(edge)) continue; // wasn't a real edge in the original graph
       const fromNode = graph.nodes.get(fromId);
       const toNode = graph.nodes.get(edge.to);
       if (!fromNode || !toNode) continue;

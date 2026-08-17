@@ -36,7 +36,7 @@ import { DEFAULT_ISOCHRONE_MINUTES } from '@firebreak/terrain';
 import { DEFAULT_MOVER_PROFILE_ID } from '@firebreak/terrain';
 import { RoadSpeedOverrides } from '@firebreak/terrain';
 import { MobilityFidelity, DEFAULT_MOBILITY_FIDELITY, originObjectiveDistanceM } from './terrain/mobilityGrid';
-import { MobilityClass } from '@firebreak/terrain';
+import { MobilityClass, TransitCell } from '@firebreak/terrain';
 import { recordMobilityRunTelemetry, MobilityStageTimestamp } from './terrain/mobilityTelemetry';
 import { MobilityPanel } from './components/MobilityPanel';
 import { CounterMobilityPanel } from './components/CounterMobilityPanel';
@@ -511,6 +511,13 @@ const App: React.FC = () => {
   const [mobilityPreviewCells, setMobilityPreviewCells] = useState<
     { polygon: { lat: number; lng: number }[]; trafficability: MobilityClass; timeSeconds: number; bandIndex: number }[] | null
   >(null);
+  /** Real, interim mover-ensemble transit cells, streamed as movers complete
+   *  (WP4 streaming work — `onEnsembleProgress`) — lets corridors visibly
+   *  thicken on the map WHILE the ensemble runs, instead of only appearing
+   *  once the whole run finishes. Superseded the instant `mobilityResult`'s
+   *  own final `ensemble` lands (see `transitCellsForMap`'s precedence) —
+   *  never shown alongside it, only ever a stand-in before it exists. */
+  const [mobilityEnsembleProgressCells, setMobilityEnsembleProgressCells] = useState<TransitCell[] | null>(null);
   /** The box-free vehicle road route, painted the moment it resolves — well
    *  before the full grid/search pipeline settles (docs §38's stated
    *  remainder, closed via `onRoadRoute`). Superseded by `mobilityResult`'s
@@ -583,6 +590,7 @@ const App: React.FC = () => {
     setMobilityProgress(0);
     setMobilityStage(null);
     setMobilityPreviewCells(null);
+    setMobilityEnsembleProgressCells(null);
     setMobilityEarlyRoadRoute(null);
     setHighlightedCorridorId(null);
     setMovementView('unrestricted');
@@ -652,6 +660,15 @@ const App: React.FC = () => {
           if (controller.signal.aborted) return;
           setMobilityEarlyRoadRoute(route.waypoints);
         },
+        // Fires repeatedly (unlike every onX callback above) — real interim
+        // transit cells as movers complete, roughly every 250ms
+        // (movementSimulation.ts's own throttle). This is the "corridors
+        // visibly thickening" request: transitCellsForMap prefers this over
+        // the final mobilityResult.ensemble until the run actually finishes.
+        onEnsembleProgress: cells => {
+          if (controller.signal.aborted) return;
+          setMobilityEnsembleProgressCells(cells);
+        },
       });
       if (controller.signal.aborted) return;
       if (!result) {
@@ -660,6 +677,7 @@ const App: React.FC = () => {
       }
       setMobilityResult(result);
       setMobilityPreviewCells(null); // the real result supersedes the preview
+      setMobilityEnsembleProgressCells(null); // ditto — result.ensemble is now the authoritative picture
       recordMobilityRunTelemetry(
         result,
         performance.now() - runStartMs,
@@ -755,9 +773,21 @@ const App: React.FC = () => {
   }, [corridorView, cmAfterField, movementView, mobilityResult]);
 
   const transitCellsForMap = useMemo(() => {
-    if (!showTransitField || !displayedEnsemble) return null;
-    return displayedEnsemble.cells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
-  }, [showTransitField, displayedEnsemble]);
+    if (!showTransitField) return null;
+    // The final ensemble is authoritative the instant it exists — a run
+    // completing (or the restricted/unrestricted toggle switching to a
+    // scenario that already has one) always wins over the streamed preview,
+    // which only ever stands in for the baseline ensemble BEFORE it exists
+    // (mobilityEnsembleProgressCells is cleared the moment mobilityResult
+    // lands — see handleRunMobilityAppreciation).
+    if (displayedEnsemble) {
+      return displayedEnsemble.cells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
+    }
+    if (mobilityEnsembleProgressCells) {
+      return mobilityEnsembleProgressCells.map(c => ({ polygon: c.polygon, transitFraction: c.transitFraction }));
+    }
+    return null;
+  }, [showTransitField, displayedEnsemble, mobilityEnsembleProgressCells]);
 
   /**
    * ONE representative route per corridor, road-snapped and corner-smoothed

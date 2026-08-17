@@ -11,8 +11,9 @@
 
 import {
   AccumulatedCostSearchResult, MobilityCellResult, MobilityGridCell, LocalProjection, MovementEnsembleResult,
-  RestrictionPlan, RoadSpeedOverrides, RoadGraph, CorridorField, KeyTerrainCandidate, KeyTerrainResult,
-  ObserverViewshed, ViewshedOptions,
+  RestrictionPlan, RoadSpeedOverrides, RoadGraph, CorridorField, CorridorFieldOptions, DissimilarRoute,
+  CorridorEvidence, KeyTerrainCandidate, KeyTerrainResult, ObserverViewshed, ViewshedOptions, ChokepointCell,
+  MinCutResult, RoadMinCutResult, TransitCell,
 } from '@firebreak/terrain';
 import {
   MobilityWorkerRequest, MobilityWorkerResponse, SimPathNode,
@@ -24,6 +25,11 @@ let nextRequestId = 1;
 interface PendingEntry {
   resolve: (response: MobilityWorkerResponse) => void;
   onProgress?: (fraction: number, phase: 'search' | 'ensemble' | 'restrictions' | 'rerun', log?: string) => void;
+  /** Interim, real (not synthetic) mover-ensemble transit snapshots — see
+   *  `MobilityMovementPartialResponse`'s own doc comment. Routed here the
+   *  same way `onProgress` is (never resolves/deletes the pending entry),
+   *  so the eventual terminal 'movement' response still reaches the caller. */
+  onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
 }
 const pending = new Map<number, PendingEntry>();
 
@@ -35,6 +41,10 @@ function ensureWorker(): Worker {
     if (!entry) return;
     if (e.data.kind === 'progress') {
       entry.onProgress?.(e.data.fraction, e.data.phase, e.data.log);
+      return;
+    }
+    if (e.data.kind === 'movementPartial') {
+      entry.onPartialTracks?.(e.data.cells, e.data.moversDone);
       return;
     }
     pending.delete(e.data.requestId);
@@ -107,6 +117,11 @@ export interface MovementEnsembleRequestOptions {
    *  (docs §42b) — see `MobilityMovementRequest.roadGraph`'s doc comment for
    *  why this is unrestricted-baseline-only by construction. */
   roadGraph?: RoadGraph;
+  /** Interim, REAL transit-cell snapshots from the baseline ensemble as
+   *  movers complete (WP4, movement-analysis performance/streaming work) —
+   *  see `MobilityMovementPartialResponse`'s own doc comment. Omit for no
+   *  streaming (unchanged behaviour for every existing caller). */
+  onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
 }
 
 export interface MovementEnsembleOutcome {
@@ -144,6 +159,7 @@ export function runMovementEnsembleInWorker(
         // carries 'search' for the OTHER request kind, still type-checks.
         else if (phase !== 'search') options.onProgress?.(fraction, phase);
       },
+      onPartialTracks: options.onPartialTracks,
     });
     const request: MobilityWorkerRequest = {
       kind: 'movement', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
@@ -221,6 +237,114 @@ export function runViewshedInWorker(
     });
     const request: MobilityWorkerRequest = {
       kind: 'viewshed', requestId, cells, hexSize, observerKeys, options,
+    };
+    w.postMessage(request);
+  });
+}
+
+/** Build a corridor field (`corridorField.ts#buildCorridorField`) in the
+ *  worker — every call runs at least one full accumulated-cost search
+ *  internally (`computeCellFacts`), the same CPU-bound shape the other
+ *  `run*InWorker` functions above already exist to keep off the main
+ *  thread. No progress reporting, same simplicity call
+ *  `runKeyTerrainScoringInWorker` already made. */
+export function runCorridorFieldInWorker(
+  cells: MobilityGridCell[],
+  hexSize: number,
+  proj: LocalProjection,
+  originKeys: string[],
+  objectiveKeys: string[],
+  profileId: string,
+  nightMode: boolean,
+  options?: CorridorFieldOptions & {
+    routeCount?: number;
+    routesOverride?: DissimilarRoute[];
+    evidence?: CorridorEvidence;
+    weightByAttractiveness?: boolean;
+    /** WP5 Tier B — see `buildCorridorField`'s own doc comment on this field.
+     *  Must correspond to a search over these SAME `edgePenalties` (and no
+     *  others) — see `MobilityCorridorsRequest.options`'s own correctness
+     *  note on why this matters for the restricted-movement call site. */
+    arrivalSecondsOverride?: Map<string, number>;
+    edgePenalties?: Map<string, number>;
+  },
+  roadSpeedOverrides?: RoadSpeedOverrides
+): Promise<CorridorField | null> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(response.kind === 'corridors' ? response.field : null),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'corridors', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      options, roadSpeedOverrides,
+    };
+    w.postMessage(request);
+  });
+}
+
+/** Betweenness over an already-derived route set
+ *  (`corridorAnalysis.ts#computeChokepoints`) in the worker — pure geometry
+ *  + counting, no cost model, given its own request so it never has to wait
+ *  behind a slower 'corridors'/'minCut' call issued around it in the same
+ *  run (docs §47.4/§38: a caller wanting all three "as soon as each is
+ *  real" issues them as separate requests, not one bundled response gated
+ *  on the slowest). */
+export function runChokepointsInWorker(
+  cells: MobilityGridCell[],
+  hexSize: number,
+  proj: LocalProjection,
+  routes: DissimilarRoute[]
+): Promise<ChokepointCell[]> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(response.kind === 'chokepoints' ? response.chokepoints : []),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'chokepoints', requestId, cells, hexSize, proj, routes,
+    };
+    w.postMessage(request);
+  });
+}
+
+export interface MinCutOutcome {
+  barrier: MinCutResult | null;
+  roadNetworkBarrier: RoadMinCutResult | null;
+}
+
+/** The hex min-cut barrier (`minCutBarrier.ts#computeMinCutBarrier`) and,
+ *  when a road graph + both access-node sets are supplied, the
+ *  road-network-exact min-cut (`computeRoadNetworkMinCut`) in the SAME
+ *  worker request — both are Edmonds-Karp max-flow, the single most
+ *  CPU-bound phase this mode runs, and the two are independent of each
+ *  other (docs §47.4: "Hex vs road min-cut — 2-way, free"). */
+export function runMinCutInWorker(
+  cells: MobilityGridCell[],
+  originKeys: string[],
+  objectiveKeys: string[],
+  profileId: string,
+  nightMode: boolean,
+  roadSpeedOverrides?: RoadSpeedOverrides,
+  roadGraph?: RoadGraph,
+  roadOriginNodeIds?: string[],
+  roadObjectiveNodeIds?: string[]
+): Promise<MinCutOutcome> {
+  const w = ensureWorker();
+  const requestId = nextRequestId++;
+  return new Promise(resolve => {
+    pending.set(requestId, {
+      resolve: response => resolve(
+        response.kind === 'minCut'
+          ? { barrier: response.barrier, roadNetworkBarrier: response.roadNetworkBarrier }
+          : { barrier: null, roadNetworkBarrier: null }
+      ),
+    });
+    const request: MobilityWorkerRequest = {
+      kind: 'minCut', requestId, cells, originKeys, objectiveKeys, profileId, nightMode,
+      roadSpeedOverrides, roadGraph, roadOriginNodeIds, roadObjectiveNodeIds,
     };
     w.postMessage(request);
   });

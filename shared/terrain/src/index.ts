@@ -10,6 +10,8 @@ export * from './classification';
 export * from './confidenceTier';
 
 export * from './accumulatedCost';
+export type { CellIndex } from './cellIndex';
+export { buildCellIndex, getCellIndex, invalidateCellIndex } from './cellIndex';
 export * from './concealment';
 export * from './corridorAnalysis';
 export * from './corridorField';
