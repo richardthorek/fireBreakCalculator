@@ -116,22 +116,29 @@ test('buildTransitCells: a key with no matching cell (stale/out-of-grid) is sile
 });
 
 test('onPartialTracks is a pure observer: supplying it never changes the final ensemble result', () => {
-  // moverCount must be large enough that the 250ms throttle genuinely fires
-  // at least once on a real machine — the WHOLE POINT of this test is to
-  // catch a callback that accidentally touches shared/retained state
-  // (transitCounts, the RNG, etc.), and a run so fast the callback never
-  // actually executes would pass this comparison VACUOUSLY regardless of
-  // whether that guarantee holds. 4000 is the same count proven (below) to
-  // reliably cross the interval on this grid.
-  const runOpts = { moverCount: 4000, seed: 7, keepTrajectories: 0 } as const;
+  // FOUND ON CI (not locally): the original version of this test relied on
+  // a 4000-mover run genuinely crossing the REAL 250ms wall-clock throttle
+  // at least once, proven reliable on the machine this was authored on —
+  // but wall-clock timing is not deterministic across machines, and on at
+  // least one real GitHub Actions runner (evidently faster or differently
+  // loaded) the same 4000-mover run completed without ever crossing 250ms,
+  // so the callback never fired and this test's own precondition guard
+  // correctly failed, but flakily — a real, reproducible CI-only failure
+  // with no code defect behind it. Fixed with `partialTracksIntervalMsOverride:
+  // 0` (movementSimulation.ts, a test-only seam) instead of a bigger mover
+  // count: forces the throttle to fire on literally every mover,
+  // deterministically, regardless of host speed — the comparison's
+  // correctness no longer depends on timing at all.
+  const runOpts = { moverCount: 300, seed: 7, keepTrajectories: 0 } as const;
   const withoutCallback = simulateMovementEnsemble(grid, originKeys, objectiveKeys, foot, false, HEX_SIZE, PROJ, runOpts)!;
   const partialCalls: { cells: TransitCell[]; moversDone: number }[] = [];
   const withCallback = simulateMovementEnsemble(grid, originKeys, objectiveKeys, foot, false, HEX_SIZE, PROJ, {
     ...runOpts,
+    partialTracksIntervalMsOverride: 0,
     onPartialTracks: (cells, moversDone) => partialCalls.push({ cells, moversDone }),
   })!;
   assert.ok(withoutCallback && withCallback, 'test setup: both runs must produce a real ensemble');
-  assert.ok(partialCalls.length > 0, 'test setup: the callback must actually have fired at least once, or this comparison proves nothing');
+  assert.strictEqual(partialCalls.length, 300, 'test setup: with the interval forced to 0, the callback must fire on EVERY mover, deterministically — not a timing-dependent count');
   assert.strictEqual(withCallback.arrivedCount, withoutCallback.arrivedCount, 'arrivedCount must be unaffected by the callback');
   assert.strictEqual(withCallback.lostCount, withoutCallback.lostCount, 'lostCount must be unaffected by the callback');
   assert.deepStrictEqual(
