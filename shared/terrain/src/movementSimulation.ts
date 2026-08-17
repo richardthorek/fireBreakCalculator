@@ -745,6 +745,17 @@ export interface MovementSimulationOptions {
    *  `moverCount`, never retracted or corrected. Omit for no streaming
    *  (the default — every existing caller). */
   onPartialTracks?: (cells: TransitCell[], moversDone: number) => void;
+  /** TEST-ONLY SEAM — overrides `PARTIAL_TRACKS_INTERVAL_MS` for this call.
+   *  Found necessary in review: a test proving `onPartialTracks` is a pure
+   *  observer needs the callback to have ACTUALLY fired at least once during
+   *  the run for the comparison to mean anything, but the real interval is
+   *  wall-clock time — whether a given mover count crosses 250ms is not
+   *  deterministic across machines (it did not on at least one real CI
+   *  runner, differently loaded from the machine this was authored on,
+   *  causing a real, reproducible CI-only test failure). Set to `0` in a
+   *  test to force the throttle to fire on literally every mover,
+   *  regardless of host speed. No production caller sets this. */
+  partialTracksIntervalMsOverride?: number;
   /** Directed edges severed by an emplaced restriction. Never traversable. */
   blockedEdges?: Set<string>;
   /** Reuse a cache across runs over the same grid (restrictionPlanner.ts). */
@@ -1042,7 +1053,8 @@ export function simulateMovementEnsemble(
     // (not "every mover") and skipped entirely when nobody is listening.
     if (options.onPartialTracks) {
       const now = nowMs();
-      if (now - lastPartialAtMs >= PARTIAL_TRACKS_INTERVAL_MS) {
+      const interval = options.partialTracksIntervalMsOverride ?? PARTIAL_TRACKS_INTERVAL_MS;
+      if (now - lastPartialAtMs >= interval) {
         lastPartialAtMs = now;
         options.onPartialTracks(buildTransitCells(transitCounts, m + 1, byKey, hexSize, proj), m + 1);
       }
