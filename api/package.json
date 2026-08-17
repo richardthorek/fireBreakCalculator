@@ -18,9 +18,9 @@
     "@azure/storage-blob": "^12.33.0"
   },
   "devDependencies": {
-    "@types/node": "^26.x",
+    "@types/node": "^22.x",
     "rimraf": "^6.1.2",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=22.x"

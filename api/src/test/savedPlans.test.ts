@@ -6,7 +6,7 @@
  * Run after build: node ./dist/src/test/savedPlans.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import {
   MAX_PLAN_DATA_LENGTH,
   MAX_PLAN_NAME_LENGTH,

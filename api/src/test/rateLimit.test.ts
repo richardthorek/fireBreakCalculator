@@ -4,7 +4,7 @@
  * Run after build: node ./dist/src/test/rateLimit.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import { HttpRequest } from '@azure/functions';
 import { hitRateLimit, getClientIp, _clearRateLimitBuckets } from '../services/rateLimit';
 

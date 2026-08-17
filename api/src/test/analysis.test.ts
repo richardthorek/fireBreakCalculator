@@ -4,7 +4,7 @@
  * Run after build:  node ./dist/src/test/analysis.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import {
   EquipmentAnalysisService,
   AnalysisRequest,

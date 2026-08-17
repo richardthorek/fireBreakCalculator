@@ -7,7 +7,7 @@
  * Run after build: node ./dist/src/test/mobilityAssistant.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import { MobilityAssistantPayload, isMobilityAssistantPayload } from '../types/mobilityAssistant';
 import { buildTemplateMobilityBriefing } from '../services/mobilityBriefingTemplate';
 import { buildSystemPrompt } from '../services/aiGrounding';
