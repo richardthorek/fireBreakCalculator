@@ -5,7 +5,7 @@ const BASE = process.env.FUNC_BASE || 'http://localhost:7071/api';
 
 async function create(payload:any) {
   const res = await fetch(`${BASE}/equipment`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-  const json = await res.json().catch(()=>null);
+  const json = await res.json().catch(()=>null) as any;
   console.log('CREATE', res.status, json?.id || json?.error || 'no-json');
   return { status: res.status, body: json };
 }

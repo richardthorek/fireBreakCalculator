@@ -6,7 +6,7 @@
  * Run after build: node ./dist/src/test/aiGrounding.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import { retrieveDoctrine, getDoctrineChunk, DOCTRINE_CHUNKS } from '../services/knowledgeBase';
 import {
   extractNumericClaims,

@@ -4,7 +4,7 @@
  * Run after build: node ./dist/src/test/smeacsBriefing.test.js
  */
 
-import * as assert from 'node:assert';
+import assert from 'node:assert';
 import { buildSmeacsBriefing } from '../services/smeacsBriefingBuilder';
 import { renderSmeacsAsText } from '../services/smeacsTextRenderer';
 import { AssistantPayload } from '../types/assistant';
