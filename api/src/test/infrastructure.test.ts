@@ -188,6 +188,55 @@ async function run() {
   check('an unstitchable fragment still surfaces as ONE edge-only trail, no crash',
     brokenResult.trails.length === 1 && (brokenResult.trails[0] as any).holes === undefined);
 
+  // --- Concurrency limiter (2026-08-17 — a production 502 + client-side
+  // Overpass CORS failure traced to Overpass's per-IP CONCURRENT-connection
+  // quota, not a rate limit). Five requests for five DISTINCT bboxes (no
+  // cache collisions) fired at once must never have more than
+  // OVERPASS_MAX_CONCURRENT (default 2, no env override in this test
+  // process) outbound fetches in flight simultaneously, while still
+  // genuinely overlapping — not silently serialised to one at a time. ---
+  _clearInfrastructureCache();
+  {
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const resolvers: (() => void)[] = [];
+    setFetch(async () => {
+      inFlight++;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise<void>(resolve => resolvers.push(resolve));
+      inFlight--;
+      return okJson(overpassBody);
+    });
+
+    const bboxes: [number, number, number, number][] = [
+      [-30.0, 140.0, -29.9, 140.1],
+      [-31.0, 141.0, -30.9, 141.1],
+      [-32.0, 142.0, -31.9, 142.1],
+      [-33.0, 143.0, -32.9, 143.1],
+      [-34.0, 144.0, -33.9, 144.1],
+    ];
+    const pending = bboxes.map(([s, w, n, e]) => fetchCorridorInfrastructure(s, w, n, e));
+
+    // Let the microtask queue settle so every call that's going to start has
+    // started, then release one held fetch at a time — each release should
+    // let exactly one queued call step in, never spiking peakInFlight higher.
+    await new Promise(resolve => setImmediate(resolve));
+    check('at most OVERPASS_MAX_CONCURRENT (2) requests are ever in flight at once',
+      peakInFlight <= 2, `peak was ${peakInFlight}`);
+    check('the cap is actually reached, not accidentally serialised to 1 at a time',
+      peakInFlight === 2, `peak was ${peakInFlight}`);
+
+    while (resolvers.length > 0) {
+      resolvers.shift()!();
+      await new Promise(resolve => setImmediate(resolve));
+      check(`peak in-flight stays capped after a release (${resolvers.length} release(s) left)`,
+        peakInFlight <= 2, `peak was ${peakInFlight}`);
+    }
+    const results = await Promise.all(pending);
+    check('every queued request eventually completes successfully',
+      results.every(r => r.available === true && r.trails.length === 1));
+  }
+
   setFetch(origFetch as any);
   if (failures > 0) {
     console.error(`\n${failures} infrastructure check(s) failed`);
