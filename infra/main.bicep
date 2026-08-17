@@ -150,6 +150,23 @@ resource vegTilesContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   }
 }
 
+// Shared cross-instance Overpass (OSM) infrastructure cache (see
+// api/src/services/infrastructureService.ts's "TWO-TIER CACHE" note,
+// 2026-08-17): corridor trail/road/water query results, keyed by rounded
+// bbox+kind, so a bbox one Function instance already fetched is a blob read
+// for every other instance/cold start instead of a re-fetch — the same
+// "first user pays, everyone after reads the blob" idea as vegtiles, just
+// without vegtiles' quantised-tile grid (Overpass bboxes aren't grid-aligned,
+// so hits are narrower: re-runs and near-identical corridors, not any
+// overlapping one).
+resource infraCacheContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'infracache'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // Tier-2 mobility job artefacts (OCOKA 5, docs/ROUTE_INTELLIGENCE.md §47.3):
 // append-only blobs at mobilityjobs/{jobId}/{seq}-{kind}.json, read direct
 // from Blob via a per-artefact SAS (api-mobility/src/services/
@@ -165,6 +182,9 @@ resource mobilityJobsContainer 'Microsoft.Storage/storageAccounts/blobServices/c
 // Vegetation changes on a timescale of years — a 365-day expiry means one
 // upstream fetch effectively caches a tile for a whole fire season and
 // beyond (the upstream canary watches for contract drift in between).
+// Infrastructure (OSM roads/water) is far more volatile — contributors edit
+// it continuously — so 7 days trades some staleness risk for a real
+// multi-instance cache win without ever drifting far from current OSM data.
 // Mobility job artefacts are the opposite: a run is either read within
 // minutes/hours or abandoned, so 24 hours is generous (§47.3's own figure).
 resource storageLifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
@@ -187,6 +207,24 @@ resource storageLifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@
                 baseBlob: {
                   delete: {
                     daysAfterModificationGreaterThan: 365
+                  }
+                }
+              }
+            }
+          }
+          {
+            name: 'infracache-expiry'
+            enabled: true
+            type: 'Lifecycle'
+            definition: {
+              filters: {
+                blobTypes: ['blockBlob']
+                prefixMatch: ['infracache/']
+              }
+              actions: {
+                baseBlob: {
+                  delete: {
+                    daysAfterModificationGreaterThan: 7
                   }
                 }
               }

@@ -118,12 +118,30 @@ calls this same-origin endpoint instead of the public Overpass instances
 directly: those instances omit `Access-Control-Allow-Origin`
 on their rate-limited/error responses, so a direct browser call that hits a
 429/504/timeout is surfaced as an opaque CORS failure and the whole trail lookup
-dies. The server→Overpass hop has no CORS, and one server IP with a short
-in-process cache (10 min, rounded-bbox key) spends the public 2-slot-per-IP
-quota once per corridor rather than once per user. Rate-limited (`infra` tag).
-On upstream failure returns `502` and the client falls back to calling Overpass
-directly; a `404` (endpoint not deployed) makes the client stop probing the
-proxy for the session and use the direct path.
+dies. Rate-limited (`infra` tag). On upstream failure returns `502` and the
+client falls back to calling Overpass directly; a `404` (endpoint not deployed)
+makes the client stop probing the proxy for the session and use the direct path.
+
+**Two-tier cache + concurrency limit (2026-08-17, `infrastructureService.ts`):**
+a production 502 plus a client-side Overpass CORS failure were traced to
+Overpass's own per-IP CONCURRENT-connection quota (commonly ~2), not a rate
+limit — a handful of simultaneous users each triggering their own corridor
+fetch is enough to trip it. Two independent fixes:
+  - **L1** in-process `Map` (10 min TTL, rounded-bbox+kind key) — unchanged,
+    zero-latency, but private to one warm Function instance.
+  - **L2** shared blob cache (`infracache` container, `infra/main.bicep`,
+    7-day lifecycle expiry — OSM roads/water are far more volatile than
+    vegetation's 365-day tiles) — same key, checked before ever calling
+    Overpass, SHARED across every instance and cold start. Unlike the
+    quantised vegetation tiles, corridor bboxes aren't grid-aligned, so hits
+    are narrower ("the same or a re-run corridor" vs. vegtiles' "any
+    overlapping tile") but still cover the "many users work the same ground
+    during an incident" case.
+  - **Concurrency limit** — outbound Overpass requests from one instance are
+    queued behind a small in-process semaphore (`OVERPASS_MAX_CONCURRENT`,
+    default 2) instead of all firing at once; this — not caching — is what
+    actually protects the concurrent-connection quota under a cache-miss
+    storm across many distinct bboxes at once.
 
 **`kind` param (added docs §34):** `highway` (default) fetches reusable trails/
 roads; `water` fetches waterway/water-body geometry (`waterway=river|canal|

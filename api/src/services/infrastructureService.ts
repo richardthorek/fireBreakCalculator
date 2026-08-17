@@ -17,12 +17,38 @@
  * unreachable (offline/local dev), so the proxy is an accelerator, not a hard
  * dependency.
  *
- * Cache is in-process only (a short TTL keyed by rounded bbox): a corridor is
- * re-queried across the optimizer's passes and by nearby subsequent runs, and
- * OSM ways for a rural area are stable over the lifetime of a warm function
- * host. No blob layer — unlike the quantised veg tiles, corridor bboxes aren't
- * grid-aligned, so cross-user blob hits would be rare and not worth the write.
+ * TWO-TIER CACHE (2026-08-17 — live 502s + a client-side Overpass CORS
+ * failure surfaced in production, traced to Overpass's own per-IP concurrent-
+ * connection quota being tight enough that a handful of simultaneous users
+ * can trip it):
+ *  L1 — the original in-process `Map`, keyed by rounded bbox+kind. Free,
+ *       zero-latency, but private to ONE warm Function instance — under
+ *       scale-out or a cold start, a fresh instance starts with an empty L1
+ *       and re-pays the upstream cost even for a bbox another instance
+ *       already fetched moments ago.
+ *  L2 — a blob cache (mirrors vegetationTileService.ts's container pattern),
+ *       keyed the same way, SHARED across every instance and surviving cold
+ *       starts. A miss on L1 checks L2 before ever touching Overpass; a
+ *       result fetched from Overpass populates both. Unlike the quantised veg
+ *       tiles, corridor bboxes aren't grid-aligned, so cross-user hits are
+ *       "the same or a re-run corridor", not "any overlapping corridor" — a
+ *       real but narrower win than the veg cache's, and still exactly the
+ *       "many users work the same ground during an incident" case this
+ *       exists for. `infracache-expiry` (infra/main.bicep) age-limits L2
+ *       independently of L1's own TTL — OSM road/water topology is far more
+ *       stable than 7 days, but stale-but-plausible data is a worse failure
+ *       mode here than a slightly-too-frequent refetch.
+ *
+ * CONCURRENCY LIMIT: the per-IP Overpass quota is a CONCURRENT-connection
+ * limit, not a rate limit — the fix for tripping it under multi-user load is
+ * capping how many outbound Overpass requests this instance has in flight at
+ * once, not caching harder (a cache miss storm — many distinct bboxes at
+ * once — still floods Overpass even with a perfect cache). `overpassLimiter`
+ * below queues requests past `OVERPASS_MAX_CONCURRENT` instead of firing them
+ * all at once.
  */
+
+import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 
 /** Highway classes that represent reusable broken ground for a fire break —
  *  MUST match the webapp's REUSABLE_HIGHWAYS so proxied and direct results are
@@ -58,10 +84,49 @@ const OVERPASS_ENDPOINTS: string[] = (process.env.OVERPASS_URLS
     ]);
 
 const UPSTREAM_TIMEOUT_MS = 12_000;
-/** In-process cache TTL. OSM ways are stable; a warm host reuses corridors
- *  across passes and nearby runs within this window. */
+/** In-process (L1) cache TTL. OSM ways are stable; a warm host reuses
+ *  corridors across passes and nearby runs within this window. Independent
+ *  of the L2 blob cache's own age limit (`infracache-expiry`, infra/main.bicep) —
+ *  L1 is deliberately much shorter since it costs nothing to let it expire
+ *  often and re-check L2/Overpass. */
 const CACHE_TTL_MS = 10 * 60_000;
 const CACHE_MAX = 200;
+
+/**
+ * Minimal counting semaphore — caps how many `run()` callbacks are actually
+ * executing at once; callers past the cap queue in FIFO order and each one
+ * resolves as an earlier slot frees up. No external dependency for something
+ * this small (a handful of lines) and this narrowly scoped (module-private,
+ * one call site).
+ */
+class Semaphore {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+  constructor(private readonly max: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) {
+      await new Promise<void>(resolve => this.queue.push(resolve));
+    }
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+/** Overpass's public mirrors enforce a CONCURRENT-connection cap per source
+ *  IP (commonly ~2), not a request-rate limit — several simultaneous users
+ *  each triggering their own corridor fetch is enough to trip it even though
+ *  no single user is polling quickly. Queuing past this cap (rather than
+ *  firing every request immediately) is the actual fix; caching alone
+ *  doesn't help a cache-miss storm across many distinct bboxes at once. */
+const OVERPASS_MAX_CONCURRENT = Number(process.env.OVERPASS_MAX_CONCURRENT) || 2;
+const overpassLimiter = new Semaphore(OVERPASS_MAX_CONCURRENT);
 
 export interface InfrastructureTrail {
   name?: string;
@@ -101,6 +166,68 @@ let preferredEndpointIndex = 0;
 
 const bboxKey = (s: number, w: number, n: number, e: number, kind: InfrastructureKind) =>
   [kind, s, w, n, e].map(v => typeof v === 'number' ? v.toFixed(3) : v).join(',');
+
+/** Same rounding as `bboxKey`, reshaped into a blob-name-safe path — commas
+ *  aren't valid in a blob name, everything else in `bboxKey`'s output already
+ *  is. Kept as a distinct function (not a `.replace` on `bboxKey`'s output) so
+ *  the L1 key format and the L2 blob-name format can diverge later without
+ *  entangling the two. */
+const blobKey = (s: number, w: number, n: number, e: number, kind: InfrastructureKind) =>
+  `infra/v1/${kind}/${s.toFixed(3)}_${w.toFixed(3)}_${n.toFixed(3)}_${e.toFixed(3)}.json`;
+
+const INFRA_CACHE_CONTAINER = process.env.INFRA_CACHE_CONTAINER || 'infracache';
+
+let infraContainerPromise: Promise<ContainerClient | null> | null = null;
+
+/** Container client from the existing storage connection string — same
+ *  connection string the vegetation tile cache and Table Storage clients use
+ *  (see tableClient.ts). Returns null when storage isn't configured (local
+ *  dev without an emulator/account): every call site below treats that as
+ *  "L2 unavailable, fall through to L1/Overpass", never as an error. */
+function getInfraContainer(): Promise<ContainerClient | null> {
+  if (!infraContainerPromise) {
+    infraContainerPromise = (async () => {
+      const conn = process.env.TABLES_CONNECTION_STRING;
+      if (!conn) return null;
+      try {
+        const svc = BlobServiceClient.fromConnectionString(conn);
+        const container = svc.getContainerClient(INFRA_CACHE_CONTAINER);
+        await container.createIfNotExists();
+        return container;
+      } catch {
+        infraContainerPromise = null; // retry next request
+        return null;
+      }
+    })();
+  }
+  return infraContainerPromise;
+}
+
+async function readInfraBlob(container: ContainerClient, name: string): Promise<InfrastructureResult | null> {
+  try {
+    const blob = container.getBlockBlobClient(name);
+    if (!(await blob.exists())) return null;
+    const buf = await blob.downloadToBuffer();
+    const parsed = JSON.parse(buf.toString('utf-8'));
+    if (!Array.isArray(parsed?.trails) || typeof parsed?.available !== 'boolean') return null;
+    return parsed as InfrastructureResult;
+  } catch {
+    // A malformed/unreadable blob must degrade to "L2 miss", never throw —
+    // the caller's own Overpass fallback recovers it.
+    return null;
+  }
+}
+
+async function writeInfraBlob(container: ContainerClient, name: string, data: InfrastructureResult): Promise<void> {
+  try {
+    const bytes = Buffer.from(JSON.stringify(data), 'utf-8');
+    await container.getBlockBlobClient(name).uploadData(bytes, {
+      blobHTTPHeaders: { blobContentType: 'application/json' },
+    });
+  } catch {
+    // A failed cache write must not fail the request — next caller refetches.
+  }
+}
 
 function buildQuery(kind: InfrastructureKind, s: number, w: number, n: number, e: number): string {
   if (kind === 'water') {
@@ -276,8 +403,13 @@ async function queryEndpoint(url: string, query: string): Promise<any> {
 /**
  * Fetch reusable trails/roads within a bounding box (south, west, north, east)
  * via Overpass, trying each endpoint in turn (starting from whichever last
- * worked). Short-lived in-process cache. Returns `available: false` only after
- * every endpoint failed; never throws.
+ * worked). Checks the in-process (L1) cache, then the shared blob (L2) cache,
+ * before ever calling Overpass; a fresh Overpass result populates both. The
+ * actual outbound Overpass call is queued behind `overpassLimiter` so this
+ * instance never has more than `OVERPASS_MAX_CONCURRENT` requests in flight —
+ * see the module header for why that (not caching harder) is what protects
+ * Overpass's concurrent-connection quota under real multi-user load. Returns
+ * `available: false` only after every endpoint failed; never throws.
  */
 export async function fetchCorridorInfrastructure(
   south: number,
@@ -290,6 +422,15 @@ export async function fetchCorridorInfrastructure(
   const cached = getCached(key);
   if (cached) return cached;
 
+  const container = await getInfraContainer();
+  if (container) {
+    const l2 = await readInfraBlob(container, blobKey(south, west, north, east, kind));
+    if (l2) {
+      setCached(key, l2);
+      return l2;
+    }
+  }
+
   const query = buildQuery(kind, south, west, north, east);
   const order = [
     ...OVERPASS_ENDPOINTS.slice(preferredEndpointIndex),
@@ -298,7 +439,7 @@ export async function fetchCorridorInfrastructure(
 
   for (const url of order) {
     try {
-      const json = await queryEndpoint(url, query);
+      const json = await overpassLimiter.run(() => queryEndpoint(url, query));
       const trails: InfrastructureTrail[] = (json?.elements ?? [])
         .filter((el: any) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2)
         .map((el: any) => ({
@@ -312,6 +453,7 @@ export async function fetchCorridorInfrastructure(
       if (kind === 'water') trails.push(...extractWaterRelationTrails(json?.elements ?? []));
       const data: InfrastructureResult = { trails, available: true };
       setCached(key, data);
+      if (container) await writeInfraBlob(container, blobKey(south, west, north, east, kind), data);
       preferredEndpointIndex = OVERPASS_ENDPOINTS.indexOf(url);
       return data;
     } catch {
@@ -319,8 +461,8 @@ export async function fetchCorridorInfrastructure(
       // struggling mirror.
     }
   }
-  // Do NOT cache a total failure — a later attempt may succeed once a quota
-  // refreshes.
+  // Do NOT cache a total failure (either tier) — a later attempt may succeed
+  // once a quota refreshes.
   return { trails: [], available: false };
 }
 
@@ -328,4 +470,5 @@ export async function fetchCorridorInfrastructure(
 export function _clearInfrastructureCache(): void {
   cache.clear();
   preferredEndpointIndex = 0;
+  infraContainerPromise = null;
 }
