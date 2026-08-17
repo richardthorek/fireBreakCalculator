@@ -854,7 +854,7 @@ const App: React.FC = () => {
       }
       return { polygon: r.polygon, trafficability: r.trafficability, timeSeconds: r.timeSeconds, bandIndex };
     });
-  }, [mobilityResult]);
+  }, [mobilityResult, mobilityPreviewCells]);
 
   // --- Unit movement simulation (owner "bonus feature", 2026-07-26) ----------
   // An RTS-style animated unit following the real computed path, with a real
