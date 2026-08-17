@@ -214,14 +214,18 @@ export interface MobilityCorridorsRequest {
    *  doc comment. */
   roadSpeedOverrides?: RoadSpeedOverrides;
   /** Forwarded verbatim to `buildCorridorField` — see that function's own
-   *  doc comment for what each governs. `edgePenalties` is deliberately not
-   *  carried here: none of `mobilityAppreciation.ts`'s run-time corridor
-   *  builds (baseline, road-route-folded-in re-cluster, restricted) use it —
-   *  only the counter-mobility ledger's own one-shot scenario build does
-   *  (`App.tsx#handleRunCounterMobilityLedger`, outside a run already in
-   *  progress), and that stays on the main thread rather than growing this
-   *  request's surface for a caller that isn't part of this synchronous
-   *  block in the first place. */
+   *  doc comment for what each governs.
+   *
+   *  CORRECTNESS NOTE (found in review, not by design): `edgePenalties` WAS
+   *  deliberately excluded from this request on the assumption that none of
+   *  `mobilityAppreciation.ts`'s run-time corridor builds needed it. That
+   *  assumption was wrong for the RESTRICTED build specifically — its
+   *  `routesOverride` comes from an ensemble re-run with `blockedEdges`
+   *  applied (`restrictionPlanner.ts`), so `computeCellFacts`'s own internal
+   *  arrival-time search (or an `arrivalSecondsOverride` standing in for it)
+   *  must see the SAME blocked-edge network, not the unrestricted one. See
+   *  `mobilityAppreciation.ts`'s restricted call site for how
+   *  `RestrictionPlan.blockedEdges` becomes an `Infinity`-penalty map here. */
   options?: CorridorFieldOptions & {
     routeCount?: number;
     routesOverride?: DissimilarRoute[];
@@ -229,8 +233,11 @@ export interface MobilityCorridorsRequest {
     weightByAttractiveness?: boolean;
     /** WP5 Tier B — see `buildCorridorField`'s own doc comment on this same
      *  field. `Map`s structured-clone natively across the worker boundary,
-     *  same as every other Map-valued field already crossing it. */
+     *  same as every other Map-valued field already crossing it. Must
+     *  correspond to a search over these SAME `edgePenalties` (and no
+     *  others) — see the correctness note above. */
     arrivalSecondsOverride?: Map<string, number>;
+    edgePenalties?: Map<string, number>;
   };
 }
 

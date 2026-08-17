@@ -48,6 +48,7 @@ import {
   ScoredKeyTerrainCandidate, MAX_CANDIDATES_EVALUATED, KEY_TERRAIN_MISSION_CAVEAT, EVALUATION_ROUTE_COUNT,
 } from '@firebreak/terrain';
 import { MobilityWorkerRequest, MobilityWorkerResponse } from './mobilityWorker';
+import { runKeyTerrainScoringInWorker } from './mobilityWorkerClient';
 
 /** Never spawn more pool workers than there are candidates to score (a
  *  worker with an empty chunk is pure overhead), and cap well below
@@ -172,13 +173,27 @@ export async function runKeyTerrainScoringPooled(
   const poolSize = Math.max(1, Math.min(MAX_POOL_WORKERS, navigator.hardwareConcurrency || 4, evaluated.length));
 
   if (poolSize <= 1) {
-    const slot = ensurePoolSize(1)[0];
-    const requestId = nextPoolRequestId++;
-    const response = await requestFromSlot(slot, {
-      kind: 'keyTerrain', requestId, cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
-      baselineField, candidates: evaluated, roadSpeedOverrides,
-    });
-    return response.kind === 'keyTerrain' ? response.result : null;
+    // FOUND IN REVIEW: this used to spin up its OWN dedicated pool worker
+    // (`ensurePoolSize(1)`) and send it `evaluated` (the already-capped
+    // list) — which left a permanent, redundant second Worker instance
+    // alive for a case that gains nothing from pooling (either
+    // `navigator.hardwareConcurrency === 1`, where nothing parallelises
+    // anyway, or too few candidates to split), AND under-reported
+    // `candidatesConsidered` as `evaluated.length` instead of the true
+    // pre-cap `candidates.length` — `buildKeyTerrainResult` derives that
+    // field from whatever candidates array IT was given, and the pool was
+    // the one that pre-sliced before calling it. Fixed by reusing the
+    // SAME shared singleton worker every other request kind already uses
+    // (`runKeyTerrainScoringInWorker`, `mobilityWorkerClient.ts`) with the
+    // ORIGINAL, un-sliced `candidates` — exactly what a non-pooled call
+    // always did before pooling existed; the worker's own
+    // `scoreKeyTerrainCandidates` applies `MAX_CANDIDATES_EVALUATED`
+    // internally and correctly derives `candidatesConsidered` from the
+    // full list it was actually given.
+    return runKeyTerrainScoringInWorker(
+      cells, hexSize, proj, originKeys, objectiveKeys, profileId, nightMode,
+      baselineField, candidates, roadSpeedOverrides
+    );
   }
 
   const slots = ensurePoolSize(poolSize);

@@ -175,19 +175,37 @@ export const CORRIDOR_CHECK_MIN_GROWTH_FRACTION = 0.2;
  * pulled out so it can be unit-tested without mocking every network fetch
  * the surrounding async loop needs. See `CORRIDOR_CHECK_MIN_GROWTH_FRACTION`'s
  * own doc comment for the full reasoning behind each branch.
+ *
+ * THREE safety nets, not two (found in review — the original two left a
+ * real gap): the first opportunity always checks, and a round within one of
+ * `MAX_LAZY_ROUNDS` always checks — but the loop has a THIRD, unrelated exit
+ * (`nextNeeded.size === 0`, "enclosed by terrain, or the α×C* budget
+ * genuinely exhausted") that neither original net covered. A round whose
+ * growth was small enough to be throttled AND which also turns out to be
+ * the frontier-exhausted exit would report a `corridorCountAtStop` several
+ * rounds and possibly hundreds of cells stale — right when
+ * `mobilityAppreciation.ts`'s own log line asserts, with specific
+ * confidence, that the budget "genuinely ran out of ground" for the grid
+ * actually being reported. `frontierExhausted` (the caller's own
+ * `nextNeeded.size === 0` test, computed before this call rather than
+ * after) is therefore a third unconditional trigger, exactly like
+ * `nearRoundCap` — the same "always check right before a stop, whatever
+ * the reason" principle applied a second time.
  */
 export function shouldCheckCorridorCount(
   everCheckedCorridorCount: boolean,
   materializedCellCount: number,
   cellCountAtLastCorridorCheck: number,
-  round: number
+  round: number,
+  frontierExhausted: boolean
 ): boolean {
   const growthSinceLastCheck = materializedCellCount - cellCountAtLastCorridorCheck;
   const nearRoundCap = round >= MAX_LAZY_ROUNDS - 1;
   return (
     !everCheckedCorridorCount ||
     growthSinceLastCheck >= CORRIDOR_CHECK_MIN_GROWTH_FRACTION * materializedCellCount ||
-    nearRoundCap
+    nearRoundCap ||
+    frontierExhausted
   );
 }
 
@@ -541,17 +559,46 @@ export async function runLazyMobilitySearch(
     // stop rule; the frontier/ceiling checks below are the safety bounds
     // behind it, exactly as designed.
     //
+    // Which tiles does the reachable frontier actually border? Only cells
+    // this round's search could reach at all are relevant — an unreached
+    // cell's neighbours say nothing about where growth would help (matches
+    // `frontierTouchedEdges`'s own "unreachable cells don't count" rule from
+    // the old fixed-box approach). Once C* is known (Phase 2), a cell beyond
+    // the α·C* travel-time budget doesn't get to pull in new tiles either —
+    // the self-sizing cost-budget "ellipse" (docs §35 design point 2) falls
+    // straight out of this filter rather than needing separate geometry.
+    //
+    // Computed BEFORE the corridor-count check below (found in review: it
+    // used to run after) specifically so `shouldCheckCorridorCount` can see
+    // whether THIS round is about to exit via frontier exhaustion — see
+    // that function's own `frontierExhausted` parameter doc.
+    const nextNeeded = new Set<string>();
+    for (const [key, arrival] of reach.best) {
+      if (costStar !== undefined && arrival.timeSeconds > alpha * costStar) continue;
+      const cell = materialized.get(key);
+      if (!cell) continue;
+      for (const nHex of hexNeighbors(cell.hex)) {
+        const nKey = hexKey(nHex);
+        if (materialized.has(nKey)) continue;
+        const idx = tileIndexOfLocal(axialToLocal(nHex, hexSize), tileSizeM);
+        const tk = tileKeyOf(idx.tx, idx.ty);
+        if (!materializedTiles.has(tk)) nextNeeded.add(tk);
+      }
+    }
+
     // WP5 Tier B — throttled via the pure `shouldCheckCorridorCount`
     // predicate above, not run unconditionally on every round. See that
     // function's own doc comment (and `CORRIDOR_CHECK_MIN_GROWTH_FRACTION`'s)
     // for the full reasoning: the very first opportunity always checks (so
     // the common single-round case is byte-for-byte unchanged from before
-    // this fix), and any round near `MAX_LAZY_ROUNDS` always checks too, so
-    // the reported `corridorCountAtStop` is never stale at the moment growth
-    // is forced to stop for an unrelated reason.
+    // this fix), any round near `MAX_LAZY_ROUNDS` always checks, and any
+    // round about to exit via frontier exhaustion (`nextNeeded.size === 0`,
+    // just below) always checks too — so the reported `corridorCountAtStop`
+    // is never stale at the moment growth is forced to stop, for ANY of the
+    // three reasons it can stop.
     if (path && costStar !== undefined) {
       const needsCorridorCheck = shouldCheckCorridorCount(
-        everCheckedCorridorCount, materialized.size, cellCountAtLastCorridorCheck, round
+        everCheckedCorridorCount, materialized.size, cellCountAtLastCorridorCheck, round, nextNeeded.size === 0
       );
       if (needsCorridorCheck) {
         corridorCountAtStop = estimateDistinctCorridorCount(
@@ -566,28 +613,6 @@ export async function runLazyMobilitySearch(
           `ROUTE FOUND (${(costStar / 60).toFixed(0)} MIN) BUT ONLY ${corridorCountAtStop} DISTINCT CORRIDOR(S) SO FAR — ` +
           `WIDENING WITHIN α×C* (${alpha}×${(costStar / 60).toFixed(0)} MIN) TO LOOK FOR MORE`
         );
-      }
-    }
-
-    // Which tiles does the reachable frontier actually border? Only cells
-    // this round's search could reach at all are relevant — an unreached
-    // cell's neighbours say nothing about where growth would help (matches
-    // `frontierTouchedEdges`'s own "unreachable cells don't count" rule from
-    // the old fixed-box approach). Once C* is known (Phase 2), a cell beyond
-    // the α·C* travel-time budget doesn't get to pull in new tiles either —
-    // the self-sizing cost-budget "ellipse" (docs §35 design point 2) falls
-    // straight out of this filter rather than needing separate geometry.
-    const nextNeeded = new Set<string>();
-    for (const [key, arrival] of reach.best) {
-      if (costStar !== undefined && arrival.timeSeconds > alpha * costStar) continue;
-      const cell = materialized.get(key);
-      if (!cell) continue;
-      for (const nHex of hexNeighbors(cell.hex)) {
-        const nKey = hexKey(nHex);
-        if (materialized.has(nKey)) continue;
-        const idx = tileIndexOfLocal(axialToLocal(nHex, hexSize), tileSizeM);
-        const tk = tileKeyOf(idx.tx, idx.ty);
-        if (!materializedTiles.has(tk)) nextNeeded.add(tk);
       }
     }
 

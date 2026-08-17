@@ -1,13 +1,15 @@
 /**
- * Precomputed per-grid index for the Dijkstra search core (`accumulatedCost.ts`)
- * — WP2 of the movement-analysis performance work (docs/ROUTE_INTELLIGENCE.md,
- * profiling audit). A single Terrain Mobility run performs on the order of a
- * hundred full-grid Dijkstra passes over the SAME `MobilityGridCell[]` (one per
- * profile/threshold/restriction-candidate/ensemble-mover evaluation — see the
- * call sites in `movementSimulation.ts`, `restrictionPlanner.ts`,
- * `corridorField.ts`, `delayLedger.ts`, `keyTerrain.ts`). Four things were being
- * redone from scratch on EVERY pass even though the underlying grid never
- * changes between them:
+ * Precomputed per-grid index for the Dijkstra search core
+ * (`runAccumulatedCostSearch`/`runCostToGoSearch`, `accumulatedCost.ts`) —
+ * WP2 of the movement-analysis performance work
+ * (docs/ROUTE_INTELLIGENCE.md, profiling audit). A single Terrain Mobility
+ * run performs on the order of a hundred full-grid Dijkstra passes over the
+ * SAME `MobilityGridCell[]` (one per profile/threshold/restriction-
+ * candidate/ensemble-mover evaluation — see the callers of those two search
+ * functions in `movementSimulation.ts`, `restrictionPlanner.ts`,
+ * `corridorField.ts`, `delayLedger.ts`, `keyTerrain.ts`). Four things were
+ * being redone from scratch on EVERY pass even though the underlying grid
+ * never changes between them:
  *
  *  1. `hexNeighbors()` allocated a fresh 6-element array of `{q,r}` objects on
  *     every node pop, in every pass.
@@ -19,10 +21,17 @@
  *     ~6N edges on every one of the ~120 passes.
  *
  * This module computes all four ONCE per grid (`buildCellIndex`, cached by
- * `cells` array identity in `getCellIndex` — every caller above passes the
- * SAME `cells` reference across its repeated search calls, so the cache turns
- * "rebuilt every pass" into "built once, read many times") and hands the
- * search core flat, integer-indexed `TypedArray` data instead.
+ * `cells` array identity in `getCellIndex`) and hands the SEARCH CORE flat,
+ * integer-indexed `TypedArray` data instead — every one of the callers named
+ * above passes the SAME `cells` reference across its repeated calls INTO
+ * `runAccumulatedCostSearch`/`runCostToGoSearch`, so the cache turns
+ * "rebuilt every search pass" into "built once, read many times" for THOSE
+ * two functions specifically. It does NOT (yet) generalise to those callers'
+ * OWN separate hot loops outside the search itself — `corridorField.ts`'s
+ * trafficability pass, `minCutBarrier.ts`'s graph build, and
+ * `movementSimulation.ts`'s own step-scoring loop each still build their own
+ * `byKey`/`hexNeighbors`/`toMobilitySample` calls directly, a real
+ * follow-up opportunity, not something this module already covers.
  *
  * PURE MECHANICAL SPEEDUP, NOT AN APPROXIMATION: every value here is the exact
  * same value the previous per-pass code computed — same `hexKey`/`NEIGHBOR_DIRS`

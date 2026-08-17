@@ -833,13 +833,32 @@ export async function runMobilityAppreciation(
       }
       if (restrictionPlan.bypassNote) onLog?.(restrictionPlan.bypassNote.toUpperCase());
       if (restrictionPlan.scenario && restrictionPlan.scenario.tracks.length > 0) {
+        // FOUND IN REVIEW: this call previously reused `baselineArrivalSeconds`
+        // (the UNRESTRICTED search) as `arrivalSecondsOverride` here — wrong,
+        // because this scenario's routes were generated with
+        // `restrictionPlan.blockedEdges` severed (`restrictionPlanner.ts`).
+        // Reusing the unrestricted arrival times would have reported fast,
+        // unrestricted arrival times for cells the restriction actually slows
+        // or cuts off — corrupting the restricted corridor's own bottleneck/
+        // width bucketing (`computeCellFacts`'s iso-arrival-time slicing) with
+        // fabricated-looking "facts" a field user would read as real. Fixed
+        // by giving `computeCellFacts`'s own internal search the SAME
+        // blocked-edge network the scenario itself was built against, via
+        // `edgePenalties` (an Infinity penalty per already-directed edge key —
+        // `blockedEdges` is stored pre-expanded to both directions, see that
+        // field's own doc comment), and NOT supplying `arrivalSecondsOverride`
+        // — there is no already-computed restricted-network arrival map to
+        // reuse (the ensemble's own cost-to-go field is a REVERSE search from
+        // the objective, not the forward one `computeCellFacts` needs), so
+        // this one call pays the full search WP5 Fix 1 otherwise saves.
+        const restrictedEdgePenalties = new Map(restrictionPlan.blockedEdges.map(key => [key, Infinity]));
         restrictedCorridorField = await runCorridorFieldInWorker(
           grid.cells, grid.hexSize, grid.proj, grid.originKeys, grid.objectiveKeys, profileId, nightMode,
           {
             routesOverride: ensembleTracksToRoutes(restrictionPlan.scenario.tracks, grid.cells),
             evidence: 'simulated-movers',
             weightByAttractiveness: false,
-            arrivalSecondsOverride: baselineArrivalSeconds,
+            edgePenalties: restrictedEdgePenalties,
           },
           roadSpeedOverrides
         );
