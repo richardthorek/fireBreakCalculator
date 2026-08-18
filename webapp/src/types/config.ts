@@ -245,4 +245,19 @@ export interface VegetationAnalysis {
   /** True when any segment's class came from mock/fallback data — results are
    *  then indicative only and must be flagged to the user. */
   usedFallbackData?: boolean;
+  /** Real mapped watercourse/water-body geometry fetched once for the whole
+   *  line (the same corridor-wide fetch each segment's `isWater` flag is
+   *  derived from) — carried through so the map can draw it as a visible
+   *  reference layer, same shape/purpose as Terrain Mobility's own hydrology
+   *  reference layer (docs §34). `kind === 'water'` (closed ring, `natural=
+   *  water`) renders as a filled polygon; anything else (river/stream/canal
+   *  `waterway=*`) renders as a line. */
+  waterFeatures?: { kind: string; coords: { lat: number; lng: number }[] }[];
+  /** Real mapped track/trail/minor-road geometry fetched once for the whole
+   *  line — the same reusable-trail set each segment's `onExistingTrail`
+   *  flag is derived from (docs/CALCULATION_REVIEW.md, 2026-07-28). Carried
+   *  through purely so the map can show WHERE the reused ground is; the
+   *  flag itself already covers the cost-model side (informational only,
+   *  no discount applied). */
+  trailFeatures?: { kind: string; coords: { lat: number; lng: number }[] }[];
 }

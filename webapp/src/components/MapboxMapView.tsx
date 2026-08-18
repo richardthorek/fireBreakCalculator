@@ -1022,6 +1022,7 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       if (map.getSource('slope-segments')) map.removeSource('slope-segments');
       onTrackAnalysisChange?.(null);
       onVegetationAnalysisChange?.(null);
+      setVegetationAnalysis(null);
       onLineChange?.(null);
       setDropsVersion(v => v + 1);
     });
@@ -2153,6 +2154,162 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
     if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
   }, [waterFeatures, registerOverlayOpacity, unregisterOverlayOpacity]);
 
+  // --- Fire-break water reference layer -------------------------------------
+  // Same purpose and rendering technique as Terrain Mobility's hydrology
+  // reference layer above (docs §34): fire-break mode already fetches this
+  // exact watercourse/water-body geometry once per drawn line to decide each
+  // segment's `isWater`/`crossesWater` flag (excluded from every resource's
+  // time/cost — damp ground doesn't carry fire), but previously discarded the
+  // geometry after computing that boolean. Drawing it here answers "why is
+  // this stretch excluded" the same way the mobility layer does for its own
+  // fording gate.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['firebreak-water-body', 'firebreak-water-line-casing', 'firebreak-water-line']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        if (map.getSource('firebreak-water-body')) map.removeSource('firebreak-water-body');
+        if (map.getSource('firebreak-water-line')) map.removeSource('firebreak-water-line');
+      } catch (e) { /* style may already be gone */ }
+    };
+    const waterFeats = vegetationAnalysis?.waterFeatures;
+    if (!waterFeats || waterFeats.length === 0) { remove(); mobilityReattachRef.current.delete('firebreak-water'); return; }
+
+    const bodyFeatures = waterFeats
+      .filter(f => f.kind === 'water' && f.coords.length >= 4)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'Polygon' as const, coordinates: [f.coords.map(p => [p.lng, p.lat])] },
+      }));
+    const lineFeatures = waterFeats
+      .filter(f => f.kind !== 'water' && f.coords.length >= 2)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: { kind: f.kind },
+        geometry: { type: 'LineString' as const, coordinates: f.coords.map(p => [p.lng, p.lat]) },
+      }));
+
+    const apply = () => {
+      try {
+        const bodyData = { type: 'FeatureCollection' as const, features: bodyFeatures };
+        const lineData = { type: 'FeatureCollection' as const, features: lineFeatures };
+        if (map.getSource('firebreak-water-body')) {
+          (map.getSource('firebreak-water-body') as any).setData(bodyData);
+          (map.getSource('firebreak-water-line') as any)?.setData(lineData);
+        } else {
+          map.addSource('firebreak-water-body', { type: 'geojson', data: bodyData } as any);
+          map.addLayer({
+            id: 'firebreak-water-body',
+            type: 'fill',
+            source: 'firebreak-water-body',
+            paint: { 'fill-color': '#1e88e5', 'fill-opacity': 0 },
+          } as any);
+          map.addSource('firebreak-water-line', { type: 'geojson', data: lineData } as any);
+          map.addLayer({
+            id: 'firebreak-water-line-casing',
+            type: 'line',
+            source: 'firebreak-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#0a3d62',
+              'line-width': ['match', ['get', 'kind'], 'stream', 4, 6],
+              'line-opacity': 0,
+            },
+          } as any);
+          map.addLayer({
+            id: 'firebreak-water-line',
+            type: 'line',
+            source: 'firebreak-water-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#4fc3f7',
+              'line-width': ['match', ['get', 'kind'], 'stream', 2, 3],
+              'line-opacity': 0,
+            },
+          } as any);
+        }
+        registerOverlayOpacity('firebreak-water-body', 'fill-opacity', 0.4);
+        registerOverlayOpacity('firebreak-water-line-casing', 'line-opacity', 0.9);
+        registerOverlayOpacity('firebreak-water-line', 'line-opacity', 0.95);
+      } catch (e) { logger.warn('Failed to render fire-break water reference layer', e); }
+    };
+    mobilityReattachRef.current.set('firebreak-water', apply);
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+  }, [vegetationAnalysis, registerOverlayOpacity, unregisterOverlayOpacity]);
+
+  // --- Fire-break existing-trail/track reference layer -----------------------
+  // Same corridor-wide fetch each segment's `onExistingTrail` flag already
+  // comes from (docs/CALCULATION_REVIEW.md, 2026-07-28) — a mapped track,
+  // path or minor road the drawn/optimized line runs along. INFORMATIONAL
+  // ONLY, same as the flag itself: there is no sourced existing-track-vs-
+  // virgin clearing-rate factor to apply, so this never changes the estimate
+  // — it only shows a crew WHERE the ground is already broken. Styled as a
+  // dashed line (not a solid barrier like mobility's restrictions layer) to
+  // read as "reference," not "recommendation."
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const remove = () => {
+      try {
+        for (const id of ['firebreak-trail-line-casing', 'firebreak-trail-line']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+          unregisterOverlayOpacity(id);
+        }
+        if (map.getSource('firebreak-trail-line')) map.removeSource('firebreak-trail-line');
+      } catch (e) { /* style may already be gone */ }
+    };
+    const trailFeats = vegetationAnalysis?.trailFeatures;
+    if (!trailFeats || trailFeats.length === 0) { remove(); mobilityReattachRef.current.delete('firebreak-trails'); return; }
+
+    const lineFeatures = trailFeats
+      .filter(f => f.coords.length >= 2)
+      .map(f => ({
+        type: 'Feature' as const,
+        properties: { kind: f.kind },
+        geometry: { type: 'LineString' as const, coordinates: f.coords.map(p => [p.lng, p.lat]) },
+      }));
+
+    const apply = () => {
+      try {
+        const lineData = { type: 'FeatureCollection' as const, features: lineFeatures };
+        const existing = map.getSource('firebreak-trail-line');
+        if (existing) {
+          (existing as any).setData(lineData);
+        } else {
+          map.addSource('firebreak-trail-line', { type: 'geojson', data: lineData } as any);
+          map.addLayer({
+            id: 'firebreak-trail-line-casing',
+            type: 'line',
+            source: 'firebreak-trail-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#5d4037', 'line-width': 5, 'line-opacity': 0 },
+          } as any);
+          map.addLayer({
+            id: 'firebreak-trail-line',
+            type: 'line',
+            source: 'firebreak-trail-line',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: {
+              'line-color': '#ffb74d',
+              'line-width': 2.5,
+              'line-dasharray': [2, 1.5],
+              'line-opacity': 0,
+            },
+          } as any);
+        }
+        registerOverlayOpacity('firebreak-trail-line-casing', 'line-opacity', 0.6);
+        registerOverlayOpacity('firebreak-trail-line', 'line-opacity', 0.9);
+      } catch (e) { logger.warn('Failed to render fire-break existing-trail reference layer', e); }
+    };
+    mobilityReattachRef.current.set('firebreak-trails', apply);
+    if (map.isStyleLoaded && !map.isStyleLoaded()) map.once('idle', apply); else apply();
+  }, [vegetationAnalysis, registerOverlayOpacity, unregisterOverlayOpacity]);
+
   // --- Recommended restrictions (docs §32) ---------------------------------
   // The actionable output of the whole mode: block HERE. Drawn as a heavy bar
   // across the ground between two real cell centres — never an invented point
@@ -2866,10 +3023,16 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const analyzeAndRender = async (latlngs: any[]) => {
     setIsAnalyzing(true); onAnalyzingChange?.(true);
     try {
-      const slope = await analyzeTrackSlopes(latlngs);
+      // Slope (DEM) and vegetation (NVIS/NSW/Mapbox) are independent data
+      // sources with no dependency on each other, so run them concurrently
+      // instead of back-to-back — halves perceived latency on every draw/edit.
+      // Vegetation failure stays non-fatal (matches the previous behaviour);
+      // slope failure is still fatal and falls through to the outer catch.
+      const vegPromise: Promise<VegetationAnalysis | null> = analyzeTrackVegetation(latlngs)
+        .catch(e => { logger.warn('Vegetation analysis failed', e); return null; });
+      const [slope, veg] = await Promise.all([analyzeTrackSlopes(latlngs), vegPromise]);
       onTrackAnalysisChange?.(slope);
-      let veg: VegetationAnalysis | null = null;
-      try { veg = await analyzeTrackVegetation(latlngs); onVegetationAnalysisChange?.(veg); } catch (e) { logger.warn('Vegetation analysis failed', e); }
+      if (veg) { onVegetationAnalysisChange?.(veg); setVegetationAnalysis(veg); }
       renderSlopeSegments(slope);
     } catch (e) {
       logger.error('Slope analysis failed', e); setError('Slope analysis failed');

@@ -182,6 +182,15 @@ const CATEGORY_REPRESENTATIVE_SLOPE: Record<string, number> = {
 const PARTIAL_THRESHOLD = 0.15;
 /** Time-penalty slope of the partial band: penalty = 1 + overFraction × K. */
 const PARTIAL_TIME_PENALTY_K = 2;
+/** Notional-rate fraction applied to a segment that has already been ruled
+ *  over-limit (slope/side-slope/vegetation), so a partial/incompatible
+ *  result still carries a meaningful (if pessimistic) total time instead of
+ *  an infinite or zero one. Unsourced — like the terrain/vegetation factors
+ *  this file replaced (CALCULATION_REVIEW.md F3/F7), this is a deliberately
+ *  conservative placeholder (10× slower than the reference rate), not a
+ *  measured relationship; revisit if/when over-limit segment handling gets
+ *  its own sourced figure. */
+const OVER_LIMIT_NOTIONAL_RATE_FRACTION = 0.1;
 
 export class EquipmentAnalysisService {
   private validateEquipment(equipment: EquipmentSpec): string[] {
@@ -327,7 +336,7 @@ export class EquipmentAnalysisService {
       if (rate > 0) {
         time += seg.length / rate;
       } else if (refRate > 0) {
-        time += seg.length / (refRate * 0.1);
+        time += seg.length / (refRate * OVER_LIMIT_NOTIONAL_RATE_FRACTION);
       }
     }
 

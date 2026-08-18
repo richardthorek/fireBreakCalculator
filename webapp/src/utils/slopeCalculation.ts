@@ -444,13 +444,23 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
     // representative side-slope, same "flag the hazard" convention as
     // maxSubSlope above.
     let segCrossSlope = 0;
-    for (const probe of crossSlopeProbes) {
-      const [elevLeft, elevRight] = await Promise.all([
-        resolveElevation(probe.left.lat, probe.left.lng, demCache),
-        resolveElevation(probe.right.lat, probe.right.lng, demCache),
-      ]);
-      const cs = calculateSlope(elevLeft, elevRight, CROSS_SLOPE_OFFSET_M * 2);
-      if (cs > segCrossSlope) segCrossSlope = cs;
+    if (crossSlopeProbes.length > 0) {
+      // One batched resolution across every probe in this mini-segment
+      // rather than a sequential await per probe — matches the along-line
+      // `elevs` resolution just above, and matters when `demCache` is cold
+      // (each `resolveElevation` call then falls through to a Terrain-RGB
+      // tile fetch, where sequential awaits would serialize N tile fetches
+      // instead of firing them together).
+      const probePoints = crossSlopeProbes.flatMap(probe => [probe.left, probe.right]);
+      const probeElevs = await Promise.all(
+        probePoints.map(p => resolveElevation(p.lat, p.lng, demCache))
+      );
+      for (let pi = 0; pi < crossSlopeProbes.length; pi++) {
+        const elevLeft = probeElevs[pi * 2];
+        const elevRight = probeElevs[pi * 2 + 1];
+        const cs = calculateSlope(elevLeft, elevRight, CROSS_SLOPE_OFFSET_M * 2);
+        if (cs > segCrossSlope) segCrossSlope = cs;
+      }
     }
 
     // Use maxSubSlope to detect steep gullies; use weighted average as segment slope
