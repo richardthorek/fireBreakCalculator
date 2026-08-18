@@ -619,6 +619,10 @@ html, body {
 .btn.del:hover { background:#641717; }
 .btn.cancel { background:#444f5a; }
 .btn.edit { background:#315170; }
+.btn.reset { background:#8a5a12; border-color:#8a5a12; }
+.btn.reset:hover { background:#734b0d; }
+.tag.mini.modified { background:#8a5a12; color:#fff; margin-left:4px; }
+.equip-persistence-hint { margin:0 0 6px; padding:6px 10px; font-size:11px; color:#cbd5e1; background:#22303d; border:1px solid #33465a; border-radius:4px; }
 .quick-add { background:#0d6efd; border:1px solid #0d6efd; color:#fff; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
 .quick-add:disabled { opacity:0.5; cursor:not-allowed; }
 .equip-error { background:#872626; padding:6px 10px; border-radius:4px; font-size:12px; }
@@ -1329,6 +1333,22 @@ button:focus {
   max-width: 8rem;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.hero-caveat {
+  margin: 0.2rem 0 0;
+  font-size: 0.65rem;
+  color: #8aa9bf;
+  line-height: 1.3;
+}
+.hero-caveat-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #F6A609;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
 }
 
 @media (max-width: 1023px) {
@@ -5000,7 +5020,18 @@ button:focus {
 
 .segment-index { color: #64748b; font-family: var(--font-family-mono); }
 .segment-chainage { font-family: var(--font-family-mono); font-size: 0.72rem; color: #cbd5e1; }
-.segment-grade, .segment-fuel { display: inline-flex; align-items: center; gap: 0.35rem; }
+.segment-grade { display: inline-flex; align-items: center; gap: 0.35rem; }
+.segment-fuel { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.segment-fuel-main { display: inline-flex; align-items: center; gap: 0.35rem; }
+.segment-fuel-detail {
+  font-size: 0.66rem;
+  color: #8aa9bf;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  padding-left: calc(10px + 0.35rem);
+}
 
 .segment-swatch {
   width: 10px;
@@ -5478,6 +5509,40 @@ button:focus {
   cursor: pointer;
 }
 .ai-briefing-regenerate:hover { color: #e2e8f0; border-color: #475569; }
+
+.reality-check-card {
+  border: 1px solid rgba(246,166,9,0.35);
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(246,166,9,0.08), rgba(30,36,51,0.5) 55%);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.reality-check-header { display: flex; gap: 0.55rem; align-items: flex-start; color: #F6A609; }
+.reality-check-header h5 { margin: 0; color: #f5f7fa; font-size: 0.85rem; }
+.reality-check-caption { margin: 0.15rem 0 0; color: #94a3b8; font-size: 0.73rem; line-height: 1.4; }
+.reality-check-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  min-height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: #F6A609;
+  color: #1a1406;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.reality-check-btn:hover { background: #d78f05; }
+.reality-check-loading { display: flex; align-items: center; gap: 0.5rem; color: #cbd5e1; font-size: 0.78rem; }
+.reality-check-result { display: flex; flex-direction: column; gap: 0.4rem; }
+.reality-check-text { margin: 0; color: #e2e8f0; font-size: 0.82rem; line-height: 1.55; white-space: pre-line; }
+.reality-check-result .ai-source-ai { background: rgba(246,166,9,0.18); color: #fcd34d; }
 
 .ai-chat { display: flex; flex-direction: column; gap: 0.55rem; border-top: 1px solid rgba(42,52,66,0.6); padding-top: 0.55rem; }
 

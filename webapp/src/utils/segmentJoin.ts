@@ -84,11 +84,16 @@ export function buildJoinedSegments(track: TrackAnalysis, veg: VegetationAnalysi
     });
   }
 
-  // Merge identical neighbours to keep the output readable.
+  // Merge identical neighbours to keep the output readable. Requires the
+  // granular label (vegLabel — NVIS MVG name / NSW SVTM PCT name) to match
+  // too, not just the coarse costing bucket: two stretches can share a
+  // coarse vegetation TYPE while being different vegetation communities on
+  // the ground, and this table (and the GIS export attributes derived from
+  // it, gisExport.ts) is exactly where that distinction should stay visible.
   const merged: JoinedSegment[] = [];
   for (const seg of raw) {
     const last = merged[merged.length - 1];
-    if (last && last.slopeCategory === seg.slopeCategory && last.vegetation === seg.vegetation && last.estimated === seg.estimated && last.isModifiedOrLowFidelity === seg.isModifiedOrLowFidelity) {
+    if (last && last.slopeCategory === seg.slopeCategory && last.vegetation === seg.vegetation && last.estimated === seg.estimated && last.isModifiedOrLowFidelity === seg.isModifiedOrLowFidelity && last.vegLabel === seg.vegLabel) {
       const lenA = last.endM - last.startM;
       const lenB = seg.endM - seg.startM;
       last.slope = (last.slope * lenA + seg.slope * lenB) / (lenA + lenB);

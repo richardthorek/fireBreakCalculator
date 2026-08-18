@@ -15,6 +15,7 @@ import { ElevationProfile } from './ElevationProfile';
 import { SegmentBreakdown } from './SegmentBreakdown';
 import { AdvisorPanel, OptimizerStatus } from './AdvisorPanel';
 import { AiAssistantCard } from './AiAssistantCard';
+import { RealityCheckCard } from './RealityCheckCard';
 import { buildAssistantPayload, AssistantPayload } from '../utils/assistantApi';
 import { SLOPE_CATEGORIES, VEGETATION_CATEGORIES } from '../config/categories';
 import { getVegetationTypeDisplayName, getTerrainLevelDisplayName } from '../utils/formatters';
@@ -809,9 +810,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       trackAnalysis,
       vegetationAnalysis,
       equipmentResults: finalCalculations as any[],
-      assessment
+      assessment,
+      equipmentCatalog: [...machinery, ...aircraft, ...handCrews].map((e) => ({
+        id: e.id,
+        standard: e.standard,
+        sourceNote: e.sourceNote,
+      })),
     });
-  }, [distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, finalCalculations, assessment]);
+  }, [distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, finalCalculations, assessment, machinery, aircraft, handCrews]);
 
   const attentionCount = assessment
     ? assessment.insights.filter(i => i.severity === 'critical' || i.severity === 'warning').length
@@ -1023,6 +1029,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
                 </div>
               )}
             </div>
+          )}
+          {!isAnalyzing && distance != null && heroTimeOption && trackAnalysis && (
+            <p className="hero-caveat">
+              Sum of {trackAnalysis.segments.length} ground segments of varying slope/fuel
+              — not one flat rate. Excludes mobilisation/travel to site.
+              {' '}<button type="button" className="hero-caveat-link" onClick={() => setActiveTab('terrain')}>See breakdown</button>
+            </p>
           )}
 
           {/* Backend Analysis Status */}
@@ -1406,6 +1419,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               onHeatmapColorModeChange={onHeatmapColorModeChange}
             />
             <AiAssistantCard payload={assistantPayload} />
+            <RealityCheckCard payload={assistantPayload} />
           </>
         )}
         {activeTab === 'live-layers' && (

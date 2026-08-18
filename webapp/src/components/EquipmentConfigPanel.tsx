@@ -24,6 +24,15 @@ interface EquipmentConfigPanelProps {
   showGuide?: boolean;
   filter?: string; // Filter text for equipment
   compactMode?: boolean; // Use compact layout for integrated panel
+  /** True if the item's cost/rate/limits have been customised away from the
+   * platform default (a saved override, session-only or account-persisted). */
+  isOverridden?: (item: EquipmentApi) => boolean;
+  /** Revert one item to the platform default. Omitted entirely hides the
+   * "Reset" affordance (e.g. while overrides haven't loaded yet). */
+  onReset?: (item: EquipmentApi) => Promise<void>;
+  /** Whether a customisation right now persists to the signed-in user's
+   * account (true) or is session-only and will be lost on tab close (false). */
+  persistsToAccount?: boolean;
 }
 
 type EquipmentTab = EquipmentCoreType;
@@ -133,7 +142,9 @@ const EquipmentListComponent: React.FC<{
   vegExample: (v: string) => string;
   filter?: string;
   compactMode?: boolean;
-}> = ({ equipment, activeTab, adding, draft, setDraft, saveNew, setAdding, resetDraft, editingId, setEditingId, saveEdit, remove, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample, filter = '', compactMode = false }) => {
+  isOverridden?: (item: EquipmentApi) => boolean;
+  onReset?: (item: EquipmentApi) => Promise<void>;
+}> = ({ equipment, activeTab, adding, draft, setDraft, saveNew, setAdding, resetDraft, editingId, setEditingId, saveEdit, remove, saving, terrainOptions, vegetationOptions, terrainLabel, vegLabel, terrainExample, vegExample, filter = '', compactMode = false, isOverridden, onReset }) => {
   const filtered = equipment
     .filter(e => e.type === activeTab)
     .filter(e => filter === '' || e.name.toLowerCase().includes(filter.toLowerCase()));
@@ -199,7 +210,21 @@ const EquipmentListComponent: React.FC<{
           <div key={item.id} className="equip-row" onDoubleClick={() => setEditingId(item.id)}>
             <div className="eq-name text" title={item.name}>
               {item.name}
-              {item.standard && <span className="tag mini" title="Built-in standard catalogue item — you can edit or delete it">Std</span>}
+              {item.standard && (
+                <span
+                  className="tag mini"
+                  title={
+                    item.sourceNote
+                      ? `Platform default. Sourcing: ${item.sourceNote}`
+                      : "Platform default — editable per-account without changing anyone else's estimate"
+                  }
+                >
+                  Std
+                </span>
+              )}
+              {item.standard && isOverridden?.(item) && (
+                <span className="tag mini modified" title="You've customised this item away from the platform default">Modified</span>
+              )}
             </div>
             {item.type === 'Machinery' && <div className="eq-small text">{(item as MachineryApi).clearingRate || '-'} m/h</div>}
             {item.type === 'Aircraft' && (
@@ -218,7 +243,11 @@ const EquipmentListComponent: React.FC<{
             </div>
             <div className="eq-actions">
               <button className="btn edit" onClick={() => setEditingId(item.id)}>Edit</button>
-              <button className="btn del" onClick={() => remove(item)}>✕</button>
+              {item.standard && isOverridden?.(item) && onReset ? (
+                <button className="btn reset" title="Revert to the platform default" onClick={() => onReset(item)}>Reset</button>
+              ) : (
+                <button className="btn del" onClick={() => remove(item)} disabled={item.standard} title={item.standard ? 'Platform defaults cannot be deleted — use Reset to undo your changes instead' : undefined}>✕</button>
+              )}
             </div>
           </div>
         )
@@ -233,7 +262,8 @@ const EquipmentListComponent: React.FC<{
 
 export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   equipment, loading, error, onCreate, onUpdate, onDelete, isOpen, onToggle, initialTab = 'Machinery', showOwnTabs = true, triggerAdd,
-  showDescription = true, showGuide = true, filter = '', compactMode = false
+  showDescription = true, showGuide = true, filter = '', compactMode = false,
+  isOverridden, onReset, persistsToAccount
 }) => {
   const [activeTab, setActiveTab] = useState<EquipmentTab>(initialTab);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -284,6 +314,13 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
   if (compactMode) {
     return (
       <div className="equipment-config-panel compact">
+        {onReset && (
+          <p className="equip-persistence-hint">
+            {persistsToAccount
+              ? 'Your machinery customisations are saved to your account and will be there next time you sign in.'
+              : 'Editing a platform default here only for this browser tab — sign in to save your changes to your account, or they reset when you close the tab.'}
+          </p>
+        )}
         <EquipmentListComponent
           equipment={equipment}
           activeTab={activeTab}
@@ -306,6 +343,8 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
           vegExample={vegExample}
           filter={filter}
           compactMode={compactMode}
+          isOverridden={isOverridden}
+          onReset={onReset}
         />
       </div>
     );
@@ -385,6 +424,8 @@ export const EquipmentConfigPanel: React.FC<EquipmentConfigPanelProps> = ({
             vegExample={vegExample}
             filter={filter}
             compactMode={compactMode}
+            isOverridden={isOverridden}
+            onReset={onReset}
           />
           <p className="equip-hint">Double-click a row to edit. Tags toggle inclusion. Changes save instantly.</p>
         </div>

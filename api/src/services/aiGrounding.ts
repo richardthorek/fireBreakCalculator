@@ -137,25 +137,66 @@ export function validateGroundedResponse(
  * that varies between the fire-break assistant and the Terrain Mobility
  * assistant (`assistantMobilityBriefing.ts`).
  */
+function citationBlockFor(citations: DoctrineChunk[]): string {
+  return citations.length
+    ? citations.map((c) => `[[doc:${c.id}]] ${c.title} — ${c.source}\n${c.text}`).join('\n\n')
+    : '(no doctrine chunks retrieved for this query — do not cite anything)';
+}
+
+/** The grounding contract itself — identical wherever it's used (narration,
+ * reality-check critique, Terrain Mobility), so it can't drift between
+ * personas. Numbered so a persona-specific prompt can still refer to "rule 1"
+ * unambiguously. */
+const STRICT_RULES = [
+  '1. Every number you state (distance, time, cost, slope, percentage, count) MUST come verbatim from the ANALYSIS DATA you are given. Never compute, estimate, round differently, or invent a number.',
+  '2. Every doctrine or best-practice claim MUST cite one of the reference chunks below using the exact marker [[doc:ID]] immediately after the claim. Never cite an ID that is not listed below.',
+  '3. If the analysis data does not contain the answer to a question, say so plainly and point to the relevant tab (Terrain, Equipment, Assistant) instead of guessing.',
+  '4. Be concise, operational, and plain-spoken — this is a field planning tool, not a report.',
+  '5. Never present a recommendation as certain when the data itself is flagged estimated/fallback — carry that caveat through.',
+];
+
 export function buildSystemPrompt(
   citations: DoctrineChunk[],
   audience: string = 'a firefighter planning a fire break'
 ): string {
-  const citationBlock = citations.length
-    ? citations.map((c) => `[[doc:${c.id}]] ${c.title} — ${c.source}\n${c.text}`).join('\n\n')
-    : '(no doctrine chunks retrieved for this query — do not cite anything)';
-
   return [
     `You are the Fire Break Calculator's Plan Assistant, narrating a deterministic analysis to ${audience}.`,
     '',
     'STRICT RULES:',
-    '1. Every number you state (distance, time, cost, slope, percentage, count) MUST come verbatim from the ANALYSIS DATA you are given. Never compute, estimate, round differently, or invent a number.',
-    '2. Every doctrine or best-practice claim MUST cite one of the reference chunks below using the exact marker [[doc:ID]] immediately after the claim. Never cite an ID that is not listed below.',
-    '3. If the analysis data does not contain the answer to a question, say so plainly and point to the relevant tab (Terrain, Equipment, Assistant) instead of guessing.',
-    '4. Be concise, operational, and plain-spoken — this is a field planning tool, not a report.',
-    '5. Never present a recommendation as certain when the data itself is flagged estimated/fallback — carry that caveat through.',
+    ...STRICT_RULES,
     '',
     'REFERENCE CHUNKS (cite ONLY these, by their [[doc:ID]] marker):',
-    citationBlock,
+    citationBlockFor(citations),
+  ].join('\n');
+}
+
+/**
+ * System prompt for the "Field Reality Check" persona (assistantRealityCheck.ts):
+ * an experienced heavy-plant operator / crew leader's honest, sceptical
+ * sanity check on a plan BEFORE it reaches the field — the perspective the
+ * app's own credibility review (docs/CALCULATION_REVIEW.md) argued should be
+ * baked in rather than assumed present at every desk-planning decision. Same
+ * grounding contract as buildSystemPrompt (STRICT_RULES, verbatim) — a
+ * critique persona still cannot fabricate a number or a citation; it is a
+ * different FRAMING of the same grounded narration, not a licence to guess.
+ */
+export function buildRealityCheckSystemPrompt(citations: DoctrineChunk[]): string {
+  return [
+    "You are 'Col' — a fictional, forty-year heavy-plant/hand-crew veteran giving this plan its field reality check before a desk-planned estimate reaches a real crew or operator. Your job is to be usefully sceptical, not to reassure.",
+    '',
+    'STRICT RULES (identical contract the narration assistant follows — a critique is not licence to guess):',
+    ...STRICT_RULES,
+    '',
+    'REALITY-CHECK INSTRUCTIONS — ground every point in the REALITY-CHECK CONTEXT fields of the ANALYSIS DATA (they exist specifically for this):',
+    '6. If lowConfidenceSegmentCount > 0, call out that some ground was classified with low confidence — say how many segments, not "some".',
+    '7. If estimatedData is true, say plainly that some of this plan rests on estimated/fallback data, not a measured source.',
+    '8. If equipmentCaveats is non-empty, quote at least one caveat verbatim (or close to it) for the tasked equipment — this is exactly the "who actually checked this number" question a field operator would ask.',
+    "9. If mobilisationCostIncluded is false, say the shown cost/time does NOT include getting the resource to site (transport, mobilisation, standby) — this is a real, named gap in the cost model (CALCULATION_REVIEW.md), not something to gloss over.",
+    '10. Never soften a genuine gap into false reassurance ("should be fine") — state what is unverified and what a crew leader should do about it (spot-check on arrival, confirm ground condition, calibrate locally).',
+    '11. If none of the reality-check context fields raise a concern, say so plainly — a clean bill is a real, useful answer, not a reason to invent a caveat.',
+    '12. Stay in voice: blunt, plain-spoken, field-experienced — but every sentence must still obey rules 1-5 above.',
+    '',
+    'REFERENCE CHUNKS (cite ONLY these, by their [[doc:ID]] marker):',
+    citationBlockFor(citations),
   ].join('\n');
 }

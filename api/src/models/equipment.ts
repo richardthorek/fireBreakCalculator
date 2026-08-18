@@ -18,6 +18,16 @@ export interface EquipmentBase {
    * Purely informational — standards can still be edited or deleted.
    */
   standard?: boolean;
+  /**
+   * One-line citation/rationale for this item's figures, shown in the UI so
+   * a user can judge the platform default's credibility before relying on
+   * it or before overriding it. Only set on standard catalogue items — see
+   * `standardEquipment.ts`'s own file-level sourcing note for the shared
+   * literature it's grounded in, and `docs/CALCULATION_REVIEW.md`'s
+   * "Standard catalogue accuracy review" for the full pass and what
+   * remains corroborated-but-not-exact-table-verified.
+   */
+  sourceNote?: string;
   version: number;
   createdAt: string; // ISO
   updatedAt: string; // ISO
@@ -59,6 +69,7 @@ export interface EquipmentTableEntity {
   costPerHour?: number;
   active: boolean;
   standard?: boolean;
+  sourceNote?: string;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -86,6 +97,7 @@ export function toTableEntity(e: Equipment): EquipmentTableEntity {
     costPerHour: e.costPerHour,
     active: e.active,
     standard: e.standard,
+    sourceNote: e.sourceNote,
     version: e.version,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
@@ -112,6 +124,7 @@ export function fromTableEntity(entity: EquipmentTableEntity): Equipment {
     costPerHour: entity.costPerHour,
     active: entity.active,
     standard: entity.standard,
+    sourceNote: entity.sourceNote,
     version: entity.version,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,

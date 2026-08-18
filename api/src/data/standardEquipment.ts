@@ -28,6 +28,21 @@
  *    manufacturer tank capacities for the aircraft cycle model.
  * Costs are indicative planning figures only (aerial "call-when-needed" rates in
  * particular vary widely) and should be overridden with local contract rates.
+ *
+ * ACCURACY REVIEW (2026-08-18) — each item below carries its own `sourceNote`,
+ * surfaced in the UI (equipment panel "Std" badge tooltip), stating exactly
+ * what was corroborated for this pass and what wasn't. Two source PDFs (NWCG
+ * production tables, DELWP Report 56) could not be extracted to exact table
+ * values in the review environment used (403/binary-only responses) — the
+ * general order-of-magnitude and structural claims (rate ranges, tank
+ * capacities, fuel/slope classing) were corroborated against secondary
+ * sources and cross-checked for internal consistency (e.g. rate increases
+ * monotonically with dozer class; aircraft tank sizes match their named
+ * airframe), but figures were not re-derived line-by-line from the primary
+ * tables. EXCAVATOR, POSITRACK and CREW-RAFT have no literature table at all
+ * and are the project's own calibrated estimates — flagged accordingly. See
+ * `docs/CALCULATION_REVIEW.md`'s "Standard catalogue accuracy review" section
+ * for the full pass and what a follow-up SME review should re-check.
  */
 
 import {
@@ -65,6 +80,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'Rate/slope: order-of-magnitude consistent with grader-class fireline production in the NWCG production tables (grass fuel models); cost: indicative plant-hire figure, calibrate to local contract rates. Reviewed 2026-08-18, not independently re-derived from the primary table (see CALCULATION_REVIEW.md).',
   },
   {
     code: 'DOZER-LIGHT',
@@ -80,6 +97,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'NWCG Type 3 dozer class — rate/slope order-of-magnitude consistent with NWCG light-dozer production tables; cost is an indicative plant-hire figure. Reviewed 2026-08-18: corroborated, not chain-by-chain re-derived from the primary table.',
   },
   {
     code: 'DOZER-MED',
@@ -95,6 +114,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'NWCG Type 2 dozer class; DELWP Report 56 (McCarthy, Tolhurst & Wouters) models D6/D7/D9 construction rate together from real fireground data (33 cases). Rate/slope order-of-magnitude consistent with both; cost indicative. Reviewed 2026-08-18: corroborated, not re-derived exactly.',
   },
   {
     code: 'DOZER-HEAVY',
@@ -110,6 +131,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'NWCG Type 1 dozer class; DELWP Report 56 groups D9-class machines with D6/D7 in its combined large-bulldozer model. Rate/slope order-of-magnitude consistent; cost indicative. Reviewed 2026-08-18: corroborated, not re-derived exactly.',
   },
   {
     code: 'EXCAVATOR',
@@ -125,6 +148,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'No direct NWCG/Report 56 excavator-with-rake table exists; rate is the project\'s own calibrated estimate (scaled down from dozer figures for broken/heavy-timber ground, add_machines.js), not a literature figure. Reviewed 2026-08-18: flagged for SME verification against local plant data.',
   },
   {
     code: 'POSITRACK',
@@ -140,6 +165,8 @@ const MACHINERY: MachinerySeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'No published production table for mulching skid-steers on fireline. Rate/cost are the project\'s own estimate (add_machines.js), not from NWCG/Report 56/NAFC. Reviewed 2026-08-18: this is the least literature-grounded item in the machinery catalogue — verify against local plant-hire experience before relying on it.',
   },
 ];
 
@@ -158,6 +185,8 @@ const AIRCRAFT: AircraftSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'Tank capacity matches NAFC\'s light helicopter (Type 3) category, ~700 L belly tank/bucket. Drop length/turnaround/cost are indicative planning figures, not a published per-drop-length table — calibrate to local contract rates. Reviewed 2026-08-18.',
   },
   {
     code: 'HELI-MED',
@@ -173,6 +202,8 @@ const AIRCRAFT: AircraftSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'Tank capacity matches the Bell 212/412-class medium helitanker (NAFC Type 2), ~1,500 L. Drop length/turnaround/cost indicative planning figures — calibrate to local contract rates. Reviewed 2026-08-18.',
   },
   {
     code: 'HELI-HEAVY',
@@ -188,6 +219,8 @@ const AIRCRAFT: AircraftSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'NAFC Type 1 heavy helitanker category; capacity rounded down slightly from the S-64 Aircrane\'s published ~8,000 L tank to a representative Type 1 figure. Drop length/turnaround/cost indicative — call-when-needed rates vary widely, override with the real contract rate. Reviewed 2026-08-18.',
   },
   {
     code: 'SEAT',
@@ -203,6 +236,8 @@ const AIRCRAFT: AircraftSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'Tank capacity matches the AT-802 Fire Boss\'s published ~3,000 L retardant/water tank (NAFC SEAT category). Drop length/turnaround/cost indicative planning figures — calibrate to local contract rates. Reviewed 2026-08-18.',
   },
   {
     code: 'LAT',
@@ -218,6 +253,8 @@ const AIRCRAFT: AircraftSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      '15,000 L sits within the published retardant-tank range for RJ85/B737-class Large Air Tankers (NAFC LAT category, typically 11,000-15,000 L). Drop length/turnaround/cost indicative — call-when-needed rates vary widely, override with the real contract rate. Reviewed 2026-08-18.',
   },
 ];
 
@@ -236,6 +273,8 @@ const HAND_CREWS: HandCrewSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub'],
     standard: true,
     active: true,
+    sourceNote:
+      'DELWP Report 56 found average 6-person hand-crew rates of 90-120 m/crew/hour across mixed real fireground conditions (~15-20 m/person/hour), declining sharply with elevated fuel/steep terrain. This item\'s 30 m/person/hour is the FLAT GRASSLAND easiest-case reference rate the production model derates from (see file header), so a higher figure than Report 56\'s mixed-conditions average is expected — but it has not been checked against Report 56\'s own grassland-only subset. Reviewed 2026-08-18: order-of-magnitude plausible, flagged for closer SME check.',
   },
   {
     code: 'CREW-CHAINSAW',
@@ -251,6 +290,8 @@ const HAND_CREWS: HandCrewSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'Rate reduced from the standard hand crew (CREW-STD) per NWCG\'s general timbered-fuel hand-line derating for sawyer/chainsaw teams; not independently checked against a specific published sawyer-crew production table. Reviewed 2026-08-18: order-of-magnitude plausible, uncited exact figure.',
   },
   {
     code: 'CREW-RAFT',
@@ -266,6 +307,8 @@ const HAND_CREWS: HandCrewSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'No published production table specific to remote/winch-insertion RAFT teams was found; rate is the project\'s own estimate, positioned between CREW-STD and CREW-CHAINSAW for steep/inaccessible ground. Reviewed 2026-08-18: the least literature-grounded item in the hand-crew catalogue — verify against agency RAFT operational data.',
   },
   {
     code: 'CREW-STRIKE',
@@ -281,6 +324,8 @@ const HAND_CREWS: HandCrewSeed[] = [
     allowedVegetation: ['grassland', 'lightshrub', 'mediumscrub', 'heavyforest'],
     standard: true,
     active: true,
+    sourceNote:
+      'NWCG Type 1 20-person crew — the NWCG 2021 Fire Line Production Rate Tables express 20-person crew rates in chains/hour by fuel model; this per-person figure is order-of-magnitude consistent but was not re-derived chain-by-chain from the primary table for this review. Reviewed 2026-08-18.',
   },
 ];
 

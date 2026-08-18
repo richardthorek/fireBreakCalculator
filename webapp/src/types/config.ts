@@ -24,6 +24,12 @@ export interface MachinerySpec {
   costPerHour?: number;
   /** Description of the machinery */
   description?: string;
+  /** True for a built-in platform-default catalogue item (see api's
+   *  standardEquipment.ts) — threaded through so the AI assistant/reality
+   *  check can quote its own sourcing caveat when tasked. */
+  standard?: boolean;
+  /** One-line sourcing/rationale citation, only set on standard items. */
+  sourceNote?: string;
   /** Terrain types this machinery can operate in */
   allowedTerrain: TerrainLevel[];
   /** Vegetation types this machinery can handle (new taxonomy)
@@ -48,6 +54,12 @@ export interface AircraftSpec {
   costPerHour?: number;
   /** Description of the aircraft */
   description?: string;
+  /** True for a built-in platform-default catalogue item (see api's
+   *  standardEquipment.ts) — threaded through so the AI assistant/reality
+   *  check can quote its own sourcing caveat when tasked. */
+  standard?: boolean;
+  /** One-line sourcing/rationale citation, only set on standard items. */
+  sourceNote?: string;
   /** Terrain types this aircraft can operate over */
   allowedTerrain: TerrainLevel[];
   /** Vegetation types this aircraft can effectively treat */
@@ -67,6 +79,12 @@ export interface HandCrewSpec {
   costPerHour?: number;
   /** Description of the crew type */
   description?: string;
+  /** True for a built-in platform-default catalogue item (see api's
+   *  standardEquipment.ts) — threaded through so the AI assistant/reality
+   *  check can quote its own sourcing caveat when tasked. */
+  standard?: boolean;
+  /** One-line sourcing/rationale citation, only set on standard items. */
+  sourceNote?: string;
   /** Terrain types this crew can work in */
   allowedTerrain: TerrainLevel[];
   /** Vegetation types this crew can handle */

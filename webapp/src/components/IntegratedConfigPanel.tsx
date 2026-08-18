@@ -20,7 +20,10 @@ interface IntegratedConfigPanelProps {
   onCreateEquipment: (partial: Partial<EquipmentApi> & { type: EquipmentApi['type']; name: string; }) => Promise<void>;
   onUpdateEquipment: (item: EquipmentApi) => Promise<void>;
   onDeleteEquipment: (item: EquipmentApi) => Promise<void>;
-  
+  isEquipmentOverridden?: (item: EquipmentApi) => boolean;
+  onResetEquipment?: (item: EquipmentApi) => Promise<void>;
+  equipmentPersistsToAccount?: boolean;
+
   // Vegetation mapping props
   vegetationMappings: VegetationFormationMappingApi[];
   loadingVegetationMappings: boolean;
@@ -44,7 +47,10 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
   onCreateEquipment,
   onUpdateEquipment,
   onDeleteEquipment,
-  
+  isEquipmentOverridden,
+  onResetEquipment,
+  equipmentPersistsToAccount,
+
   // Vegetation mapping props
   vegetationMappings,
   loadingVegetationMappings,
@@ -161,6 +167,9 @@ const IntegratedConfigPanel: React.FC<IntegratedConfigPanelProps> = ({
                   onCreate={onCreateEquipment}
                   onUpdate={onUpdateEquipment}
                   onDelete={onDeleteEquipment}
+                  isOverridden={isEquipmentOverridden}
+                  onReset={onResetEquipment}
+                  persistsToAccount={equipmentPersistsToAccount}
                   isOpen={true}
                   onToggle={onToggle}
                   showOwnTabs={false}
