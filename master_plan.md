@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 18, 2026 — step 59: acted on an owner-run "Col" field-veteran persona critique — granular vegetation class no longer discarded on merge, a headline-estimate caveat, and a new grounded "Field reality check" AI persona/endpoint (`docs/AI_ASSISTANT.md` §4b). Follows step 58 (machinery-defaults visibility/persistence/accuracy review), both owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — step 60: acted on an owner-run "Col" field-veteran persona critique — granular vegetation class no longer discarded on merge, a headline-estimate caveat, and a new grounded "Field reality check" AI persona/endpoint (`docs/AI_ASSISTANT.md` §4b). Follows step 59 (machinery-defaults visibility/persistence/accuracy review) and step 58 (a concurrent fire-break efficiency/accuracy pass: vegetation area-cache pre-warming, concurrent slope+vegetation analysis, batched cross-slope probes, the frontend split-brain fallback fixed to only show when the backend is genuinely unavailable, water/existing-trail geometry drawn on the map) — all three owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -106,7 +106,8 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
   - An 8-angle code review of the whole diff then found and fixed three further real correctness bugs (a restricted-corridor build was silently reusing unrestricted arrival-time data; pooled key-terrain scoring under-reported how many candidates it considered on single-core hardware; the corridor-count throttle's safety nets missed one of the loop's three exit paths, risking a stale count reported alongside an overconfident log message) — each verified against the actual code, fixed, and mutation-tested where the fix could regress silently. Five lower-severity findings from the same pass were reported but deliberately left unfixed (pre-existing patterns this PR only amplified, a latent gap with no current trigger, an exact-tie edge case, an architectural duplication trade-off, and a missed opportunity to reuse the incremental map-paint path for the new streaming feature) — see `ROUTE_INTELLIGENCE.md` §50 for the full list.
   - **2026-08-17 — live production report: no progressive paint visible at all.** After #210 merged, owner reported that during a real run the hex grid (GO/SLOW-GO/NO-GO colouring) either doesn't appear until well after the "widening the search" log lines start, or doesn't appear at all. Root cause: `mobilityHeatmapForMap` (`App.tsx`) is a `useMemo` that reads `mobilityPreviewCells` in its body but only listed `[mobilityResult]` as a dependency — since `mobilityResult` stays `null` for the entire search phase, React never recomputed the memo as `onPreviewCells` fired repeatedly, so the map stayed frozen at its initial `null` value until a route was finally confirmed. A production console log shared alongside the report (`/api/infrastructure` 502s, an Overpass CORS failure) was investigated and ruled out as the cause — `fetchCorridorInfrastructure`'s own contract ("every endpoint has failed; never throws") means an Overpass outage degrades gracefully and isn't on the hex-grid rendering path. Fixed by adding the missing dependency — PR [#214](https://github.com/richardthorek/fireBreakCalculator/pull/214).
   - **2026-08-17 — Overpass resilience at scale.** The same production log raised a real "what happens under real concurrent multi-user load" gap: `infrastructureService.ts`'s cache was in-process only (private per warm Function instance, so scale-out/cold starts re-pay the same fetch) and had no concurrency limit at all, even though Overpass's public mirrors enforce a per-IP CONCURRENT-connection cap (not a rate limit) — a handful of simultaneous users alone can trip it. Added a shared L2 blob cache (`infracache` container, `infra/main.bicep`, 7-day lifecycle expiry, same key as the existing L1) plus a small in-process semaphore (`OVERPASS_MAX_CONCURRENT`, default 2) queuing outbound Overpass calls instead of firing them all at once — the semaphore, not the cache, is what actually protects the quota under a cache-miss storm. See `docs/api-register.md`'s Infrastructure section for the full design.
-  - Remaining: the coarse-to-fine search itself — now fully designed (not yet implemented) in `ROUTE_INTELLIGENCE.md` §50's WP6 section: two passes over the existing pipeline at different `hexSize`s, fine-resolution materialisation restricted to the coarse pass's own multi-corridor candidate bands (not narrowed to one path), with the residual "a real avenue could be too narrow for the coarse pass to see" risk stated as a limitation rather than engineered away; frontier-streaming from the Dijkstra search phase is also still unbuilt.
+  - **2026-08-17 — the actual root cause of "still frozen, still no map painting" after #214: elevation sampling silently fell off a cliff at scale.** A further owner report, WITH the #214 fix already live, showed the freeze and blank map persisting, plus a `POST /api/elevation/profile` 400 in the console. Root cause: `ROUTE_INTELLIGENCE.md`'s own "Data cost" section (written 2026-07-27) had already predicted this exact wall — the DEM primary path encodes every point into one request URL with a hard cap (5,000 points), and the two-pass coarse/fine split designed to avoid ever hitting it at scale was explicitly deferred when the lazy grid shipped 2026-07-29. `'standard'/'fine'` fidelity's own hard cell ceilings (12,000/50,000) are routinely past that cap, so a real run's elevation fetch 400'd outright, and the existing "DEM failed → fall back to per-point Mapbox" path then fired for the WHOLE oversized batch — a request-per-point tile fetch/decode loop, which is what was actually freezing the tab and starving the (correctly-fixed) progressive-paint pipeline of any data to paint. Fixed with client-side chunking (`sampleElevationsBatch`, `slopeCalculation.ts`) — splits any point set over the cap into multiple ≤5,000-point DEM requests instead of one oversized request, so every chunk still gets the fast batched path and per-point fallback only fires for a chunk whose OWN request genuinely fails. This is NOT the two-pass redesign (still unbuilt, still the real fix for DEM call *volume*) — it makes the current uniform-resolution pipeline correct and reasonably fast at any scale instead of silently breaking past 5,000 cells. See `ROUTE_INTELLIGENCE.md`'s "Data cost" section and `CALCULATION_REVIEW.md`'s A2/F4 note.
+  - Remaining: the coarse-to-fine search itself — now fully designed (not yet implemented) in `ROUTE_INTELLIGENCE.md` §50's WP6 section: two passes over the existing pipeline at different `hexSize`s, fine-resolution materialisation restricted to the coarse pass's own multi-corridor candidate bands (not narrowed to one path), with the residual "a real avenue could be too narrow for the coarse pass to see" risk stated as a limitation rather than engineered away; frontier-streaming from the Dijkstra search phase is also still unbuilt. **This remains the actual fix for elevation-sampling volume at scale** — today's chunking fix only prevents it from breaking outright.
   - Note: while investigating, found `main` had not deployed since 2026-08-03 (unrelated pre-existing CI break, Oryx couldn't resolve `shared/terrain`'s own deps) — fixed and shipped separately as its own PR ([#211](https://github.com/richardthorek/fireBreakCalculator/pull/211), merged), off `main`, independent of this programme. Its own merge to `main` then failed `Build & Test` on a wall-clock-timing-dependent flaky test — fixed with a test-only dependency-injection seam, PR [#212](https://github.com/richardthorek/fireBreakCalculator/pull/212), merged.
 
 - **End-user guide** (Difficulty: S)
@@ -254,8 +255,9 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 | 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | 57 (OCOKA 5) | Tier-2 backend job protocol — new standalone `api-mobility/` package (Durable orchestrator, 5 sequential activities, blob artefacts, per-artefact SAS, Table-Storage rate limiting), `MobilityJobRequest` third must-match pair, webapp polling client + manual trigger panel, `infra/main.bicep` additions all gated `deployMobilityBackend bool = false`. No fan-out (OCOKA 8); v1 algorithmic subset only | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
-| 58 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
-| 59 | Col persona review acted on: granular vegetation class (NVIS MVG/NSW SVTM PCT name) no longer silently discarded on segment-merge, now shown per-row and in GIS export; a headline-estimate caveat ("not one flat rate, excludes mobilisation"); new "Field reality check" AI persona/endpoint grounded in the same payload+contract as the narration assistant | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review", [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §4b |
+| 58 | Fire-break efficiency/accuracy pass — manual-draw vegetation now pre-warms the area cache (was per-point only), slope+vegetation analysis run concurrently, frontend legacy calc no longer eagerly computed/shown while the backend is loading (was a live, not just offline, split-brain), cross-slope probes batched, an unsourced over-limit fallback rate named; water/existing-trail geometry (already fetched for the `isWater`/`onExistingTrail` flags) now drawn on the map, mirroring Terrain Mobility's own hydrology reference layer | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
+| 59 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
+| 60 | Col persona review acted on: granular vegetation class (NVIS MVG/NSW SVTM PCT name) no longer silently discarded on segment-merge, now shown per-row and in GIS export; a headline-estimate caveat ("not one flat rate, excludes mobilisation"); new "Field reality check" AI persona/endpoint grounded in the same payload+contract as the narration assistant | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review", [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §4b |
 
 ## Recent Updates
 
@@ -264,7 +266,7 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
-- **2026-08-18 — Col persona review acted on (step 59): vegetation
+- **2026-08-18 — Col persona review acted on (step 60): vegetation
   granularity, headline caveat, "Field reality check" AI persona.** Owner
   ran a role-play critique exercise (a sceptical, forty-year heavy-plant/
   hand-crew veteran, "Col") against the app, then asked for the resulting
@@ -306,7 +308,7 @@ history beyond this window: `git log`.
      so the persona has real ammunition instead of a vague description:
      `equipmentCaveats` is populated by joining tasked equipment against
      the effective catalogue (overrides applied) and pulling each standard
-     item's own `sourceNote` from step 58's accuracy review. A deterministic
+     item's own `sourceNote` from step 59's accuracy review. A deterministic
      template fallback (`realityCheckTemplate.ts`) means the reality check
      works even with no AI model configured — the gaps it flags are already
      computed, the AI layer only adds plain-language framing. New
@@ -325,6 +327,46 @@ history beyond this window: `git log`.
   Gates green: webapp `npm test` (45/45 files) + `npm run build`, api
   `npm run build` + `npm run test:unit` (12 new checks, all prior suites
   unaffected).
+- **2026-08-18 — fire-break efficiency/accuracy pass (step 58).** A
+  mobility-side-style deep review of fire-break mode's own logic (mirroring
+  the movement-analysis performance programme, not re-litigating
+  `CALCULATION_REVIEW.md`'s already-shipped F1–F8/A1–A7 items) found and
+  fixed five real issues, plus a follow-on visualization request:
+  **Efficiency** — `vegetationAnalysis.ts`'s manual-draw path
+  (`analyzeTrackVegetation`, the primary fire-break flow) never called
+  `fetchStateVegetationArea` before its per-segment point loop, so every
+  drawn line fired one NSW/NVIS query per ~200 m sample even though
+  `routeOptimizer.ts`'s own `sampleVegetation` had already solved exactly
+  this with an area-first pre-warm; now pre-warmed the same way above
+  `AREA_QUERY_MIN_POINTS`. `MapboxMapView.tsx`'s `analyzeAndRender` ran
+  slope and vegetation analysis sequentially despite being independent data
+  sources — now `Promise.all`'d. `slopeCalculation.ts`'s cross-slope probe
+  resolution looped one `Promise.all` per probe instead of batching all of a
+  segment's probes together — now one batched resolution per segment.
+  **Accuracy** — confirmed the "A1 split-brain" documented as resolved in
+  `CALCULATION_REVIEW.md` was still live in production, not just an offline
+  fallback: `AnalysisPanel.tsx`'s frontend coarse single-bucket model was
+  eagerly computed and shown during the real window before every backend
+  response (and indefinitely on backend failure), silently swapping the
+  displayed number between two different estimates depending on network
+  timing. Fixed by gating the frontend calculation on the backend being
+  genuinely unavailable/errored, never merely "hasn't answered yet" — the
+  panel's own `isBackendLoading` diagnostic message was already designed
+  for this and had been dead code until now. Also named
+  `equipmentAnalysis.ts`'s previously-unlabelled `refRate × 0.1` over-limit
+  notional-rate fallback as `OVER_LIMIT_NOTIONAL_RATE_FRACTION` with a
+  provenance comment (still unsourced, same honesty as F3/F7's factors).
+  **Visualization (follow-on request)** — fire-break mode already fetched
+  real water and existing-trail/track geometry per line to derive each
+  segment's `isWater`/`onExistingTrail` flags, then discarded it; that
+  geometry is now carried through on `VegetationAnalysis`
+  (`waterFeatures`/`trailFeatures`) and drawn on the map, reusing the exact
+  technique Terrain Mobility's own hydrology reference layer already uses
+  (filled polygon for water bodies, cased line for
+  rivers/streams/tracks) — repurposed `MapboxMapView.tsx`'s previously-dead
+  `vegetationAnalysis` state slot rather than adding a new one. Gates green:
+  api `npm run build` + `npm run test:unit`, webapp `npm run build` +
+  `npm test` (46/46). PR [#218](https://github.com/richardthorek/fireBreakCalculator/pull/218).
 - **2026-08-18 — Deploy-failure assessment (owner-requested check).** Owner
   flagged "the latest deploys also had a failure" while this branch's work
   was in progress. Traced it: `main` run [#31999630017](https://github.com/richardthorek/fireBreakCalculator/actions/runs/31999630017)
@@ -343,7 +385,7 @@ history beyond this window: `git log`.
   here because it hadn't been recorded in this file yet, and "assess and
   record" was the explicit ask, not "there's live breakage to fix."
 - **2026-08-18 — Machinery defaults: visibility, customisation/persistence,
-  accuracy review (step 58, owner-directed, out of queue order).** Two asks:
+  accuracy review (step 59, owner-directed, out of queue order).** Two asks:
   (1) any user can adjust a standard machinery/aircraft/hand-crew item's
   cost/rate/limits; anonymous edits are session-only (`sessionStorage`,
   gone on tab close), signed-in users (Station Manager, `fireBreakEnabled`

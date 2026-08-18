@@ -158,10 +158,22 @@ const resolveElevation = async (
  * Terrain-RGB tiles (then mock) per point. `estimated` is true when any value
  * did not come from real elevation data, so callers can flag results honestly.
  */
-export const sampleElevationsBatch = async (
+/** Matches `/api/elevation/profile`'s own hard cap (`elevationProfile.ts`) —
+ *  a real upstream constraint, not an arbitrary one: the ArcGIS `getSamples`
+ *  call encodes every point into one request URL (`buildGetSamplesUrl`,
+ *  `elevationService.ts`), so a point set beyond this size can't go through
+ *  as a single request regardless. A Terrain Mobility grid round routinely
+ *  exceeds this (2026-08-17 — production 400s traced here: 'standard'/'fine'
+ *  fidelity's hard cell ceilings are 12,000/50,000, both well past 5,000) —
+ *  see the chunking below. */
+const MAX_ELEVATION_PROFILE_POINTS = 5000;
+
+/** One DEM request's worth of points (already ≤ MAX_ELEVATION_PROFILE_POINTS)
+ *  — falls back to per-point Mapbox Terrain-RGB sampling only if THIS chunk's
+ *  own DEM request fails, not the whole original point set. */
+async function sampleElevationsChunk(
   points: { lat: number; lng: number }[]
-): Promise<{ elevations: number[]; estimated: boolean }> => {
-  if (points.length === 0) return { elevations: [], estimated: false };
+): Promise<{ elevations: number[]; estimated: boolean }> {
   const mockCountAtStart = mockElevationUseCount;
   const profile = await fetchElevationProfile(points);
   if (profile) {
@@ -171,6 +183,30 @@ export const sampleElevationsBatch = async (
     points.map(p => getElevationMapbox(p.lat, p.lng, { zoom: DEFAULT_TERRAIN_ZOOM }))
   );
   return { elevations, estimated: mockElevationUseCount > mockCountAtStart };
+}
+
+export const sampleElevationsBatch = async (
+  points: { lat: number; lng: number }[]
+): Promise<{ elevations: number[]; estimated: boolean }> => {
+  if (points.length === 0) return { elevations: [], estimated: false };
+  if (points.length <= MAX_ELEVATION_PROFILE_POINTS) {
+    return sampleElevationsChunk(points);
+  }
+  // Larger than one /api/elevation/profile request can carry. Split into
+  // chunks so a large batch still gets the fast batched-DEM path per chunk —
+  // the bug this fixes was falling straight through to per-point Mapbox
+  // sampling for the ENTIRE set the moment it didn't fit in one request,
+  // which is dramatically slower (one tile fetch+decode per point) and was
+  // presenting as a frozen tab with no map painting during a real run.
+  const chunks: { lat: number; lng: number }[][] = [];
+  for (let i = 0; i < points.length; i += MAX_ELEVATION_PROFILE_POINTS) {
+    chunks.push(points.slice(i, i + MAX_ELEVATION_PROFILE_POINTS));
+  }
+  const results = await Promise.all(chunks.map(sampleElevationsChunk));
+  return {
+    elevations: results.flatMap(r => r.elevations),
+    estimated: results.some(r => r.estimated),
+  };
 };
 
 /** Deterministically generate the elevation sample points for a mini-segment. */
@@ -408,13 +444,23 @@ export const analyzeTrackSlopes = async (points: LatLngLike[]): Promise<TrackAna
     // representative side-slope, same "flag the hazard" convention as
     // maxSubSlope above.
     let segCrossSlope = 0;
-    for (const probe of crossSlopeProbes) {
-      const [elevLeft, elevRight] = await Promise.all([
-        resolveElevation(probe.left.lat, probe.left.lng, demCache),
-        resolveElevation(probe.right.lat, probe.right.lng, demCache),
-      ]);
-      const cs = calculateSlope(elevLeft, elevRight, CROSS_SLOPE_OFFSET_M * 2);
-      if (cs > segCrossSlope) segCrossSlope = cs;
+    if (crossSlopeProbes.length > 0) {
+      // One batched resolution across every probe in this mini-segment
+      // rather than a sequential await per probe — matches the along-line
+      // `elevs` resolution just above, and matters when `demCache` is cold
+      // (each `resolveElevation` call then falls through to a Terrain-RGB
+      // tile fetch, where sequential awaits would serialize N tile fetches
+      // instead of firing them together).
+      const probePoints = crossSlopeProbes.flatMap(probe => [probe.left, probe.right]);
+      const probeElevs = await Promise.all(
+        probePoints.map(p => resolveElevation(p.lat, p.lng, demCache))
+      );
+      for (let pi = 0; pi < crossSlopeProbes.length; pi++) {
+        const elevLeft = probeElevs[pi * 2];
+        const elevRight = probeElevs[pi * 2 + 1];
+        const cs = calculateSlope(elevLeft, elevRight, CROSS_SLOPE_OFFSET_M * 2);
+        if (cs > segCrossSlope) segCrossSlope = cs;
+      }
     }
 
     // Use maxSubSlope to detect steep gullies; use weighted average as segment slope
