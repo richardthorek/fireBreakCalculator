@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — OCOKA 5 shipped, step 57: tier-2 backend job protocol (`api-mobility/`, Durable orchestration, blob artefacts + per-artefact SAS), gated `deployMobilityBackend bool = false`. See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — Fire-break efficiency/accuracy pass, step 58: vegetation area-cache pre-warming, concurrent slope+vegetation analysis, batched cross-slope probes, the frontend split-brain fallback fixed to only show when the backend is genuinely unavailable (not merely loading), and water/existing-trail geometry now drawn on the map. See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -251,6 +251,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 | 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | 57 (OCOKA 5) | Tier-2 backend job protocol — new standalone `api-mobility/` package (Durable orchestrator, 5 sequential activities, blob artefacts, per-artefact SAS, Table-Storage rate limiting), `MobilityJobRequest` third must-match pair, webapp polling client + manual trigger panel, `infra/main.bicep` additions all gated `deployMobilityBackend bool = false`. No fan-out (OCOKA 8); v1 algorithmic subset only | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
+| 58 | Fire-break efficiency/accuracy pass — manual-draw vegetation now pre-warms the area cache (was per-point only), slope+vegetation analysis run concurrently, frontend legacy calc no longer eagerly computed/shown while the backend is loading (was a live, not just offline, split-brain), cross-slope probes batched, an unsourced over-limit fallback rate named; water/existing-trail geometry (already fetched for the `isWater`/`onExistingTrail` flags) now drawn on the map, mirroring Terrain Mobility's own hydrology reference layer | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
 
 ## Recent Updates
 
@@ -259,6 +260,46 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-18 — fire-break efficiency/accuracy pass (step 58).** A
+  mobility-side-style deep review of fire-break mode's own logic (mirroring
+  the movement-analysis performance programme, not re-litigating
+  `CALCULATION_REVIEW.md`'s already-shipped F1–F8/A1–A7 items) found and
+  fixed five real issues, plus a follow-on visualization request:
+  **Efficiency** — `vegetationAnalysis.ts`'s manual-draw path
+  (`analyzeTrackVegetation`, the primary fire-break flow) never called
+  `fetchStateVegetationArea` before its per-segment point loop, so every
+  drawn line fired one NSW/NVIS query per ~200 m sample even though
+  `routeOptimizer.ts`'s own `sampleVegetation` had already solved exactly
+  this with an area-first pre-warm; now pre-warmed the same way above
+  `AREA_QUERY_MIN_POINTS`. `MapboxMapView.tsx`'s `analyzeAndRender` ran
+  slope and vegetation analysis sequentially despite being independent data
+  sources — now `Promise.all`'d. `slopeCalculation.ts`'s cross-slope probe
+  resolution looped one `Promise.all` per probe instead of batching all of a
+  segment's probes together — now one batched resolution per segment.
+  **Accuracy** — confirmed the "A1 split-brain" documented as resolved in
+  `CALCULATION_REVIEW.md` was still live in production, not just an offline
+  fallback: `AnalysisPanel.tsx`'s frontend coarse single-bucket model was
+  eagerly computed and shown during the real window before every backend
+  response (and indefinitely on backend failure), silently swapping the
+  displayed number between two different estimates depending on network
+  timing. Fixed by gating the frontend calculation on the backend being
+  genuinely unavailable/errored, never merely "hasn't answered yet" — the
+  panel's own `isBackendLoading` diagnostic message was already designed
+  for this and had been dead code until now. Also named
+  `equipmentAnalysis.ts`'s previously-unlabelled `refRate × 0.1` over-limit
+  notional-rate fallback as `OVER_LIMIT_NOTIONAL_RATE_FRACTION` with a
+  provenance comment (still unsourced, same honesty as F3/F7's factors).
+  **Visualization (follow-on request)** — fire-break mode already fetched
+  real water and existing-trail/track geometry per line to derive each
+  segment's `isWater`/`onExistingTrail` flags, then discarded it; that
+  geometry is now carried through on `VegetationAnalysis`
+  (`waterFeatures`/`trailFeatures`) and drawn on the map, reusing the exact
+  technique Terrain Mobility's own hydrology reference layer already uses
+  (filled polygon for water bodies, cased line for
+  rivers/streams/tracks) — repurposed `MapboxMapView.tsx`'s previously-dead
+  `vegetationAnalysis` state slot rather than adding a new one. Gates green:
+  api `npm run build` + `npm run test:unit`, webapp `npm run build` +
+  `npm test` (46/46).
 - **2026-08-03 — OCOKA 5 shipped (step 57): tier-2 backend job protocol.**
   New standalone `api-mobility/` package (not inside `/api` — researched
   against current Microsoft Learn docs first: a Static Web App allows

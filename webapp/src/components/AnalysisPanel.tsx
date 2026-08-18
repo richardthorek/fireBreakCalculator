@@ -533,13 +533,23 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     return deriveTerrainFromSlope(trackAnalysis.maxSlope);
   }, [trackAnalysis]);
 
+  // The frontend model below is a coarse single-bucket fallback (whole-line
+  // terrain/vegetation factors) that materially differs from the backend's
+  // segment-integrated, side-slope/water-aware model
+  // (docs/CALCULATION_REVIEW.md — A1). It must only ever be SHOWN when the
+  // backend is genuinely unavailable or has errored — never merely "hasn't
+  // answered yet" — otherwise the displayed estimate silently swaps between
+  // two different numbers depending on network timing. Gating the memo on
+  // this (rather than computing unconditionally and discarding the result)
+  // also skips the per-equipment loop + debug logging below on every render
+  // where the backend result will be used instead. The `isBackendLoading`
+  // diagnostic message further down the panel relies on `finalCalculations`
+  // staying empty while a backend request is in flight.
+  const useFrontendFallback = analysisReady &&
+    (backendAvailable === false || (backendAvailable === true && !backendLoading && !!backendError));
+
   const calculations = useMemo<CalculationResult[]>(() => {
-    // Don't compute until ready (map settled, or a line is already drawn — the
-    // latter proves the map is interactive even if the settle signal was missed,
-    // which otherwise wedges mobile at "No option"). Avoids analysis during the
-    // initial pan while never blocking a real drawn line.
-    if (!analysisReady) {
-      logger.debug('⏸️ Frontend calculations blocked: not ready yet');
+    if (!useFrontendFallback) {
       return [];
     }
 
@@ -764,7 +774,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     });
 
     return sortedResults;
-  }, [analysisReady, distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
+  }, [useFrontendFallback, distance, trackAnalysis, effectiveVegetation, machinery, aircraft, handCrews, derivedTerrainRequirement]);
 
   // Always use backend results, fallback to frontend calculations only if backend unavailable
   // Type guard for compatibilityLevel

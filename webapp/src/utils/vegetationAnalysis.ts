@@ -9,7 +9,7 @@ type LatLngLike = { lat: number; lng: number } | { lat: number; lon: number };
 import { VegetationType } from '@firebreak/terrain';
 import { VegetationSegment, VegetationAnalysis } from '../types/config';
 import { MAPBOX_TOKEN } from '../config/mapboxToken';
-import { fetchStateVegetation } from './stateVegetationRouter';
+import { fetchStateVegetation, fetchStateVegetationArea, AreaVegetationBounds } from './stateVegetationRouter';
 import { logger } from './logger';
 import { mapFormationToVegetationType } from './vegetationMappingHelper';
 import { fetchCorridorWaterways, distanceToNearestWater, fetchCorridorInfrastructure, distanceToNearestTrail, InfrastructureData } from './infrastructureService';
@@ -26,6 +26,12 @@ const WATER_SNAP_M = 30;
  *  (`RouteComparisonStats.existingTrailDistance`) describe the same ground,
  *  not two different snap radii quietly disagreeing. */
 const TRAIL_SNAP_M = 30;
+
+/** Same threshold as `routeOptimizer.ts`'s own `AREA_QUERY_MIN_POINTS`: below
+ *  this many vegetation samples a per-point sweep is cheaper than an area
+ *  fetch; at or above it, pre-warming the area cache below saves the bulk of
+ *  what would otherwise be one upstream query per ~200 m sample. */
+const AREA_QUERY_MIN_POINTS = 24;
 
 /**
  * Helper function to get longitude from coordinate object that may use lng or lon
@@ -395,10 +401,22 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
       south = Math.min(south, p.lat); north = Math.max(north, p.lat);
       west = Math.min(west, getLng(p)); east = Math.max(east, getLng(p));
     }
-    [waterways, existingTrails] = await Promise.all([
+    const areaBounds: AreaVegetationBounds = { minLat: south, minLng: west, maxLat: north, maxLng: east };
+    // Pre-warm the area vegetation cache once per line (at most one NSW
+    // polygon query + one NVIS raster export) so the per-segment point
+    // lookups below (`resolveVegetation` → `fetchStateVegetation`) resolve
+    // locally instead of firing one query per ~200 m sample — the same
+    // area-first pattern `routeOptimizer.ts`'s `sampleVegetation` already
+    // uses for pathfinding. `fetchStateVegetationArea` caches its result
+    // into the shared area cache and never throws, so it's safe alongside
+    // the other two corridor-wide fetches without its own try/catch.
+    const [waterRes, trailRes] = await Promise.all([
       fetchCorridorWaterways(south, west, north, east),
       fetchCorridorInfrastructure(south, west, north, east),
+      segSpecs.length >= AREA_QUERY_MIN_POINTS ? fetchStateVegetationArea(areaBounds) : Promise.resolve(null),
     ]);
+    waterways = waterRes;
+    existingTrails = trailRes;
   } catch (err) {
     logger.warn('Water-crossing / existing-trail check failed; proceeding without it:', err);
   }
@@ -578,7 +596,13 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
     predominantVegetation,
     vegetationDistribution,
     overallConfidence,
-    usedFallbackData
+    usedFallbackData,
+    // Carried through from the corridor-wide fetch above so the map can
+    // render the actual mapped water/trail geometry (see VegetationAnalysis
+    // doc comments) — the same data each segment's isWater/onExistingTrail
+    // flag already reflects, just not thrown away this time.
+    waterFeatures: waterways.trails.map(t => ({ kind: t.kind, coords: t.coords })),
+    trailFeatures: existingTrails.trails.map(t => ({ kind: t.kind, coords: t.coords })),
   };
 };
 
