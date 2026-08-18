@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 18, 2026 — step 61: new fire-break feature, "incident box" — draw or import a fire perimeter, get wind (live or manual), enter a manual rate of spread per sector, and get a conservative standoff box ("rate of spread + build time = minimum distance") pathfound into a real buildable corridor via the existing optimizer + production-time engine. Owner-directed, out of queue order. Follows step 60 (Col persona review), step 59 (machinery-defaults visibility/persistence/accuracy review) and step 58 (fire-break efficiency/accuracy pass). See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — step 62: route optimizer damage-minimisation pass — a new vegetation-boundary discount makes the corridor optimizer prefer tracing the grass/timber treeline edge over cutting fresh through the middle of a paddock/crop (owner-reported: a uniformly-grassland paddock has no cost gradient today, so the shortest straight line always wins, even when it means unnecessary agricultural damage). Follows step 61 (incident box) and step 60 (Col persona review), both owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -259,6 +259,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 59 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
 | 60 | Col persona review acted on: granular vegetation class (NVIS MVG/NSW SVTM PCT name) no longer silently discarded on segment-merge, now shown per-row and in GIS export; a headline-estimate caveat ("not one flat rate, excludes mobilisation"); new "Field reality check" AI persona/endpoint grounded in the same payload+contract as the narration assistant | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review", [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §4b |
 | 61 | Incident box — draw/import a fire perimeter, wind (live/manual), manual per-sector rate of spread, conservative standoff-distance solve ("ROS + build time = minimum distance"), pathfound into a buildable corridor via the existing optimizer + production-time engine; new `GET /api/wind` | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Incident box" |
+| 62 | Route optimizer damage-minimisation: vegetation-boundary discount — prefer tracing the grass/timber treeline edge over cutting through the middle of a paddock, same discount mechanism as the existing trail discount, shipped directly into the default optimizer | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Damage-minimisation: vegetation-boundary discount" |
 
 ## Recent Updates
 
@@ -267,6 +268,57 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-18 — Route optimizer damage-minimisation pass: vegetation-
+  boundary discount (step 62, owner-directed).** Owner observation: the
+  optimizer's recommended line is often a decent distance from the
+  treeline, running through the "middle" of a paddock that might be a
+  critical crop or pasture — the ask was to minimise mitigation-works
+  damage by preferencing the treeline edge (or existing roads/tracks/
+  waterways, both already preferred via the existing trail discount and
+  the water-as-free-edge rule). Investigated first, per the session's own
+  "challenge your own approach" instruction: `VEGETATION_COST` (grass 1.0
+  vs heavy forest 3.8) already makes grass cheaper, so a naive read is
+  "the optimizer should already do this." The owner's own framing in
+  response settled it: the goal isn't build-cost minimisation at all, it's
+  **damage minimisation** — and a uniformly-grassland paddock has NO cost
+  gradient under the existing model (every cell costs 1.0×), so the
+  shortest straight line through the middle wins by default with no
+  incentive whatsoever to detour toward the edge, regardless of how the
+  build-cost weights are tuned.
+  - **Mechanism**: mirrors the EXISTING trail-discount pattern
+    (`TRAIL_FUEL_DISCOUNT`/`TRAIL_SNAP_M`) rather than inventing a new cost
+    concept. `markVegetationBoundaries()` (`routeOptimizer.ts`) runs a
+    second pass over the already-sampled hex grid — after
+    `buildSharedWideGrid`'s nodes are populated, so zero extra network
+    cost — flagging a node `nearVegetationBoundary: true` when a hex
+    neighbour's `VEGETATION_COST` differs by ≥ `VEGETATION_BOUNDARY_COST_DELTA`
+    (1.0; grass next to lightshrub is a soft gradient and does NOT count,
+    grass next to medium/heavy scrub does). `edgeCost()` applies
+    `VEGETATION_BOUNDARY_DISCOUNT` (0.65) when both edge endpoints are
+    flagged, composing multiplicatively with the trail discount (a track
+    that happens to run the fenceline gets both).
+  - **Honesty**: detection is the same resolution as the underlying NVIS
+    (~100 m national)/NSW SVTM classification, not a surveyed treeline —
+    flagged the same way `onTrail`/`existingTrailDistance` already are
+    (`RouteComparisonStats.vegetationBoundaryDistance`,
+    `RawHeatmapCell`/`HexHeatmapCell.nearVegetationBoundary`), never
+    presented as a precise trace.
+  - **Deliberately not built**: draggable/geometric boundary-snapping. This
+    is a cost-FIELD input into the same Dijkstra search that already
+    prices slope/water/trails, not a separate geometric post-process —
+    keeping it that way means it can't contradict the rest of the cost
+    model the way a bolted-on snap heuristic could. The existing
+    leg-length-scaled search-corridor width (tight for short legs, wide
+    for long) gives "short stays direct, long follows the edge" for free,
+    with no separate distance rule needed.
+  - Shipped directly into the default optimizer (owner decision — no
+    toggle, no A/B). New `webapp/tests/vegetationBoundaryDiscount.test.ts`
+    (7 checks): discount composition (trail+boundary stack), the exact
+    "flat paddock" regression this fixes, single-endpoint-only doesn't
+    discount, heavy forest still costs more regardless, and the detection
+    pass itself (real transition flagged, soft gradient and isolated cells
+    not). Gates green: webapp `npm test` (48/48, one new file) + `npm run
+    build`; api untouched, no rebuild needed.
 - **2026-08-18 — Incident box, a new fire-break feature (step 61,
   owner-directed).** Owner asked for: draw/paint the current fire perimeter,
   use current weather for wind, recommend a standoff "box" prioritising the

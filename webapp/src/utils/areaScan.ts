@@ -96,6 +96,9 @@ export async function scanArea(sw: LatLng, ne: LatLng, options: AreaScanOptions 
       vegEstimated: vegRes[i].estimated,
       // No trail lookup for area recon — terrain + vegetation only, per WP6.
       onTrail: false,
+      // Area recon has no hex-neighbour adjacency pass (unlike the route
+      // optimizer's own grid build) — false, not guessed.
+      nearVegetationBoundary: false,
     });
   });
 
@@ -124,6 +127,7 @@ export async function scanArea(sw: LatLng, ne: LatLng, options: AreaScanOptions 
       avgSlopeDegrees,
       vegetation: node.vegetation,
       onTrail: false,
+      nearVegetationBoundary: false,
       estimated: node.vegEstimated,
     };
   });
