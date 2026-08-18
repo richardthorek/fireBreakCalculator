@@ -2860,6 +2860,59 @@ button:focus {
 }
 .area-recon-clear-btn:hover { border-color: #38bdf8; color: #ffffff; }
 
+/* Incident box map tools — same stacking rule as area recon (§2805), placed
+ * below it so both fire-break box tools can coexist on screen even though
+ * they're mutually exclusive to arm (App.tsx). */
+.incident-box-toggle-btn {
+  position: absolute;
+  top: 226px;
+  right: 20px;
+  z-index: 990;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.incident-box-toggle-btn:hover { border-color: #f87171; color: #ffffff; }
+.incident-box-toggle-btn.active {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: #f87171;
+  color: #fca5a5;
+}
+
+.incident-box-draw-controls {
+  position: absolute;
+  top: 274px;
+  right: 20px;
+  z-index: 990;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.incident-box-draw-count { color: #e2e8f0; font-size: 12px; font-weight: 600; }
+.incident-box-draw-controls button {
+  background: rgba(248, 113, 113, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.incident-box-draw-controls button:hover { border-color: #f87171; color: #ffffff; }
+.incident-box-draw-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .live-feeds-control {
   position: absolute;
   top: 120px;
@@ -5626,3 +5679,88 @@ button:focus {
   color: var(--muted-text, #9ca3af);
   opacity: 0.9;
 }
+
+/* Incident box panel (docs/ROUTE_INTELLIGENCE.md "Incident box") — a plain
+ * collapsible block in the fire-break sidebar, same visual language as the
+ * other analysis panels rather than a bespoke look. */
+.incident-box-panel-open-btn {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.incident-box-panel-open-btn:hover { border-color: #f87171; color: #ffffff; }
+
+.incident-box-panel {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.incident-box-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.incident-box-panel-header h3 { margin: 0; font-size: 0.95rem; }
+.incident-box-panel-header button {
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 6px;
+  color: var(--muted-text, #9ca3af);
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.incident-box-panel-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.incident-box-panel-section p { margin: 0; font-size: 0.8rem; line-height: 1.4; }
+.incident-box-panel-section button {
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  color: #fca5a5;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.incident-box-panel-section button:hover { border-color: #f87171; color: #ffffff; }
+.incident-box-panel-section button:disabled { opacity: 0.5; cursor: not-allowed; }
+.incident-box-import-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.incident-box-import-list button { width: 100%; text-align: left; }
+.incident-box-manual-wind { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.incident-box-manual-wind input { width: 8rem; padding: 0.3rem 0.4rem; border-radius: 5px; border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(15, 23, 42, 0.6); color: #e2e8f0; }
+.incident-box-wind-reading { color: #7dd3fc; font-size: 0.8rem; }
+.incident-box-ros-block { display: flex; flex-direction: column; gap: 0.4rem; }
+.incident-box-ros-block label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--muted-text, #9ca3af); }
+.incident-box-ros-block input { padding: 0.35rem 0.5rem; border-radius: 5px; border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(15, 23, 42, 0.6); color: #e2e8f0; }
+.incident-box-error { color: #f87171; font-size: 0.8rem; }
+.incident-box-caveat {
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  font-size: 0.75rem;
+}
+.incident-box-headline { font-size: 0.9rem; }
+.incident-box-sector-table, .incident-box-equipment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+.incident-box-sector-table th, .incident-box-sector-table td,
+.incident-box-equipment-table th, .incident-box-equipment-table td {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  text-align: left;
+}
+.incident-box-equipment-table tr.incompatible { opacity: 0.5; }

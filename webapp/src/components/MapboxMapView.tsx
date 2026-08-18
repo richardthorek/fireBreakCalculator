@@ -229,6 +229,14 @@ interface MapboxMapViewProps {
   /** Area recon scan lifecycle, for the status badge + clear button. */
   areaReconStatus?: 'idle' | 'running' | 'done' | 'error';
   onClearAreaRecon?: () => void;
+  /** Incident box tool — true while armed to paint a fire-perimeter polygon
+   *  (each click adds a vertex; an explicit "Finish" button closes it). */
+  incidentBoxActive?: boolean;
+  onIncidentBoxActiveChange?: (active: boolean) => void;
+  /** Fired once the user finishes the perimeter (>= 3 vertices, explicit finish). */
+  onIncidentPerimeterDrawn?: (points: { lat: number; lng: number }[]) => void;
+  /** The generated/edited incident box ring, rendered as an editable overlay. */
+  incidentBoxRing?: [number, number][] | null;
   /** Current map view bounds — emitted when the view changes. */
   onViewBoundsChange?: (bounds: ViewBounds | null) => void;
   /** Live feed data to render on the map. */
@@ -396,6 +404,10 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   areaReconHeatmap = null,
   areaReconStatus = 'idle',
   onClearAreaRecon,
+  incidentBoxActive = false,
+  onIncidentBoxActiveChange,
+  onIncidentPerimeterDrawn,
+  incidentBoxRing = null,
   onViewBoundsChange,
   liveFeedData: externalLiveFeedData,
   tacticalMode = false,
@@ -511,6 +523,19 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
   const onAreaReconBoxDrawnRef = useRef(onAreaReconBoxDrawn);
   useEffect(() => { onAreaReconBoxDrawnRef.current = onAreaReconBoxDrawn; }, [onAreaReconBoxDrawn]);
   const areaReconStartRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Incident box tool — while armed, each click adds a perimeter vertex; an
+  // explicit "Finish perimeter" button (not a click-count or dblclick, which
+  // fights Mapbox's own zoom gesture) closes the shape. Refs so the
+  // once-registered map click listener always reads the latest prop values.
+  const incidentBoxActiveRef = useRef(false);
+  useEffect(() => { incidentBoxActiveRef.current = incidentBoxActive; }, [incidentBoxActive]);
+  const onIncidentBoxActiveChangeRef = useRef(onIncidentBoxActiveChange);
+  useEffect(() => { onIncidentBoxActiveChangeRef.current = onIncidentBoxActiveChange; }, [onIncidentBoxActiveChange]);
+  const onIncidentPerimeterDrawnRef = useRef(onIncidentPerimeterDrawn);
+  useEffect(() => { onIncidentPerimeterDrawnRef.current = onIncidentPerimeterDrawn; }, [onIncidentPerimeterDrawn]);
+  const incidentPerimeterPointsRef = useRef<{ lat: number; lng: number }[]>([]);
+  const [incidentPerimeterPoints, setIncidentPerimeterPoints] = useState<{ lat: number; lng: number }[]>([]);
 
   // Terrain Mobility mode — origin/objective PAINT tool (owner feedback
   // 2026-07-26: press-drag to paint circular dabs, not a two-click
@@ -1076,6 +1101,17 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       });
     });
 
+    // Incident box tool — accumulate perimeter vertices on each click while
+    // armed. Finishing is an explicit button (see incidentPerimeterPoints
+    // state below), not a click count, so the user can lay down as many
+    // vertices as the perimeter actually needs.
+    map.on('click', (e: any) => {
+      if (!incidentBoxActiveRef.current) return;
+      const pt = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      incidentPerimeterPointsRef.current = [...incidentPerimeterPointsRef.current, pt];
+      setIncidentPerimeterPoints(incidentPerimeterPointsRef.current);
+    });
+
     // Terrain Mobility mode — press-drag-to-paint AOI tool (owner feedback
     // 2026-07-26): while a role is armed, mousedown starts a stroke and every
     // subsequent mousemove (throttled by distance so a slow drag doesn't
@@ -1350,6 +1386,49 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
       setOverlay('area-recon-preview', null, {});
     }
   }, [areaReconActive]);
+
+  // Incident perimeter tool: clear accumulated vertices/preview whenever the
+  // tool is switched off (finished, cancelled, or toggled off externally).
+  useEffect(() => {
+    if (!incidentBoxActive) {
+      incidentPerimeterPointsRef.current = [];
+      setIncidentPerimeterPoints([]);
+      setOverlay('incident-perimeter-preview', null, {});
+    }
+  }, [incidentBoxActive]);
+
+  // Live preview of the perimeter as vertices are added — a line while
+  // fewer than 3 points, a closed polygon once there are enough to form one.
+  useEffect(() => {
+    if (incidentPerimeterPoints.length === 0) {
+      setOverlay('incident-perimeter-preview', null, {});
+      return;
+    }
+    const coords = incidentPerimeterPoints.map(p => [p.lng, p.lat]);
+    if (incidentPerimeterPoints.length < 3) {
+      setOverlay('incident-perimeter-preview', { type: 'LineString', coordinates: coords }, {
+        main: { type: 'line', paint: { 'line-color': '#f97316', 'line-width': 3, 'line-dasharray': [2, 2] } },
+      });
+    } else {
+      const ring = [...coords, coords[0]];
+      setOverlay('incident-perimeter-preview', { type: 'Polygon', coordinates: [ring] }, {
+        main: { type: 'fill', paint: { 'fill-color': '#f97316', 'fill-opacity': 0.15 } },
+        casing: { type: 'line', paint: { 'line-color': '#f97316', 'line-width': 2, 'line-dasharray': [2, 2] } },
+      });
+    }
+  }, [incidentPerimeterPoints]);
+
+  // The confirmed/edited incident box, once generated by App.tsx.
+  useEffect(() => {
+    if (!incidentBoxRing || incidentBoxRing.length < 4) {
+      setOverlay('incident-box', null, {});
+      return;
+    }
+    setOverlay('incident-box', { type: 'Polygon', coordinates: [incidentBoxRing] }, {
+      main: { type: 'fill', paint: { 'fill-color': '#dc2626', 'fill-opacity': 0.08 } },
+      casing: { type: 'line', paint: { 'line-color': '#dc2626', 'line-width': 3 } },
+    });
+  }, [incidentBoxRing]);
 
   // Optimized route preview: dashed amber line with dark casing.
   useEffect(() => {
@@ -3248,6 +3327,48 @@ export const MapboxMapView: React.FC<MapboxMapViewProps> = ({
         <button type="button" className="area-recon-clear-btn" onClick={onClearAreaRecon}>
           Clear scan
         </button>
+      )}
+      {!tacticalMode && onIncidentBoxActiveChange && (
+        <button
+          type="button"
+          className={`incident-box-toggle-btn${incidentBoxActive ? ' active' : ''}`}
+          onClick={() => onIncidentBoxActiveChange(!incidentBoxActive)}
+          title="Paint the current fire perimeter to get a recommended box"
+        >
+          {incidentBoxActive ? 'Click perimeter…' : 'Incident box'}
+        </button>
+      )}
+      {incidentBoxActive && (
+        <div className="incident-box-draw-controls">
+          <span className="incident-box-draw-count">{incidentPerimeterPoints.length} pt{incidentPerimeterPoints.length === 1 ? '' : 's'}</span>
+          {incidentPerimeterPoints.length > 0 && (
+            <button
+              type="button"
+              className="incident-box-undo-btn"
+              onClick={() => {
+                const next = incidentPerimeterPointsRef.current.slice(0, -1);
+                incidentPerimeterPointsRef.current = next;
+                setIncidentPerimeterPoints(next);
+              }}
+            >
+              Undo point
+            </button>
+          )}
+          <button
+            type="button"
+            className="incident-box-finish-btn"
+            disabled={incidentPerimeterPoints.length < 3}
+            onClick={() => {
+              const points = incidentPerimeterPointsRef.current;
+              incidentPerimeterPointsRef.current = [];
+              setIncidentPerimeterPoints([]);
+              onIncidentBoxActiveChangeRef.current?.(false);
+              onIncidentPerimeterDrawnRef.current?.(points);
+            }}
+          >
+            Finish perimeter
+          </button>
+        </div>
       )}
       {/* Brush cursor (owner, 2026-07-27: "the mouse icon for painting needs
           to be different, a size appropriate brush"). A ring approximating

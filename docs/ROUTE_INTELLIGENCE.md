@@ -6544,5 +6544,93 @@ ensemble-transit streaming WP4 already ships) has not been built.
 
 ---
 
+## Incident box
+
+Fire-break mode tool (not Terrain Mobility — owned by `IncidentBoxPanel.tsx`,
+`webapp/src/utils/incidentBox{Geometry,Planner}.ts`,
+`incidentBoundaryImport.ts`, `windService.ts`; backend `GET /api/wind`,
+`docs/api-register.md` "Wind (Incident Box)"). Get a fire's current
+perimeter, get wind, and recommend a standoff "box" — deepest at the head
+(downwind), shallowest at the rear — before pathfinding it into a real
+buildable corridor with the existing production-time engine.
+
+**Getting the perimeter.** Two paths, both feeding the same
+`onIncidentPerimeterDrawn` callback:
+- **Manual draw** — a multi-click polygon tool on the map (own armed state,
+  `incidentBoxActive`/`incidentPerimeterPoints` in `MapboxMapView.tsx`),
+  finished with an explicit "Finish perimeter" button rather than a click
+  count or double-click (double-click already means "zoom in" to Mapbox).
+  Matches how this is actually done in the field per the owner: a rough
+  line, ~10 vertices, loosely tracking roads/waterways, refined as planning
+  develops — not a precise trace.
+- **Import from the live fire-boundary feed** — `incidentBoundaryImport.ts`
+  reuses the EXISTING `fetchFireBoundaries()` (Digital Atlas of Australia
+  NRT, `liveFeedsService.ts`, already shipped and national — covers NSW and
+  every other state that feed lists, not NSW-specific). Note: the NSW RFS
+  "majorIncidents.json" feed used elsewhere in this app (`parseNsw`) is
+  point-only, no boundary geometry — it was the feed named in the original
+  ask but is NOT the source here; `fetchFireBoundaries()` is what actually
+  carries polygons.
+
+**Getting wind.** `GET /api/wind` proxies Open-Meteo (live, free, no key) —
+explicitly NOT presented as a BOM/AFDRS product; official AFDRS access is a
+separate, currently blocked item. Manual entry (`manualWindObservation`) is
+a first-class fallback, not an error path: fire-break mode's zero-reception
+guarantee only holds if a failed/offline wind fetch still produces a usable
+box, flagged `usedFallbackWind: true` end to end (`WindObservation` is a
+must-match pair, `api/src/types/incidentBox.ts` ↔ `webapp/src/utils/windService.ts`).
+
+**The standoff distance — "rate of spread plus construction time equals
+minimum distance" (the owner's own framing, verbatim).** This is
+deliberately NOT a fire-behaviour spread-rate model — this app's data-
+honesty rule rules out an invented spread-rate coefficient the same way it
+rules out an invented fuel-age clearing-rate curve (see that item in
+`master_plan.md`'s "Next up"). Rate of spread is a **manual input** — the
+user's own figure, per sector (head required; flank/rear default to the
+head value if left blank, which is the conservative choice: never assume
+the flanks/rear are slower unless told so).
+
+`incidentBoxGeometry.ts` classifies each perimeter vertex into a wind
+sector (head/leftFlank/rightFlank/rear, by angle off the downwind bearing)
+and offsets vertices outward — pure geometry, no network calls, so it's
+cheaply unit-tested (`webapp/tests/incidentBoxGeometry.test.ts`).
+
+`incidentBoxPlanner.ts` then solves each present sector's standoff distance
+by fixed-point iteration (capped at 3 rounds): offset the sector's vertices
+by a candidate distance, run the EXISTING production-time engine
+(`analyzeTrackSlopes`/`analyzeTrackVegetation`/`buildRouteProfile`/
+`calculateEquipmentAnalysis` — no new costing model) on that straight offset
+line, take the conservative (max, never min) compatible-resource time, and
+set the next candidate distance to `rate-of-spread × that time` — i.e. the
+distance the fire would cover in exactly the time it takes to build the
+break there. Converges when the candidate stops moving; a sector that
+doesn't converge within 3 rounds is flagged `converged: false` and its
+distance treated as a lower bound, not a settled answer (same "not-
+assessed ≠ found nothing" honesty discipline used elsewhere in this repo,
+e.g. OCOKA cover/concealment).
+
+**Pathfinding the final box.** Once distances settle, the box ring is
+pathfound ONCE (not per iteration, for cost) through the EXISTING corridor
+optimizer (`optimizeRoute`, `routeOptimizer.ts`) as a closed loop —
+"specific corridors" per the original ask. This is what actually snaps the
+recommended line onto existing roads/trails (already built, per the owner —
+the optimizer's existing trail-discount behaviour handles this with no new
+code) and routes around water. If pathfinding fails, the raw box ring is
+used instead, flagged `usedFallbackRoute: true`.
+
+**The headline number.** `IncidentBoxPanel.tsx` shows the same conservative
+(max compatible) construction-time figure the sector solve uses, alongside
+the full equipment comparison table (same `calculateEquipmentAnalysis`
+response shape `AnalysisPanel.tsx` already renders — no second costing
+engine, no duplicated numbers).
+
+**Deliberately out of scope for this first slice**: draggable box-vertex
+editing (the box is instead re-generated from adjustable rate-of-spread/
+wind inputs — arguably better for touch/field use per the root CLAUDE.md's
+"touch-first" rule than fiddly vertex-dragging on a small screen); per-
+vertex (rather than per-sector) standoff solving, which would multiply the
+number of pathfind/costing calls for marginal precision gain on a ~10-
+vertex rough perimeter.
+
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.

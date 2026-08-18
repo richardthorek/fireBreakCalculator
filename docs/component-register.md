@@ -45,6 +45,7 @@ This is a **living document** that should be kept synchronized with the codebase
 | AdvisorPanel | `webapp/src/components/AdvisorPanel.tsx` | `{ assessment, optimizerStatus/result, onOptimize/Apply/Dismiss, onLocate }` | Plan Assistant: ranked insight cards + route optimizer compare/apply | planInsights, routeOptimizer |
 | ExportImportControls | `webapp/src/components/ExportImportControls.tsx` | `{ exportInput, onImportAsPlan, onAddOverlay, overlayCount, onClearOverlays }` | GIS export menu (GeoJSON/KML/KMZ/SHP/GPX) + file import dialog | gisExport, gisImport, fflate, @mapbox/shp-write |
 | AiAssistantCard | `webapp/src/components/AiAssistantCard.tsx` | `{ payload: AssistantPayload \| null }` | AI briefing generator + grounded chat, source-badged (ai/template/unavailable), citation chips | assistantApi |
+| IncidentBoxPanel | `webapp/src/components/IncidentBoxPanel.tsx` | `{ active, onActiveChange, drawingActive, onDrawingActiveChange, drawnPerimeter, onBoxRingChange, mapCenter }` | Incident box tool: get a fire perimeter (draw or import) → wind + rate-of-spread inputs → conservative standoff box → pathfound corridor + build-time estimate | windService, incidentBoxPlanner, incidentBoundaryImport |
 
 ## Terrain Mobility Components
 
