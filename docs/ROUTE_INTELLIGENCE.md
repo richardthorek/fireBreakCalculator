@@ -3337,6 +3337,36 @@ Resolved by the two-pass structure above:
 - **Fine-narrow pass** → bare-earth DEM via *chunked* `getSamples`, over the
   few cells inside a discovered corridor, where the accuracy pays for itself.
 
+**2026-08-17 — the wall got hit for real, because the two-pass split was never
+built.** The "Shipped" note directly below records that the lazy-grid work
+that landed 2026-07-29 deliberately did NOT implement this two-pass split —
+every round still asks for the DEM primary path over its WHOLE materialised
+set, uniformly, regardless of scale. `'standard'/'fine'` fidelity's own hard
+cell ceilings (`mobilityGrid.ts` `FIDELITY_TIERS`) are 12,000/50,000 — both
+routinely past the 5,000-point cap this section already predicted, and in
+production that showed up exactly as forecast: `POST /api/elevation/profile`
+400s, with `sampleElevationsBatch`'s existing "DEM failed → fall back to
+per-point Mapbox" path then firing for the ENTIRE oversized batch — a
+request-per-point tile fetch/decode loop, which is what was actually behind
+reports of the tab freezing and the map never painting during a real run
+(not a rendering bug this time — the WP1/WP4 progressive-paint fixes and
+the `mobilityHeatmapForMap` memo fix, PR
+[#214](https://github.com/richardthorek/fireBreakCalculator/pull/214), were
+both real and correct, but starved of any data to paint if a round's own
+elevation fetch never returns).
+
+**Interim fix (not the two-pass redesign above — a smaller, immediately
+correct fix underneath it):** `sampleElevationsBatch` now chunks any point
+set over the cap into multiple ≤5,000-point DEM requests instead of one
+oversized request. Every chunk still gets the fast batched-DEM path
+independently; per-point Mapbox fallback now only fires for a chunk whose
+OWN request genuinely fails, never for the whole set merely because it
+didn't fit in one request. This does not reduce DEM call volume the way the
+coarse/fine split would (that remains the real fix, still unbuilt, still
+WP6-adjacent) — it just makes the current uniform-resolution pipeline
+correct and reasonably fast at any scale instead of silently falling off a
+cliff past 5,000 cells.
+
 Caveat on "internal cost": these rasters decode in the **browser** (canvas
 `getImageData`), not server-side. The ceiling is client CPU/memory — generous,
 but real at very fine resolution over very large areas.
