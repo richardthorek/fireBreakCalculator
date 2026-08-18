@@ -6,6 +6,7 @@ const connectionString = process.env.TABLES_CONNECTION_STRING;
 const equipmentTableName = process.env.EQUIPMENT_TABLE_NAME || 'equipment';
 const vegetationTableName = process.env.VEGETATION_TABLE_NAME || 'vegetation';
 const savedPlansTableName = process.env.SAVED_PLANS_TABLE_NAME || 'savedplans';
+const equipmentOverridesTableName = process.env.EQUIPMENT_OVERRIDES_TABLE_NAME || 'equipmentoverrides';
 const mobilityTelemetryTableName = process.env.MOBILITY_TELEMETRY_TABLE_NAME || 'mobilitytelemetry';
 
 if (!connectionString) {
@@ -23,6 +24,10 @@ export function getVegetationTableClient(): TableClient {
 
 export function getSavedPlansTableClient(): TableClient {
   return TableClient.fromConnectionString(connectionString!, savedPlansTableName);
+}
+
+export function getEquipmentOverrideTableClient(): TableClient {
+  return TableClient.fromConnectionString(connectionString!, equipmentOverridesTableName);
 }
 
 export function getMobilityTelemetryTableClient(): TableClient {

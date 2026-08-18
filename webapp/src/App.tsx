@@ -21,6 +21,16 @@ import { readPlanFromUrl, encodePlan, SharedPlan } from './utils/planSharing';
 import { AccountControl } from './components/AccountControl';
 import { SuiteSession } from './utils/suiteAuth';
 import { createSavedPlan, SavedPlanApi } from './utils/savedPlansApi';
+import {
+  EquipmentOverrideMap,
+  applyOverrides,
+  diffFromBase,
+  getSessionOverrides,
+  setSessionOverride,
+  clearSessionOverride,
+  clearAllSessionOverrides,
+} from './utils/equipmentOverrides';
+import { listEquipmentOverrides, setEquipmentOverride, deleteEquipmentOverride } from './utils/equipmentOverridesApi';
 import { buildChainageIndex, pointAtChainage, sliceByChainage } from '@firebreak/terrain';
 import { optimizeRoute, OptimizedRouteResult, HexHeatmapCell } from './utils/routeOptimizer';
 import { scanArea } from './utils/areaScan';
@@ -992,11 +1002,23 @@ const App: React.FC = () => {
     setApplyLineRequest({ coords, version: applyVersionRef.current });
   }, []);
   
-  // Raw remote equipment (backend canonical) + loading state
-  const [equipment, setEquipment] = useState<EquipmentApi[]>([]);
+  // Raw remote equipment (backend canonical, platform defaults untouched) + loading state
+  const [rawEquipment, setRawEquipment] = useState<EquipmentApi[]>([]);
   const [loadingEquip, setLoadingEquip] = useState(false);
   const [equipError, setEquipError] = useState<string | null>(null);
-  
+
+  // Per-item customisation of standard catalogue items — session-only until
+  // signed in, then persisted per-account. See utils/equipmentOverrides.ts.
+  const [equipmentOverrides, setEquipmentOverrides] = useState<EquipmentOverrideMap>(() => getSessionOverrides());
+  const overridesPersistToAccount = !!suiteSession?.fireBreakEnabled;
+
+  // Effective equipment list the rest of the app consumes — platform
+  // defaults with the caller's own customisation layered on top.
+  const equipment = useMemo(
+    () => applyOverrides(rawEquipment, equipmentOverrides),
+    [rawEquipment, equipmentOverrides]
+  );
+
   // Vegetation formation mappings + loading state
   const [vegetationMappings, setVegetationMappings] = useState<VegetationFormationMappingApi[]>([]);
   const [loadingVegetationMappings, setLoadingVegetationMappings] = useState(false);
@@ -1220,7 +1242,7 @@ const App: React.FC = () => {
     setEquipError(null);
     try {
       const data = await listEquipment();
-      setEquipment(data);
+      setRawEquipment(data);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to load equipment';
       setEquipError(errorMessage);
@@ -1228,6 +1250,49 @@ const App: React.FC = () => {
       setLoadingEquip(false);
     }
   }, []);
+
+  // Load this visitor's machinery customisation: account-persisted overrides
+  // when signed in with fireBreakEnabled, otherwise the session-only store.
+  // On first sign-in, any session overrides made before signing in are
+  // migrated up to the account rather than silently discarded.
+  const loadEquipmentOverrides = useCallback(async () => {
+    if (suiteSession?.fireBreakEnabled) {
+      try {
+        const sessionOverrides = getSessionOverrides();
+        const sessionIds = Object.keys(sessionOverrides);
+        if (sessionIds.length > 0) {
+          await Promise.all(
+            sessionIds.map((id) => {
+              const item = rawEquipment.find((e) => e.id === id);
+              if (!item) return Promise.resolve();
+              return setEquipmentOverride(suiteSession.token, id, item.type, sessionOverrides[id]);
+            })
+          );
+          clearAllSessionOverrides();
+        }
+        const remote = await listEquipmentOverrides(suiteSession.token);
+        const map: EquipmentOverrideMap = {};
+        for (const o of remote) map[o.equipmentId] = o.fields;
+        setEquipmentOverrides(map);
+      } catch (error) {
+        logger.warn('Failed to load equipment overrides from account', error);
+      }
+    } else {
+      setEquipmentOverrides(getSessionOverrides());
+    }
+  }, [suiteSession, rawEquipment]);
+
+  // Re-resolve overrides whenever sign-in state changes, or once the
+  // platform catalogue has loaded (needed to type-tag a session→account
+  // migration correctly).
+  useEffect(() => {
+    if (suiteSession?.fireBreakEnabled) {
+      if (rawEquipment.length > 0) loadEquipmentOverrides();
+    } else {
+      setEquipmentOverrides(getSessionOverrides());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suiteSession, rawEquipment.length > 0]);
 
   // Vegetation mappings loader
   const loadVegetationMappings = useCallback(async () => {
@@ -1361,15 +1426,49 @@ const App: React.FC = () => {
   };
 
   const handleUpdate = async (item: EquipmentApi) => {
+    if (item.standard) {
+      // Standard catalogue rows are shared platform defaults — the backend
+      // rejects a direct PUT on one. Personal tuning goes through the
+      // override layer instead: only the fields that actually changed vs
+      // the platform default are saved, so the base row is never touched.
+      const base = rawEquipment.find((e) => e.id === item.id) ?? item;
+      const patch = diffFromBase(base, item);
+      if (Object.keys(patch).length === 0) return;
+      if (suiteSession?.fireBreakEnabled) {
+        const saved = await setEquipmentOverride(suiteSession.token, item.id, item.type, patch);
+        setEquipmentOverrides((prev) => ({ ...prev, [item.id]: saved.fields }));
+      } else {
+        const next = setSessionOverride(item.id, patch);
+        setEquipmentOverrides(next);
+      }
+      return;
+    }
     await updateEquipmentItem(item);
     await loadEquipment();
   };
 
+  const handleResetEquipment = async (item: EquipmentApi) => {
+    if (suiteSession?.fireBreakEnabled) {
+      await deleteEquipmentOverride(suiteSession.token, item.id);
+    } else {
+      clearSessionOverride(item.id);
+    }
+    setEquipmentOverrides((prev) => {
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
+  };
+
   const handleDelete = async (item: EquipmentApi) => {
+    // Standard items can't be deleted (backend enforces this too) — the
+    // panel already hides the delete affordance for them, offering Reset
+    // instead, so reaching here with a standard item shouldn't happen.
+    if (item.standard) return;
     await deleteEquipment(item.type, item.id);
     await loadEquipment();
   };
-  
+
   // CRUD helpers for vegetation mappings
   const handleCreateVegetationMapping = async (mapping: CreateVegetationMappingInput) => {
     await createVegetationMapping(mapping);
@@ -1707,6 +1806,9 @@ const App: React.FC = () => {
           onCreateEquipment={handleCreate}
           onUpdateEquipment={handleUpdate}
           onDeleteEquipment={handleDelete}
+          isEquipmentOverridden={(item) => item.id in equipmentOverrides}
+          onResetEquipment={handleResetEquipment}
+          equipmentPersistsToAccount={overridesPersistToAccount}
           
           // Vegetation mapping props
           vegetationMappings={vegetationMappings}

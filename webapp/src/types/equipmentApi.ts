@@ -16,6 +16,10 @@ export interface EquipmentBase {
   active: boolean;
   /** True for built-in standard catalogue items seeded by the backend. */
   standard?: boolean;
+  /** One-line citation/rationale for this item's figures — only set on
+   * standard items. See api/src/data/standardEquipment.ts's sourcing note
+   * and docs/CALCULATION_REVIEW.md's accuracy review. */
+  sourceNote?: string;
   version: number;
   createdAt: string;
   updatedAt: string;

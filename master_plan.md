@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 3, 2026 — OCOKA 5 shipped, step 57: tier-2 backend job protocol (`api-mobility/`, Durable orchestration, blob artefacts + per-artefact SAS), gated `deployMobilityBackend bool = false`. See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — step 58: machinery-defaults visibility, per-user customisation/persistence, and a standard-catalogue accuracy review (owner-directed, out of queue order). See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -250,6 +250,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 55 | Fixed a performance regression in step 51's own `onTrail` corner-sampling fix — 7× per-feature calls collapsed to 7 cheap whole-array calls + one tag-resolution pass, same correctness | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §48 |
 | 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | 57 (OCOKA 5) | Tier-2 backend job protocol — new standalone `api-mobility/` package (Durable orchestrator, 5 sequential activities, blob artefacts, per-artefact SAS, Table-Storage rate limiting), `MobilityJobRequest` third must-match pair, webapp polling client + manual trigger panel, `infra/main.bicep` additions all gated `deployMobilityBackend bool = false`. No fan-out (OCOKA 8); v1 algorithmic subset only | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
+| 58 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
 
 ## Recent Updates
 
@@ -258,6 +259,33 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-18 — Machinery defaults: visibility, customisation/persistence,
+  accuracy review (step 58, owner-directed, out of queue order).** Two asks:
+  (1) any user can adjust a standard machinery/aircraft/hand-crew item's
+  cost/rate/limits; anonymous edits are session-only (`sessionStorage`,
+  gone on tab close), signed-in users (Station Manager, `fireBreakEnabled`
+  — same entitlement saved plans use) get it persisted per-account and
+  restorable, with a "Reset to default" action — the intended sign-up
+  incentive. (2) reviewed and cited the sourcing behind all 15 standard
+  catalogue items, visible in the app (equipment panel "Std" badge
+  tooltip), not just in a doc. **A real correctness gap found and fixed
+  along the way:** `equipmentUpdate`/`equipmentDelete` were fully
+  anonymous with no session/account distinction at all — any visitor
+  editing a standard item permanently mutated the *shared* Table Storage
+  row for every other user. Fixed by making standard rows read-only via
+  those endpoints (`409 { standard: true }`, pointing to the new API
+  instead) and adding a per-user override layer
+  (`api/src/models/equipmentOverride.ts` + `equipmentOverridesStore.ts` +
+  three new `equipmentOverride*` functions) that patches only the
+  whitelisted fields a user actually changed — the platform default row is
+  never touched, so deleting an override reverts exactly. Full detail,
+  including the accuracy review's findings by confidence tier and what
+  couldn't be verified in this pass (two source PDFs returned 403/binary
+  in the review environment — corroborated via secondary sources instead,
+  stated honestly per item, not glossed over): `CALCULATION_REVIEW.md`
+  "Standard catalogue accuracy review" + "Customisation & persistence
+  architecture". Gates green: webapp `npm test` (45/45 files) + `npm run
+  build`, api `npm run test:unit`.
 - **2026-08-03 — OCOKA 5 shipped (step 57): tier-2 backend job protocol.**
   New standalone `api-mobility/` package (not inside `/api` — researched
   against current Microsoft Learn docs first: a Static Web App allows

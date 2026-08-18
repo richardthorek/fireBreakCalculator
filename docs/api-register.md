@@ -16,8 +16,17 @@ This is a **living document** that should be kept synchronized with the API code
 | `/api/equipment` | POST | Create new equipment | `EquipmentCreateRequest` | `Equipment` | No |
 | `/api/equipment/seed` | POST | Seed the built-in standard equipment catalogue. `?force=true` overwrites existing standard rows; otherwise seeds only when empty. | None | `{ seeded, force, count, equipment[] }` | No |
 | `/api/equipment/{id}` | GET | Get equipment by ID | None | `Equipment` | No |
-| `/api/equipment/{id}` | PUT | Update equipment | `EquipmentUpdateRequest` | `Equipment` | No |
-| `/api/equipment/{id}` | DELETE | Delete equipment | None | `204 No Content` | No |
+| `/api/equipment/{type}/{id}` | PUT | Update equipment. Rejects with `409 { standard: true }` when the target is a built-in standard catalogue row — those are shared platform defaults; use the override endpoints below instead | `EquipmentUpdateRequest` | `Equipment` | No |
+| `/api/equipment/{type}/{id}` | DELETE | Delete equipment. Rejects with `409 { standard: true }` for a standard catalogue row (never removable — set `active: false` via an override instead) | None | `204 No Content` | No |
+| `/api/equipment/overrides` | GET | List the signed-in user's saved equipment overrides (their persisted customisation of standard catalogue items) | None | `EquipmentOverride[]` | Yes (`fireBreakEnabled`) |
+| `/api/equipment/overrides/{id}` | PUT | Upsert the caller's override for one equipment item — a whitelisted field patch (cost/rate/limits/etc., see `OVERRIDABLE_EQUIPMENT_FIELDS`); the underlying standard row is never touched, so every other user keeps seeing the platform default | `{ equipmentType, fields }` | `EquipmentOverride` | Yes (`fireBreakEnabled`) |
+| `/api/equipment/overrides/{id}` | DELETE | Revert one item to the platform default by deleting the caller's override. Idempotent — no override present is not an error | None | `204 No Content` | Yes (`fireBreakEnabled`) |
+
+Anonymous visitors get the same customisation ability entirely client-side: the
+webapp keeps unsaved overrides in `sessionStorage` (cleared when the tab
+closes) and only calls the `/equipment/overrides` endpoints once signed in —
+see `webapp/src/utils/equipmentOverrides.ts` and `master_plan.md`'s
+"Machinery defaults: visibility, customisation, accuracy" entry.
 
 ### Equipment Data Model
 ```typescript

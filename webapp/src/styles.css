@@ -619,6 +619,10 @@ html, body {
 .btn.del:hover { background:#641717; }
 .btn.cancel { background:#444f5a; }
 .btn.edit { background:#315170; }
+.btn.reset { background:#8a5a12; border-color:#8a5a12; }
+.btn.reset:hover { background:#734b0d; }
+.tag.mini.modified { background:#8a5a12; color:#fff; margin-left:4px; }
+.equip-persistence-hint { margin:0 0 6px; padding:6px 10px; font-size:11px; color:#cbd5e1; background:#22303d; border:1px solid #33465a; border-radius:4px; }
 .quick-add { background:#0d6efd; border:1px solid #0d6efd; color:#fff; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
 .quick-add:disabled { opacity:0.5; cursor:not-allowed; }
 .equip-error { background:#872626; padding:6px 10px; border-radius:4px; font-size:12px; }

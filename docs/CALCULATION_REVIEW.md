@@ -4,6 +4,98 @@
 
 ---
 
+## Standard catalogue accuracy review (2026-08-18)
+
+Owner request: review, test and document the accuracy of the 15 pre-loaded
+standard machinery/aircraft/hand-crew items (`api/src/data/standardEquipment.ts`,
+mirrored in `webapp/src/config/standardEquipment.ts`), and make that sourcing
+visible and adjustable in the app — see the "Machinery defaults: visibility,
+customisation, accuracy" entry in `master_plan.md`.
+
+**What this pass did:** every one of the 15 items now carries a `sourceNote`
+field (`EquipmentBase.sourceNote`) — a one-line citation/rationale for its
+figures, surfaced in the equipment panel's "Std" badge tooltip so a user can
+judge a default's credibility before relying on it or overriding it (see
+`EquipmentConfigPanel.tsx`). Every item was checked for:
+- **Internal consistency** — rates increase monotonically with dozer/aircraft
+  class (GRADER < DOZER-LIGHT... < DOZER-HEAVY; HELI-LIGHT < HELI-MED <
+  HELI-HEAVY by both capacity and cost), `maxSlope` widens with machine class,
+  and `allowedTerrain`/`allowedVegetation` gating is coherent with each
+  item's stated capability (e.g. GRADER excluded from `heavyforest`,
+  DOZER-HEAVY admitted to `very_steep`).
+- **Structural grounding** — cross-checked against the three sources already
+  cited in the file header: NWCG Fireline Handbook / 2021 Fire Line
+  Production Rate Tables (dozer + 20-person-crew rates by fuel model), DELWP
+  Report 56 "Prediction of firefighting resources for suppression
+  operations" (McCarthy, Tolhurst & Wouters — real Victorian fireground data:
+  D6/D7/D9 bulldozers modelled together, 33 cases; 6-person hand crews
+  average 90–120 m/crew/hour across mixed conditions), and NAFC standard
+  aircraft categories/tank capacities.
+
+**What this pass could NOT do:** re-derive every figure line-by-line from
+the primary tables. Both PDFs (NWCG production tables, DELWP Report 56)
+returned 403/binary-only responses to the tools available in this review
+environment, so verification stopped at corroborating order-of-magnitude and
+structural claims via secondary sources, not reading the exact table cells.
+This is stated per-item in each `sourceNote`, not glossed over — the same
+honesty convention the OCOKA programme uses for its own unverified MCOO
+vocabulary (`CLAUDE.md`).
+
+**Findings, by confidence tier:**
+- **Best-grounded:** the four dozer classes (GRADER, DOZER-LIGHT/MED/HEAVY)
+  and all five aircraft — structural match to NAFC categories/tank sizes is
+  strong (e.g. SEAT's 3,000 L matches the AT-802 Fire Boss's published tank;
+  LAT's 15,000 L sits inside the published RJ85/B737-class LAT range).
+- **Plausible but not independently verified:** CREW-STD's 30 m/person/hour —
+  higher than Report 56's 90–120 m/crew/hour mixed-conditions average
+  (~15–20 m/person/hour for a 6-person crew), which is expected since this
+  catalogue's reference rate is FLAT GRASSLAND easiest-case (the production
+  model derates every other condition from it — see file header), but the
+  grassland-only subset of Report 56 wasn't isolated to confirm the gap is
+  exactly right. CREW-CHAINSAW and CREW-STRIKE are the same tier.
+- **No literature table found — the project's own calibrated estimate:**
+  EXCAVATOR, POSITRACK (machinery) and CREW-RAFT (hand crew). Each
+  `sourceNote` says so explicitly rather than implying a citation that
+  doesn't exist.
+
+**Customisation & persistence architecture (same pass):** previously,
+`equipmentUpdate`/`equipmentDelete` were fully anonymous and mutated the
+*shared* Table Storage row directly — any visitor editing a standard item
+changed what every other user (and every anonymous visitor) saw, with no
+session/account distinction at all. Fixed by splitting the two concerns:
+- The platform default rows (`standard: true`) are now **read-only** via the
+  direct CRUD endpoints — `equipmentUpdate`/`equipmentDelete` reject a
+  standard item with `409 { standard: true }`, pointing the caller at the
+  override API instead. Custom (non-standard) equipment is unaffected.
+- A new per-user **override** layer (`api/src/models/equipmentOverride.ts`,
+  `equipmentOverridesStore.ts`, `equipmentOverrideList/Set/Delete.ts`) stores
+  only the whitelisted fields a user actually changed (cost/rate/limits/etc.,
+  never identity fields), keyed by `(userId, equipmentId)`. Deleting an
+  override exactly reverts to the platform default, since the base row was
+  never touched.
+- **Not signed in:** the same customisation lives in `sessionStorage` only
+  (`webapp/src/utils/equipmentOverrides.ts`) — never reaches the backend,
+  gone when the tab closes. **Signed in** (Station Manager, `fireBreakEnabled`
+  — the same entitlement saved plans already use): persisted per-account via
+  `equipmentOverridesApi.ts`, restored on every visit/device, with a
+  one-time migration of any pre-sign-in session overrides on first sign-in.
+  This mirrors `savedPlansApi.ts`'s own session-vs-account precedent and is
+  the intended incentive to sign up for Station Manager.
+- UI: `EquipmentConfigPanel.tsx` shows a "Modified" badge + "Reset" (revert
+  to default) action on any customised standard item, disables direct delete
+  for standard items (409 otherwise), and a small banner states whether the
+  current edit session-only or account-persisted.
+
+**Follow-up recommended (not done in this pass):** a domain SME (RFS/DELWP
+plant/crew supervisor) spot-check the "plausible but not independently
+verified" and "no literature table" tiers against real local experience —
+exactly the calibration path the file header already recommends. This is a
+credibility/trust item, not a defect; nothing here contradicts the
+segment-wise production *model* (F1–F3 above), which was already reviewed
+and is unaffected.
+
+---
+
 ## Implementation status (July 2026)
 
 The **P0 calculation-accuracy items below have been implemented** (see PR for this branch):
