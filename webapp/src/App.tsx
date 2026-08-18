@@ -1120,6 +1120,8 @@ const App: React.FC = () => {
         clearingRate: m.clearingRate || 0,
         costPerHour: m.costPerHour || 0,
         description: m.description || '',
+        standard: m.standard,
+        sourceNote: m.sourceNote,
         allowedTerrain,
         allowedVegetation,
         maxSlope: m.maxSlope ?? deriveMaxSlopeFromTerrain(allowedTerrain)
@@ -1175,6 +1177,8 @@ const App: React.FC = () => {
         turnaroundMinutes: a.turnaroundMinutes || 0,
         costPerHour: a.costPerHour || 0,
         description: a.description || '',
+        standard: a.standard,
+        sourceNote: a.sourceNote,
         allowedTerrain,
         allowedVegetation
       };
@@ -1228,6 +1232,8 @@ const App: React.FC = () => {
         tools: c.equipmentList || [],
         costPerHour: c.costPerHour || 0,
         description: c.description || '',
+        standard: c.standard,
+        sourceNote: c.sourceNote,
         allowedTerrain,
         allowedVegetation
       };

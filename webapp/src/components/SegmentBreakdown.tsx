@@ -74,13 +74,20 @@ export const SegmentBreakdown: React.FC<SegmentBreakdownProps> = ({
                 <span className="segment-swatch" style={{ background: slopeColor(seg.slopeCategory) }} aria-hidden />
                 {Math.round(seg.slope)}°
               </span>
-              <span role="cell" className="segment-fuel" title={seg.vegLabel || undefined}>
-                <span className="segment-swatch" style={{ background: vegSwatchColor(seg.vegetation) }} aria-hidden />
-                {seg.vegetation ? getVegetationTypeDisplayName(seg.vegetation) : '—'}
-                {seg.estimated && <span className="segment-estimated-flag" title="Estimated/fallback data">≈</span>}
-                {seg.isModifiedOrLowFidelity && <span className="segment-modified-flag" title="Modified or low-fidelity land — verify locally">⚠</span>}
-                {seg.confidence !== undefined && !seg.estimated && (
-                  <span className="segment-confidence">{Math.round(seg.confidence * 100)}%</span>
+              <span role="cell" className="segment-fuel">
+                <span className="segment-fuel-main">
+                  <span className="segment-swatch" style={{ background: vegSwatchColor(seg.vegetation) }} aria-hidden />
+                  {seg.vegetation ? getVegetationTypeDisplayName(seg.vegetation) : '—'}
+                  {seg.estimated && <span className="segment-estimated-flag" title="Estimated/fallback data">≈</span>}
+                  {seg.isModifiedOrLowFidelity && <span className="segment-modified-flag" title="Modified or low-fidelity land — verify locally">⚠</span>}
+                  {seg.confidence !== undefined && !seg.estimated && (
+                    <span className="segment-confidence">{Math.round(seg.confidence * 100)}%</span>
+                  )}
+                </span>
+                {seg.vegLabel && (
+                  <span className="segment-fuel-detail" title={`Underlying classified vegetation community (${seg.estimated ? 'estimated/fallback source' : 'NVIS/NSW SVTM'}) — this row's costing bucket is the coarse type above; this is the granular class it was mapped from.`}>
+                    {seg.vegLabel}
+                  </span>
                 )}
               </span>
               <span role="cell" className="segment-locate-col">

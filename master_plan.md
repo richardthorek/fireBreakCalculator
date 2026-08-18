@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 18, 2026 — step 58: machinery-defaults visibility, per-user customisation/persistence, and a standard-catalogue accuracy review (owner-directed, out of queue order). See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — step 59: acted on an owner-run "Col" field-veteran persona critique — granular vegetation class no longer discarded on merge, a headline-estimate caveat, and a new grounded "Field reality check" AI persona/endpoint (`docs/AI_ASSISTANT.md` §4b). Follows step 58 (machinery-defaults visibility/persistence/accuracy review), both owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -54,6 +54,10 @@ Sorted **smallest effort first**, ready-to-start items ahead of blocked ones. Si
 | **Movement-analysis performance + progressive-painting programme** | WP1–WP5 shipped (PR [#210](https://github.com/richardthorek/fireBreakCalculator/pull/210), merged); a real progressive-paint regression found via live production testing then fixed (PR [#214](https://github.com/richardthorek/fireBreakCalculator/pull/214)); WP6 (coarse-to-fine search) still design-only — see detail | M/L | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §50 |
 | End-user guide | Never existed; decide whether it lives here or in Station Manager's in-app wiki, then write it | S | — | docs/README.md |
 | Restrictions costed against `delayLedger.ts` | Both pieces exist; wire the recommended-restriction set through the existing delay-cost model | S/M | restrictionPlanner.ts, delayLedger.ts (✅ both) | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §32 |
+| Real mobilisation/transport cost as a modelled figure (not just a caveat) | Step 58 (Col reality check) surfaces the gap honestly (`mobilisationCostIncluded: false`, hero-caveat text) but doesn't model it. Add a flat per-resource fixed cost, shown as a distinct line, never blended silently into the existing per-segment total — keeps `equipmentAnalysis.ts` (CALCULATION_REVIEW.md's "sole accurate engine") as the only place a number is computed | S/M | Step 58 (✅) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) F6 |
+| Job-actuals log on saved plans | A crew logs what actually happened (hours, cost, ground condition note) against a saved plan — over a season this becomes real local calibration data, closing the "no one ever checks these numbers against reality" gap the Col persona review raised. Small schema add to `SavedPlan` (api + webapp must-match pair), no UI beyond one optional-fields form | S | Cloud saved plans (✅) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review" |
+| Per-equipment "field-verified" flag, distinct from "Modified" | The override system (step 58) shows *changed*, not *checked* — a crew that ran a job and confirmed a rate held up has no way to say so. Needs a small model decision: attribute on the override record itself, not a whitelisted Equipment field | S | Equipment overrides (✅, step 58) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review" |
+| Ground-condition modifier (dry/normal/wet) | The Col persona review's sharpest, least-solved point: slope alone doesn't predict trafficability — soil moisture does, and the app has zero awareness of it. A user-set, session/plan-level modifier flagged `estimated` (same data-honesty pattern as everything else) is the realistic scope; real soil-moisture data is a separate, much larger blocked item | M | — | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review" |
 | A real fuel-age → clearing-rate relationship | Genuinely blocked on **finding a sourced curve**, not on plumbing — NAFI fire-age and DEA fractional-cover are both fetched and surfaced as context (steps 10, 17) but nothing grounds how they should move the production rate; do not invent a coefficient | M+ | a citable source (research literature / agency guidance) | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md), [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §31 |
 | UI/UX uplift, moves 4–5 | Shared type/confidence discipline across both modes; extend Terrain mode's mobile floating-overlay pattern to fire-break mode | M | moves 1–3 (✅) | master_plan Recent Updates, 2026-07-26 |
 | ~~Function-hosted (tier 2) mobility search~~ | **Superseded — now OCOKA 2 + 5 above.** The telemetry gate (step 32) was for deciding *when to switch*, not *whether to build*; owner direction on 2026-08-02 superseded the build gate. Telemetry is still the right evidence for the routing threshold, so tier 2 ships with an explicit user choice plus a conservative automatic threshold that telemetry tunes later | — | — | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
@@ -251,6 +255,7 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 56 (OCOKA 2) | `shared/@firebreak/terrain` extracted — 22 pure terrain/mobility modules moved out of `webapp/src/terrain`+`utils`+`config`, consumed via a TS path alias (not npm workspaces, to protect Azure SWA's Oryx deploy build); `ConfidenceTier` relocated out of a `.tsx` component; mover ensemble seeding made chunk-invariant (`hash(seed, moverIndex)`), a flagged one-time numbers change | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §38 |
 | 57 (OCOKA 5) | Tier-2 backend job protocol — new standalone `api-mobility/` package (Durable orchestrator, 5 sequential activities, blob artefacts, per-artefact SAS, Table-Storage rate limiting), `MobilityJobRequest` third must-match pair, webapp polling client + manual trigger panel, `infra/main.bicep` additions all gated `deployMobilityBackend bool = false`. No fan-out (OCOKA 8); v1 algorithmic subset only | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) §49 |
 | 58 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
+| 59 | Col persona review acted on: granular vegetation class (NVIS MVG/NSW SVTM PCT name) no longer silently discarded on segment-merge, now shown per-row and in GIS export; a headline-estimate caveat ("not one flat rate, excludes mobilisation"); new "Field reality check" AI persona/endpoint grounded in the same payload+contract as the narration assistant | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review", [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §4b |
 
 ## Recent Updates
 
@@ -259,6 +264,84 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-18 — Col persona review acted on (step 59): vegetation
+  granularity, headline caveat, "Field reality check" AI persona.** Owner
+  ran a role-play critique exercise (a sceptical, forty-year heavy-plant/
+  hand-crew veteran, "Col") against the app, then asked for the resulting
+  recommendations to be implemented, with vegetation granularity called out
+  as the priority and — a distinct follow-up ask — for that same reality-
+  check *perspective* to be baked into the app itself rather than assumed
+  present at every desk-planning decision. Six recommendations came out of
+  the critique; three were implemented in full, three scoped down or
+  deferred honestly (see the new "Next up" rows) rather than half-built
+  under time pressure:
+  1. **Granular vegetation class was already fetched and then silently
+     discarded** — `VegetationSegment.displayLabel` (an NVIS MVG name or
+     NSW SVTM PCT/formation name, populated since well before this session)
+     was set but then erased by TWO separate merge steps that only compared
+     the coarse 4-bucket `VegetationType`: `vegetationAnalysis.ts`'s
+     rawSegments→mergedSegments merge, and `segmentJoin.ts`'s own
+     slope×vegetation join merge (shared by the segment table AND every GIS
+     export, `gisExport.ts`'s `vegetation_label` field). Both merges now
+     also require the granular label to match — real classes stay visible
+     wherever the app already threads them, no new data source, no change
+     to the coarse costing bucket. `SegmentBreakdown.tsx` promotes the
+     label from a hover-only tooltip to visible sub-text per row.
+  2. **Headline-number caveat** — the hero time readout (`AnalysisPanel.tsx`)
+     now states plainly it's a sum of N ground segments, not one flat rate,
+     and that mobilisation/travel to site is excluded, with a one-click
+     jump to the segment breakdown.
+  3. **"Field reality check" (Col) — new AI persona, same grounding
+     contract.** New `POST /api/assistant/reality-check`
+     (`assistantRealityCheck.ts`) and `RealityCheckCard.tsx`, mounted in
+     the Assistant tab beside (never merged into) the existing narration
+     assistant. `buildRealityCheckSystemPrompt` (`aiGrounding.ts`) shares
+     the exact STRICT_RULES block with the narration prompt (refactored
+     into a single constant so the two personas' grounding contract cannot
+     drift) — a critique persona is not licence to guess. `AssistantPayload`
+     gained four optional reality-check fields (`segmentCount`,
+     `lowConfidenceSegmentCount`, `equipmentCaveats`,
+     `mobilisationCostIncluded`) — a must-match pair
+     (`api/src/types/assistant.ts` ↔ `webapp/src/utils/assistantApi.ts`) —
+     so the persona has real ammunition instead of a vague description:
+     `equipmentCaveats` is populated by joining tasked equipment against
+     the effective catalogue (overrides applied) and pulling each standard
+     item's own `sourceNote` from step 58's accuracy review. A deterministic
+     template fallback (`realityCheckTemplate.ts`) means the reality check
+     works even with no AI model configured — the gaps it flags are already
+     computed, the AI layer only adds plain-language framing. New
+     `realityCheck.test.ts` (12 checks): prompt states the shared contract,
+     template surfaces each flag with real counts/quoted text (never "some"),
+     multiple concerns all list, a clean payload states there's nothing to
+     flag rather than inventing one.
+  4. **Deferred, not silently dropped** (new "Next up" rows, all citing this
+     review): modelling mobilisation cost as a real fixed-cost line (today
+     it's an honest caveat, not a number); a job-actuals log on saved plans
+     so a season of real jobs becomes local calibration data; a
+     per-equipment "field-verified" flag distinct from "Modified" (changed
+     ≠ checked); a ground-condition (dry/normal/wet) modifier — the
+     sharpest, least-solved point raised (the app has zero soil-moisture
+     awareness; slope alone doesn't predict trafficability).
+  Gates green: webapp `npm test` (45/45 files) + `npm run build`, api
+  `npm run build` + `npm run test:unit` (12 new checks, all prior suites
+  unaffected).
+- **2026-08-18 — Deploy-failure assessment (owner-requested check).** Owner
+  flagged "the latest deploys also had a failure" while this branch's work
+  was in progress. Traced it: `main` run [#31999630017](https://github.com/richardthorek/fireBreakCalculator/actions/runs/31999630017)
+  (2026-08-17T05:55Z, commit `bbf70d2`) failed — Dependabot PR #195 bumped
+  `api`'s `typescript` devDependency to 7.0.2, which has stricter module
+  resolution/type checking than 5.x and broke the api build (`node:assert`
+  default-export import compatibility, missing `lib`/`types` compiler
+  options). **Already fixed** by commit `ccbd862c` (PR #213, merged
+  2026-08-17T06:17Z, 22 minutes later, well before this branch existed) —
+  `api/tsconfig.json` gained `lib: ["es2017"]` + `types: ["node"]`, test
+  files switched to default-import `assert`, `e2e.test.ts` got one type
+  assertion. Every `main` run since (`ccbd862c` onward, including both
+  runs today) is green. This branch's base commit already carries the fix
+  — confirmed by this session's own `api` gates (`npm run build` +
+  `npm run test:unit`) passing clean throughout. No new work needed; logged
+  here because it hadn't been recorded in this file yet, and "assess and
+  record" was the explicit ask, not "there's live breakage to fix."
 - **2026-08-18 — Machinery defaults: visibility, customisation/persistence,
   accuracy review (step 58, owner-directed, out of queue order).** Two asks:
   (1) any user can adjust a standard machinery/aircraft/hand-crew item's

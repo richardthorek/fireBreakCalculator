@@ -515,12 +515,20 @@ export const analyzeTrackVegetation = async (points: LatLngLike[]): Promise<Vege
   // across a water-crossing OR existing-trail boundary, so a narrow
   // river/lake crossing or a stretch that reuses a mapped track inside a
   // longer grassland run stays a distinct, separately-flagged segment rather
-  // than disappearing into the merge.
+  // than disappearing into the merge. ALSO never across a change in the
+  // underlying granular class (displayLabel — an NVIS MVG name or NSW SVTM
+  // PCT/formation name): two adjacent stretches can share the same coarse
+  // costing bucket (e.g. both 'mediumscrub') while being genuinely different
+  // vegetation communities on the ground. Merging them here would silently
+  // discard that distinction — the whole point of fetching a granular class
+  // per point in the first place — even though nothing about the COARSE
+  // classification (or the cost model, which only ever reads
+  // vegetationType) changes.
   const mergedSegments: VegetationSegment[] = [];
   for (const seg of rawSegments) {
     const last = mergedSegments[mergedSegments.length - 1];
     if (!last || last.vegetationType !== seg.vegetationType || !!last.isWater !== !!seg.isWater
-      || !!last.onExistingTrail !== !!seg.onExistingTrail) {
+      || !!last.onExistingTrail !== !!seg.onExistingTrail || last.displayLabel !== seg.displayLabel) {
       mergedSegments.push({ ...seg, coords: seg.coords ? [...seg.coords] : [seg.start, seg.end] });
     } else {
       // Merge segments

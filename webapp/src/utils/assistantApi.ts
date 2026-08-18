@@ -34,6 +34,13 @@ export interface AssistantPayload {
   difficultyLabel: string;
   topEquipment: AssistantEquipmentSummary[];
   insights: { severity: string; title: string; detail: string }[];
+  // Reality-check context (optional) — must-match pair with
+  // api/src/types/assistant.ts. See buildAssistantPayload's threshold for
+  // lowConfidenceSegmentCount.
+  segmentCount?: number;
+  lowConfidenceSegmentCount?: number;
+  equipmentCaveats?: string[];
+  mobilisationCostIncluded?: boolean;
 }
 
 export interface AssistantCitation {
@@ -48,21 +55,39 @@ export interface AssistantResponse {
   citations: AssistantCitation[];
 }
 
+/** Segments below this confidence are called out by name to the reality-check
+ * persona rather than folded into the single overallConfidence average. */
+const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
 /** Build the compact payload the assistant endpoints validate responses against. */
 export function buildAssistantPayload(params: {
   distance: number;
   breakWidthMeters: number;
   trackAnalysis: TrackAnalysis | null;
   vegetationAnalysis: VegetationAnalysis | null;
-  equipmentResults: { name: string; type: string; time: number; cost: number; compatible: boolean; compatibilityLevel?: string }[];
+  equipmentResults: { id?: string; name: string; type: string; time: number; cost: number; compatible: boolean; compatibilityLevel?: string }[];
   assessment: PlanAssessment | null;
+  /** The effective equipment catalogue (with overrides applied) — joined by
+   * id against topEquipment so the reality check can quote a tasked item's
+   * own sourcing caveat instead of restating a generic warning. */
+  equipmentCatalog?: { id: string; standard?: boolean; sourceNote?: string }[];
 }): AssistantPayload {
-  const { distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, equipmentResults, assessment } = params;
-  const topEquipment: AssistantEquipmentSummary[] = equipmentResults
+  const { distance, breakWidthMeters, trackAnalysis, vegetationAnalysis, equipmentResults, assessment, equipmentCatalog } = params;
+  const topResults = equipmentResults
     .filter((r) => r.compatible && r.time > 0)
     .sort((a, b) => a.time - b.time)
-    .slice(0, 3)
+    .slice(0, 3);
+  const topEquipment: AssistantEquipmentSummary[] = topResults
     .map((r) => ({ name: r.name, type: r.type, timeHours: Math.round(r.time * 10) / 10, cost: Math.round(r.cost), compatibilityLevel: r.compatibilityLevel ?? 'full' }));
+
+  const catalogById = new Map((equipmentCatalog ?? []).map((e) => [e.id, e]));
+  const equipmentCaveats = topResults
+    .map((r) => (r.id ? catalogById.get(r.id) : undefined))
+    .filter((e): e is { id: string; standard?: boolean; sourceNote?: string } => !!e?.standard && !!e.sourceNote)
+    .map((e) => e.sourceNote as string);
+
+  const segments = vegetationAnalysis?.segments ?? [];
+  const lowConfidenceSegmentCount = segments.filter((s) => (s.confidence ?? 1) < LOW_CONFIDENCE_THRESHOLD).length;
 
   return {
     distanceM: Math.round(distance),
@@ -76,6 +101,13 @@ export function buildAssistantPayload(params: {
     difficultyLabel: assessment?.difficultyLabel ?? 'Unknown',
     topEquipment,
     insights: (assessment?.insights ?? []).slice(0, 5).map((i) => ({ severity: i.severity, title: i.title, detail: i.detail })),
+    segmentCount: trackAnalysis?.segments.length,
+    lowConfidenceSegmentCount,
+    equipmentCaveats,
+    // Always false today: the cost model has no fixed/variable mobilisation
+    // component at all (CALCULATION_REVIEW.md F6, hero-caveat in
+    // AnalysisPanel.tsx). Kept explicit rather than assumed by the persona.
+    mobilisationCostIncluded: false,
   };
 }
 
@@ -102,6 +134,16 @@ export async function postAssistant(path: string, body: unknown): Promise<Assist
 /** Generate a one-shot field briefing from the current analysis. */
 export async function fetchBriefing(payload: AssistantPayload): Promise<AssistantResponse | null> {
   return postAssistant('/assistant/briefing', { payload });
+}
+
+/**
+ * "Col" field reality check — an experienced heavy-plant/hand-crew veteran's
+ * grounded sanity check on this plan before it reaches a crew or operator.
+ * Same fetch/degrade contract as fetchBriefing; same grounding gate
+ * server-side (docs/AI_ASSISTANT.md).
+ */
+export async function fetchRealityCheck(payload: AssistantPayload): Promise<AssistantResponse | null> {
+  return postAssistant('/assistant/reality-check', { payload });
 }
 
 /** Ask a grounded question about the current plan. */

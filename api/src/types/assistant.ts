@@ -56,6 +56,24 @@ export interface AssistantPayload {
   taskedResourceTypes?: string[];
   entryPoint?: AccessPoint;
   approachSteps?: AccessRouteStep[];
+  // Reality-check context (optional, backward compatible) — feeds
+  // assistantRealityCheck.ts's 'Col' persona real ammunition instead of a
+  // vague description, so its critique is grounded in the SAME payload the
+  // narration/grounding-check reads, not a second, divergent data source.
+  /** Total ground segments the estimate integrated over. */
+  segmentCount?: number;
+  /** Segments with vegetation-detection confidence below a "trust this"
+   *  threshold (see buildAssistantPayload's threshold, webapp side). */
+  lowConfidenceSegmentCount?: number;
+  /** sourceNote text for any tasked equipment item that is a standard
+   *  catalogue default the user hasn't verified/overridden — see
+   *  CALCULATION_REVIEW.md's "Standard catalogue accuracy review". */
+  equipmentCaveats?: string[];
+  /** Whether the shown cost/time includes mobilisation/transport-to-site.
+   *  Always false today — a named, documented gap (CALCULATION_REVIEW.md
+   *  F6) — kept as an explicit field rather than assumed, so a future fix
+   *  flips one value instead of silently changing what the persona says. */
+  mobilisationCostIncluded?: boolean;
 }
 
 export interface AssistantCitation {
@@ -153,6 +171,13 @@ export function isAssistantPayload(v: any): v is AssistantPayload {
     if (!Array.isArray(v.taskedResourceTypes)) return false;
     if (!v.taskedResourceTypes.every((t: any) => typeof t === 'string')) return false;
   }
+  if (v.segmentCount !== undefined && !isFiniteNumber(v.segmentCount)) return false;
+  if (v.lowConfidenceSegmentCount !== undefined && !isFiniteNumber(v.lowConfidenceSegmentCount)) return false;
+  if (v.equipmentCaveats !== undefined) {
+    if (!Array.isArray(v.equipmentCaveats)) return false;
+    if (!v.equipmentCaveats.every((c: any) => typeof c === 'string')) return false;
+  }
+  if (v.mobilisationCostIncluded !== undefined && typeof v.mobilisationCostIncluded !== 'boolean') return false;
 
   return true;
 }

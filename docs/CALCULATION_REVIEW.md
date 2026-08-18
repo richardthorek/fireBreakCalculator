@@ -4,6 +4,62 @@
 
 ---
 
+## Col persona review (2026-08-18)
+
+Owner-run role-play exercise: a sceptical "crusty old heavy plant operator"
+persona ("Col", forty years on plant) critiqued the app's applicability,
+accuracy and relevance; a second persona listened and proposed concrete
+adjustments. Six recommendations came out of it. Status:
+
+| # | Recommendation | Status |
+|---|---|---|
+| 1 | Surface the ground-varies-by-segment caveat next to the headline number, not two clicks deep | ✅ Done — `AnalysisPanel.tsx` hero readout |
+| 2 | A "field-verified" vs "planning-grade" distinction, separate from sourcing | 📋 Deferred — see `master_plan.md` Next up |
+| 3 | Let a crew log a real job's actual outcome against the estimate | 📋 Deferred — see `master_plan.md` Next up (job-actuals log) |
+| 4 | Mobilisation/float cost as a real line item, not folded into `costPerHour` | 📋 Honestly caveated (hero readout, `mobilisationCostIncluded: false` in the reality-check payload), not yet modelled — see `master_plan.md` Next up |
+| 5 | A ground-condition (dry/normal/wet) modifier | 📋 Deferred, the sharpest unsolved point — see `master_plan.md` Next up |
+| 6 | Region-aware vegetation language, not four fixed buckets | ✅ Done — see "Vegetation granularity" below |
+
+**Follow-up ask (same session): bake the Col perspective into the app
+itself**, so a field veteran's reality check doesn't need to be personally
+present for every desk-planning decision — the app should surface that
+scrutiny automatically, with the actual field check still happening where it
+belongs (on the ground, once the rough estimate is done). Built as a new AI
+persona/endpoint under the SAME grounding contract as the existing narration
+assistant — see `docs/AI_ASSISTANT.md` §4b for the full design, and
+`master_plan.md` step 59 for the shipped detail.
+
+### Vegetation granularity (recommendation 6)
+
+The underlying datasets already carry much finer classes than the 4-bucket
+costing type (`grassland`/`lightshrub`/`mediumscrub`/`heavyforest`) the
+production model uses — NVIS's Major Vegetation Group name (~32 classes) or
+NSW SVTM's PCT/formation name (hundreds, region-specific) — and this was
+already being fetched into `VegetationSegment.displayLabel`
+(`vegetationAnalysis.ts`). It was silently discarded by two merge steps that
+only ever compared the coarse costing bucket: the segment-merge inside
+`vegetationAnalysis.ts` itself, and `segmentJoin.ts`'s own slope×vegetation
+join (shared by the segment breakdown table AND every GIS export). Two
+adjacent stretches sharing a coarse bucket (e.g. both `mediumscrub`) but
+genuinely different vegetation communities on the ground were blended into
+one row, keeping only the first sub-segment's granular name. Fixed by
+requiring the granular label to also match before merging in both places —
+**no new data source, no change to the coarse costing bucket the production
+model reads**, purely stopping information that was already being fetched
+from being thrown away. `SegmentBreakdown.tsx` now shows the granular class
+as visible text under each row (previously title-attribute-only, so it only
+ever reached a mouse hover); `gisExport.ts`'s existing `vegetation_label`
+export field gets the same fix for free, since it reads the same joined
+segments.
+
+**What this does NOT change:** NVIS nationally still only exposes Major
+Vegetation Group (~32 classes) via the layer this app queries — Major
+Vegetation Subgroup (~100+) is a separate, not-yet-integrated ArcGIS layer
+(`docs/NVIS_INTEGRATION.md`). NSW SVTM's PCT-level names were already the
+finest tier available and needed no new fetch — only the merge fix.
+
+---
+
 ## Standard catalogue accuracy review (2026-08-18)
 
 Owner request: review, test and document the accuracy of the 15 pre-loaded
