@@ -150,6 +150,23 @@ const TRAIL_FUEL_DISCOUNT = 0.35;
 /** A node counts as "on trail" within this distance of a mapped way (metres). */
 const TRAIL_SNAP_M = 30;
 
+/** Damage-minimisation discount for tracing a vegetation-class boundary (the
+ *  grass/timber "treeline edge") instead of cutting fresh through the middle
+ *  of open, usable land (crop/pasture) — even where the interior is nominally
+ *  just as cheap to clear per the raw per-cell vegetation cost alone. Without
+ *  this, a uniformly-grassland paddock has NO cost gradient at all, so the
+ *  shortest (straight, middle-of-the-paddock) line wins by default — the
+ *  owner-reported problem this addresses. Same mechanism as
+ *  TRAIL_FUEL_DISCOUNT; smaller magnitude because "boundary" here is a
+ *  same-resolution NVIS/SVTM classification (~100 m nationally, finer NSW
+ *  SVTM overlay) — a coarse heuristic, not a mapped/surveyed treeline. */
+const VEGETATION_BOUNDARY_DISCOUNT = 0.65;
+/** Minimum VEGETATION_COST gap to a hex neighbour before a cell counts as
+ *  "near a boundary" — grassland next to lightshrub (0.4 apart) is a soft
+ *  gradient, not a real treeline; grassland next to mediumscrub/heavyforest
+ *  (1.2+/2.8 apart) is. */
+const VEGETATION_BOUNDARY_COST_DELTA = 1.0;
+
 export interface RouteComparisonStats {
   /** Total length in metres. */
   distance: number;
@@ -163,6 +180,10 @@ export interface RouteComparisonStats {
   steepDistance: number;
   /** Metres of path following mapped existing trails/roads. */
   existingTrailDistance: number;
+  /** Metres of path tracing a vegetation-class boundary (treeline edge) —
+   *  see VEGETATION_BOUNDARY_DISCOUNT. Coarse/estimated, same resolution as
+   *  the underlying vegetation classification. */
+  vegetationBoundaryDistance: number;
   /** Unitless effort score (distance × slope × fuel multipliers). Lower is better. */
   effortScore: number;
 }
@@ -184,6 +205,9 @@ export interface HexHeatmapCell {
   costNormalizedObjective: number;
   vegetation: VegetationType;
   onTrail: boolean;
+  /** True when this cell sits near a vegetation-class boundary (treeline
+   *  edge) — see VEGETATION_BOUNDARY_DISCOUNT. */
+  nearVegetationBoundary: boolean;
   /** True when this cell's vegetation sample was estimated/fallback data. */
   estimated: boolean;
 }
@@ -243,6 +267,11 @@ export interface SampledNode {
   vegetation: VegetationType;
   vegEstimated: boolean;
   onTrail: boolean;
+  /** True when this node sits near a vegetation-class boundary (treeline
+   *  edge) — see VEGETATION_BOUNDARY_DISCOUNT. Only ever set true where hex
+   *  neighbours are actually known (the shared wide-pass grid); false
+   *  elsewhere, never guessed. */
+  nearVegetationBoundary: boolean;
 }
 
 export interface RawHeatmapCell {
@@ -255,6 +284,7 @@ export interface RawHeatmapCell {
   avgSlopeDegrees: number;
   vegetation: VegetationType;
   onTrail: boolean;
+  nearVegetationBoundary: boolean;
   estimated: boolean;
 }
 
@@ -427,19 +457,27 @@ async function sampleNodes(
     vegetation: vegRes[i].type,
     vegEstimated: vegRes[i].estimated,
     onTrail: trails.length > 0 && distanceToNearestTrail(p, trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
+    // No hex-neighbour context for an arbitrary point set (this is used for
+    // pass boundaries / the straight-line comparison baseline) — false, not
+    // guessed. Real detection happens in buildSharedWideGrid, where hex
+    // adjacency is actually known.
+    nearVegetationBoundary: false,
   }));
   return { nodes, estimated: elevRes.estimated || vegRes.some(v => v.estimated) };
 }
 
 /** Edge cost between two sampled nodes: metres × slope factor × mean fuel factor,
- *  discounted when the edge follows a mapped trail. */
-export function edgeCost(a: SampledNode, b: SampledNode): { cost: number; dist: number; slope: number; onTrail: boolean } {
+ *  discounted when the edge follows a mapped trail and/or traces a vegetation
+ *  boundary (damage-minimisation preference — see VEGETATION_BOUNDARY_DISCOUNT). */
+export function edgeCost(a: SampledNode, b: SampledNode): { cost: number; dist: number; slope: number; onTrail: boolean; nearVegetationBoundary: boolean } {
   const dist = calculateDistance(a.lat, a.lng, b.lat, b.lng);
-  if (dist <= 0) return { cost: 0, dist: 0, slope: 0, onTrail: false };
+  if (dist <= 0) return { cost: 0, dist: 0, slope: 0, onTrail: false, nearVegetationBoundary: false };
   const slope = calculateSlope(a.elevation, b.elevation, dist);
   const onTrail = a.onTrail && b.onTrail;
-  const veg = ((VEGETATION_COST[a.vegetation] + VEGETATION_COST[b.vegetation]) / 2) * (onTrail ? TRAIL_FUEL_DISCOUNT : 1);
-  return { cost: dist * slopeCost(slope) * veg, dist, slope, onTrail };
+  const nearVegetationBoundary = a.nearVegetationBoundary && b.nearVegetationBoundary;
+  const discount = (onTrail ? TRAIL_FUEL_DISCOUNT : 1) * (nearVegetationBoundary ? VEGETATION_BOUNDARY_DISCOUNT : 1);
+  const veg = ((VEGETATION_COST[a.vegetation] + VEGETATION_COST[b.vegetation]) / 2) * discount;
+  return { cost: dist * slopeCost(slope) * veg, dist, slope, onTrail, nearVegetationBoundary };
 }
 
 /** Accumulate comparison stats over a sequence of sampled nodes. */
@@ -450,15 +488,17 @@ function pathStats(nodes: SampledNode[]): RouteComparisonStats {
   let heavy = 0;
   let steep = 0;
   let trail = 0;
+  let boundary = 0;
   let effort = 0;
   for (let i = 1; i < nodes.length; i++) {
-    const { cost, dist, slope, onTrail } = edgeCost(nodes[i - 1], nodes[i]);
+    const { cost, dist, slope, onTrail, nearVegetationBoundary } = edgeCost(nodes[i - 1], nodes[i]);
     distance += dist;
     effort += cost;
     slopeSum += slope * dist;
     if (slope > maxSlope) maxSlope = slope;
     if (slope >= 25) steep += dist;
     if (onTrail) trail += dist;
+    if (nearVegetationBoundary) boundary += dist;
     if (nodes[i].vegetation === 'heavyforest' || nodes[i - 1].vegetation === 'heavyforest') {
       heavy += dist / (nodes[i].vegetation === nodes[i - 1].vegetation ? 1 : 2);
     }
@@ -470,8 +510,40 @@ function pathStats(nodes: SampledNode[]): RouteComparisonStats {
     heavyForestDistance: heavy,
     steepDistance: steep,
     existingTrailDistance: trail,
+    vegetationBoundaryDistance: boundary,
     effortScore: effort,
   };
+}
+
+/**
+ * Vegetation-boundary detection (damage-minimisation preference — see
+ * VEGETATION_BOUNDARY_DISCOUNT): mutates `nodeMap` in place, marking a hex
+ * cell's node `nearVegetationBoundary: true` when any hex neighbour's
+ * vegetation cost differs from its own by at least
+ * VEGETATION_BOUNDARY_COST_DELTA. Must run AFTER every hex in `cellsRaw` is
+ * already sampled into `nodeMap` — this is a pure re-read of already-fetched
+ * data, no extra network/cache cost. A/B (the drawn endpoints) are never
+ * touched here; only real hex cells have known neighbours. Exported (not
+ * just inlined in buildSharedWideGrid) so it's directly unit-testable.
+ */
+export function markVegetationBoundaries(
+  cellsRaw: { hex: AxialCoord }[],
+  nodeMap: Map<string, SampledNode>
+): void {
+  for (const cell of cellsRaw) {
+    const id = hexKey(cell.hex);
+    const node = nodeMap.get(id);
+    if (!node) continue;
+    const ownCost = VEGETATION_COST[node.vegetation];
+    for (const n of hexNeighbors(cell.hex)) {
+      const neighbor = nodeMap.get(hexKey(n));
+      if (!neighbor) continue;
+      if (Math.abs(VEGETATION_COST[neighbor.vegetation] - ownCost) >= VEGETATION_BOUNDARY_COST_DELTA) {
+        node.nearVegetationBoundary = true;
+        break;
+      }
+    }
+  }
 }
 
 /** Reconstruct the best path known SO FAR to whichever settled node is
@@ -650,6 +722,7 @@ async function runHexPass(
             costNormalizedObjective: 0,
             vegetation: 'grassland' as VegetationType,
             onTrail: false,
+            nearVegetationBoundary: false,
             estimated: false,
           };
         }),
@@ -684,9 +757,14 @@ async function runHexPass(
       vegetation: vegRes[i].type,
       vegEstimated: vegRes[i].estimated,
       onTrail: trails.length > 0 && distanceToNearestTrail(p, trails, TRAIL_SNAP_M) <= TRAIL_SNAP_M,
+      // Filled in below, once hex adjacency is known — a node can't tell if
+      // it's near a boundary until its neighbours are sampled too.
+      nearVegetationBoundary: false,
     });
     localById.set(id, local);
   });
+
+  markVegetationBoundaries(cellsRaw, nodeMap);
 
   const adjacency = new Map<string, string[]>();
   const addEdge = (a: string, b: string) => {
@@ -756,6 +834,7 @@ async function runHexPass(
       avgSlopeDegrees,
       vegetation: node.vegetation,
       onTrail: node.onTrail,
+      nearVegetationBoundary: node.nearVegetationBoundary,
       estimated: node.vegEstimated,
     };
   });
@@ -1015,6 +1094,7 @@ export function normalizeHeatmap(cells: RawHeatmapCell[]): HexHeatmapCell[] {
     costNormalizedObjective: objectiveSeverity(c.avgSlopeDegrees, c.vegetation),
     vegetation: c.vegetation,
     onTrail: c.onTrail,
+    nearVegetationBoundary: c.nearVegetationBoundary,
     estimated: c.estimated,
   }));
 }
@@ -1130,6 +1210,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
           costNormalizedObjective: 0,
           vegetation: 'grassland' as VegetationType,
           onTrail: false,
+          nearVegetationBoundary: false,
           estimated: false,
         })),
       },
@@ -1192,6 +1273,7 @@ export async function optimizeRoute(waypoints: LatLng[], options: OptimizeOption
             costNormalizedObjective: sev,
             vegetation: s.type,
             onTrail: false,
+            nearVegetationBoundary: false,
             estimated: s.estimated,
           });
         }

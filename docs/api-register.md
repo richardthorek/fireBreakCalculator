@@ -162,6 +162,23 @@ endpoint.
 |----------|--------|---------|---------|----------|---------------|
 | `/api/infrastructure` | GET | Reusable trails/roads (or waterways, see `kind`) within a corridor bbox, via Overpass | Query `s`,`w`,`n`,`e` (WGS84 bounds; each side ≤ 3°), optional `kind=highway\|water` | `{ trails: { name?, kind, coords: {lat,lng}[] }[], available: boolean }` | No |
 
+## Wind (Incident Box)
+
+Server-side proxy for live wind, used by the fire-break "incident box" tool
+(draw/import a fire perimeter → get a wind- and rate-of-spread-driven
+standoff box → pathfind it, see `ROUTE_INTELLIGENCE.md` "Incident box"). The
+upstream is Open-Meteo's free forecast API — a live source, deliberately
+**not** presented as a BOM/AFDRS product (that's a separate, currently
+blocked item — see `master_plan.md` "Blocked"). Short in-process cache only
+(8 min TTL, no L2 tier — wind goes stale fast). Rate-limited (`wind` tag).
+On upstream failure returns `502`; the frontend falls back to manual wind
+entry so fire-break mode's offline guarantee holds for everything except
+this one optional live-data step.
+
+| Endpoint | Method | Purpose | Request | Response | Auth Required |
+|----------|--------|---------|---------|----------|---------------|
+| `/api/wind` | GET | Current wind speed/direction at a point (Open-Meteo) | Query `lat`, `lng` | `{ directionFromDeg, speedKmh, gustKmh?, source: 'open-meteo', observedAt, usedFallbackWind: false, lat, lng }` | No |
+
 ## Terrain Mobility Telemetry
 
 Fire-and-forget scale/performance sink for Terrain Mobility runs — cell

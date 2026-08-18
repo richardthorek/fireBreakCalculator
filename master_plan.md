@@ -1,6 +1,6 @@
 # Fire Break Calculator — Master Plan
 
-**Last Updated**: August 18, 2026 — step 60: acted on an owner-run "Col" field-veteran persona critique — granular vegetation class no longer discarded on merge, a headline-estimate caveat, and a new grounded "Field reality check" AI persona/endpoint (`docs/AI_ASSISTANT.md` §4b). Follows step 59 (machinery-defaults visibility/persistence/accuracy review) and step 58 (a concurrent fire-break efficiency/accuracy pass: vegetation area-cache pre-warming, concurrent slope+vegetation analysis, batched cross-slope probes, the frontend split-brain fallback fixed to only show when the backend is genuinely unavailable, water/existing-trail geometry drawn on the map) — all three owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
+**Last Updated**: August 18, 2026 — step 62: route optimizer damage-minimisation pass — a new vegetation-boundary discount makes the corridor optimizer prefer tracing the grass/timber treeline edge over cutting fresh through the middle of a paddock/crop (owner-reported: a uniformly-grassland paddock has no cost gradient today, so the shortest straight line always wins, even when it means unnecessary agricultural damage). Follows step 61 (incident box) and step 60 (Col persona review), both owner-directed, out of queue order. See Recent Updates for the dated history, including OCOKA 5 (step 57), OCOKA 2/6/7 (steps 56, 52–53), the OCOKA programme, and its same-day terminology correction (OAKOC/IPOE → OCOKA/IPB for the ADF audience this product actually serves).
 **Related Docs**: [CLAUDE.md](CLAUDE.md) · [docs/README.md](docs/README.md)
 
 ---
@@ -258,6 +258,8 @@ One line each — history and rationale live in the linked as-built doc and in R
 | 58 | Fire-break efficiency/accuracy pass — manual-draw vegetation now pre-warms the area cache (was per-point only), slope+vegetation analysis run concurrently, frontend legacy calc no longer eagerly computed/shown while the backend is loading (was a live, not just offline, split-brain), cross-slope probes batched, an unsourced over-limit fallback rate named; water/existing-trail geometry (already fetched for the `isWater`/`onExistingTrail` flags) now drawn on the map, mirroring Terrain Mobility's own hydrology reference layer | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) |
 | 59 | Machinery defaults: visibility, per-user customisation/persistence, accuracy review — closed a real anonymous-global-write gap on the standard catalogue, added a per-user override layer (session-only until signed in, account-persisted with `fireBreakEnabled`), and reviewed/cited all 15 standard items' sourcing in a visible UI tooltip | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Standard catalogue accuracy review" |
 | 60 | Col persona review acted on: granular vegetation class (NVIS MVG/NSW SVTM PCT name) no longer silently discarded on segment-merge, now shown per-row and in GIS export; a headline-estimate caveat ("not one flat rate, excludes mobilisation"); new "Field reality check" AI persona/endpoint grounded in the same payload+contract as the narration assistant | [CALCULATION_REVIEW.md](docs/CALCULATION_REVIEW.md) "Col persona review", [AI_ASSISTANT.md](docs/AI_ASSISTANT.md) §4b |
+| 61 | Incident box — draw/import a fire perimeter, wind (live/manual), manual per-sector rate of spread, conservative standoff-distance solve ("ROS + build time = minimum distance"), pathfound into a buildable corridor via the existing optimizer + production-time engine; new `GET /api/wind` | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Incident box" |
+| 62 | Route optimizer damage-minimisation: vegetation-boundary discount — prefer tracing the grass/timber treeline edge over cutting through the middle of a paddock, same discount mechanism as the existing trail discount, shipped directly into the default optimizer | [ROUTE_INTELLIGENCE.md](docs/ROUTE_INTELLIGENCE.md) "Damage-minimisation: vegetation-boundary discount" |
 
 ## Recent Updates
 
@@ -266,6 +268,120 @@ full substance is preserved elsewhere: the **Shipped** table above (one line,
 every step, permanent) and the linked as-built doc's own dated section. Full
 history beyond this window: `git log`.
 
+- **2026-08-18 — Route optimizer damage-minimisation pass: vegetation-
+  boundary discount (step 62, owner-directed).** Owner observation: the
+  optimizer's recommended line is often a decent distance from the
+  treeline, running through the "middle" of a paddock that might be a
+  critical crop or pasture — the ask was to minimise mitigation-works
+  damage by preferencing the treeline edge (or existing roads/tracks/
+  waterways, both already preferred via the existing trail discount and
+  the water-as-free-edge rule). Investigated first, per the session's own
+  "challenge your own approach" instruction: `VEGETATION_COST` (grass 1.0
+  vs heavy forest 3.8) already makes grass cheaper, so a naive read is
+  "the optimizer should already do this." The owner's own framing in
+  response settled it: the goal isn't build-cost minimisation at all, it's
+  **damage minimisation** — and a uniformly-grassland paddock has NO cost
+  gradient under the existing model (every cell costs 1.0×), so the
+  shortest straight line through the middle wins by default with no
+  incentive whatsoever to detour toward the edge, regardless of how the
+  build-cost weights are tuned.
+  - **Mechanism**: mirrors the EXISTING trail-discount pattern
+    (`TRAIL_FUEL_DISCOUNT`/`TRAIL_SNAP_M`) rather than inventing a new cost
+    concept. `markVegetationBoundaries()` (`routeOptimizer.ts`) runs a
+    second pass over the already-sampled hex grid — after
+    `buildSharedWideGrid`'s nodes are populated, so zero extra network
+    cost — flagging a node `nearVegetationBoundary: true` when a hex
+    neighbour's `VEGETATION_COST` differs by ≥ `VEGETATION_BOUNDARY_COST_DELTA`
+    (1.0; grass next to lightshrub is a soft gradient and does NOT count,
+    grass next to medium/heavy scrub does). `edgeCost()` applies
+    `VEGETATION_BOUNDARY_DISCOUNT` (0.65) when both edge endpoints are
+    flagged, composing multiplicatively with the trail discount (a track
+    that happens to run the fenceline gets both).
+  - **Honesty**: detection is the same resolution as the underlying NVIS
+    (~100 m national)/NSW SVTM classification, not a surveyed treeline —
+    flagged the same way `onTrail`/`existingTrailDistance` already are
+    (`RouteComparisonStats.vegetationBoundaryDistance`,
+    `RawHeatmapCell`/`HexHeatmapCell.nearVegetationBoundary`), never
+    presented as a precise trace.
+  - **Deliberately not built**: draggable/geometric boundary-snapping. This
+    is a cost-FIELD input into the same Dijkstra search that already
+    prices slope/water/trails, not a separate geometric post-process —
+    keeping it that way means it can't contradict the rest of the cost
+    model the way a bolted-on snap heuristic could. The existing
+    leg-length-scaled search-corridor width (tight for short legs, wide
+    for long) gives "short stays direct, long follows the edge" for free,
+    with no separate distance rule needed.
+  - Shipped directly into the default optimizer (owner decision — no
+    toggle, no A/B). New `webapp/tests/vegetationBoundaryDiscount.test.ts`
+    (7 checks): discount composition (trail+boundary stack), the exact
+    "flat paddock" regression this fixes, single-endpoint-only doesn't
+    discount, heavy forest still costs more regardless, and the detection
+    pass itself (real transition flagged, soft gradient and isolated cells
+    not). Gates green: webapp `npm test` (48/48, one new file) + `npm run
+    build`; api untouched, no rebuild needed.
+- **2026-08-18 — Incident box, a new fire-break feature (step 61,
+  owner-directed).** Owner asked for: draw/paint the current fire perimeter,
+  use current weather for wind, recommend a standoff "box" prioritising the
+  head and flanks, account for build time given weather/terrain, be
+  conservative, and let the box be adjusted before pathfinding specific
+  corridors — then, mid-implementation, sharpened the core algorithm to
+  "rate of spread plus construction time equals minimum distance" (rate of
+  spread as a manual input, not predicted) and added "load a fire polygon,
+  click a job, one button to draw containment."
+  - **Perimeter**: manual multi-click polygon draw tool on the map (own
+    armed state in `MapboxMapView.tsx`, finished by an explicit button, not
+    a click-count/dblclick — dblclick already means zoom), OR import from
+    the already-shipped `fetchFireBoundaries()` national live feed
+    (`incidentBoundaryImport.ts`). Note: the NSW RFS "majorIncidents.json"
+    feed named in the original ask is point-only (no polygon geometry) —
+    `fetchFireBoundaries()` (Digital Atlas NRT) is the feed that actually
+    carries fire polygons, and it's already national, not NSW-only, so
+    every state it lists works identically with no extra code.
+  - **Wind**: new `GET /api/wind` server-proxies Open-Meteo (live, free, no
+    key) — deliberately not presented as a BOM/AFDRS product (that access
+    is a separate, still-blocked item). Manual entry is a first-class
+    fallback (`usedFallbackWind` flag, a must-match pair
+    `api/src/types/incidentBox.ts` ↔ `webapp/src/utils/windService.ts`), so
+    fire-break mode's zero-reception guarantee still holds if the fetch
+    fails or the device is offline.
+  - **The standoff-distance algorithm — not a fire-behaviour model.** This
+    app's data-honesty rule (no fabricated analysis) rules out an invented
+    spread-rate coefficient the same way it already rules out an invented
+    fuel-age clearing-rate curve. Rate of spread is a manual, per-sector
+    user input (head required; flank/rear default to head — the
+    conservative choice). `incidentBoxGeometry.ts` (pure, unit-tested)
+    classifies perimeter vertices into wind sectors; `incidentBoxPlanner.ts`
+    solves each sector's standoff distance by fixed-point iteration against
+    the EXISTING production-time engine (`analyzeTrackSlopes`/
+    `analyzeTrackVegetation`/`calculateEquipmentAnalysis` — no new costing
+    model), taking the conservative (max, never min) compatible-resource
+    time each round and setting the next candidate distance to
+    `rate-of-spread × that time`. A sector that doesn't converge within 3
+    rounds is flagged `converged: false` — its distance is a lower bound,
+    not a settled answer, same honesty discipline as OCOKA's cover/
+    concealment gap.
+  - **Pathfinding**: once distances settle, the box is pathfound ONCE
+    through the existing corridor optimizer (`optimizeRoute`) as a closed
+    loop — this is what snaps the recommended line onto existing roads/
+    trails (already built, per the owner — reuses the optimizer's existing
+    trail-discount behaviour) and routes around water, with no new
+    pathfinding code. Falls back to the raw box ring if pathfinding fails
+    (`usedFallbackRoute` flag).
+  - **Adjustability**: the box is regenerated from adjustable rate-of-spread/
+    wind inputs rather than draggable vertex editing — a deliberate scope
+    choice for a first slice, and arguably better for touch/field use per
+    this repo's own "touch-first" rule than fiddly vertex-dragging on a
+    small screen; draggable editing is a possible follow-up, not shipped.
+  - New `IncidentBoxPanel.tsx` (fire-break mode only, mutually exclusive
+    with the existing area-recon tool and with Terrain Mobility mode, same
+    pattern as the existing tool-exclusivity effect in `App.tsx`) shows the
+    conservative headline time plus the same equipment-comparison table
+    shape `AnalysisPanel.tsx` already renders — no second costing engine,
+    no duplicated numbers. Gates green: webapp `npm test` (47/47, one new
+    file, `incidentBoxGeometry.test.ts`) + `npm run build`, api `npm run
+    build` (existing `test:unit` suite unaffected — zero risk, nothing in
+    `/api` outside the new `wind.ts`/`windService.ts`/`incidentBox.ts`
+    files was touched).
 - **2026-08-18 — Col persona review acted on (step 60): vegetation
   granularity, headline caveat, "Field reality check" AI persona.** Owner
   ran a role-play critique exercise (a sceptical, forty-year heavy-plant/

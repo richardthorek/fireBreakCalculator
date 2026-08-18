@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { Settings2, Radar } from 'lucide-react';
 import { MapboxMapView } from './components/MapboxMapView';
 import { AnalysisPanel } from './components/AnalysisPanel';
+import { IncidentBoxPanel } from './components/IncidentBoxPanel';
 import IntegratedConfigPanel from './components/IntegratedConfigPanel';
 import { SearchControl } from './components/SearchControl';
 import { MapEmptyState } from './components/MapEmptyState';
@@ -392,6 +393,28 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- Incident box — draw/import a fire perimeter, get a wind- and
+  // rate-of-spread-driven standoff box, pathfind it into a buildable
+  // corridor. See webapp/src/utils/incidentBoxPlanner.ts and
+  // components/IncidentBoxPanel.tsx for the actual logic; this is just the
+  // state slice + mutual-exclusion wiring, same pattern as area recon above.
+  const [incidentBoxActive, setIncidentBoxActive] = useState(false);
+  const [incidentBoxDrawingActive, setIncidentBoxDrawingActive] = useState(false);
+  const [incidentBoxDrawnPerimeter, setIncidentBoxDrawnPerimeter] = useState<{ lat: number; lng: number }[] | null>(null);
+  const [incidentBoxRing, setIncidentBoxRing] = useState<[number, number][] | null>(null);
+  const handleIncidentPerimeterDrawn = useCallback((points: { lat: number; lng: number }[]) => {
+    setIncidentBoxDrawnPerimeter(points);
+  }, []);
+  // The area-recon box tool and the incident-perimeter draw tool both read
+  // map clicks while armed — keep them mutually exclusive, same reasoning
+  // as the mode-level cleanup effect below.
+  useEffect(() => {
+    if (incidentBoxDrawingActive) setAreaReconActive(false);
+  }, [incidentBoxDrawingActive]);
+  useEffect(() => {
+    if (areaReconActive) setIncidentBoxDrawingActive(false);
+  }, [areaReconActive]);
+
   const handleClearAreaRecon = useCallback(() => {
     areaReconAbortRef.current?.abort();
     setAreaReconStatus('idle');
@@ -483,6 +506,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (mobilityModeActive) {
       setAreaReconActive(false); // fire-break's own box-scan tool
+      setIncidentBoxActive(false); // fire-break's own incident-box tool
+      setIncidentBoxDrawingActive(false);
     } else {
       setMobilityBoxRole(null); // Terrain mode's paint/erase tool
     }
@@ -1587,6 +1612,10 @@ const App: React.FC = () => {
             areaReconHeatmap={areaReconStatus === 'done' ? areaReconHeatmap : null}
             areaReconStatus={areaReconStatus}
             onClearAreaRecon={handleClearAreaRecon}
+            incidentBoxActive={incidentBoxDrawingActive}
+            onIncidentBoxActiveChange={setIncidentBoxDrawingActive}
+            onIncidentPerimeterDrawn={handleIncidentPerimeterDrawn}
+            incidentBoxRing={incidentBoxRing}
             onViewBoundsChange={setViewBounds}
             liveFeedData={liveFeedData}
             tacticalMode={mobilityModeActive}
@@ -1752,6 +1781,16 @@ const App: React.FC = () => {
             )}
             </>
           ) : (
+          <>
+          <IncidentBoxPanel
+            active={incidentBoxActive}
+            onActiveChange={setIncidentBoxActive}
+            drawingActive={incidentBoxDrawingActive}
+            onDrawingActiveChange={setIncidentBoxDrawingActive}
+            drawnPerimeter={incidentBoxDrawnPerimeter}
+            onBoxRingChange={setIncidentBoxRing}
+            mapCenter={viewBounds ? { lat: (viewBounds.minLat + viewBounds.maxLat) / 2, lng: (viewBounds.minLng + viewBounds.maxLng) / 2 } : null}
+          />
           <AnalysisPanel
             distance={fireBreakDistance}
             trackAnalysis={trackAnalysis}
@@ -1793,6 +1832,7 @@ const App: React.FC = () => {
             anonymousLimited={anonymousLimited}
             onRequestSignIn={requestSignIn}
           />
+          </>
           )}
         </div>
         <IntegratedConfigPanel

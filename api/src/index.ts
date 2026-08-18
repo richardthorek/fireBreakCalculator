@@ -9,6 +9,7 @@ import './functions/assistantSmeacsBriefing';
 import './functions/auth';
 import './functions/elevationProfile';
 import './functions/infrastructure';
+import './functions/wind';
 import './functions/mobilityTelemetryRecord';
 import './functions/equipmentCreate';
 import './functions/equipmentDelete';

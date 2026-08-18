@@ -22,7 +22,8 @@ Every along-line location is addressed by **chainage** (metres from line start).
 - **Granular progress (2026-07-14, same change):** `onProgress` now reports a new `sampling` phase driven per-point by the vegetation sweep (the actual long haul, so the % genuinely tracks the fetch), owning ~2–55% of the bar; the search phase spans the rest, weighted per pass (wide 45% / refine 30% / polish 25% of a leg — replacing the old equal thirds that parked the bar during the expensive pass) with the wide pass's streamed scan events doubling as sub-pass progress. The bar moves off 0 within the first second (grid layout reports 2%). Area recon's bar is likewise driven per-point through its 0.1→0.7 sampling span instead of one end-of-fetch jump.
 - **Area-query vegetation — at most TWO upstream requests per run (2026-07-14, field-reported):** watching the live colour-in exposed the real cost of per-point sampling: one to two upstream queries **per hex cell** (~650–1500 per run), which scales linearly with corridor size and "at any sort of scale will overwhelm the upstream API" (free government servers, no SLA, no quota owed to us). `sampleVegetation` now takes the corridor's bbox and resolves fuel from **one NSW SVTM envelope feature-query + one NVIS `export` raster image**, both decoded/sampled app-side (point-in-polygon for NSW polygons; legend-driven pixel colour-decode for the NVIS raster — endpoint contracts, safeguards and canary coverage in [NVIS_INTEGRATION.md](NVIS_INTEGRATION.md)). Per-point identify remains ONLY the fallback (area data unavailable/offline, unmatched pixels), at concurrency 6 (the raise to 16 is reverted — it optimised the wrong thing), and **ordered line-outward**: the prefetch sorts the sweep by distance to the drawn line, so whatever per-point work happens samples the ground that actually decides the route first, and the streamed colour-in sweeps outward from the line. Positive NoData from the raster (ocean/gaps) short-circuits to the flagged conservative assumption without wasting a point query. Smoke-verified: whole 3-leg corridor resolved from exactly 1 area call and 0 point queries (was ~220 on the same synthetic line); fallback run confirms line-first ordering (first-quartile mean distance ≪ last-quartile) and the concurrency cap. **Retention (same day):** fetched area datasets are kept for the session and consulted by every later lookup — including plain point calls — so the finer refine/polish passes, per-segment analysis on an applied line, and re-runs all sample the locally-held data with zero further upstream traffic; the full hex granularity is retained because local sampling is free (see NVIS_INTEGRATION.md "Retention").
 - **Live colour-in during sampling (2026-07-14, field suggestion):** the map itself is now the progress indicator. The route-wide prefetch emits a `grid` scan event for the WHOLE shared grid the moment it's built (the full corridor outline appears at run start, where previously the map was blank until each leg's wide pass), then streams throttled (~120 ms) `cells` events as **each vegetation sample lands** — every hex colours in as its data arrives, sweeping across the corridor with the fetch. Per-cell slope comes from the batched elevation request (resolves in one round trip; early veg arrivals buffer until it does); the streamed preview colours on the **objective** severity for both scales, since a per-scan relative stretch is undefined until the scan finishes — each pass's own `cells` events later overwrite with the true pair, and the final heatmap replaces the lot. `MapboxMapView` fades each newly revealed cell in over ~450 ms (per-feature time-based opacity — data-driven paint can't use layer transitions, so the opacity expression is re-set per frame with the current clock; the loop self-terminates when the youngest reveal finishes and is skipped under `prefers-reduced-motion`); `App.tsx` stamps `revealedAt` on first reveal only, so later refinements don't re-flash a cell.
-- **Cost:** metres × traversal-slope factor (quadratic ramp, ×1.6 ≥25°, ×3 ≥45°) × fuel factor (grass 1.0 / light 1.2 / medium 1.7 / heavy 2.6), discounted on mapped trail (see below). Douglas-Peucker simplify (8 m) on the final output — tightened from 15 m once the output became a refined line (below) rather than raw hex centres.
+- **Cost:** metres × traversal-slope factor (quadratic ramp, ×1.6 ≥25°, ×3 ≥45°) × fuel factor (grass 1.0 / light 1.4 / medium 2.2 / heavy 3.8, see 2026-07-13 "Fuel weighting" below), discounted on mapped trail and/or a vegetation boundary (see "Damage-minimisation" below). Douglas-Peucker simplify (8 m) on the final output — tightened from 15 m once the output became a refined line (below) rather than raw hex centres.
+- **Damage-minimisation: vegetation-boundary discount (2026-08-18, owner-reported).** A uniformly-grassland paddock has NO cost gradient at all under the fuel-cost model above — every cell costs 1.0×, so the shortest (straight) line wins by default, which meant the optimizer would happily recommend a break straight through the MIDDLE of a paddock/crop rather than along its treeline edge, even though the edge is operationally preferable (less agricultural/environmental damage from siting the break where it doesn't cut a live paddock in two). Not a new fire-behaviour model — it's the same discount mechanism as the existing trail discount, applied to a different feature: `markVegetationBoundaries()` (`routeOptimizer.ts`) runs a second pass over the already-sampled hex grid (after `buildSharedWideGrid`'s nodes are populated — zero extra network cost) marking a node `nearVegetationBoundary: true` when any hex neighbour's `VEGETATION_COST` differs from its own by ≥ `VEGETATION_BOUNDARY_COST_DELTA` (1.0 — grass next to lightshrub is a soft gradient and does NOT count, grass next to medium/heavy scrub does). `edgeCost()` applies `VEGETATION_BOUNDARY_DISCOUNT` (0.65) when BOTH endpoints are flagged, composing multiplicatively with the existing trail discount (a track that happens to run the fenceline gets both). Detection is inherently approximate — same resolution as the underlying NVIS (~100 m national)/NSW SVTM vegetation classification, not a surveyed treeline — so it is NOT presented as a precise trace; `RouteComparisonStats.vegetationBoundaryDistance` and the `RawHeatmapCell`/`HexHeatmapCell.nearVegetationBoundary` flag surface it the same honest way `existingTrailDistance`/`onTrail` already do. Shipped directly into the default optimizer (owner decision — no toggle), unit-tested (`webapp/tests/vegetationBoundaryDiscount.test.ts`): the discount composition, the "flat paddock" regression this fixes, and the detection pass itself (flags a real transition, not a soft gradient, not an isolated cell). Deliberately NOT built: draggable/precise boundary-line snapping (this is a cost-field input into the SAME Dijkstra search that already handles slope/water/trails, not a geometric post-process — the existing corridor-width scaling already means a short leg's tight search corridor may never even reach a distant boundary while a long leg's wider one will, which is what gives "short stays direct, long follows the edge" for free, without a separate distance rule).
 - **Path refinement — coarse hex line → realistic line (2026-07-16, field-reported: `pathRefinement.ts`):** the Dijkstra search routes at grid resolution, so its result rides the hex cell CENTRES — a slightly blocky zig-zag, and where it chose to reuse a trail (a discounted edge) the line runs roughly *alongside* the road rather than on it (field screenshot: a route paralleling "Old Mill Rd" instead of tracing it). After the per-leg search, each leg's coarse line is refined into a realistic one using data **already held locally**, so refinement costs no extra network round trips: (1) densify to ~20 m spacing; (2) **snap to trails** — pull vertices onto a mapped trail/road when it's within 35 m *and* runs within 40° of the local path heading (an angle gate so a route that merely *crosses* a road doesn't spike onto it, only one *following* it collapses on); (3) **local fuel-aware nudge** — each still-free vertex may shift ≤8 m perpendicular toward lower-fuel ground, resolved from the session-retained area vegetation data (`resolveFromCachedAreas`, zero-network), giving a finer, more realistic line between hex centres without re-running the search at a finer hex size. Done **per-leg** so each leg's endpoints — which ARE the user's drawn waypoints — never move. The effort/length/trail-reuse stats stay computed on the search nodes: refinement is a geometric presentation pass *within* the corridor the search already priced, not a re-route, so it must not restate the costed result. The hex heatmap is untouched (it still shows the full scanned corridor). Verified by a 16-check bundled smoke run: endpoint preservation, parallel-run snap-on vs perpendicular-crossing snap-off, distance gate, monotone fuel nudge toward the cheaper side, locked (snapped) vertices held, and end-to-end road-hugging (mean offset from the road 25 m → <8 m).
 - **Honesty:** any estimated elevation or vegetation sample → `usedEstimatedData: true`, surfaced in the UI. Missing vegetation data is assumed `mediumscrub` **and flagged estimated** — never silently optimistic.
 - **Lifecycle:** result is a dashed map preview + original-vs-optimized stats (length, max slope, steep metres, heavy-timber metres, trail reused, effort score). Apply = replace drawn line and re-run the full analysis pipeline; Dismiss = discard. Since 2026-07-12, **Apply shows whenever the optimized coordinates genuinely differ from the original line**, not gated on a minimum improvement percentage — it used to hide behind an `improvement > 1%` threshold, which meant a result within ~1% of the original (or one the user still preferred over their own line) offered no way to accept it; it now hides only in the true fallback case where the search failed and the "optimized" line is just the original re-sampled.
@@ -6543,6 +6544,94 @@ Frontier-streaming from the Dijkstra search itself (visible reachability
 ensemble-transit streaming WP4 already ships) has not been built.
 
 ---
+
+## Incident box
+
+Fire-break mode tool (not Terrain Mobility — owned by `IncidentBoxPanel.tsx`,
+`webapp/src/utils/incidentBox{Geometry,Planner}.ts`,
+`incidentBoundaryImport.ts`, `windService.ts`; backend `GET /api/wind`,
+`docs/api-register.md` "Wind (Incident Box)"). Get a fire's current
+perimeter, get wind, and recommend a standoff "box" — deepest at the head
+(downwind), shallowest at the rear — before pathfinding it into a real
+buildable corridor with the existing production-time engine.
+
+**Getting the perimeter.** Two paths, both feeding the same
+`onIncidentPerimeterDrawn` callback:
+- **Manual draw** — a multi-click polygon tool on the map (own armed state,
+  `incidentBoxActive`/`incidentPerimeterPoints` in `MapboxMapView.tsx`),
+  finished with an explicit "Finish perimeter" button rather than a click
+  count or double-click (double-click already means "zoom in" to Mapbox).
+  Matches how this is actually done in the field per the owner: a rough
+  line, ~10 vertices, loosely tracking roads/waterways, refined as planning
+  develops — not a precise trace.
+- **Import from the live fire-boundary feed** — `incidentBoundaryImport.ts`
+  reuses the EXISTING `fetchFireBoundaries()` (Digital Atlas of Australia
+  NRT, `liveFeedsService.ts`, already shipped and national — covers NSW and
+  every other state that feed lists, not NSW-specific). Note: the NSW RFS
+  "majorIncidents.json" feed used elsewhere in this app (`parseNsw`) is
+  point-only, no boundary geometry — it was the feed named in the original
+  ask but is NOT the source here; `fetchFireBoundaries()` is what actually
+  carries polygons.
+
+**Getting wind.** `GET /api/wind` proxies Open-Meteo (live, free, no key) —
+explicitly NOT presented as a BOM/AFDRS product; official AFDRS access is a
+separate, currently blocked item. Manual entry (`manualWindObservation`) is
+a first-class fallback, not an error path: fire-break mode's zero-reception
+guarantee only holds if a failed/offline wind fetch still produces a usable
+box, flagged `usedFallbackWind: true` end to end (`WindObservation` is a
+must-match pair, `api/src/types/incidentBox.ts` ↔ `webapp/src/utils/windService.ts`).
+
+**The standoff distance — "rate of spread plus construction time equals
+minimum distance" (the owner's own framing, verbatim).** This is
+deliberately NOT a fire-behaviour spread-rate model — this app's data-
+honesty rule rules out an invented spread-rate coefficient the same way it
+rules out an invented fuel-age clearing-rate curve (see that item in
+`master_plan.md`'s "Next up"). Rate of spread is a **manual input** — the
+user's own figure, per sector (head required; flank/rear default to the
+head value if left blank, which is the conservative choice: never assume
+the flanks/rear are slower unless told so).
+
+`incidentBoxGeometry.ts` classifies each perimeter vertex into a wind
+sector (head/leftFlank/rightFlank/rear, by angle off the downwind bearing)
+and offsets vertices outward — pure geometry, no network calls, so it's
+cheaply unit-tested (`webapp/tests/incidentBoxGeometry.test.ts`).
+
+`incidentBoxPlanner.ts` then solves each present sector's standoff distance
+by fixed-point iteration (capped at 3 rounds): offset the sector's vertices
+by a candidate distance, run the EXISTING production-time engine
+(`analyzeTrackSlopes`/`analyzeTrackVegetation`/`buildRouteProfile`/
+`calculateEquipmentAnalysis` — no new costing model) on that straight offset
+line, take the conservative (max, never min) compatible-resource time, and
+set the next candidate distance to `rate-of-spread × that time` — i.e. the
+distance the fire would cover in exactly the time it takes to build the
+break there. Converges when the candidate stops moving; a sector that
+doesn't converge within 3 rounds is flagged `converged: false` and its
+distance treated as a lower bound, not a settled answer (same "not-
+assessed ≠ found nothing" honesty discipline used elsewhere in this repo,
+e.g. OCOKA cover/concealment).
+
+**Pathfinding the final box.** Once distances settle, the box ring is
+pathfound ONCE (not per iteration, for cost) through the EXISTING corridor
+optimizer (`optimizeRoute`, `routeOptimizer.ts`) as a closed loop —
+"specific corridors" per the original ask. This is what actually snaps the
+recommended line onto existing roads/trails (already built, per the owner —
+the optimizer's existing trail-discount behaviour handles this with no new
+code) and routes around water. If pathfinding fails, the raw box ring is
+used instead, flagged `usedFallbackRoute: true`.
+
+**The headline number.** `IncidentBoxPanel.tsx` shows the same conservative
+(max compatible) construction-time figure the sector solve uses, alongside
+the full equipment comparison table (same `calculateEquipmentAnalysis`
+response shape `AnalysisPanel.tsx` already renders — no second costing
+engine, no duplicated numbers).
+
+**Deliberately out of scope for this first slice**: draggable box-vertex
+editing (the box is instead re-generated from adjustable rate-of-spread/
+wind inputs — arguably better for touch/field use per the root CLAUDE.md's
+"touch-first" rule than fiddly vertex-dragging on a small screen); per-
+vertex (rather than per-sector) standoff solving, which would multiply the
+number of pathfind/costing calls for marginal precision gain on a ~10-
+vertex rough perimeter.
 
 ## Update policy
 Update this doc when the optimizer cost model, sampling strategy, insight rules, or data sources change.
