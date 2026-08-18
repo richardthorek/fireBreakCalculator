@@ -299,7 +299,7 @@ history beyond this window: `git log`.
   rivers/streams/tracks) — repurposed `MapboxMapView.tsx`'s previously-dead
   `vegetationAnalysis` state slot rather than adding a new one. Gates green:
   api `npm run build` + `npm run test:unit`, webapp `npm run build` +
-  `npm test` (46/46).
+  `npm test` (46/46). PR [#218](https://github.com/richardthorek/fireBreakCalculator/pull/218).
 - **2026-08-03 — OCOKA 5 shipped (step 57): tier-2 backend job protocol.**
   New standalone `api-mobility/` package (not inside `/api` — researched
   against current Microsoft Learn docs first: a Static Web App allows
